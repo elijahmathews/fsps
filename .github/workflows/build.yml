@@ -1,0 +1,49 @@
+name: Build FSPS
+
+on:
+  push:
+    # Temporarily monitor allocatable branch
+    # TODO: Remove when PR into upstream finalized
+    branches: [ master, allocatable ]
+  pull_request:
+    branches: [ master, allocatable ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Set SPS_HOME to the current checkout directory
+      SPS_HOME: ${{ github.workspace }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install GFortran
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gfortran
+
+    - name: Compile FSPS
+      working-directory: ./src
+      run: |
+        make clean
+        make all
+
+    - name: Run simple.exe
+      working-directory: ./src
+      run: |
+        # Run the driver to ensure no runtime segfaults
+        ./simple.exe
+        
+    - name: Verify Output Exists
+      run: |
+        # Files are written to $SPS_HOME/OUTPUTS/ with .spec suffix
+        if [ -f "$SPS_HOME/OUTPUTS/CSP.out.spec" ]; then
+          echo "CSP.out.spec created successfully."
+        else
+          echo "Error: CSP.out.spec was not created in $SPS_HOME/OUTPUTS/"
+          ls -R $SPS_HOME/OUTPUTS/ # Debugging
+          exit 1
+        fi
