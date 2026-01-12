@@ -36,7 +36,7 @@ function sfh_weight(sfh, imin, imax)
   integer :: i, istart
   real(SP), dimension(2) :: tlim
   real(SP) :: dt, delta_time, log_tb
-  real(SP), dimension(ntfull) :: tmp_wght=0. !left=0., right=0.
+  real(SP), dimension(ntfull) :: tmp_wght
 
 
   ! Check if this is an SSP.  If so, do simple weights and return.

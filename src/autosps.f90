@@ -6,53 +6,40 @@ PROGRAM AUTOSPS
   IMPLICIT NONE
 
   INTEGER :: z
-  REAL(SP), DIMENSION(ntfull,nspec)  :: spec_ssp
-  REAL(SP), DIMENSION(ntfull)        :: mass_ssp,lbol_ssp
+  REAL(SP), ALLOCATABLE, DIMENSION(:,:)  :: spec_ssp
+  REAL(SP), ALLOCATABLE, DIMENSION(:)        :: mass_ssp,lbol_ssp
   CHARACTER(100) :: file1='',aux
   CHARACTER(3)  :: str
   TYPE(PARAMS)  :: pset
-  TYPE(COMPSPOUT), DIMENSION(ntfull) :: ocompsp
+  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
+  INTEGER :: alloc_stat
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
   
-  IF (isoc_type.NE.'pdva') THEN
+  ! Initialize FSPS with Padova Isochrones (Required for autosps)
+  ! We call this early to populate zlegend and nz dimensions
+  WRITE(6,*) 'Initializing SPS with Padova isochrones...'
+  CALL SPS_SETUP(-1, input_isoc_type='pdva')
+
+  ! Verify that the initialization succeeded with the correct library
+  IF (TRIM(isoc_type).NE.'pdva') THEN
      WRITE(*,*) 'ERROR: autosps only works with the "Padova" isochrones'
-     WRITE(*,*) '       edit sps_vars.f90 to turn these isochrones on'
-     RETURN
-  ENDIF
-
-  !set IMF
-  WRITE(6,*)  'enter IMF [0-5; def:0]:'
-  WRITE(6,*) ' (0=Salpeter, 1=Chabrier 2003, 2=Kroupa 2001, '//&
-       '3=van Dokkum 2008, 4=Dave 2008, 5=tabulated)'
-  READ(5,'(A)')  aux
-  IF (LEN(TRIM(aux)).EQ.0) THEN
-     imf_type = 0
-  ELSE
-     READ(aux,'(I1)') imf_type
-  ENDIF
-  IF (imf_type.LT.0.OR.imf_type.GT.5) THEN
-     WRITE(*,*) 'ERROR: imf out of bounds: ',imf_type
      STOP
   ENDIF
-  WRITE(6,'(" ---> Using IMF",1x,I1)') imf_type
+
+  ! Allocate arrays dependent on runtime dimensions
+  ALLOCATE(spec_ssp(ntfull,nspec), stat=alloc_stat)
+  ALLOCATE(mass_ssp(ntfull), lbol_ssp(ntfull), stat=alloc_stat)
+  ALLOCATE(ocompsp(ntfull), stat=alloc_stat)
+  IF (alloc_stat /= 0) STOP 'Allocation failed in AUTOSPS'
+
+  ! Allocate PARAMS components
+  IF (.NOT. ALLOCATED(pset%mag_compute)) ALLOCATE(pset%mag_compute(nbands))
+  IF (.NOT. ALLOCATED(pset%ssp_gen_age)) ALLOCATE(pset%ssp_gen_age(nt))
+  pset%mag_compute = 1
+  pset%ssp_gen_age = 1
   
-
-  !setup directory and metallicity array
-  CALL GETENV('SPS_HOME',SPS_HOME)
-  IF (LEN_TRIM(SPS_HOME).EQ.0) THEN
-     WRITE(*,*) 'SETUP_SPS ERROR: spsdir environment variable not set!'
-     STOP
-  ENDIF
-  OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/Padova/Padova2007/zlegend.dat',&
-       STATUS='OLD',ACTION='READ')
-  DO z=1,nz
-     READ(90,'(F6.4)') zlegend(z)
-  ENDDO
-  CLOSE(90)
-
-
   !set SFH
   WRITE(6,*)
   WRITE(6,*)  'Specify SFH [0-2, def:0]'
@@ -139,14 +126,12 @@ PROGRAM AUTOSPS
   WRITE(6,'(" ---> Running model.......")')
   
   IF (pset%sfh.EQ.2) THEN
-     CALL SPS_SETUP(-1) 
      DO z=1,nz
         pset%zmet=z
         CALL SSP_GEN(pset,mass_ssp_zz(:,z),lbol_ssp_zz(:,z),spec_ssp_zz(:,:,z))
      ENDDO
      CALL COMPSP(3,nz,file1,mass_ssp_zz,lbol_ssp_zz,spec_ssp_zz,pset,ocompsp)
   ELSE
-     CALL SPS_SETUP(pset%zmet)
      CALL SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
      CALL COMPSP(3,1,file1,mass_ssp,lbol_ssp,spec_ssp,pset,ocompsp)
   ENDIF

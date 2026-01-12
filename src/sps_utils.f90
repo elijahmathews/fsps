@@ -302,6 +302,15 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
+     SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
+       USE sps_vars
+       INTEGER, INTENT(in) :: zin
+       CHARACTER(LEN=*), INTENT(in), OPTIONAL :: input_isoc_type
+       CHARACTER(LEN=*), INTENT(in), OPTIONAL :: input_spec_type
+     END SUBROUTINE SPS_SETUP
+  END INTERFACE
+
+  INTERFACE
      SUBROUTINE SETUP_TABULAR_SFH(pset, nzin)
        USE sps_vars
        TYPE(PARAMS), INTENT(in) :: pset

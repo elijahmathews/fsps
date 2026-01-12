@@ -61,8 +61,8 @@ simple : simple.o $(COMMON)
 lesssimple : lesssimple.o $(COMMON)
 	$(F90) $(F90FLAGS) -o lesssimple.exe lesssimple.o $(COMMON)
 
-spec_bin : spec_bin.o sps_vars.o
-	$(F90) $(F90FLAGS) -o spec_bin.exe spec_bin.o sps_vars.o
+spec_bin : spec_bin.o $(COMMON)
+	$(F90) $(F90FLAGS) -o spec_bin.exe spec_bin.o $(COMMON)
 
 sps_vars.o : sps_vars.f90
 	$(F90) $(F90FLAGS) sps_vars.f90 -c

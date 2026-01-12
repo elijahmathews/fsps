@@ -10,15 +10,16 @@
 
   INTEGER :: i
   !define variable for SSP spectrum
-  REAL(SP), DIMENSION(ntfull,nspec)  :: spec_ssp
+  REAL(SP), ALLOCATABLE, DIMENSION(:,:)  :: spec_ssp
   !define variables for Mass and Lbol info
-  REAL(SP), DIMENSION(ntfull)    :: mass_ssp,lbol_ssp
+  REAL(SP), ALLOCATABLE, DIMENSION(:)    :: mass_ssp,lbol_ssp
   CHARACTER(100) :: file1='', file2=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
-  TYPE(COMPSPOUT), DIMENSION(ntfull) :: ocompsp
+  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
   REAL(SP) :: ssfr6,ssfr7,ssfr8,ave_age
+  INTEGER :: alloc_stat
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -33,6 +34,18 @@
                             !20 = solar metallacity
 
   CALL SPS_SETUP(pset%zmet) !read in the isochrones and spectral libraries
+
+  ! Allocate arrays dependent on runtime dimensions
+  ALLOCATE(spec_ssp(ntfull,nspec), stat=alloc_stat)
+  ALLOCATE(mass_ssp(ntfull), lbol_ssp(ntfull), stat=alloc_stat)
+  ALLOCATE(ocompsp(ntfull), stat=alloc_stat)
+  IF (alloc_stat /= 0) STOP 'Allocation failed in SIMPLE'
+
+  ! Allocate PARAMS components
+  IF (.NOT. ALLOCATED(pset%mag_compute)) ALLOCATE(pset%mag_compute(nbands))
+  IF (.NOT. ALLOCATED(pset%ssp_gen_age)) ALLOCATE(pset%ssp_gen_age(nt))
+  pset%mag_compute = 1
+  pset%ssp_gen_age = 1
 
   !define the parameter set.  These are the default values, specified 
   !in sps_vars.f90, but are explicitly included here for transparency

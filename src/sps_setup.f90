@@ -1,4 +1,4 @@
-SUBROUTINE SPS_SETUP(zin)
+SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
 
   !read in isochrones and spectral libraries for all metallicities.
   !read in band-pass info and the spectrum for Vega.
@@ -10,9 +10,12 @@ SUBROUTINE SPS_SETUP(zin)
   !in a much faster setup.
 
   USE sps_vars
-  USE sps_utils
+  USE sps_utils, ONLY: linterp, linterparr, locate, tsum, get_tuniv, get_lumdist, airtovac
   IMPLICIT NONE
   INTEGER, INTENT(in) :: zin
+  CHARACTER(LEN=*), INTENT(in), OPTIONAL :: input_isoc_type
+  CHARACTER(LEN=*), INTENT(in), OPTIONAL :: input_spec_type
+
   INTEGER :: stat=1,n,i,j,m,jj,k,i1,i2,stat2=1
   INTEGER, PARAMETER :: ntlam=1221,nspec_agb=6146,nspec_aringer=9032
   INTEGER, PARAMETER :: nlamwr=1963,nspec_pagb=9281
@@ -22,9 +25,13 @@ SUBROUTINE SPS_SETUP(zin)
   CHARACTER(6) :: zstype
   CHARACTER(5) :: zstype5
   REAL(SP) :: dumr1,d1,d2,logage,x,a,zero=0.0,d,one=1.0,dz,dlam
-  CHARACTER(5), DIMENSION(nz) :: zlegend_str=''
+  
+  ! Local allocatable arrays for those that depend on dynamic sizes
+  CHARACTER(5), ALLOCATABLE :: zlegend_str(:)
+  REAL(SP), ALLOCATABLE :: tspec(:)
+
   CHARACTER(5), DIMENSION(nz_xrb) :: zz_str_xrb=''
-  REAL(SP), DIMENSION(nspec) :: tspec=0.
+  
   REAL(SP), DIMENSION(ntlam) :: tvega_lam=0.,tvega_spec=0.
   REAL(SP), DIMENSION(ntlam) :: tsun_lam=0.,tsun_spec=0.
   REAL(SP), DIMENSION(nlamwr) :: tlamwr=0.,tspecwr=0.
@@ -48,15 +55,20 @@ SUBROUTINE SPS_SETUP(zin)
   REAL(SP), DIMENSION(nspec_aringer,n_agb_car) :: aringer_specinit=0.
   REAL(SP), DIMENSION(nagndust_spec)           :: agndust_lam=0.
   REAL(SP), DIMENSION(nagndust_spec,nagndust)  :: agndust_specinit=0.
-  !REAL(KIND(1.0)), DIMENSION(nspec,nzinit,ndim_logt,ndim_logg) :: speclibinit=0.
+  
   REAL(KIND(1.0)), allocatable :: speclibinit(:,:,:,:)
-  REAL(SP), DIMENSION(nspec,nzwmb,ndim_wmb_logt,ndim_wmb_logg) :: wmbsi=0.
+  REAL(SP), ALLOCATABLE :: wmbsi(:,:,:,:)
   REAL(SP), DIMENSION(nzwmb)     :: zwmb=0.
   REAL(SP), DIMENSION(nspec_wmb) :: wmb_lam=0.
   REAL(SP), DIMENSION(nspec_wmb,ndim_wmb_logt,ndim_wmb_logg) :: wmb_specinit=0.
   REAL(SP), DIMENSION(ntabmax)   :: lsflam=0.,lsfsig=0.
   REAL(SP), DIMENSION(30) :: g03lam=0., g03smc=0.
   REAL(SP), DIMENSION(nspec_xrb) :: tspec_xrb
+
+  CHARACTER(256) :: isoc_dir
+  CHARACTER(256) :: file_path
+  INTEGER :: ios
+  CHARACTER(1024) :: line_buffer
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -66,12 +78,295 @@ SUBROUTINE SPS_SETUP(zin)
      WRITE(*,*) '    Setting up SPS...'
   ENDIF
 
+  !----------------------------------------------------------------!
+  !--------------Confirm that variables are properly set-----------!
+  !----------------------------------------------------------------!
+
+  CALL getenv('SPS_HOME',SPS_HOME)
+  IF (LEN_TRIM(SPS_HOME).EQ.0) THEN
+     WRITE(*,*) 'SPS_SETUP ERROR: spsdir environment variable not set!'
+     STOP
+  ENDIF
+
+  ! 1. Determine Isochrone Type
+  IF (PRESENT(input_isoc_type)) THEN
+     isoc_type = input_isoc_type
+  ELSE
+     isoc_type = 'mist' ! Default
+  ENDIF
+
+  ! Map isoc_type to directory and set zsol
+  SELECT CASE (TRIM(isoc_type))
+  CASE ('mist')
+     isoc_dir = 'MIST'
+     zsol = 0.0142
+  CASE ('pdva')
+     isoc_dir = 'Padova/Padova2007'
+     zsol = 0.019
+  CASE ('prsc')
+     isoc_dir = 'PARSEC'
+     zsol = 0.01524
+  CASE ('bsti')
+     isoc_dir = 'BaSTI'
+     zsol = 0.020
+  CASE ('gnva')
+     isoc_dir = 'Geneva'
+     zsol = 0.020
+  CASE ('bpss')
+     isoc_dir = 'BPASS'
+     zsol = 0.020
+  CASE DEFAULT
+     WRITE(*,*) 'SPS_SETUP ERROR: Unknown isoc_type: ', TRIM(isoc_type)
+     STOP
+  END SELECT
+
+  ! 2. Determine Spectral Library Type
+  IF (PRESENT(input_spec_type)) THEN
+     spec_type = input_spec_type
+  ELSEIF (TRIM(isoc_type) == 'bpss') THEN
+     spec_type = 'bpass'
+  ELSE
+     spec_type = 'miles' ! Default
+  ENDIF
+
+  ! Set zsol_spec
+  IF (TRIM(spec_type) == 'miles') THEN
+     zsol_spec = 0.019
+  ELSEIF (TRIM(spec_type) == 'basel') THEN
+     zsol_spec = 0.020
+  ELSEIF (INDEX(TRIM(spec_type), 'c3k') > 0) THEN
+     zsol_spec = 0.0134
+  ELSEIF (TRIM(spec_type) == 'bpass') THEN
+     zsol_spec = 0.020
+  ENDIF
+
+  ! 3. Determine nbands (Count filters in allfilters.dat)
+  nbands = 0
+  IF (TRIM(alt_filter_file).EQ.'') THEN
+     file_path = TRIM(SPS_HOME)//'/data/allfilters.dat'
+  ELSE
+     file_path = TRIM(SPS_HOME)//'/data/'//TRIM(alt_filter_file)
+  ENDIF
+  
+  OPEN(99, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+  IF (stat.NE.0) THEN
+     WRITE(*,*) 'SPS_SETUP ERROR: Filter file cannot be opened: ', TRIM(file_path)
+     STOP
+  ENDIF
+  DO
+     READ(99, '(A)', IOSTAT=ios) line_buffer
+     ! Check for valid line content before checking EOF
+     IF (LEN_TRIM(line_buffer) > 0) THEN
+        IF (line_buffer(1:1) == '#') nbands = nbands + 1
+     ENDIF
+     IF (ios /= 0) EXIT
+  ENDDO
+  CLOSE(99)
+  
+  IF (nbands == 0) THEN
+      WRITE(*,*) 'SPS_SETUP ERROR: No filters found in ', TRIM(file_path)
+      STOP
+  ENDIF
+
+  ! 4. Determine nz (Count lines in zlegend.dat)
+  file_path = TRIM(SPS_HOME)//'/ISOCHRONES/'//TRIM(isoc_dir)//'/zlegend.dat'
+  OPEN(90, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+  IF (stat.NE.0) THEN
+     WRITE(*,*) 'SPS_SETUP ERROR: zlegend.dat cannot be opened: ', TRIM(file_path)
+     STOP
+  ENDIF
+  
+  nz = 0
+  DO
+     READ(90, *, IOSTAT=ios)
+     IF (ios /= 0) EXIT
+     nz = nz + 1
+  ENDDO
+  CLOSE(90)
+
   IF (zin.GT.nz) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: zin GT nz', zin,nz
      STOP
   ENDIF
 
-  !clean out all the common block arrays
+  ! 5. Determine nt (Count blocks in first isochrone file)
+  ! We need to read the first metallicity to find the file
+  OPEN(90, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+  ! Read the first entry to construct filename
+  IF (TRIM(isoc_type) == 'mist') THEN
+      READ(90, '(A)') line_buffer ! Read as string for MIST
+      ! line_buffer holds zlegend_str(1)
+      file_path = TRIM(SPS_HOME)//'/ISOCHRONES/MIST/isoc_z'//TRIM(ADJUSTL(line_buffer))//'.dat'
+  ELSE
+      READ(90, *) dumr1 ! Read as float
+      WRITE(zstype, '(F6.4)') dumr1
+      file_path = TRIM(SPS_HOME)//'/ISOCHRONES/'//TRIM(isoc_dir)//'/isoc_z'//zstype//'.dat'
+  ENDIF
+  CLOSE(90)
+
+  nt = 0
+  OPEN(97, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+  IF (stat.NE.0) THEN
+      WRITE(*,*) 'SPS_SETUP ERROR: Cannot open isochrone file to determine nt: ', TRIM(file_path)
+      STOP
+  ENDIF
+  
+  DO
+     READ(97, '(A)', IOSTAT=ios) char
+     IF (ios /= 0) EXIT
+     IF (char == '#') nt = nt + 1
+  ENDDO
+  CLOSE(97)
+
+  ! 6. Determine nspec (Count lines in .lambda file)
+  IF (TRIM(isoc_type) == 'bpss') THEN
+      file_path = TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/bpass.lambda'
+  ELSE
+      IF (spec_type.EQ.'basel') THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel.lambda'
+      ELSE IF (spec_type.EQ.'miles') THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/MILES/miles.lambda'
+      ELSE IF (INDEX(spec_type, 'c3k') > 0) THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/C3K/'//TRIM(spec_type)//'.lambda'
+      ENDIF
+  ENDIF
+
+  OPEN(91, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+  IF (stat.NE.0) THEN
+     WRITE(*,*) 'SPS_SETUP ERROR: wavelength grid cannot be opened: ', TRIM(file_path)
+     STOP
+  ENDIF
+  nspec = 0
+  DO
+     READ(91, *, IOSTAT=ios)
+     IF (ios /= 0) EXIT
+     nspec = nspec + 1
+  ENDDO
+  CLOSE(91)
+
+  ! 7. Determine nzinit (Count lines in spectral zlegend.dat)
+  IF (TRIM(isoc_type) == 'bpss') THEN
+      nzinit = 1
+  ELSE
+      IF (spec_type.EQ.'basel') THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/zlegend.dat'
+      ELSE IF (spec_type.EQ.'miles') THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/MILES/zlegend.dat'
+      ELSE IF (INDEX(spec_type, 'c3k') > 0) THEN
+         file_path = TRIM(SPS_HOME)//'/SPECTRA/C3K/zlegend.dat'
+      ENDIF
+      
+      OPEN(93, FILE=file_path, STATUS='OLD', IOSTAT=stat, ACTION='READ')
+      IF (stat.NE.0) THEN
+         WRITE(*,*) 'SPS_SETUP ERROR: spectral zlegend cannot be opened: ', TRIM(file_path)
+         STOP
+      ENDIF
+      nzinit = 0
+      DO
+         READ(93, *, IOSTAT=ios)
+         IF (ios /= 0) EXIT
+         nzinit = nzinit + 1
+      ENDDO
+      CLOSE(93)
+  ENDIF
+
+  ! 8. Calculate ntfull
+  ntfull = time_res_incr * nt
+
+  !----------------------------------------------------------------!
+  !-------------------ALLOCATE ARRAYS------------------------------!
+  !----------------------------------------------------------------!
+  
+  ! Local arrays
+  IF (ALLOCATED(zlegend_str)) DEALLOCATE(zlegend_str)
+  ALLOCATE(zlegend_str(nz), stat=stat)
+  IF (ALLOCATED(tspec)) DEALLOCATE(tspec)
+  ALLOCATE(tspec(nspec), stat=stat)
+  
+  ! sps_vars arrays
+  IF (ALLOCATED(mact_isoc)) DEALLOCATE(mact_isoc, logl_isoc, logt_isoc, &
+       logg_isoc, ffco_isoc, phase_isoc, mini_isoc, lmdot_isoc)
+  ALLOCATE(mact_isoc(nz,nt,nm), logl_isoc(nz,nt,nm), logt_isoc(nz,nt,nm), &
+           logg_isoc(nz,nt,nm), ffco_isoc(nz,nt,nm), phase_isoc(nz,nt,nm), &
+           mini_isoc(nz,nt,nm), lmdot_isoc(nz,nt,nm), stat=stat)
+  IF (stat /= 0) STOP 'Allocation failed for isochrone arrays'
+
+  IF (ALLOCATED(nmass_isoc)) DEALLOCATE(nmass_isoc, timestep_isoc)
+  ALLOCATE(nmass_isoc(nz,nt), timestep_isoc(nz,nt), stat=stat)
+  IF (ALLOCATED(zlegend)) DEALLOCATE(zlegend, zlegendinit)
+  ALLOCATE(zlegend(nz), zlegendinit(nzinit), stat=stat)
+  
+  IF (ALLOCATED(spec_ssp_zz)) DEALLOCATE(spec_ssp_zz, mass_ssp_zz, lbol_ssp_zz, time_full)
+  ALLOCATE(spec_ssp_zz(nspec,ntfull,nz), mass_ssp_zz(ntfull,nz), &
+           lbol_ssp_zz(ntfull,nz), time_full(ntfull), stat=stat)
+  IF (ALLOCATED(weight_ssp)) DEALLOCATE(weight_ssp)
+  ALLOCATE(weight_ssp(ntfull,nz), stat=stat)
+  IF (ALLOCATED(spec_young)) DEALLOCATE(spec_young, spec_old)
+  ALLOCATE(spec_young(nspec), spec_old(nspec), stat=stat)
+  
+  IF (ALLOCATED(bpass_spec_ssp)) DEALLOCATE(bpass_spec_ssp, bpass_mass_ssp)
+  ALLOCATE(bpass_spec_ssp(nspec,nt,nz), bpass_mass_ssp(nt,nz), stat=stat)
+  IF (ALLOCATED(spec_xrb)) DEALLOCATE(spec_xrb)
+  ALLOCATE(spec_xrb(nspec,nt_xrb,nz_xrb), stat=stat)
+  
+  IF (ALLOCATED(bands)) DEALLOCATE(bands)
+  ALLOCATE(bands(nspec,nbands), stat=stat)
+  IF (ALLOCATED(magsun)) DEALLOCATE(magsun, magvega, filter_leff)
+  ALLOCATE(magsun(nbands), magvega(nbands), filter_leff(nbands), stat=stat)
+  IF (ALLOCATED(vega_spec)) DEALLOCATE(vega_spec, sun_spec, spec_lambda, spec_nu, spec_res)
+  ALLOCATE(vega_spec(nspec), sun_spec(nspec), spec_lambda(nspec), &
+           spec_nu(nspec), spec_res(nspec), stat=stat)
+           
+  IF (ALLOCATED(speclib)) DEALLOCATE(speclib)
+  ALLOCATE(speclib(nspec,nz,ndim_logt,ndim_logg), stat=stat)
+  IF (ALLOCATED(speclibinit)) DEALLOCATE(speclibinit)
+  ALLOCATE(speclibinit(nspec,nzinit,ndim_logt,ndim_logg), stat=stat)
+  IF (ALLOCATED(wmbsi)) DEALLOCATE(wmbsi)
+  ALLOCATE(wmbsi(nspec,nzwmb,ndim_wmb_logt,ndim_wmb_logg), stat=stat)
+  IF (ALLOCATED(wmb_spec)) DEALLOCATE(wmb_spec)
+  ALLOCATE(wmb_spec(nspec,nz,ndim_wmb_logt,ndim_wmb_logg), stat=stat)
+  
+  IF (ALLOCATED(agb_spec_o)) DEALLOCATE(agb_spec_o, agb_logt_o)
+  ALLOCATE(agb_spec_o(nspec,n_agb_o), agb_logt_o(nz,n_agb_o), stat=stat)
+  IF (ALLOCATED(agb_spec_c)) DEALLOCATE(agb_spec_c, agb_logt_c)
+  ALLOCATE(agb_spec_c(nspec,n_agb_c), agb_logt_c(n_agb_c), stat=stat)
+  IF (ALLOCATED(agb_logt_car)) DEALLOCATE(agb_logt_car, agb_spec_car)
+  ALLOCATE(agb_logt_car(n_agb_car), agb_spec_car(nspec,n_agb_car), stat=stat)
+  
+  IF (ALLOCATED(pagb_spec)) DEALLOCATE(pagb_spec)
+  ALLOCATE(pagb_spec(nspec,ndim_pagb,2), stat=stat)
+  IF (ALLOCATED(wrn_spec)) DEALLOCATE(wrn_spec, wrc_spec)
+  ALLOCATE(wrn_spec(nspec,ndim_wr,nz), wrc_spec(nspec,ndim_wr,nz), stat=stat)
+  
+  IF (ALLOCATED(dustem2_dustem)) DEALLOCATE(dustem2_dustem)
+  ALLOCATE(dustem2_dustem(nspec,nqpah_dustem,numin_dustem*2), stat=stat)
+  IF (ALLOCATED(flux_dagb)) DEALLOCATE(flux_dagb)
+  ALLOCATE(flux_dagb(nspec,2,nteff_dagb,ntau_dagb), stat=stat)
+  
+  IF (ALLOCATED(nebem_cont)) DEALLOCATE(nebem_cont, xnebem_cont)
+  ALLOCATE(nebem_cont(nspec,nebnz,nebnage,nebnip), &
+           xnebem_cont(nspec,nebnz,nebnage,nebnip), stat=stat)
+  IF (ALLOCATED(neb_res_min)) DEALLOCATE(neb_res_min, gaussnebarr)
+  ALLOCATE(neb_res_min(nspec), gaussnebarr(nspec,nemline), stat=stat)
+  
+  IF (ALLOCATED(agndust_spec)) DEALLOCATE(agndust_spec)
+  ALLOCATE(agndust_spec(nspec,nagndust), stat=stat)
+  
+  IF (ALLOCATED(mwdindex)) DEALLOCATE(mwdindex, wgdust, g03smcextn)
+  ALLOCATE(mwdindex(nspec), wgdust(nspec,18,6,2), g03smcextn(nspec), stat=stat)
+  
+  ! Type allocations
+  IF (ALLOCATED(lsfinfo%lsf)) DEALLOCATE(lsfinfo%lsf)
+  ALLOCATE(lsfinfo%lsf(nspec), stat=stat)
+  
+  ! Check allocations
+  IF (stat /= 0) THEN
+      WRITE(*,*) 'SPS_SETUP ERROR: Allocation failed.'
+      STOP
+  ENDIF
+
+  ! Initialize
+  wmbsi = 0.
   mini_isoc     = 0.
   mact_isoc     = 0.
   logl_isoc     = 0.
@@ -94,17 +389,6 @@ SUBROUTINE SPS_SETUP(zin)
   n_isoc        = 0
   m             = 1
 
-
-  !----------------------------------------------------------------!
-  !--------------Confirm that variables are properly set-----------!
-  !----------------------------------------------------------------!
-
-  CALL getenv('SPS_HOME',SPS_HOME)
-  IF (LEN_TRIM(SPS_HOME).EQ.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: spsdir environment variable not set!'
-     STOP
-  ENDIF
-
   IF (basel_str.NE.'pdva'.AND.basel_str.NE.'wlbc') THEN
      WRITE(*,*) 'SPS_SETUP ERROR: basel_str var set to invalid type: ',basel_str
      STOP
@@ -114,32 +398,16 @@ SUBROUTINE SPS_SETUP(zin)
   !----------------Read in metallicity values----------------------!
   !----------------------------------------------------------------!
 
-  !units are simply metal fraction by mass (e.g. Z=0.0190 for Zsun)
-  IF (isoc_type.EQ.'pdva') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/Padova/Padova2007/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (isoc_type.EQ.'prsc') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/PARSEC/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (isoc_type.EQ.'bsti') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BaSTI/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (isoc_type.EQ.'mist') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/MIST/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (isoc_type.EQ.'bpss') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (isoc_type.EQ.'gnva') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/Geneva/zlegend'//&
-          '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
-  ENDIF
+  ! Re-open zlegend file
+  file_path = TRIM(SPS_HOME)//'/ISOCHRONES/'//TRIM(isoc_dir)//'/zlegend.dat'
+  OPEN(90,FILE=file_path,STATUS='OLD',iostat=stat,ACTION='READ')
+  
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: zlegend.dat cannot be opened'
      STOP
   ENDIF
 
-  IF (isoc_type.EQ.'mist') THEN
+  IF (TRIM(isoc_type).EQ.'mist') THEN
      DO z=1,nz
         READ(90,'(A5)') zlegend_str(z)
         zstype5 = zlegend_str(z)
@@ -170,7 +438,7 @@ SUBROUTINE SPS_SETUP(zin)
   !---------------------Read in BPASS SSPs-------------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.EQ.'bpss') THEN
+  IF (TRIM(isoc_type).EQ.'bpss') THEN
 
      IF (time_res_incr.NE.1) THEN
         WRITE(*,*) 'SPS_SETUP ERROR: cannot have time_res_incr>1 w/ BPASS models'
@@ -217,24 +485,24 @@ SUBROUTINE SPS_SETUP(zin)
   !-----------------Read in spectral libraries---------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.NE.'bpss') THEN
+  IF (TRIM(isoc_type).NE.'bpss') THEN
 
   !read in wavelength array and spectral metallicity grid
-  IF (spec_type.EQ.'basel') THEN
+  IF (TRIM(spec_type).EQ.'basel') THEN
      OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/zlegend.dat',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel.res',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (spec_type.EQ.'miles') THEN
+  ELSE IF (TRIM(spec_type).EQ.'miles') THEN
      OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/miles.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/zlegend.dat',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/miles.res',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-  ELSE IF (spec_type(1:3).EQ.'c3k') THEN
+  ELSE IF (INDEX(TRIM(spec_type), 'c3k') > 0) THEN
      OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//TRIM(spec_type)//'.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/zlegend.dat',&
@@ -272,9 +540,6 @@ SUBROUTINE SPS_SETUP(zin)
   ENDDO
   CLOSE(91)
 
-  ALLOCATE(speclibinit(nspec,nzinit,ndim_logt,ndim_logg))
-  speclibinit = 0.0
-
   !read in each metallicity
   DO z=1,nzinit
 
@@ -282,17 +547,17 @@ SUBROUTINE SPS_SETUP(zin)
      WRITE(zstype,'(F6.4)') zlegendinit(z)
 
      !read in the spectral library
-     IF (spec_type.EQ.'basel') THEN
+     IF (TRIM(spec_type).EQ.'basel') THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_'//basel_str//&
              '_z'//zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
-     ELSE IF (spec_type.EQ.'miles') THEN
+     ELSE IF (TRIM(spec_type).EQ.'miles') THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/imiles_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
-     ELSE IF (spec_type(1:3).EQ.'c3k') THEN
+     ELSE IF (INDEX(TRIM(spec_type), 'c3k') > 0) THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
@@ -668,23 +933,23 @@ SUBROUTINE SPS_SETUP(zin)
      WRITE(zstype,'(F6.4)') zlegend(z)
 
      !open Padova isochrones
-     IF (isoc_type.EQ.'pdva') OPEN(97,FILE=TRIM(SPS_HOME)//&
+     IF (TRIM(isoc_type).EQ.'pdva') OPEN(97,FILE=TRIM(SPS_HOME)//&
           '/ISOCHRONES/Padova/Padova2007/isoc_z'//&
           zstype//'.dat',STATUS='OLD', IOSTAT=stat,ACTION='READ')
      !open PARSEC isochrones
-     IF (isoc_type.EQ.'prsc') OPEN(97,FILE=TRIM(SPS_HOME)//&
+     IF (TRIM(isoc_type).EQ.'prsc') OPEN(97,FILE=TRIM(SPS_HOME)//&
           '/ISOCHRONES/PARSEC/isoc_z'//&
           zstype//'.dat',STATUS='OLD', IOSTAT=stat,ACTION='READ')
      !open MIST isochrones
-     IF (isoc_type.EQ.'mist') OPEN(97,FILE=TRIM(SPS_HOME)//&
+     IF (TRIM(isoc_type).EQ.'mist') OPEN(97,FILE=TRIM(SPS_HOME)//&
           '/ISOCHRONES/MIST/isoc_z'//zlegend_str(z)//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
      !open BaSTI isochrones
-     IF (isoc_type.EQ.'bsti') OPEN(97,FILE=TRIM(SPS_HOME)//&
+     IF (TRIM(isoc_type).EQ.'bsti') OPEN(97,FILE=TRIM(SPS_HOME)//&
           '/ISOCHRONES/BaSTI/isoc_z'//zstype//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
      !open Geneva isochrones
-     IF (isoc_type.EQ.'gnva') OPEN(97,FILE=TRIM(SPS_HOME)//&
+     IF (TRIM(isoc_type).EQ.'gnva') OPEN(97,FILE=TRIM(SPS_HOME)//&
           '/ISOCHRONES/Geneva/isoc_z'//zstype//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
 
@@ -708,7 +973,7 @@ SUBROUTINE SPS_SETUP(zin)
               WRITE(*,*) 'SPS_SETUP ERROR: number of mass points GT nm'
               STOP
            ENDIF
-           IF (isoc_type.EQ.'mist') THEN
+           IF (TRIM(isoc_type).EQ.'mist') THEN
               READ(97,*,IOSTAT=stat) logage,mini_isoc(z,n_isoc,m),&
                    mact_isoc(z,n_isoc,m),logl_isoc(z,n_isoc,m),&
                    logt_isoc(z,n_isoc,m),logg_isoc(z,n_isoc,m),&
@@ -736,6 +1001,8 @@ SUBROUTINE SPS_SETUP(zin)
 20   CONTINUE
      CLOSE(97)
 
+     ! For dynamically determined nt, we should verify, but here nt is set by reading the first file.
+     ! If subsequent files have different number of ages, that's an error.
      IF (n_isoc.NE.nt) THEN
         WRITE(*,*) 'SPS_SETUP ERROR: number of isochrones NE nt',n_isoc,nt
         STOP
@@ -745,7 +1012,7 @@ SUBROUTINE SPS_SETUP(zin)
 
   !this is necessary because Geneva does not extend below 1.0 Msun
   !see imf_weight.f90 for details
-  IF (isoc_type.EQ.'gnva') THEN
+  IF (TRIM(isoc_type).EQ.'gnva') THEN
      imf_lower_bound = MINVAL(mini_isoc(zmin,1,1:nmass_isoc(zmin,1)))*0.99
   ELSE
      imf_lower_bound = imf_lower_limit
@@ -894,15 +1161,15 @@ SUBROUTINE SPS_SETUP(zin)
   !----------------Set up nebular emission arrays------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.EQ.'mist'.OR.isoc_type.EQ.'pdva'.OR.&
-     isoc_type.EQ.'prsc'.OR.isoc_type.EQ.'bpss') THEN
+  IF (TRIM(isoc_type).EQ.'mist'.OR.TRIM(isoc_type).EQ.'pdva'.OR.&
+     TRIM(isoc_type).EQ.'prsc'.OR.TRIM(isoc_type).EQ.'bpss') THEN
 
      !read in nebular continuum arrays.  Units are Lsun/Hz/Q
      IF (cloudy_dust.EQ.1) THEN
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//isoc_type//'.cont',&
+        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//TRIM(isoc_type)//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//isoc_type//'.cont',&
+        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//TRIM(isoc_type)//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -929,10 +1196,10 @@ SUBROUTINE SPS_SETUP(zin)
 
      !read in nebular emission line luminosities.  Units are Lsun/Q
      IF (cloudy_dust.EQ.1) THEN
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//isoc_type//'.lines',&
+        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//TRIM(isoc_type)//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//isoc_type//'.lines',&
+        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//TRIM(isoc_type)//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -990,13 +1257,13 @@ SUBROUTINE SPS_SETUP(zin)
   !------------------Set up X-ray nebular --------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.EQ.'bpss') THEN
+  IF (TRIM(isoc_type).EQ.'bpss') THEN
       !read in nebular continuum arrays.  Units are Lsun/Hz/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//TRIM(isoc_type)//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//TRIM(isoc_type)//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1023,10 +1290,10 @@ SUBROUTINE SPS_SETUP(zin)
 
       !read in nebular emission line luminosities.  Units are Lsun/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//TRIM(isoc_type)//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//TRIM(isoc_type)//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1235,8 +1502,9 @@ SUBROUTINE SPS_SETUP(zin)
      ind=(/53,54,55,56,95,96,97,98,99,100,101,102,103,104/)
      DO j=1,14
         IF (ind(j).GT.nbands) THEN
-           WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
-           EXIT
+           ! WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
+           ! We just skip if it does not exist now that nbands is dynamic
+           CYCLE
         ENDIF
         d = TSUM(spec_lambda,(spec_lambda/lami(j))**(-1.0)*bands(:,ind(j))/&
              spec_lambda)
@@ -1249,8 +1517,8 @@ SUBROUTINE SPS_SETUP(zin)
      ind(1:3)  = (/90,91,92/)
      DO j=1,3
         IF (ind(j).GT.nbands) THEN
-           WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
-           EXIT
+           ! WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
+           CYCLE
         ENDIF
         d = TSUM(spec_lambda,(spec_lambda/lami(j))**(-2.0)*bands(:,ind(j))/&
              spec_lambda)
@@ -1390,7 +1658,7 @@ SUBROUTINE SPS_SETUP(zin)
   !-----------------set up expanded time array---------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.NE.'bpss') THEN
+  IF (TRIM(isoc_type).NE.'bpss') THEN
 
      DO i=1,ntfull
         IF (MOD(i-1,time_res_incr).EQ.0) THEN

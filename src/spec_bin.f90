@@ -4,35 +4,29 @@ PROGRAM SPEC_BIN
   !must be run twice for each value of isoc_type var
 
   USE sps_vars
+  USE sps_utils, ONLY: sps_setup ! To access setup if needed, or rely on vars
   IMPLICIT NONE
   INTEGER  :: z,dumi1,i,j
   REAL(SP) :: dumr1,d2,d3
   CHARACTER(6) :: zstype
+  INTEGER :: alloc_stat
 
   !----------------------------------------------------------------!
 
   CALL GETENV('SPS_HOME',SPS_HOME)
-  
-  IF (spec_type.EQ.'basel') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/zlegend.dat',&
-          STATUS='OLD',ACTION='READ')
-  ELSE IF (spec_type.EQ.'miles') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/zlegend.dat',&
-          STATUS='OLD',ACTION='READ')
-  ELSE IF (spec_type.EQ.'ckc14') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/zlegend.dat',&
-          STATUS='OLD',ACTION='READ')
-  ENDIF
-  DO z=1,nzinit
-     READ(90,'(F6.4)') zlegendinit(z)
-  ENDDO
-  CLOSE(90)
+   
+   ! Initialize variables and dimensions using default libraries.
+   ! This sets nspec, nzinit, and allocates speclib arrays.
+   CALL SPS_SETUP(-1)
+   
+   ! Close the zlegend file if it was left open (safety check)
+   CLOSE(90, IOSTAT=dumi1) 
 
-  DO z=1,nzinit
+   DO z=1,nzinit
      
      WRITE(zstype,'(F6.4)') zlegendinit(z)
 
-     IF (spec_type.EQ.'basel') THEN
+     IF (TRIM(spec_type).EQ.'basel') THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_'&
              //basel_str//'_z'//zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
@@ -41,7 +35,7 @@ PROGRAM SPEC_BIN
              FORM='UNFORMATTED',STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
 
-     ELSE IF (spec_type.EQ.'miles') THEN
+     ELSE IF (TRIM(spec_type).EQ.'miles') THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/imiles_z'&
              //zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
@@ -50,11 +44,11 @@ PROGRAM SPEC_BIN
              STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
 
-     ELSE IF (spec_type(1:5).EQ.'ckc14') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//spec_type//'_z'&
+     ELSE IF (INDEX(TRIM(spec_type), 'c3k') > 0) THEN
+        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//TRIM(spec_type)//'_z'&
              //zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
-        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//spec_type//'_z'&
+        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//TRIM(spec_type)//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)

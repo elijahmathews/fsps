@@ -10,15 +10,16 @@ PROGRAM LESSSIMPLE
   !    variables not explicitly defined here are defined in sps_vars.f90
   INTEGER :: i
   !define variable for SSP spectrum
-  REAL(SP), DIMENSION(ntfull,nspec)  :: spec_pz
+  REAL(SP), ALLOCATABLE, DIMENSION(:,:)  :: spec_pz
   !define variables for Mass and Lbol info
-  REAL(SP), DIMENSION(ntfull)    :: mass_pz,lbol_pz
+  REAL(SP), ALLOCATABLE, DIMENSION(:)    :: mass_pz,lbol_pz
   CHARACTER(100) :: file2=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
-  TYPE(COMPSPOUT), DIMENSION(ntfull) :: ocompsp
+  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
   REAL(SP) :: zave
+  INTEGER :: alloc_stat
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -31,6 +32,18 @@ PROGRAM LESSSIMPLE
 
   !here we have to read in all the librarries
   CALL SPS_SETUP(-1)
+
+  ! Allocate arrays dependent on runtime dimensions
+  ALLOCATE(spec_pz(ntfull,nspec), stat=alloc_stat)
+  ALLOCATE(mass_pz(ntfull), lbol_pz(ntfull), stat=alloc_stat)
+  ALLOCATE(ocompsp(ntfull), stat=alloc_stat)
+  IF (alloc_stat /= 0) STOP 'Allocation failed in LESSSIMPLE'
+
+  ! Allocate PARAMS components
+  IF (.NOT. ALLOCATED(pset%mag_compute)) ALLOCATE(pset%mag_compute(nbands))
+  IF (.NOT. ALLOCATED(pset%ssp_gen_age)) ALLOCATE(pset%ssp_gen_age(nt))
+  pset%mag_compute = 1
+  pset%ssp_gen_age = 1
 
   !compute all SSPs (i.e. at all Zs)
   !nz and the various *ssp_zz arrays are stored 
