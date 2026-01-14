@@ -54,6 +54,10 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
      STOP
   ENDIF
 
+  ! Zero out the local automatic array
+  tspec = 0.0
+  tspec_ssp = 0.0
+
   !reset arrays
   spec_ssp = 0.
   mass_ssp = 0.
@@ -194,6 +198,12 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
         spec_ssp(:,ii) = 0.
         DO j=1,nmass(i)
 
+           ! --- FIX: Skip Pre-Main Sequence (Phase -1) ---
+           ! These are not covered by standard libraries and 
+           ! produce machine noise in the UV if included.
+           IF (phase(i,j) < 0.0) CYCLE
+           ! ----------------------------------------------
+
            tco = ffco(i,j)
            IF (phase(i,j).EQ.5.AND.tco.GT.1.0) THEN
               !dilute the C star fraction
@@ -203,6 +213,19 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
            CALL GETSPEC(pset,mact(i,j),logt(i,j),&
                 10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),&
                 wght(j)/MAXVAL(wght(1:nmass(i))*10**logl(i,1:nmass(i))),tspec)
+           
+         !   ! === DEBUG TRAP ===
+         !   ! Check the 50th wavelength point (approx 257A in UV).
+         !   ! If flux is anomalously high (> 1e-20), print the star's details.
+         !   IF (tspec(50) > 1.0e-20) THEN
+         !       PRINT *, "DEBUG: UV LEAK DETECTED at Isochrone i=", i, " Star j=", j
+         !       PRINT *, "       LogT=", logt(i,j), " LogG=", logg(i,j), " Phase=", phase(i,j)
+         !       PRINT *, "       Flux(50)=", tspec(50), " Weight=", wght(j)
+         !       PRINT *, "       Mact=", mact(i,j), " LogL=", logl(i,j)
+         !       ! Only print the first few to avoid flooding log
+         !       IF (j < 5 .OR. tspec(50) > 1.0e-15) STOP "Stopping at first leak detection."
+         !   ENDIF
+         !   ! ==================
 
            !only construct SSPs for particular evolutionary
            !phases if evtype NE -1

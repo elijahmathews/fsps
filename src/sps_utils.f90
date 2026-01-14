@@ -389,4 +389,87 @@ MODULE SPS_UTILS
      END SUBROUTINE ZTINTERP
   END INTERFACE
 
+CONTAINS
+
+  SUBROUTINE SPS_TAKEDOWN
+    USE sps_vars
+    IMPLICIT NONE
+    
+    ! Check and deallocate all allocatable arrays in SPS_VARS
+    
+    ! --- Isochrone arrays ---
+    IF (ALLOCATED(mact_isoc)) DEALLOCATE(mact_isoc)
+    IF (ALLOCATED(logl_isoc)) DEALLOCATE(logl_isoc)
+    IF (ALLOCATED(logt_isoc)) DEALLOCATE(logt_isoc)
+    IF (ALLOCATED(logg_isoc)) DEALLOCATE(logg_isoc)
+    IF (ALLOCATED(ffco_isoc)) DEALLOCATE(ffco_isoc)
+    IF (ALLOCATED(phase_isoc)) DEALLOCATE(phase_isoc)
+    IF (ALLOCATED(mini_isoc)) DEALLOCATE(mini_isoc)
+    IF (ALLOCATED(lmdot_isoc)) DEALLOCATE(lmdot_isoc)
+    
+    IF (ALLOCATED(nmass_isoc)) DEALLOCATE(nmass_isoc)
+    IF (ALLOCATED(timestep_isoc)) DEALLOCATE(timestep_isoc)
+    IF (ALLOCATED(zlegend)) DEALLOCATE(zlegend)
+    IF (ALLOCATED(zlegendinit)) DEALLOCATE(zlegendinit)
+    
+    ! --- SSP arrays ---
+    IF (ALLOCATED(spec_ssp_zz)) DEALLOCATE(spec_ssp_zz)
+    IF (ALLOCATED(mass_ssp_zz)) DEALLOCATE(mass_ssp_zz)
+    IF (ALLOCATED(lbol_ssp_zz)) DEALLOCATE(lbol_ssp_zz)
+    IF (ALLOCATED(time_full)) DEALLOCATE(time_full)
+    IF (ALLOCATED(weight_ssp)) DEALLOCATE(weight_ssp)
+    IF (ALLOCATED(spec_young)) DEALLOCATE(spec_young)
+    IF (ALLOCATED(spec_old)) DEALLOCATE(spec_old)
+    
+    IF (ALLOCATED(bpass_spec_ssp)) DEALLOCATE(bpass_spec_ssp)
+    IF (ALLOCATED(bpass_mass_ssp)) DEALLOCATE(bpass_mass_ssp)
+    IF (ALLOCATED(spec_xrb)) DEALLOCATE(spec_xrb)
+    
+    ! --- Spectral Library arrays ---
+    IF (ALLOCATED(speclib)) DEALLOCATE(speclib)
+    ! wmbsi is local to sps_setup, not in sps_vars
+    IF (ALLOCATED(wmb_spec)) DEALLOCATE(wmb_spec)
+    
+    IF (ALLOCATED(agb_spec_o)) DEALLOCATE(agb_spec_o)
+    IF (ALLOCATED(agb_logt_o)) DEALLOCATE(agb_logt_o)
+    IF (ALLOCATED(agb_spec_c)) DEALLOCATE(agb_spec_c)
+    IF (ALLOCATED(agb_logt_c)) DEALLOCATE(agb_logt_c)
+    IF (ALLOCATED(agb_logt_car)) DEALLOCATE(agb_logt_car)
+    IF (ALLOCATED(agb_spec_car)) DEALLOCATE(agb_spec_car)
+    
+    IF (ALLOCATED(pagb_spec)) DEALLOCATE(pagb_spec)
+    IF (ALLOCATED(wrn_spec)) DEALLOCATE(wrn_spec)
+    IF (ALLOCATED(wrc_spec)) DEALLOCATE(wrc_spec)
+    
+    ! --- Dust and Nebular arrays ---
+    IF (ALLOCATED(dustem2_dustem)) DEALLOCATE(dustem2_dustem)
+    IF (ALLOCATED(flux_dagb)) DEALLOCATE(flux_dagb)
+    IF (ALLOCATED(nebem_cont)) DEALLOCATE(nebem_cont)
+    IF (ALLOCATED(xnebem_cont)) DEALLOCATE(xnebem_cont)
+    IF (ALLOCATED(neb_res_min)) DEALLOCATE(neb_res_min)
+    IF (ALLOCATED(gaussnebarr)) DEALLOCATE(gaussnebarr)
+    IF (ALLOCATED(agndust_spec)) DEALLOCATE(agndust_spec)
+    IF (ALLOCATED(mwdindex)) DEALLOCATE(mwdindex)
+    IF (ALLOCATED(wgdust)) DEALLOCATE(wgdust)
+    IF (ALLOCATED(g03smcextn)) DEALLOCATE(g03smcextn)
+
+    ! --- General arrays ---
+    IF (ALLOCATED(bands)) DEALLOCATE(bands)
+    IF (ALLOCATED(magsun)) DEALLOCATE(magsun)
+    IF (ALLOCATED(magvega)) DEALLOCATE(magvega)
+    IF (ALLOCATED(filter_leff)) DEALLOCATE(filter_leff)
+    IF (ALLOCATED(vega_spec)) DEALLOCATE(vega_spec)
+    IF (ALLOCATED(sun_spec)) DEALLOCATE(sun_spec)
+    IF (ALLOCATED(spec_lambda)) DEALLOCATE(spec_lambda)
+    IF (ALLOCATED(spec_nu)) DEALLOCATE(spec_nu)
+    IF (ALLOCATED(spec_res)) DEALLOCATE(spec_res)
+    
+    ! --- Derived Types ---
+    IF (ALLOCATED(lsfinfo%lsf)) DEALLOCATE(lsfinfo%lsf)
+    
+    ! Reset initialization flag
+    check_sps_setup = 0
+    
+  END SUBROUTINE SPS_TAKEDOWN
+
 END MODULE SPS_UTILS

@@ -57,6 +57,7 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
   REAL(SP), DIMENSION(nagndust_spec,nagndust)  :: agndust_specinit=0.
   
   REAL(KIND(1.0)), allocatable :: speclibinit(:,:,:,:)
+  REAL(KIND(1.0)), ALLOCATABLE :: spec_buffer(:,:,:)
   REAL(SP), ALLOCATABLE :: wmbsi(:,:,:,:)
   REAL(SP), DIMENSION(nzwmb)     :: zwmb=0.
   REAL(SP), DIMENSION(nspec_wmb) :: wmb_lam=0.
@@ -244,6 +245,9 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
   ENDDO
   CLOSE(91)
 
+  PRINT *, "DEBUG: Detected nspec =", nspec
+  PRINT *, "DEBUG: spec_type =", TRIM(spec_type)
+
   ! 7. Determine nzinit (Count lines in spectral zlegend.dat)
   IF (TRIM(isoc_type) == 'bpss') THEN
       nzinit = 1
@@ -282,6 +286,7 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
   ALLOCATE(zlegend_str(nz), stat=stat)
   IF (ALLOCATED(tspec)) DEALLOCATE(tspec)
   ALLOCATE(tspec(nspec), stat=stat)
+  tspec = 0.0
   
   ! sps_vars arrays
   IF (ALLOCATED(mact_isoc)) DEALLOCATE(mact_isoc, logl_isoc, logt_isoc, &
@@ -291,73 +296,117 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
            mini_isoc(nz,nt,nm), lmdot_isoc(nz,nt,nm), stat=stat)
   IF (stat /= 0) STOP 'Allocation failed for isochrone arrays'
 
+  mact_isoc = 0.0; logl_isoc = 0.0; logt_isoc = 0.0
+  logg_isoc = 0.0; ffco_isoc = 0.0; phase_isoc = 0.0
+  mini_isoc = 0.0; lmdot_isoc = 0.0
+
   IF (ALLOCATED(nmass_isoc)) DEALLOCATE(nmass_isoc, timestep_isoc)
   ALLOCATE(nmass_isoc(nz,nt), timestep_isoc(nz,nt), stat=stat)
   IF (ALLOCATED(zlegend)) DEALLOCATE(zlegend, zlegendinit)
   ALLOCATE(zlegend(nz), zlegendinit(nzinit), stat=stat)
+  nmass_isoc = 0; timestep_isoc = 0.0
   
   IF (ALLOCATED(spec_ssp_zz)) DEALLOCATE(spec_ssp_zz, mass_ssp_zz, lbol_ssp_zz, time_full)
   ALLOCATE(spec_ssp_zz(nspec,ntfull,nz), mass_ssp_zz(ntfull,nz), &
            lbol_ssp_zz(ntfull,nz), time_full(ntfull), stat=stat)
+  spec_ssp_zz = 0.0; mass_ssp_zz = 0.0 
+  lbol_ssp_zz = 0.0; time_full = 0.0
+
   IF (ALLOCATED(weight_ssp)) DEALLOCATE(weight_ssp)
   ALLOCATE(weight_ssp(ntfull,nz), stat=stat)
+  weight_ssp = 0.0
+
   IF (ALLOCATED(spec_young)) DEALLOCATE(spec_young, spec_old)
   ALLOCATE(spec_young(nspec), spec_old(nspec), stat=stat)
+  spec_young = 0.0; spec_old = 0.0
   
   IF (ALLOCATED(bpass_spec_ssp)) DEALLOCATE(bpass_spec_ssp, bpass_mass_ssp)
   ALLOCATE(bpass_spec_ssp(nspec,nt,nz), bpass_mass_ssp(nt,nz), stat=stat)
+  bpass_spec_ssp = 0.0; bpass_mass_ssp = 0.0
+
   IF (ALLOCATED(spec_xrb)) DEALLOCATE(spec_xrb)
   ALLOCATE(spec_xrb(nspec,nt_xrb,nz_xrb), stat=stat)
+  spec_xrb = 0.0
   
   IF (ALLOCATED(bands)) DEALLOCATE(bands)
   ALLOCATE(bands(nspec,nbands), stat=stat)
+  bands = 0.0
+
   IF (ALLOCATED(magsun)) DEALLOCATE(magsun, magvega, filter_leff)
   ALLOCATE(magsun(nbands), magvega(nbands), filter_leff(nbands), stat=stat)
+  magsun = 0.0; magvega = 0.0; filter_leff = 0.0
+
   IF (ALLOCATED(vega_spec)) DEALLOCATE(vega_spec, sun_spec, spec_lambda, spec_nu, spec_res)
   ALLOCATE(vega_spec(nspec), sun_spec(nspec), spec_lambda(nspec), &
            spec_nu(nspec), spec_res(nspec), stat=stat)
+  vega_spec = 0.0; sun_spec = 0.0; spec_lambda = 0.0
+  spec_nu = 0.0; spec_res = 0.0
            
   IF (ALLOCATED(speclib)) DEALLOCATE(speclib)
   ALLOCATE(speclib(nspec,nz,ndim_logt,ndim_logg), stat=stat)
+  speclib = 0.0
+
   IF (ALLOCATED(speclibinit)) DEALLOCATE(speclibinit)
   ALLOCATE(speclibinit(nspec,nzinit,ndim_logt,ndim_logg), stat=stat)
+  speclibinit = 0.0
+
   IF (ALLOCATED(wmbsi)) DEALLOCATE(wmbsi)
   ALLOCATE(wmbsi(nspec,nzwmb,ndim_wmb_logt,ndim_wmb_logg), stat=stat)
+  wmbsi = 0.0
+
   IF (ALLOCATED(wmb_spec)) DEALLOCATE(wmb_spec)
   ALLOCATE(wmb_spec(nspec,nz,ndim_wmb_logt,ndim_wmb_logg), stat=stat)
+  wmb_spec = 0.0
   
   IF (ALLOCATED(agb_spec_o)) DEALLOCATE(agb_spec_o, agb_logt_o)
   ALLOCATE(agb_spec_o(nspec,n_agb_o), agb_logt_o(nz,n_agb_o), stat=stat)
+  agb_spec_o = 0.0; agb_logt_o = 0.0
+
   IF (ALLOCATED(agb_spec_c)) DEALLOCATE(agb_spec_c, agb_logt_c)
   ALLOCATE(agb_spec_c(nspec,n_agb_c), agb_logt_c(n_agb_c), stat=stat)
+  agb_spec_c = 0.0; agb_logt_c = 0.0
+
   IF (ALLOCATED(agb_logt_car)) DEALLOCATE(agb_logt_car, agb_spec_car)
   ALLOCATE(agb_logt_car(n_agb_car), agb_spec_car(nspec,n_agb_car), stat=stat)
+  agb_logt_car = 0.0; agb_spec_car = 0.0
   
   IF (ALLOCATED(pagb_spec)) DEALLOCATE(pagb_spec)
   ALLOCATE(pagb_spec(nspec,ndim_pagb,2), stat=stat)
+  pagb_spec = 0.0
+
   IF (ALLOCATED(wrn_spec)) DEALLOCATE(wrn_spec, wrc_spec)
   ALLOCATE(wrn_spec(nspec,ndim_wr,nz), wrc_spec(nspec,ndim_wr,nz), stat=stat)
+  wrn_spec = 0.0; wrc_spec = 0.0
   
   IF (ALLOCATED(dustem2_dustem)) DEALLOCATE(dustem2_dustem)
   ALLOCATE(dustem2_dustem(nspec,nqpah_dustem,numin_dustem*2), stat=stat)
+  dustem2_dustem = 0.0
+
   IF (ALLOCATED(flux_dagb)) DEALLOCATE(flux_dagb)
   ALLOCATE(flux_dagb(nspec,2,nteff_dagb,ntau_dagb), stat=stat)
+  flux_dagb = 0.0
   
   IF (ALLOCATED(nebem_cont)) DEALLOCATE(nebem_cont, xnebem_cont)
   ALLOCATE(nebem_cont(nspec,nebnz,nebnage,nebnip), &
            xnebem_cont(nspec,nebnz,nebnage,nebnip), stat=stat)
+  nebem_cont = 0.0; xnebem_cont = 0.0   
+
   IF (ALLOCATED(neb_res_min)) DEALLOCATE(neb_res_min, gaussnebarr)
   ALLOCATE(neb_res_min(nspec), gaussnebarr(nspec,nemline), stat=stat)
+  neb_res_min = 0.0; gaussnebarr = 0.0
   
   IF (ALLOCATED(agndust_spec)) DEALLOCATE(agndust_spec)
   ALLOCATE(agndust_spec(nspec,nagndust), stat=stat)
+  agndust_spec = 0.0
   
   IF (ALLOCATED(mwdindex)) DEALLOCATE(mwdindex, wgdust, g03smcextn)
   ALLOCATE(mwdindex(nspec), wgdust(nspec,18,6,2), g03smcextn(nspec), stat=stat)
+  mwdindex = 0; wgdust = 0.0; g03smcextn = 0.0
   
   ! Type allocations
   IF (ALLOCATED(lsfinfo%lsf)) DEALLOCATE(lsfinfo%lsf)
   ALLOCATE(lsfinfo%lsf(nspec), stat=stat)
+  lsfinfo%lsf = 0.0
   
   ! Check allocations
   IF (stat /= 0) THEN
@@ -425,6 +474,13 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
   ENDIF
 
   CLOSE(90)
+
+  ! --- DEBUG: Verify Metallicity Parsing ---
+  PRINT *, "DEBUG: zsol =", zsol
+  PRINT *, "DEBUG: zlegend(1) =", zlegend(1)
+  PRINT *, "DEBUG: zlegend_str(1) =", zlegend_str(1)
+  PRINT *, "DEBUG: zlegendinit(1) =", zlegendinit(1)
+  ! -----------------------------------------
 
   IF (zin.LE.0) THEN
      zmin = 1
@@ -557,6 +613,15 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
+        ! --- DEBUG PRINT ---
+        IF (z == 1) THEN
+           PRINT *, "DEBUG: Opening MILES binary. Z=", zstype
+           PRINT *, "DEBUG: nspec =", nspec
+           PRINT *, "DEBUG: ndim_logt =", ndim_logt
+           PRINT *, "DEBUG: ndim_logg =", ndim_logg
+           PRINT *, "DEBUG: RECL =", nspec*ndim_logg*ndim_logt*4
+        ENDIF
+        ! -------------------
      ELSE IF (INDEX(TRIM(spec_type), 'c3k') > 0) THEN
         OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
@@ -564,12 +629,37 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
              recl=nspec*ndim_logg*ndim_logt*4)
      ENDIF
      IF (stat.NE.0) THEN
-        WRITE(*,*) 'SPS_SETUP ERROR: '//spec_type//&
-             ' spectral library cannot be opened Z=', zstype
+        WRITE(*,*) 'SPS_SETUP ERROR: Library cannot be opened'
         STOP
      ENDIF
-
-     READ(92,rec=1) speclibinit(:,z,:,:)
+     
+     ! --- FIX: Read into contiguous buffer first ---
+     ! Allocate buffer for exactly ONE metallicity (contiguous memory)
+     IF (ALLOCATED(spec_buffer)) DEALLOCATE(spec_buffer)
+     ALLOCATE(spec_buffer(nspec, ndim_logt, ndim_logg))
+     
+     ! Read into the buffer (This is safe because it matches the file struct)
+     READ(92, rec=1, IOSTAT=stat2) spec_buffer
+     
+     IF (stat2 /= 0) THEN
+         WRITE(*,*) 'SPS_SETUP ERROR: Read failed for Z index', z, 'IOSTAT=', stat2
+         STOP
+     ENDIF
+     
+     ! Copy buffer into the fragmented main array
+     speclibinit(:,z,:,:) = spec_buffer
+     
+     DEALLOCATE(spec_buffer)
+     ! --- DEBUG PRINT ---
+     IF (stat2 /= 0) THEN
+         PRINT *, "DEBUG: READ FAILED with IOSTAT =", stat2
+     ELSE IF (z == 1) THEN
+         PRINT *, "DEBUG: Read Successful."
+         PRINT *, "DEBUG: speclibinit(1,1,1,1) =", speclibinit(1,z,1,1)
+         PRINT *, "DEBUG: speclibinit(nspec,1,1,1) =", speclibinit(nspec,z,1,1)
+         PRINT *, "DEBUG: Sum of spectrum =", SUM(speclibinit(:,z,1,1))
+     ENDIF
+     ! -------------------
      CLOSE(92)
 
   ENDDO
@@ -746,6 +836,12 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
      agb_spec_c(:,i) = MAX(linterparr(agb_lam,agb_specinit_c(:,i),&
           spec_lambda),tiny_number)
   ENDDO
+
+  ! --- DEBUG: AGB Arrays ---
+  PRINT *, "DEBUG: AGB_SPEC_O (1,1) (UV) =", agb_spec_o(1,1)
+  PRINT *, "DEBUG: AGB_SPEC_O Sum =", SUM(agb_spec_o)
+  PRINT *, "DEBUG: AGB_SPEC_C Sum =", SUM(agb_spec_c)
+  ! -------------------------
 
   !---------Read in Aringer carbon star library---------!
 
@@ -1094,6 +1190,10 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
      ENDDO
   ENDDO
   CLOSE(99)
+
+  ! --- DEBUG: Dusty AGB Arrays ---
+  PRINT *, "DEBUG: FLUX_DAGB Sum =", SUM(flux_dagb)
+  ! -------------------------------
 
   !C-rich spectra
   OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/dusty/Crich_dusty.spec',&
@@ -1722,9 +1822,24 @@ SUBROUTINE SPS_SETUP(zin, input_isoc_type, input_spec_type)
   !define the frequency array
   spec_nu   = clight / spec_lambda
 
+  ! --- DEBUG: Wavelength Grid ---
+  whlam5000 = locate(spec_lambda,5000.d0)
+  PRINT *, "DEBUG: whlam5000 (Index of 5000A) =", whlam5000
+  PRINT *, "DEBUG: spec_lambda(1) =", spec_lambda(1)
+  PRINT *, "DEBUG: spec_lambda(50) =", spec_lambda(50)
+  PRINT *, "DEBUG: spec_lambda(whlam5000) =", spec_lambda(whlam5000)
+  ! ------------------------------
+
   !set flag indicating that sps_setup has been run, initializing
   !important common block vars/arrays
   check_sps_setup = 1
+
+  ! --- DEBUG: Verify Final Spectral Library ---
+  PRINT *, "DEBUG: End of Setup."
+  PRINT *, "DEBUG: speclib sum =", SUM(speclib)
+  PRINT *, "DEBUG: speclib(1,1,1,1) =", speclib(1,1,1,1)
+  PRINT *, "DEBUG: speclib(nspec,1,1,1) =", speclib(nspec,1,1,1)
+  ! --------------------------------------------
 
   IF (verbose.EQ.1) THEN
      WRITE(*,*) '      ...done'

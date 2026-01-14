@@ -1,0 +1,31 @@
+name: Build FSPS
+
+on:
+  push:
+    # Temporarily monitor allocatable branch
+    # TODO: Remove when PR into upstream finalized
+    branches: [ master, allocatable ]
+  pull_request:
+    branches: [ master, allocatable ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Set SPS_HOME to the current checkout directory
+      SPS_HOME: ${{ github.workspace }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install GFortran
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gfortran
+
+    - name: Compile and Run Tests
+      run: |
+        make clean
+        make test

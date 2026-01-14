@@ -105,6 +105,8 @@ SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,zz,&
   INTEGER :: cstar,jlo,klo
   REAL(SP) :: tau1,dj,dk, compute_tau1, loggi
   REAL(SP), DIMENSION(nspec) :: dusty
+
+  dusty = 0.0
   
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!

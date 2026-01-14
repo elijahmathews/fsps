@@ -28,7 +28,7 @@ F90 = gfortran
 # Compiler Optimizations
 #  (Uncomment only one)
 #========================
-F90FLAGS := -O3 -cpp -fPIC $(F90FLAGS) # prepend so a user can set -Ofast from outside the Makefile
+F90FLAGS := -O3 -cpp -fPIC -finit-local-zero $(F90FLAGS) # prepend so a user can set -Ofast from outside the Makefile
 #---------------------
 # Intel (Itanium 2 processor)
 #F90FLAGS = -O3 -mcpu=itanium2 -cpp
