@@ -31,8 +31,8 @@ MODULE SPS_VARS
   !turn-on time for BHB and SBS phases, time is in log(yrs)
   REAL(SP), PARAMETER :: bhb_sbs_time=9.5
 
-  !turn on/off convolution of SSP with P(Z) (pz_convol.f90)
-  !NB: pz_convol.f90 has not been tested in some time, use with caution
+   !turn on/off convolution of SSP with P(Z) (cosmo_pz_convol.f90)
+   !NB: cosmo_pz_convol.f90 has not been tested in some time, use with caution
   INTEGER :: pzcon=0
 
   !the factor by which we increase the time array
@@ -269,7 +269,7 @@ MODULE SPS_VARS
   REAL(SP), PARAMETER :: yr2sc   = 3.15569E7
   !Planck's constant
   REAL(SP), PARAMETER :: hplank  = 6.6261E-27
-  !constant to convert mags into propert units (see getmags.f90)
+   !constant to convert mags into propert units (see spec_mags.f90)
   REAL(SP), PARAMETER :: mag2cgs = LOG10(lsun/4.0/mypi/(pc2cm*pc2cm)/100.0)
 
   !define large and small numbers.  numbers whose abs values
@@ -329,7 +329,7 @@ MODULE SPS_VARS
   REAL(SP), ALLOCATABLE :: g03smcextn(:)
 
   !Index for P(Z) distribution.  1=closed box;
-  !P(Z) = z^zpow*exp(-z/pmetals)  (see pz_convol.f90)
+   !P(Z) = z^zpow*exp(-z/pmetals)  (see cosmo_pz_convol.f90)
   !pmetals set in PARAMS structure
   REAL(SP) :: zpow2=1.0
 

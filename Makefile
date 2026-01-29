@@ -12,6 +12,8 @@ FFLAGS ?= -O3 -cpp -fPIC
 SRC_DIR := src
 TEST_DIR := tests
 BUILD_DIR := build
+SRC_SUBDIRS := core programs spectra sfh physics cosmology math io imf abi
+SRC_DIRS := $(addprefix $(SRC_DIR)/, $(SRC_SUBDIRS))
 
 # Module directory flags:
 # Gfortran uses -J to specify where to put/find .mod files
@@ -27,7 +29,7 @@ FCFLAGS := $(FFLAGS) $(MOD_FLAG)$(BUILD_DIR) -I$(BUILD_DIR)
 # ===================================
 
 # Tell make to look for source files in these directories
-VPATH = $(SRC_DIR):$(TEST_DIR)
+VPATH = $(SRC_DIRS):$(TEST_DIR)
 
 # The list of programs to build (executables)
 PROGS = simple lesssimple autosps spec_bin
@@ -35,13 +37,13 @@ PROGS = simple lesssimple autosps spec_bin
 # The common object files required by the programs
 # We wrap them in addprefix to place them inside the build directory
 COMMON_NAMES = sps_vars.o sps_utils.o compsp.o csp_gen.o ssp_gen.o \
-    getmags.o locate.o funcint.o sps_setup.o pz_convol.o \
-    get_tuniv.o intsfwght.o imf.o imf_weight.o add_dust.o \
-    getspec.o sbf.o add_bs.o mod_hb.o add_remnants.o getindx.o \
-    smoothspec.o mod_gb.o add_nebular.o add_xrb.o write_isochrone.o \
-    sfhstat.o linterp.o tsum.o add_agb_dust.o linterparr.o \
-    ztinterp.o vacairconv.o igm_absorb.o get_lumdist.o attn_curve.o \
-    sfh_weight.o sfhlimit.o sfhinfo.o setup_tabular_sfh.o agn_dust.o \
+	spec_mags.o interp_locate.o integrate_funcint.o sps_setup.o cosmo_pz_convol.o \
+	cosmo_tuniv.o integrate_sfhw.o imf.o imf_weight.o dust_add.o \
+	spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o remnants_add.o spec_indices.o \
+	spec_smooth.o gb_mod.o nebular_add.o xrb_add.o write_isochrone.o \
+	sfh_stats.o interp_linear.o integrate_tsum.o dust_agb.o interp_array.o \
+	interp_zt.o vacair_conv.o igm_absorb.o cosmo_lumdist.o dust_attenuation.o \
+	sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o dust_agn.o \
 	fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
@@ -75,7 +77,7 @@ REST_OF_COMMON = $(filter-out $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o, 
 $(REST_OF_COMMON): $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
 
 # Main program objects also wait for modules
-$(BUILD_DIR)/simple.o $(BUILD_DIR)/lesssimple.o $(BUILD_DIR)/autosps.o $(BUILD_DIR)/spec_bin.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
+$(BUILD_DIR)/sps_program_simple.o $(BUILD_DIR)/sps_program_lesssimple.o $(BUILD_DIR)/sps_program_autosps.o $(BUILD_DIR)/sps_program_spec_bin.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
 
 # Dependencies for test objects
 $(BUILD_DIR)/generate_test_data.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
@@ -83,16 +85,16 @@ $(BUILD_DIR)/test_runner.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
 
 # --- Linking Rules ---
 
-autosps: $(BUILD_DIR)/autosps.o $(COMMON_OBJS)
+autosps: $(BUILD_DIR)/sps_program_autosps.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-simple: $(BUILD_DIR)/simple.o $(COMMON_OBJS)
+simple: $(BUILD_DIR)/sps_program_simple.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-lesssimple: $(BUILD_DIR)/lesssimple.o $(COMMON_OBJS)
+lesssimple: $(BUILD_DIR)/sps_program_lesssimple.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-spec_bin: $(BUILD_DIR)/spec_bin.o $(BUILD_DIR)/sps_vars.o
+spec_bin: $(BUILD_DIR)/sps_program_spec_bin.o $(BUILD_DIR)/sps_vars.o
 	$(FC) $(FCFLAGS) -o $@ $^
 
 # --- Shared Library Target ---

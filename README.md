@@ -80,7 +80,8 @@ Villaume et al. 2015 and the AGN dusty torus models of Nenkova et al. 2008.
 * [`pro`](pro): Contains IDL files for reading in the .mag, .indx, and .spec
 output files
 
-* [`src`](src): Contains the source files and routines from Numerical Recipes.
+* [`src`](src): Contains the Fortran sources organized by subsystem (core, physics,
+spectra, SFH, math, cosmology, ABI, and program entry points).
 
 * [`tests`](tests): Contains the regression test suite and scripts for generating
 reference comparison data.

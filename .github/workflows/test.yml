@@ -2,9 +2,9 @@ name: FSPS Regression Tests
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, feature/c-driver-api ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, feature/c-driver-api ]
 
 jobs:
   test-matrix:

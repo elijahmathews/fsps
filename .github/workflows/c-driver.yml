@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SPS_HOME: ${{ github.workspace }}
-      FSPS_FULL_Z_TEST: 1, # Run full metallicity tests
+      # Run full metallicity tests
+      FSPS_FULL_Z_TEST: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
