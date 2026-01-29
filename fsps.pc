@@ -5,6 +5,6 @@ includedir=${prefix}/include
 
 Name: fsps
 Description: Flexible Stellar Population Synthesis C driver
-Version: 3.2
+Version: 3.2.0
 Libs: -L${libdir} -lfsps -lgfortran
 Cflags: -I${includedir}

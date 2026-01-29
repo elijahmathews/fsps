@@ -11,7 +11,7 @@ From the repo root:
 - Build the C test driver:
   - `make test_c`
 
-The shared library is created at build/libfsps.so. The C header is include/fsps.h.
+The shared library is created at build/libfsps.so.* (with symlinks build/libfsps.so and build/libfsps.so.<soname>). The C header is include/fsps.h.
 
 ## Initialization
 
@@ -87,4 +87,4 @@ FSPS uses global state and is not thread-safe. Do not call these APIs concurrent
 
 ## Pkg-config
 
-A pkg-config file is provided at fsps.pc. You may need to adjust `prefix` and install locations to match your environment.
+A pkg-config file is provided at fsps.pc. `make install` will install it to your pkg-config directory; otherwise adjust `prefix` and install locations to match your environment.

@@ -1,8 +1,20 @@
 SETUP INSTRUCTIONS
 
 1.  Edit your .cshrc (or .bashrc/zshrc) file to set the SPS_HOME variable:
-            export SPS_HOME="/home/user/fsps/"
+        export SPS_HOME="/home/user/fsps/"
        (this must point to the root directory containing the src/ directory)
+
+    Optionally, you can set FSPS_DATA_HOME to the FSPS install root
+    (the directory that contains the data/ subtree). This is useful for
+    system-wide installs where SPS_HOME is not set:
+        export FSPS_DATA_HOME="/usr/share/fsps"
+
+    If FSPS_DATA_HOME is not set, FSPS will look for data in common
+    locations such as /usr/share/fsps, /usr/local/share/fsps, or
+    ~/.local/share/fsps (if they contain a data/ directory).
+
+    If you want outputs somewhere other than $SPS_HOME/OUTPUTS, set:
+        export FSPS_OUTPUT_HOME="$HOME/.local/share/fsps"
 
 2.  Compile the code. The Makefile is located in the root directory.
     By default, it uses gfortran. You can compile by simply typing:
@@ -11,6 +23,14 @@ SETUP INSTRUCTIONS
     If you wish to use a different compiler (e.g., ifort), you can specify it
     on the command line without editing the Makefile:
             make FC=ifort
+
+        To install system-wide (shared library, header, data, and drivers), run:
+            make shared
+            make install PREFIX=/usr
+
+        This installs data to $PREFIX/share/fsps/data and the shared library to
+        $PREFIX/lib (or your distro's libdir if you override LIBDIR). For system
+        installs, set FSPS_DATA_HOME=/usr/share/fsps to locate the data directory.
 
 3.  email cconroy@cfa.harvard.edu so that I can keep you posted on updates.  
       -> this step is actually important!  Every code has bugs.  If I

@@ -302,7 +302,9 @@ MODULE SPS_VARS
   REAL(SP), DIMENSION(3,100) :: imf_user_alpha=0.
 
   !environment variable for SPS home directory
-  CHARACTER(250) :: SPS_HOME=''
+   CHARACTER(250) :: SPS_HOME=''
+   CHARACTER(250) :: DATA_HOME=''
+   CHARACTER(250) :: OUTPUT_HOME=''
   !name of the filter file, if blank it defaults to allfilters.dat
   CHARACTER(30)  :: alt_filter_file=''
 

@@ -24,15 +24,34 @@ Documentation
 ------
 See the [Manual](doc/MANUAL.pdf)
 
+Environment
+-----------
+- `SPS_HOME`: Legacy FSPS install root (contains `src/` and `data/`).
+- `FSPS_DATA_HOME`: Preferred install root (must contain `data/`), overrides `SPS_HOME` for data resolution.
+- `FSPS_OUTPUT_HOME`: Override output root (writes to `$FSPS_OUTPUT_HOME/OUTPUTS`).
+
+### System install
+
+To install the shared library, header, data files, and command-line drivers:
+
+```sh
+make shared
+make install PREFIX=/usr
+```
+
+This installs data to `/usr/share/fsps/data` and the shared library to `/usr/lib`
+(or your distro’s libdir if you override `LIBDIR`). When using a system install,
+set `FSPS_DATA_HOME=/usr/share/fsps` if `SPS_HOME` is not set.
+
 ## C Driver API
 
 FSPS ships a C driver intended for use by language bindings (e.g., Python-FSPS refactor or a Julia wrapper).
 
 - Header: include/fsps.h
-- Shared library: build/libfsps.so (build via `make shared`)
+- Shared library: build/libfsps.so.* (build via `make shared`)
 - C driver test: `make test_c`
 
-For pkg-config users, a sample file is provided at fsps.pc (update `prefix` as needed).
+For pkg-config users, `make install` installs fsps.pc to the pkg-config directory.
 
 See [doc/FSPS_C_API.md](doc/FSPS_C_API.md) for the API reference, array layout, and error handling.
 

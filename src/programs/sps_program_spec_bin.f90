@@ -3,7 +3,8 @@ PROGRAM SPEC_BIN
   !routine to convert ascii spectral files to binary
   !must be run twice for each value of isoc_type var
 
-  USE sps_vars
+   USE sps_vars
+   USE sps_utils, ONLY: fsps_resolve_paths
   IMPLICIT NONE
   INTEGER  :: z,dumi1,i,j,status
   REAL(SP) :: dumr1,d2,d3
@@ -12,7 +13,7 @@ PROGRAM SPEC_BIN
 
   !----------------------------------------------------------------!
 
-  CALL GETENV('SPS_HOME',SPS_HOME)
+   CALL fsps_resolve_paths()
   
   ! Read spec_type from command line or default to 'miles'
   CALL GET_COMMAND_ARGUMENT(1, arg_spec_type, STATUS=status)

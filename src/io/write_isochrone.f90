@@ -31,7 +31,7 @@ SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
   fmt = '(F7.4,1x,F8.4,1x,F14.9,1x,F14.9,1x,7(F8.4,1x),000(F7.3,1x))'
   WRITE(fmt(47:49),'(I3,1x,I4)') nbands
 
-  OPEN(40,FILE=TRIM(SPS_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.cmd',&
+     OPEN(40,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.cmd',&
        STATUS='REPLACE')
   WRITE(40,*) '# age log(Z) mini mact logl logt logg '//&
        'phase composition log(weight) log(mdot) mags'

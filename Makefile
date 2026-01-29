@@ -8,6 +8,19 @@ FC = gfortran
 # Default flags
 FFLAGS ?= -O3 -cpp -fPIC
 
+# Installation paths (override on make command line as needed)
+PREFIX ?= /usr/local
+DESTDIR ?=
+LIBDIR ?= $(PREFIX)/lib
+INCLUDEDIR ?= $(PREFIX)/include
+DATADIR ?= $(PREFIX)/share
+PKGCONFIGDIR ?= $(LIBDIR)/pkgconfig
+BINDIR ?= $(PREFIX)/bin
+
+# Shared library versioning
+LIB_VERSION ?= 3.2.0
+LIB_SONAME ?= 3
+
 # Directory configuration
 SRC_DIR := src
 TEST_DIR := tests
@@ -22,7 +35,7 @@ SRC_DIRS := $(addprefix $(SRC_DIR)/, $(SRC_SUBDIRS))
 MOD_FLAG ?= -J
 
 # Combine flags to include the build dir for .mod search
-FCFLAGS := $(FFLAGS) $(MOD_FLAG)$(BUILD_DIR) -I$(BUILD_DIR)
+FCFLAGS := $(FFLAGS) -fPIC $(MOD_FLAG)$(BUILD_DIR) -I$(BUILD_DIR)
 
 # ===================================
 # Source and Object Definitions
@@ -52,7 +65,9 @@ COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 # Rules
 # ===================================
 
-.PHONY: all clean shared test test_c_driver test_c
+
+.PHONY: all clean shared test test_c_driver test_c check install uninstall \
+	install-lib install-headers install-bin install-pkgconfig install-data
 
 all: $(PROGS)
 
@@ -94,13 +109,16 @@ simple: $(BUILD_DIR)/sps_program_simple.o $(COMMON_OBJS)
 lesssimple: $(BUILD_DIR)/sps_program_lesssimple.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-spec_bin: $(BUILD_DIR)/sps_program_spec_bin.o $(BUILD_DIR)/sps_vars.o
+spec_bin: $(BUILD_DIR)/sps_program_spec_bin.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
 	$(FC) $(FCFLAGS) -o $@ $^
 
 # --- Shared Library Target ---
 
 shared: $(COMMON_OBJS)
-	$(FC) $(FFLAGS) -shared -o $(BUILD_DIR)/libfsps.so $^
+	$(FC) $(FFLAGS) -shared -Wl,-soname,libfsps.so.$(LIB_SONAME) \
+		-o $(BUILD_DIR)/libfsps.so.$(LIB_VERSION) $^
+	ln -sf libfsps.so.$(LIB_VERSION) $(BUILD_DIR)/libfsps.so.$(LIB_SONAME)
+	ln -sf libfsps.so.$(LIB_SONAME) $(BUILD_DIR)/libfsps.so
 
 # --- Test Targets ---
 
@@ -117,7 +135,45 @@ test_c_driver: shared
 
 test_c: test_c_driver
 
+check: test_c
+
 # --- Utilities ---
 
 clean:
 	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_fsps
+
+# --- Install Targets ---
+
+install: all shared install-lib install-headers install-bin install-pkgconfig install-data
+
+install-lib:
+	install -d $(DESTDIR)$(LIBDIR)
+	install -m 755 $(BUILD_DIR)/libfsps.so.$(LIB_VERSION) $(DESTDIR)$(LIBDIR)/
+	ln -sf libfsps.so.$(LIB_VERSION) $(DESTDIR)$(LIBDIR)/libfsps.so.$(LIB_SONAME)
+	ln -sf libfsps.so.$(LIB_SONAME) $(DESTDIR)$(LIBDIR)/libfsps.so
+
+install-headers:
+	install -d $(DESTDIR)$(INCLUDEDIR)
+	install -m 644 include/fsps.h $(DESTDIR)$(INCLUDEDIR)/
+
+install-bin:
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(PROGS) $(DESTDIR)$(BINDIR)/
+
+install-pkgconfig:
+	install -d $(DESTDIR)$(PKGCONFIGDIR)
+	sed -e "s|^prefix=.*|prefix=$(PREFIX)|" fsps.pc > $(DESTDIR)$(PKGCONFIGDIR)/fsps.pc
+
+install-data:
+	install -d $(DESTDIR)$(DATADIR)/fsps
+	cp -a data $(DESTDIR)$(DATADIR)/fsps/
+
+uninstall:
+	rm -f $(DESTDIR)$(LIBDIR)/libfsps.so.$(LIB_VERSION)
+	rm -f $(DESTDIR)$(LIBDIR)/libfsps.so.$(LIB_SONAME)
+	rm -f $(DESTDIR)$(LIBDIR)/libfsps.so
+	rm -f $(DESTDIR)$(INCLUDEDIR)/fsps.h
+	rm -f $(DESTDIR)$(PKGCONFIGDIR)/fsps.pc
+	rm -f $(DESTDIR)$(BINDIR)/simple $(DESTDIR)$(BINDIR)/lesssimple \
+		$(DESTDIR)$(BINDIR)/autosps $(DESTDIR)$(BINDIR)/spec_bin
+	rm -rf $(DESTDIR)$(DATADIR)/fsps/data

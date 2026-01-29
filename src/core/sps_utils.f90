@@ -392,6 +392,94 @@ MODULE SPS_UTILS
 
 CONTAINS
 
+  LOGICAL FUNCTION fsps_data_exists(path)
+    USE sps_vars
+    CHARACTER(LEN=*), INTENT(IN) :: path
+    LOGICAL :: ok
+
+    ok = .FALSE.
+    INQUIRE(FILE=TRIM(path)//'/allfilters.dat', EXIST=ok)
+    IF (.NOT. ok) INQUIRE(FILE=TRIM(path)//'/FILTER_LIST', EXIST=ok)
+    fsps_data_exists = ok
+  END FUNCTION fsps_data_exists
+
+  SUBROUTINE fsps_resolve_paths()
+    USE sps_vars
+    CHARACTER(250) :: env, candidate
+    LOGICAL :: system_prefix
+
+    DATA_HOME = ''
+    OUTPUT_HOME = ''
+
+    CALL getenv('SPS_HOME', SPS_HOME)
+    IF (LEN_TRIM(SPS_HOME) > 0) THEN
+       candidate = TRIM(SPS_HOME)
+       IF (.NOT. fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = ''
+    ENDIF
+
+    CALL getenv('FSPS_DATA_HOME', env)
+    IF (LEN_TRIM(env) > 0) THEN
+       candidate = TRIM(env)
+       IF (fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = candidate
+    ENDIF
+
+    IF (LEN_TRIM(SPS_HOME) == 0) THEN
+       CALL getenv('XDG_DATA_HOME', env)
+       IF (LEN_TRIM(env) > 0) THEN
+          candidate = TRIM(env)//'/fsps'
+          IF (fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = candidate
+       ENDIF
+    ENDIF
+
+    IF (LEN_TRIM(SPS_HOME) == 0) THEN
+       CALL getenv('HOME', env)
+       IF (LEN_TRIM(env) > 0) THEN
+          candidate = TRIM(env)//'/.local/share/fsps'
+          IF (fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = candidate
+       ENDIF
+    ENDIF
+
+    IF (LEN_TRIM(SPS_HOME) == 0) THEN
+       candidate = '/usr/share/fsps'
+       IF (fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = candidate
+    ENDIF
+
+    IF (LEN_TRIM(SPS_HOME) == 0) THEN
+       candidate = '/usr/local/share/fsps'
+       IF (fsps_data_exists(TRIM(candidate)//'/data')) SPS_HOME = candidate
+    ENDIF
+
+    IF (LEN_TRIM(SPS_HOME) == 0) THEN
+       WRITE(*,*) 'SPS_SETUP ERROR: FSPS data path not found. Set FSPS_DATA_HOME or SPS_HOME.'
+       STOP
+    ENDIF
+
+    DATA_HOME = TRIM(SPS_HOME)//'/data'
+
+    CALL getenv('FSPS_OUTPUT_HOME', env)
+    IF (LEN_TRIM(env) > 0) THEN
+       OUTPUT_HOME = TRIM(env)
+    ELSE
+       system_prefix = .FALSE.
+       IF (LEN_TRIM(SPS_HOME) >= 5) THEN
+          IF (SPS_HOME(1:5) == '/usr/') system_prefix = .TRUE.
+       ENDIF
+       IF (LEN_TRIM(SPS_HOME) >= 10) THEN
+          IF (SPS_HOME(1:10) == '/usr/local') system_prefix = .TRUE.
+       ENDIF
+       IF (system_prefix) THEN
+          CALL getenv('HOME', env)
+          IF (LEN_TRIM(env) > 0) THEN
+             OUTPUT_HOME = TRIM(env)//'/.local/share/fsps'
+          ELSE
+             OUTPUT_HOME = '.'
+          ENDIF
+       ELSE
+          OUTPUT_HOME = TRIM(SPS_HOME)
+       ENDIF
+    ENDIF
+  END SUBROUTINE fsps_resolve_paths
+
   SUBROUTINE SPS_TAKEDOWN()
     USE sps_vars
     IMPLICIT NONE

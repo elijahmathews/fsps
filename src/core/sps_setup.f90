@@ -11,7 +11,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   USE sps_vars
   USE sps_utils, ONLY: locate, linterparr, linterp, tsum, get_tuniv, &
-       get_lumdist, airtovac, sps_takedown
+     get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
   IMPLICIT NONE
   INTEGER, INTENT(in) :: zin
   CHARACTER(LEN=*), INTENT(in), OPTIONAL :: isoc_type_in
@@ -355,11 +355,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !--------------Confirm that variables are properly set-----------!
   !----------------------------------------------------------------!
 
-  CALL getenv('SPS_HOME',SPS_HOME)
-  IF (LEN_TRIM(SPS_HOME).EQ.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: spsdir environment variable not set!'
-     STOP
-  ENDIF
+  CALL fsps_resolve_paths()
 
   IF (basel_str.NE.'pdva'.AND.basel_str.NE.'wlbc') THEN
      WRITE(*,*) 'SPS_SETUP ERROR: basel_str var set to invalid type: ',basel_str

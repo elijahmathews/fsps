@@ -322,21 +322,21 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(write_compsp,pset,outfile,imin,imax)
 
   !open output file for magnitudes
   IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) THEN
-     OPEN(10,FILE=TRIM(SPS_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.mags',&
+   OPEN(10,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.mags',&
           STATUS='REPLACE')
      CALL COMPSP_HEADER(10,pset)
   ENDIF
 
   !open output file for spectra
   IF (write_compsp.EQ.2.OR.write_compsp.EQ.3) THEN
-     OPEN(20,FILE=TRIM(SPS_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.spec',&
+   OPEN(20,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.spec',&
           STATUS='REPLACE')
      CALL COMPSP_HEADER(20,pset)
   ENDIF
 
   !open output file for indices
   IF (write_compsp.EQ.4) THEN
-     OPEN(30,FILE=TRIM(SPS_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.indx',&
+   OPEN(30,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.indx',&
           STATUS='REPLACE')
      CALL COMPSP_HEADER(30,pset)
   ENDIF
