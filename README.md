@@ -58,8 +58,8 @@ This directory is automatically created when you run `make`.
  * [`doc`](doc): Contains the manual, revision history, and installation
 instructions.
 
-* [`pro`](pro): Contains IDL files for reading in the .mag, .indx, and .spec
-output files
+* [`legacy/idl`](legacy/idl): Legacy IDL scripts for reading .mag/.indx/.spec
+output files (not actively maintained).
 
 * [`src`](src): Contains the Fortran sources organized by subsystem (core, physics,
 spectra, SFH, math, cosmology, ABI, and program entry points).
