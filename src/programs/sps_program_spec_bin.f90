@@ -47,16 +47,16 @@ PROGRAM SPEC_BIN
   ALLOCATE(speclib(nspec,nzinit,ndim_logt,ndim_logg))
   
   IF (spec_type.EQ.'basel') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/zlegend.dat',&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/zlegend.dat',&
           STATUS='OLD',ACTION='READ')
   ELSE IF (spec_type.EQ.'miles') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/zlegend.dat',&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/zlegend.dat',&
           STATUS='OLD',ACTION='READ')
   ELSE IF (spec_type.EQ.'ckc14'.OR.spec_type(1:5).EQ.'ckc14') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/zlegend.dat',&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/spectra/CKC14/zlegend.dat',&
           STATUS='OLD',ACTION='READ')
   ELSE IF (spec_type(1:3).EQ.'c3k') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/zlegend.dat',&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/zlegend.dat',&
           STATUS='OLD',ACTION='READ')
   ENDIF
   DO z=1,nzinit
@@ -69,37 +69,37 @@ PROGRAM SPEC_BIN
      WRITE(zstype,'(F6.4)') zlegendinit(z)
 
      IF (spec_type.EQ.'basel') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'&
              //basel_str//'_z'//zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
-        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_'&
+      OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'&
              //basel_str//'_z'//zstype//'.spectra.bin',&
              FORM='UNFORMATTED',STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
 
      ELSE IF (spec_type.EQ.'miles') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/imiles_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
              //zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
-        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/imiles_z'&
+      OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
 
      ELSE IF (spec_type(1:5).EQ.'ckc14') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//spec_type//'_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/CKC14/'//spec_type//'_z'&
              //zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
-        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/CKC14/'//spec_type//'_z'&
+      OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/CKC14/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
              
      ELSE IF (spec_type(1:3).EQ.'c3k') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//spec_type//'_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
              //zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
-        OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//spec_type//'_z'&
+      OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)

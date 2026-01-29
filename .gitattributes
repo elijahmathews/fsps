@@ -1,0 +1,16 @@
+# Treat common FSPS data extensions as plain text for GitHub Linguist
+*.lambda linguist-language=Text
+*.zlegend linguist-language=Text
+*.res linguist-language=Text
+*.spec linguist-language=Text
+*.teff linguist-language=Text
+*.mass linguist-language=Text
+*.cont linguist-language=Text
+*.lines linguist-language=Text
+*.SED linguist-language=Text
+*.sed linguist-language=Text
+*.dat linguist-language=Text
+
+# Explicitly mark binary data
+*.spectra.bin binary
+*.bin binary

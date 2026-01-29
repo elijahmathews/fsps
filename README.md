@@ -41,41 +41,22 @@ Contents
 Below is a brief description of the contents of the directories in the
 fsps root directory:
 
- * [`ISOCHRONES`](ISOCHRONES): Contains the isochrone tables for the BaSTI and Padova
-isochrone sets.  The Geneva isochrones have been pasted onto the BaSTI
-and Padova tables for high masses (M>70Msun), and the low-mass Lyon
-models have been pasted on at low masses.  You should not edit these
-files unless you know what you're doing.
-
  * [`OUTPUTS`](OUTPUTS): Contains the outputs of a few example calls of the routines
 autosps and simple.  You may wish to use this directory for all
 outputs of the fsps routines.
 
- * [`SPECTRA`](SPECTRA): Contains the spectral libraries, the spectrum of an A0V star
-used to set the Vega magnitude zero points, and a spectrum of the Sun.
-The BaSeL spectra (based on the Kurucz models) are in binary format,
-primarily to make the read in time faster and to decrease the size of
-the fsps download.  The Hot_spectra directory contain the libraries
-for O stars, WR stars, and post-AGB stars, from Smith et al. 2002 and
-Rauch 2003, respectively.
-
  * `build`: Contains the compiled object files (`.o`) and Fortran modules (`.mod`).
 This directory is automatically created when you run `make`.
 
- * [`data`](data): Contains files that define the set of filters and indices used
-in FSPS and the tabulated imfs and sfhs if those options are set.  The
-files in this directory are readily user editable.
+ * [`data`](data): Contains model inputs and lookup tables. Subdirectories include:
+	 - `data/isochrones`: isochrone libraries (BaSTI, Padova, MIST, etc.)
+	 - `data/spectra`: spectral libraries and reference spectra (A0V, Sun, Hot_spectra)
+	 - `data/nebular`: nebular emission tables (continuum + lines)
+	 - `data/dust`: dust attenuation/emission and AGN torus models
+	 - `data/`: filter lists, indices, IMFs, SFHs, and other small tables
 
  * [`doc`](doc): Contains the manual, revision history, and installation
 instructions.
-
-* [`dust`](dust): Contains the dust attenuation curves for the Witt & Gordon
-(2000) dust model and the dust emission spectra from the Draine & Li
-2007 grain model.  Also contains the circumstellar dust models from 
-Villaume et al. 2015 and the AGN dusty torus models of Nenkova et al. 2008.
-
-* [`nebular`](nebular): Contains the Cloudy lookup tables for nebular emission 
-(both continuum and line emission) computed by Nell Byler.
 
 * [`pro`](pro): Contains IDL files for reading in the .mag, .indx, and .spec
 output files

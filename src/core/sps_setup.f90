@@ -372,22 +372,22 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !units are simply metal fraction by mass (e.g. Z=0.0190 for Zsun)
   IF (isoc_type.EQ.'pdva') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/Padova/Padova2007/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/Padova/Padova2007/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (isoc_type.EQ.'prsc') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/PARSEC/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/PARSEC/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (isoc_type.EQ.'bsti') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BaSTI/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/BaSTI/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (isoc_type.EQ.'mist') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/MIST/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/MIST/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (isoc_type.EQ.'bpss') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/BPASS/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (isoc_type.EQ.'gnva') THEN
-     OPEN(90,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/Geneva/zlegend'//&
+   OPEN(90,FILE=TRIM(SPS_HOME)//'/data/isochrones/Geneva/zlegend'//&
           '.dat',STATUS='OLD',iostat=stat,ACTION='READ')
   ENDIF
   IF (stat.NE.0) THEN
@@ -433,7 +433,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
         STOP
      ENDIF
 
-     OPEN(91,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/bpass.lambda',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/isochrones/BPASS/bpass.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      IF (stat.NE.0) THEN
         WRITE(*,*) 'SPS_SETUP ERROR: wavelength grid cannot be opened'
@@ -444,7 +444,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      ENDDO
      CLOSE(91)
 
-     OPEN(92,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/bpass.mass',&
+   OPEN(92,FILE=TRIM(SPS_HOME)//'/data/isochrones/BPASS/bpass.mass',&
           STATUS='OLD',iostat=stat,ACTION='READ')
      IF (stat.NE.0) THEN
         WRITE(*,*) 'SPS_SETUP ERROR: wavelength grid cannot be opened'
@@ -455,7 +455,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      ENDDO
      CLOSE(92)
 
-     OPEN(93,FILE=TRIM(SPS_HOME)//'/ISOCHRONES/BPASS/bpass_v2.2_salpeter100'&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/isochrones/BPASS/bpass_v2.2_salpeter100'&
           //'.ssp.bin',FORM='UNFORMATTED',&
           STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
           recl=nspec*nt*nz*8)
@@ -477,25 +477,25 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in wavelength array and spectral metallicity grid
   IF (spec_type.EQ.'basel') THEN
-     OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel.lambda',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/zlegend.dat',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/zlegend.dat',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel.res',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel.res',&
           STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (spec_type.EQ.'miles') THEN
-     OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/miles.lambda',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/miles.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/zlegend.dat',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/zlegend.dat',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/miles.res',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/miles.res',&
           STATUS='OLD',iostat=stat,ACTION='READ')
   ELSE IF (spec_type(1:3).EQ.'c3k') THEN
-     OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//TRIM(spec_type)//'.lambda',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//TRIM(spec_type)//'.lambda',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/zlegend.dat',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/zlegend.dat',&
           STATUS='OLD',iostat=stat,ACTION='READ')
-     OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//TRIM(spec_type)//'.res',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//TRIM(spec_type)//'.res',&
           STATUS='OLD',iostat=stat,ACTION='READ')
   ENDIF
   IF (stat.NE.0) THEN
@@ -515,13 +515,13 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in primary logg and logt arrays
   !NB: these are the same for all spectral libraries
-  OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_logt.dat',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_logt.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   DO i=1,ndim_logt
      READ(91,*) speclib_logt(i)
   ENDDO
   CLOSE(91)
-  OPEN(91,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_logg.dat',&
+   OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_logg.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   DO i=1,ndim_logg
      READ(91,*) speclib_logg(i)
@@ -539,17 +539,17 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in the spectral library
      IF (spec_type.EQ.'basel') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/BaSeL3.1/basel_'//basel_str//&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'//basel_str//&
              '_z'//zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
      ELSE IF (spec_type.EQ.'miles') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/MILES/imiles_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
      ELSE IF (spec_type(1:3).EQ.'c3k') THEN
-        OPEN(92,FILE=TRIM(SPS_HOME)//'/SPECTRA/C3K/'//spec_type//'_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
@@ -590,10 +590,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !--------------Read WMBasic Grid from JJ Eldridge----------------;
 
   !read in Teff array
-  OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/WMBASIC.teff',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/WMBASIC.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/Hot_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/Hot_spectra/'//&
           'WMBASIC.teff cannot be opened'
      STOP
   ENDIF
@@ -605,7 +605,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !logg for WMB grid
   wmb_logg = (/3.5,4.0,4.5/)
 
-  OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/WMBASIC_zlegend.dat',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/WMBASIC_zlegend.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
 
   DO z=1,nzwmb
@@ -613,10 +613,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      READ(93,*) zwmb(z)
      WRITE(zstype,'(F6.4)') zwmb(z)
 
-     OPEN(95,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/WMBASIC_z'//&
+   OPEN(95,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/WMBASIC_z'//&
           zstype//'.spec',STATUS='OLD',iostat=stat,ACTION='READ')
      IF (stat.NE.0) THEN
-        WRITE(*,*) 'SPS_SETUP ERROR: /Hot_spectra/'//&
+      WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/Hot_spectra/'//&
           'WMBASIC_z'//zstype//'.spec '//'cannot be opened'
         STOP
      ENDIF
@@ -661,10 +661,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !-----------Read in TP-AGB Library from Lancon & Wood------------;
 
   !read in AGB Teff array for O-rich spectra
-  OPEN(93,FILE=TRIM(SPS_HOME)//'/SPECTRA/AGB_spectra/Orich.teff',&
+   OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/AGB_spectra/Orich.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Orich.teff cannot be opened'
      STOP
   ENDIF
@@ -687,10 +687,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   agb_logt_o = LOG10(agb_logt_o)
 
   !read in AGB Teff array for C-rich spectra
-  OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/AGB_spectra/Crich.teff',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/AGB_spectra/Crich.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Crich.teff cannot be opened'
      STOP
   ENDIF
@@ -703,10 +703,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   agb_logt_c = LOG10(agb_logt_c)
 
   !read in TP-AGB O-rich spectra
-  OPEN(95,FILE=TRIM(SPS_HOME)//'/SPECTRA/AGB_spectra/Orich.spec',&
+   OPEN(95,FILE=TRIM(SPS_HOME)//'/data/spectra/AGB_spectra/Orich.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Orich.spec '//'cannot be opened'
      STOP
   ENDIF
@@ -721,10 +721,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDDO
 
   !read in TP-AGB C-rich spectra
-  OPEN(96,FILE=TRIM(SPS_HOME)//'/SPECTRA/AGB_spectra/Crich.spec',&
+   OPEN(96,FILE=TRIM(SPS_HOME)//'/data/spectra/AGB_spectra/Crich.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Crich.spec '//'cannot be opened'
      STOP
   ENDIF
@@ -741,10 +741,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !---------Read in Aringer carbon star library---------!
 
   !read in Aringer C-rich Teff grid
-  OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/AGB_spectra/Crich_Aringer.teff',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/AGB_spectra/Crich_Aringer.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Crich_Aringer.teff cannot be opened'
      STOP
   ENDIF
@@ -757,10 +757,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in Aringer C-rich spectra
   OPEN(96,FILE=TRIM(SPS_HOME)//&
-       '/SPECTRA/AGB_spectra/Crich_Aringer.spec',&
+      '/data/spectra/AGB_spectra/Crich_Aringer.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /AGB_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/AGB_spectra/'//&
           'Crich_Aringer.spec '//'cannot be opened'
      STOP
   ENDIF
@@ -777,10 +777,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !------------read in post-AGB spectra from Rauch 2003------------;
 
   !read in post-AGB Teff array
-  OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/ipagb.teff',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/ipagb.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/ipagb.teff cannot be opened'
+   WRITE(*,*) 'SPS_SETUP ERROR: data/spectra/Hot_spectra/ipagb.teff cannot be opened'
      STOP
   ENDIF
   DO i=1,ndim_pagb
@@ -790,11 +790,11 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   pagb_logt = LOG10(pagb_logt)
 
   !read in solar metallicity post-AGB spectra
-  OPEN(97,FILE=TRIM(SPS_HOME)//'&
-       /SPECTRA/Hot_spectra/ipagb_solar.spec',&
+  OPEN(97,FILE=TRIM(SPS_HOME)//&
+     '/data/spectra/Hot_spectra/ipagb_solar.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/Hot_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/Hot_spectra/'//&
           'ipagb.spec_solar cannot be opened'
      STOP
   ENDIF
@@ -805,10 +805,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in halo metallicity post-AGB spectra
   OPEN(97,FILE=TRIM(SPS_HOME)//&
-       '/SPECTRA/Hot_spectra/ipagb_halo.spec',&
+     '/data/spectra/Hot_spectra/ipagb_halo.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: /SPECTRA/Hot_spectra/'//&
+   WRITE(*,*) 'SPS_SETUP ERROR: /data/spectra/Hot_spectra/'//&
           'ipagb.spec_halo cannot be opened'
      STOP
   ENDIF
@@ -828,7 +828,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !--------------read in WR spectra from Smith et al.--------------;
 
   !read in WR-N Teff array
-  OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/CMFGEN_WN.teff',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/CMFGEN_WN.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WN.teff cannot be opened'
@@ -840,7 +840,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(94)
 
   !read in WR-C Teff array
-  OPEN(94,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/CMFGEN_WC.teff',&
+   OPEN(94,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/CMFGEN_WC.teff',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WC.teff cannot be opened'
@@ -852,7 +852,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(94)
 
   !read in WR-N spectra
-  OPEN(97,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/CMFGEN_WN_Zall'//&
+   OPEN(97,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/CMFGEN_WN_Zall'//&
        '.spec',STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WN_*.spec '//&
@@ -883,7 +883,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDDO
 
   !read in WR-C spectra
-  OPEN(97,FILE=TRIM(SPS_HOME)//'/SPECTRA/Hot_spectra/CMFGEN_WC_Zall'//&
+   OPEN(97,FILE=TRIM(SPS_HOME)//'/data/spectra/Hot_spectra/CMFGEN_WC_Zall'//&
        '.spec',STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WC_*.spec '//&
@@ -925,23 +925,23 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !open Padova isochrones
      IF (isoc_type.EQ.'pdva') OPEN(97,FILE=TRIM(SPS_HOME)//&
-          '/ISOCHRONES/Padova/Padova2007/isoc_z'//&
+          '/data/isochrones/Padova/Padova2007/isoc_z'//&
           zstype//'.dat',STATUS='OLD', IOSTAT=stat,ACTION='READ')
      !open PARSEC isochrones
      IF (isoc_type.EQ.'prsc') OPEN(97,FILE=TRIM(SPS_HOME)//&
-          '/ISOCHRONES/PARSEC/isoc_z'//&
+          '/data/isochrones/PARSEC/isoc_z'//&
           zstype//'.dat',STATUS='OLD', IOSTAT=stat,ACTION='READ')
      !open MIST isochrones
      IF (isoc_type.EQ.'mist') OPEN(97,FILE=TRIM(SPS_HOME)//&
-          '/ISOCHRONES/MIST/isoc_z'//zlegend_str(z)//'.dat',STATUS='OLD',&
+          '/data/isochrones/MIST/isoc_z'//zlegend_str(z)//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
      !open BaSTI isochrones
      IF (isoc_type.EQ.'bsti') OPEN(97,FILE=TRIM(SPS_HOME)//&
-          '/ISOCHRONES/BaSTI/isoc_z'//zstype//'.dat',STATUS='OLD',&
+          '/data/isochrones/BaSTI/isoc_z'//zstype//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
      !open Geneva isochrones
      IF (isoc_type.EQ.'gnva') OPEN(97,FILE=TRIM(SPS_HOME)//&
-          '/ISOCHRONES/Geneva/isoc_z'//zstype//'.dat',STATUS='OLD',&
+          '/data/isochrones/Geneva/isoc_z'//zstype//'.dat',STATUS='OLD',&
           IOSTAT=stat,ACTION='READ')
 
      IF (stat.NE.0) THEN
@@ -1016,10 +1016,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   DO k=1,nqpah_dustem
      WRITE(sqpah,'(I1)') k-1
      IF (k-1.EQ.10) THEN
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/dustem/'//TRIM(str_dustem)//&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/dustem/'//TRIM(str_dustem)//&
              '_MW3.1_100.dat',STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/dustem/'//TRIM(str_dustem)//&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/dustem/'//TRIM(str_dustem)//&
              '_MW3.1_'//sqpah//'0.dat',STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -1054,7 +1054,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !----------------------------------------------------------------!
 
   !O-rich spectra
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/dusty/Orich_dusty.spec',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/dusty/Orich_dusty.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: error opening dusty models'
@@ -1085,7 +1085,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(99)
 
   !C-rich spectra
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/dusty/Crich_dusty.spec',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/dusty/Crich_dusty.spec',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: error opening dusty models'
@@ -1119,7 +1119,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !models from Nenkova et al. 2008
 
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/Nenkova08_y010_torusg_n10_q2.0.dat',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/Nenkova08_y010_torusg_n10_q2.0.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: error opening AGN dust models'
@@ -1155,10 +1155,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in nebular continuum arrays.  Units are Lsun/Hz/Q
      IF (cloudy_dust.EQ.1) THEN
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//isoc_type//'.cont',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//isoc_type//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//isoc_type//'.cont',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//isoc_type//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -1185,10 +1185,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in nebular emission line luminosities.  Units are Lsun/Q
      IF (cloudy_dust.EQ.1) THEN
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WD_'//isoc_type//'.lines',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//isoc_type//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-        OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_ND_'//isoc_type//'.lines',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//isoc_type//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -1249,10 +1249,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   IF (isoc_type.EQ.'bpss') THEN
       !read in nebular continuum arrays.  Units are Lsun/Hz/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//isoc_type//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//isoc_type//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1279,10 +1279,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
       !read in nebular emission line luminosities.  Units are Lsun/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_WD_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//isoc_type//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/nebular/ZAU_WX_ND_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//isoc_type//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1313,7 +1313,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !------------------Set up X-ray binary arrays--------------------!
   !----------------------------------------------------------------!
 
-  OPEN(98,FILE=TRIM(SPS_HOME)//'/SPECTRA/xrb/xsp.lambda',&
+   OPEN(98,FILE=TRIM(SPS_HOME)//'/data/spectra/xrb/xsp.lambda',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
      WRITE(*,*) 'SPS_SETUP ERROR: xsp.lambda cannot be opened'
@@ -1332,7 +1332,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   zz_str_xrb = (/'-1.30','-1.00','-0.80','-0.70','-0.50','-0.40','-0.30','-0.20','+0.00','+0.20','+0.30'/)
 
   DO j=1,nz_xrb
-     OPEN(98,FILE=TRIM(SPS_HOME)//'/SPECTRA/xrb/xsp_feh'//zz_str_xrb(j)&
+   OPEN(98,FILE=TRIM(SPS_HOME)//'/data/spectra/xrb/xsp_feh'//zz_str_xrb(j)&
           //'.spec',STATUS='OLD',iostat=stat,ACTION='READ')
      IF (stat.NE.0) THEN
         WRITE(*,*) 'SPS_SETUP ERROR: xsp_feh'//zz_str_xrb(j)//&
@@ -1356,10 +1356,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in Vega-like star (lambda, Flambda)
   !(this is actually a Kurucz (1992) model for Vega)
-  OPEN(98,FILE=TRIM(SPS_HOME)//'/SPECTRA/A0V_KURUCZ_92.SED',&
+   OPEN(98,FILE=TRIM(SPS_HOME)//'/data/spectra/A0V_KURUCZ_92.SED',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: SPECTRA/A0V_KURUCZ_92.SED cannot be opened'
+   WRITE(*,*) 'SPS_SETUP ERROR: data/spectra/A0V_KURUCZ_92.SED cannot be opened'
      STOP
   ENDIF
   !burn the header
@@ -1380,10 +1380,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !read in Solar spectrum; units are fnu, flux is appropriate for
   !deriving absolute magnitudes.  spectrum from STScI, extrapolated
   !beyond 2.5um with a blackbody.
-  OPEN(98,FILE=TRIM(SPS_HOME)//'/SPECTRA/SUN_STScI.SED',&
+   OPEN(98,FILE=TRIM(SPS_HOME)//'/data/spectra/SUN_STScI.SED',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   IF (stat.NE.0) THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: SPECTRA/SUN_STScI.SED cannot be opened'
+   WRITE(*,*) 'SPS_SETUP ERROR: data/spectra/SUN_STScI.SED cannot be opened'
      STOP
   END IF
   DO i=1,ntlam
@@ -1543,7 +1543,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !----------------------------------------------------------------!
 
   !read in the WG00 dust model attenuation curves
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/alldirty_h.dat',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/alldirty_h.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   READ(99,*)
   READ(99,*)
@@ -1554,7 +1554,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      ENDDO
   ENDDO
   CLOSE(99)
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/alldirty_c.dat',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/alldirty_c.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   READ(99,*)
   READ(99,*)
@@ -1586,7 +1586,7 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !set up Gordon et al. (2003) SMC bar extinction curve
 
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/dust/Gordon03_table4.dat',&
+   OPEN(99,FILE=TRIM(SPS_HOME)//'/data/dust/Gordon03_table4.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
   DO i=1,30
      !the data are in reverse wavelength order
