@@ -22,3 +22,4 @@ lesssimple
 spec_bin
 generate_test_data
 test_runner
+test_fsps

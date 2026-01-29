@@ -24,6 +24,18 @@ Documentation
 ------
 See the [Manual](doc/MANUAL.pdf)
 
+## C Driver API
+
+FSPS ships a C driver intended for use by language bindings (e.g., Python-FSPS refactor or a Julia wrapper).
+
+- Header: include/fsps.h
+- Shared library: build/libfsps.so (build via `make shared`)
+- C driver test: `make test_c`
+
+For pkg-config users, a sample file is provided at fsps.pc (update `prefix` as needed).
+
+See [doc/FSPS_C_API.md](doc/FSPS_C_API.md) for the API reference, array layout, and error handling.
+
 Contents
 ---------
 Below is a brief description of the contents of the directories in the

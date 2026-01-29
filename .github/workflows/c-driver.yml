@@ -1,0 +1,31 @@
+name: C Driver Tests
+
+on:
+  push:
+    branches: [ master, feature/c-driver-api ]
+  pull_request:
+    branches: [ master, feature/c-driver-api ]
+
+jobs:
+  c-driver:
+    runs-on: ubuntu-latest
+    env:
+      SPS_HOME: ${{ github.workspace }}
+      FSPS_FULL_Z_TEST: 1, # Run full metallicity tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran gcc
+
+      - name: Build shared library and C test
+        run: |
+          make clean
+          make test_c
+
+      - name: Run C driver test
+        run: |
+          ./test_fsps

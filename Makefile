@@ -41,7 +41,8 @@ COMMON_NAMES = sps_vars.o sps_utils.o compsp.o csp_gen.o ssp_gen.o \
     smoothspec.o mod_gb.o add_nebular.o add_xrb.o write_isochrone.o \
     sfhstat.o linterp.o tsum.o add_agb_dust.o linterparr.o \
     ztinterp.o vacairconv.o igm_absorb.o get_lumdist.o attn_curve.o \
-    sfh_weight.o sfhlimit.o sfhinfo.o setup_tabular_sfh.o agn_dust.o
+    sfh_weight.o sfhlimit.o sfhinfo.o setup_tabular_sfh.o agn_dust.o \
+	fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 
@@ -49,7 +50,7 @@ COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 # Rules
 # ===================================
 
-.PHONY: all clean test
+.PHONY: all clean shared test test_c_driver test_c
 
 all: $(PROGS)
 
@@ -94,6 +95,11 @@ lesssimple: $(BUILD_DIR)/lesssimple.o $(COMMON_OBJS)
 spec_bin: $(BUILD_DIR)/spec_bin.o $(BUILD_DIR)/sps_vars.o
 	$(FC) $(FCFLAGS) -o $@ $^
 
+# --- Shared Library Target ---
+
+shared: $(COMMON_OBJS)
+	$(FC) $(FFLAGS) -shared -o $(BUILD_DIR)/libfsps.so $^
+
 # --- Test Targets ---
 
 generate_test_data: $(BUILD_DIR)/generate_test_data.o $(COMMON_OBJS)
@@ -104,8 +110,12 @@ test_runner: $(BUILD_DIR)/test_runner.o $(COMMON_OBJS)
 
 test: test_runner
 
+test_c_driver: shared
+	gcc -O3 -o test_fsps $(TEST_DIR)/test_c_driver.c -Iinclude -L$(BUILD_DIR) -lfsps -lgfortran -Wl,-rpath,$(BUILD_DIR)
+
+test_c: test_c_driver
+
 # --- Utilities ---
 
 clean:
-	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner
-
+	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_fsps
