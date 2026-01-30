@@ -4,12 +4,12 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !this routine includes a fudge factor (accessed by pset%igm_factor)
   !that allows the user to scale the IGM optical depth
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP
   USE sps_utils, ONLY : locate
   IMPLICIT NONE
 
-  REAL(SP), DIMENSION(nspec), INTENT(in) :: lam,spec
-  REAL(SP), DIMENSION(nspec) :: igm_absorb,lobs,xc,tau
+   REAL(SP), DIMENSION(:), INTENT(in) :: lam,spec
+   REAL(SP), DIMENSION(SIZE(lam)) :: igm_absorb,lobs,xc,tau
   REAL(SP), INTENT(in) :: zz,factor
   REAL(SP) :: z1,lylim,a_metal
   INTEGER, PARAMETER  :: nly=17
@@ -40,7 +40,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !Ly series line blanketing
   DO i=1,nly
      IF (lam(1).GT.lyw(i)) CONTINUE
-     vv = MIN(MAX(locate(lam,lyw(i)),1),nspec)
+   vv = MIN(MAX(locate(lam,lyw(i)),1),SIZE(lam))
      tau(1:vv) = tau(1:vv) + lycoeff(i) * &
           (lobs(1:vv)/lyw(i))**3.46
      !add metal blanketing (this has ~no effect)
@@ -51,7 +51,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
 
   !LyC absorption
   IF (lam(1).LT.lylim) THEN
-     vv = MIN(MAX(locate(lam,lylim),1),nspec)
+   vv = MIN(MAX(locate(lam,lylim),1),SIZE(lam))
      !approximation to Eqn 16 in Madau (1995); see his footnote 3
      tau(1:vv) = tau(1:vv) + &
           (0.25*xc(1:vv)**3*(z1**0.46-xc(1:vv)**0.46)) + &

@@ -11,16 +11,19 @@
 ! SFRs are clipped to a minimum value of 1e-30 to avoid divide by zero errors.
 
 
-subroutine setup_tabular_sfh(pset, nzin)
+subroutine setup_tabular_sfh(ctx, pset, nzin)
 
-  use sps_vars, only: sfh_tab, ntabsfh, ntabmax, nz, &
-                      tiny_number, tiny30, PARAMS, SPS_HOME
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: tiny_number, tiny30, PARAMS, ntabmax
   implicit none
+  type(fsps_context_t), intent(inout) :: ctx
   type(PARAMS), intent(in) :: pset
   integer, intent(in) :: nzin
   integer :: stat, n
 
-  IF (pset%sfh.EQ.2) THEN
+   ASSOCIATE(sfh_tab => ctx%state%sfh_tab, ntabsfh => ctx%state%ntabsfh, nz => ctx%state%nz)
+
+   IF (pset%sfh.EQ.2) THEN
 
      if (pset%sf_start.gt.tiny_number) then
         WRITE(*,*) 'COMPSP ERROR: Tabular sfh, but sf_start > 0'
@@ -29,9 +32,9 @@ subroutine setup_tabular_sfh(pset, nzin)
 
      ! Read the sfh file
      IF (TRIM(pset%sfh_filename).EQ.'') THEN
-        OPEN(3,FILE=TRIM(SPS_HOME)//'/data/sfh.dat',ACTION='READ',STATUS='OLD')
+      OPEN(3,FILE=TRIM(ctx%sps_home)//'/data/sfh.dat',ACTION='READ',STATUS='OLD')
      ELSE
-        OPEN(3,FILE=TRIM(SPS_HOME)//'/data/'//TRIM(pset%sfh_filename),&
+      OPEN(3,FILE=TRIM(ctx%sps_home)//'/data/'//TRIM(pset%sfh_filename),&
              ACTION='READ',STATUS='OLD')
      ENDIF
      DO n=1,ntabmax
@@ -69,6 +72,8 @@ subroutine setup_tabular_sfh(pset, nzin)
   ! clip SFR to a minimum of 1e-30
   do n=1, ntabsfh
      sfh_tab(2, n) = max(sfh_tab(2, n), tiny30)
-  enddo
+   enddo
+
+   END ASSOCIATE
 
 end subroutine setup_tabular_sfh

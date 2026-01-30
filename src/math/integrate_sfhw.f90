@@ -6,7 +6,7 @@
 ! functions below (and making sure the sfhlimits.f90 make sense)
 ! ------------------------------------
 
-function intsfwght(sspind, logt, sfh)
+function intsfwght(ctx, sspind, logt, sfh)
   ! Wrapper on the sfhint_* routines to choose the correct interpolation type
   ! and calculate the definite integral of the weighted SFR between the given
   ! limits.
@@ -31,25 +31,26 @@ function intsfwght(sspind, logt, sfh)
   !  intsfwght:
   !    The exact definite integral between the limits specified in `logt`.
   
-  use sps_vars, only: interpolation_type, SFHPARAMS, SP
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SFHPARAMS, SP
   implicit none
-  
+   type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
   real(SP), intent(in), dimension(2) :: logt
   type(SFHPARAMS), intent(in) :: sfh
 
   real(SP) :: intsfwght, sfwght_log, sfwght_lin
 
-  if (interpolation_type.eq.0) then
-     intsfwght =  sfwght_log(sspind, logt(2), sfh) - sfwght_log(sspind, logt(1), sfh)
-  else if (interpolation_type.eq.1) then
-     intsfwght = (sfwght_lin(sspind, 10**logt(2), sfh) - sfwght_lin(sspind, 10**logt(1), sfh))
+  if (ctx%interpolation_type_val.eq.0) then
+     intsfwght =  sfwght_log(ctx, sspind, logt(2), sfh) - sfwght_log(ctx, sspind, logt(1), sfh)
+  else if (ctx%interpolation_type_val.eq.1) then
+     intsfwght = (sfwght_lin(ctx, sspind, 10**logt(2), sfh) - sfwght_lin(ctx, sspind, 10**logt(1), sfh))
   endif
   
 end function intsfwght
    
 
-function sfwght_log(sspind, logt, sfh)
+function sfwght_log(ctx, sspind, logt, sfh)
   ! Evaluates the indefinite integral of the interpolation weight in log time,
   ! weighted by the SFH, and evaluated at `logt`.  In detail, this function
   ! returns:
@@ -75,22 +76,25 @@ function sfwght_log(sspind, logt, sfh)
   !  sfwght_log:
   !    The exact indefinite integral, evaluated at `logt`.  Scalar float.
   
-  use sps_vars, only: time_full, tiny_logt, SFHPARAMS, SP
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SFHPARAMS, SP
   implicit none
-  
+   type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
   real(SP), intent(in) :: logt
   type(SFHPARAMS), intent(in) :: sfh
 
   real(SP) :: sfwght_log
+   real(SP), external :: ei
 
-  real(SP) :: loge, ei
+   real(SP) :: loge
   real(SP) :: logage, tprime ! intermediate time variables
   real(SP) :: a, b, c ! dummy variables used to break up long expressions
 
   REAL(SP), PARAMETER :: e=2.7182818284590452353602874713526624977572_sp
   loge = log10(e)
 
+  ASSOCIATE(time_full => ctx%state%time_full, tiny_logt => ctx%tiny_logt_val)
   ! Zero index means use ~0 age.
   if (sspind.gt.0) then
      logage = time_full(sspind)
@@ -123,12 +127,13 @@ function sfwght_log(sspind, logt, sfh)
      c = sfh%sf_slope * (10**logt)**2 / 2 * (logage - logt + loge / 2)
      sfwght_log = b + c
      
-  endif
+   endif
+   END ASSOCIATE
   
 end function sfwght_log
 
 
-function sfwght_lin(sspind, t, sfh)
+function sfwght_lin(ctx, sspind, t, sfh)
   ! Evaluates the indefinite integral of the interpolation weight in linear
   ! time, weighted by the SFH, and evaluated at `logt`.  In detail, this
   ! function returns:
@@ -154,9 +159,10 @@ function sfwght_lin(sspind, t, sfh)
   !  sfwght_lin:
   !    The indefinite integral, evaluated at `t`
 
-  use sps_vars, only: time_full, tiny_logt, SFHPARAMS, SP
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SFHPARAMS, SP
   implicit none
-  
+   type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind 
   real(SP), intent(in) :: t
   type(SFHPARAMS), intent(in) :: sfh
@@ -166,6 +172,7 @@ function sfwght_lin(sspind, t, sfh)
   real(SP) :: age, tprime
   real(SP) :: a
 
+  ASSOCIATE(time_full => ctx%state%time_full, tiny_logt => ctx%tiny_logt_val)
   ! Convert from log(age_ssp) to age_ssp,
   ! accounting for the case sspind=0 (where age~0)
   if (sspind.gt.0) then
@@ -196,7 +203,8 @@ function sfwght_lin(sspind, t, sfh)
      a = 1 - sfh%sf_slope * tprime
      sfwght_lin = a * age * t + (sfh%sf_slope*age - a) * t**2 / 2 - sfh%sf_slope * t**3 / 3
 
-  endif
+   endif
+   END ASSOCIATE
 
 end function sfwght_lin
 
@@ -215,8 +223,8 @@ FUNCTION EI(X)
 !
 !       ============================================
 !
-  implicit none
-  INTEGER, PARAMETER :: SP = KIND(1.d0)
+   use fsps_types, only: SP
+   implicit none
   REAL(SP) :: X, EI
 
   INTEGER :: K, MAXIT=1000

@@ -50,7 +50,7 @@ PROGS = simple lesssimple autosps spec_bin
 
 # The common object files required by the programs
 # We wrap them in addprefix to place them inside the build directory
-COMMON_NAMES = sps_vars.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o ssp_gen.o \
+COMMON_NAMES = fsps_types.o sps_vars.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o ssp_gen.o \
 	fsps_context.o \
 	spec_mags.o interp_locate.o integrate_funcint.o sps_setup.o cosmo_pz_convol.o \
 	cosmo_tuniv.o integrate_sfhw.o imf.o imf_weight.o dust_add.o \
@@ -90,6 +90,8 @@ $(BUILD_DIR)/%.o: %.f90 | $(BUILD_DIR)
 # Specific dependencies to enforce compilation order
 
 # Module dependency ordering
+$(BUILD_DIR)/sps_vars.o: $(BUILD_DIR)/fsps_types.o
+
 $(BUILD_DIR)/fsps_cache.o: $(BUILD_DIR)/sps_vars.o
 
 $(BUILD_DIR)/fsps_context_types.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o
@@ -98,10 +100,10 @@ $(BUILD_DIR)/fsps_context_types.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cac
 $(BUILD_DIR)/sps_utils.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o $(BUILD_DIR)/fsps_context_types.o
 
 # All other common objects depend on vars, cache, utils, and context types.
-REST_OF_COMMON = $(filter-out $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
+REST_OF_COMMON = $(filter-out $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
 	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o, $(COMMON_OBJS))
 
-$(REST_OF_COMMON): $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
+$(REST_OF_COMMON): $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
 	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o
 
 # Main program objects also wait for modules

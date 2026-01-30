@@ -2,12 +2,12 @@ FUNCTION INTIND(lam,func,lo,hi)
 
   !perform integral over spectrum for index computation
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP
   USE sps_utils, ONLY : tsum, locate
   IMPLICIT NONE
 
-  INTEGER :: l1,l2,i
-  REAL(SP), INTENT(in), DIMENSION(nspec) :: lam, func
+   INTEGER :: l1,l2
+   REAL(SP), INTENT(in), DIMENSION(:) :: lam, func
   REAL(SP), INTENT(in) :: lo,hi
   REAL(SP) :: f1,f2,intind
 
@@ -15,8 +15,8 @@ FUNCTION INTIND(lam,func,lo,hi)
   !---------------------------------------------------------------!
 
   !take care of the ends
-  l1 = MAX(MIN(locate(lam,lo),nspec-1),1)
-  l2 = MAX(MIN(locate(lam,hi),nspec-1),2)
+   l1 = MAX(MIN(locate(lam,lo),SIZE(lam)-1),1)
+   l2 = MAX(MIN(locate(lam,hi),SIZE(lam)-1),2)
   f1 = (func(l1+1)-func(l1))/(lam(l1+1)-lam(l1))*&
        (lo-lam(l1))+func(l1)
   f2 = (func(l2+1)-func(l2))/(lam(l2+1)-lam(l2))*&
@@ -42,15 +42,15 @@ SUBROUTINE GETINDX(ctx, lambda, spec, indices)
   !indices are defined in fsps/data/allindices.dat
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP
   USE sps_utils, ONLY : intind, locate
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER :: j
-  REAL(SP), INTENT(in), DIMENSION(nspec) :: spec,lambda
-  REAL(SP), INTENT(inout), DIMENSION(nindx) :: indices
+   REAL(SP), INTENT(in), DIMENSION(:) :: spec,lambda
+   REAL(SP), INTENT(inout), DIMENSION(:) :: indices
   REAL(SP) :: intfifc,cb,cr,lr,lb
 
   !---------------------------------------------------------------!
@@ -106,7 +106,7 @@ SUBROUTINE GETINDX(ctx, lambda, spec, indices)
      ENDIF
 
      !set dummy values for indices defined off of the wavelength grid
-     IF (indexdefined(6,j).GT.lambda(nspec)) indices(j) = 999.0
+   IF (indexdefined(6,j).GT.lambda(SIZE(lambda))) indices(j) = 999.0
      IF (indexdefined(3,j).LT.lambda(1)) indices(j) = 999.0
 
    ENDDO

@@ -7,17 +7,19 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   ! This subroutine is a major bottleneck.  The spectra must be
   ! recomputed each time the IMF or isochrone parameters change.
 
-   USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
-  USE sps_utils, ONLY: locate
+      USE fsps_context_types, ONLY: fsps_context_t
+      USE fsps_types, ONLY: SP, PARAMS, tiny_number, tiny30, verbose, clight, mypi, msun, newton, yr2sc, lsun, gsig4pi, &
+         cstar_aringer, n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
+         ndim_logt, ndim_logg
+   USE sps_utils, ONLY: locate, add_agb_dust
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
   TYPE(PARAMS), INTENT(in) :: pset
-  REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec  
-  REAL(SP), DIMENSION(nspec) :: ispec
-  REAL(SP) :: t,u,r2,test1,test2,test3,test4,loggi,teffi,rwr,twr,logt_cut
+   REAL(SP), INTENT(inout), DIMENSION(:) :: spec  
+   REAL(SP), DIMENSION(SIZE(spec)) :: ispec
+   REAL(SP) :: t,u,r2,test1,test2,test3,test4,loggi,rwr,twr,logt_cut
   INTEGER  :: klo,jlo,flag
 
   !---------------------------------------------------------------!

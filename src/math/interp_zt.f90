@@ -1,24 +1,36 @@
-SUBROUTINE ZTINTERP(zpos,spec,lbol,mass,tpos,zpow)
+SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
 
   !Linearly interpolate a grid of SSPs with the following options:
   !1) single metallicity (zpos) for a single age (tpos)
   !2) integrate over an MDF (zpos,zpow) for a grid of ages
   !3) single metallicity (zpos) for a grid of ages
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP
   USE sps_utils, ONLY : locate, tsum
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
   REAL(SP),INTENT(in) :: zpos
   REAL(SP),INTENT(in), OPTIONAL :: tpos,zpow
   REAL(SP),INTENT(inout),DIMENSION(:) :: mass, lbol
   REAL(SP),INTENT(inout),DIMENSION(:,:) :: spec
-  INTEGER  :: zlo,zhi,tlo,i
-  REAL(SP) :: dz,dt,z0,imdf,w1=0.25,w2=0.5,w3=0.25
-  REAL(SP), DIMENSION(nz) :: mdf
+   INTEGER  :: zlo,zhi,tlo,i
+    REAL(SP) :: dz,dt,z0,w1=0.25,w2=0.5,w3=0.25
+    REAL(SP), ALLOCATABLE :: mdf(:)
 
   !------------------------------------------------------------!
 
+
+  ASSOCIATE( &
+     nz => ctx%state%nz, nspec => ctx%state%nspec, ntfull => ctx%state%ntfull, &
+     zlegend => ctx%state%zlegend, zsol => ctx%state%zsol, &
+     time_full => ctx%state%time_full, &
+     mass_ssp_zz => ctx%state%mass_ssp_zz, &
+     lbol_ssp_zz => ctx%state%lbol_ssp_zz, &
+     spec_ssp_zz => ctx%state%spec_ssp_zz )
+
+   allocate(mdf(nz))
 
   !interpolate to a single metallicity and a single time
   IF (PRESENT(tpos)) THEN
@@ -115,7 +127,9 @@ SUBROUTINE ZTINTERP(zpos,spec,lbol,mass,tpos,zpow)
      
      ENDIF
 
-  ENDIF
+   ENDIF
+
+   END ASSOCIATE
 
 
 END SUBROUTINE ZTINTERP

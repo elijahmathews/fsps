@@ -1,4 +1,4 @@
-FUNCTION IMF(mass)
+FUNCTION IMF(ctx, mass)
 
   !define IMFs (dn/dM)
 
@@ -6,9 +6,11 @@ FUNCTION IMF(mass)
   !if the imf_type var is +10 then we calculate dn/dm*m
   !if the imf_type var is <10 then we calculate dn/dm
   
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP, chab_mc, chab_sigma2, chab_ind, vd_sigma2, vd_ah, vd_ind, vd_al, vd_nc
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
   REAL(SP), DIMENSION(:), INTENT(in) :: mass
   REAL(SP), DIMENSION(SIZE(mass)) :: imf
   INTEGER :: i,n
@@ -18,6 +20,15 @@ FUNCTION IMF(mass)
   !---------------------------------------------------------------!
  
   imf = 0.0
+
+  ASSOCIATE( &
+     imf_type => ctx%imf_type_val, &
+     salp_ind => ctx%state%salp_ind, &
+     imf_alpha => ctx%state%imf_alpha, &
+     imf_vdmc => ctx%state%imf_vdmc, &
+     imf_mdave => ctx%state%imf_mdave, &
+     n_user_imf => ctx%state%n_user_imf, &
+     imf_user_alpha => ctx%state%imf_user_alpha )
 
   !Salpeter (1955) IMF
   IF (MOD(imf_type,10).EQ.0) THEN
@@ -39,7 +50,7 @@ FUNCTION IMF(mass)
      !convert from dn/dlnM to dn/dM
      imf = imf/mass
      IF (imf_type.EQ.11) imf = mass*imf
-  ENDIF
+   ENDIF
   
   !Kroupa (2001) IMF
   IF (MOD(imf_type,10).EQ.2) THEN
@@ -54,7 +65,7 @@ FUNCTION IMF(mass)
              mass(i)**(-imf_alpha(3))
      ENDDO
      IF (imf_type.EQ.12) imf = mass*imf
-  ENDIF
+   ENDIF
   
   !van Dokkum (2008) IMF
   IF (MOD(imf_type,10).EQ.3) THEN
@@ -70,7 +81,7 @@ FUNCTION IMF(mass)
      !convert from dn/dlnM to dn/dM
      imf = imf/mass
      IF (imf_type.EQ.13) imf = mass*imf
-  ENDIF
+   ENDIF
   
   !Dave (2008) IMF
   IF (MOD(imf_type,10).EQ.4) THEN
@@ -82,7 +93,7 @@ FUNCTION IMF(mass)
              mass(i)**(-imf_alpha(2))
      ENDDO
      IF (imf_type.EQ.14) imf = mass*imf
-  ENDIF
+   ENDIF
 
   !user-defined IMF
   IF (MOD(imf_type,10).EQ.5) THEN
@@ -102,6 +113,8 @@ FUNCTION IMF(mass)
         ENDDO
      ENDDO
      IF (imf_type.EQ.15) imf = mass*imf
-  ENDIF
+   ENDIF
+
+   END ASSOCIATE
 
 END FUNCTION IMF

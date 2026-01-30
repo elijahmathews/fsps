@@ -17,17 +17,17 @@ SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
   !sets the turn-on time for this modification
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, nm, gsig4pi
   USE sps_utils, ONLY : linterp
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-  REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
+  REAL(SP), INTENT(inout), DIMENSION(:,:) :: mini,mact,&
        logl,logt,logg,phase
   REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
   REAL(SP), INTENT(in) :: hb_wght, s_bs
   INTEGER, INTENT(in)  :: t
-  INTEGER, INTENT(inout), DIMENSION(nt) :: nmass
+  INTEGER, INTENT(inout), DIMENSION(:) :: nmass
   INTEGER, PARAMETER :: nbs = 20 !Number of BS stars to add
   !weight given to total BS population
   REAL(SP) :: bs_wght=0.

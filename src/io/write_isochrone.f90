@@ -5,7 +5,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   !by the parameter time_res_incr
 
      USE fsps_context_types, ONLY: fsps_context_t
-     USE sps_vars
+     USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time, gsig4pi
   USE sps_utils, ONLY : getmags,getspec,imf_weight,mod_hb,mod_gb,add_bs
   IMPLICIT NONE
 
@@ -15,19 +15,19 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   CHARACTER(100), INTENT(in)  :: outfile
   CHARACTER(60)  :: fmt
   REAL(SP) :: dz=0.0,loggi,hb_wght
-  REAL(SP), DIMENSION(nspec)  :: spec
   REAL(SP), DIMENSION(nm)     :: wght
-  REAL(SP), DIMENSION(nbands) :: mags
+  REAL(SP), ALLOCATABLE :: spec(:)
+  REAL(SP), ALLOCATABLE :: mags(:)
   !temp arrays for the isochrone data
-  REAL(SP), DIMENSION(nt,nm)  :: mini,mact,logl,logt,logg,&
-       ffco,phase,lmdot
-  INTEGER, DIMENSION(nt)      :: nmass
+  REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
+       ffco(:,:),phase(:,:),lmdot(:,:)
+  INTEGER, ALLOCATABLE :: nmass(:)
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
 
   ASSOCIATE( &
-       nbands => ctx%state%nbands, &
+       nbands => ctx%state%nbands, nspec => ctx%state%nspec, nt => ctx%state%nt, &
        OUTPUT_HOME => ctx%output_home, &
        isoc_type => ctx%state%isoc_type, &
        mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
@@ -36,6 +36,12 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
        lmdot_isoc => ctx%state%lmdot_isoc, phase_isoc => ctx%state%phase_isoc, &
        nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc, &
        zlegend => ctx%state%zlegend, mact_isoc_full => ctx%state%mact_isoc )
+
+  ALLOCATE(spec(nspec))
+  ALLOCATE(mags(nbands))
+  ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
+  ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+  ALLOCATE(nmass(nt))
 
   hb_wght = 0.0
   wght    = 0.0

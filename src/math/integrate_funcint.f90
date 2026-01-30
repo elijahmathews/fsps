@@ -1,6 +1,6 @@
 FUNCTION MYARTH(first,increment,n)
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP
   IMPLICIT NONE
   REAL(SP), INTENT(IN) :: first,increment
   INTEGER, INTENT(IN) :: n
@@ -34,23 +34,23 @@ END FUNCTION MYARTH
 !---------------------------------------------------------------!
 !---------------------------------------------------------------!
 
-SUBROUTINE MYTRAPZD(func,a,b,s,n)
+SUBROUTINE MYTRAPZD(func, a, b, s, n)
 
-  USE sps_vars
-  IMPLICIT NONE
+   USE fsps_types, ONLY: SP
+   IMPLICIT NONE
   REAL(SP), INTENT(IN) :: a,b
   REAL(SP), INTENT(INOUT) :: s
   INTEGER, INTENT(IN) :: n
   INTERFACE
-     FUNCTION func(x)
-       USE sps_vars
+       FUNCTION func(x)
+             USE fsps_types, ONLY: SP
        REAL(SP), DIMENSION(:), INTENT(IN) :: x
        REAL(SP), DIMENSION(SIZE(x)) :: func
      END FUNCTION func
   END INTERFACE
   INTERFACE
      FUNCTION myarth(first,increment,n)
-       USE sps_vars
+          USE fsps_types, ONLY: SP
        REAL(SP), INTENT(IN) :: first,increment
        INTEGER, INTENT(IN) :: n
        REAL(SP), DIMENSION(n) :: myarth
@@ -75,7 +75,7 @@ END SUBROUTINE MYTRAPZD
 
 SUBROUTINE MYPOLINT(xa,ya,x,y,dy)
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP
   IMPLICIT NONE
   REAL(SP), DIMENSION(:), INTENT(IN) :: xa,ya
   REAL(SP), INTENT(IN) :: x
@@ -114,22 +114,22 @@ END SUBROUTINE MYPOLINT
 !---------------------------------------------------------------!
 !---------------------------------------------------------------!
 
-FUNCTION FUNCINT(func,a,b)
+FUNCTION FUNCINT(func, a, b)
 
-  USE sps_vars
-  IMPLICIT NONE
+   USE fsps_types, ONLY: SP
+   IMPLICIT NONE
   REAL(SP), INTENT(IN) :: a,b
   REAL(SP) :: funcint
   INTERFACE
-     FUNCTION func(x)
-       USE sps_vars
+       FUNCTION func(x)
+             USE fsps_types, ONLY: SP
        REAL(SP), DIMENSION(:), INTENT(IN) :: x
        REAL(SP), DIMENSION(size(x)) :: func
      END FUNCTION func
   END INTERFACE
   INTERFACE 
      SUBROUTINE MYPOLINT(xa,ya,x,y,dy)
-       USE sps_vars
+          USE fsps_types, ONLY: SP
        REAL(SP), DIMENSION(:), INTENT(IN) :: xa,ya
        REAL(SP), INTENT(IN) :: x
        REAL(SP), INTENT(OUT) :: y,dy
@@ -143,7 +143,7 @@ FUNCTION FUNCINT(func,a,b)
 
   h(1)=1.0
   DO j=1,JMAX
-     CALL mytrapzd(func,a,b,s(j),j)
+   CALL mytrapzd(func, a, b, s(j), j)
      IF (j >= K) THEN
         CALL mypolint(h(j-KM:j),s(j-KM:j),zero,funcint,dqromb)
         IF (abs(dqromb) <= EPS*ABS(funcint)) RETURN
@@ -155,5 +155,116 @@ FUNCTION FUNCINT(func,a,b)
   WRITE(*,*) 'FUNCINT ERROR:',a,b
 
 END FUNCTION FUNCINT
+
+!---------------------------------------------------------------!
+!---------------------------------------------------------------!
+
+SUBROUTINE MYTRAPZD_CTX(ctx, func, a, b, s, n)
+
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP
+   IMPLICIT NONE
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
+   REAL(SP), INTENT(IN) :: a,b
+   REAL(SP), INTENT(INOUT) :: s
+   INTEGER, INTENT(IN) :: n
+   INTERFACE
+       FUNCTION func(ctx, x)
+             USE fsps_context_types, ONLY: fsps_context_t
+             USE fsps_types, ONLY: SP
+             TYPE(fsps_context_t), INTENT(IN) :: ctx
+             REAL(SP), DIMENSION(:), INTENT(IN) :: x
+             REAL(SP), DIMENSION(SIZE(x)) :: func
+       END FUNCTION func
+   END INTERFACE
+   INTERFACE
+      FUNCTION myarth(first,increment,n)
+          USE fsps_types, ONLY: SP
+       REAL(SP), INTENT(IN) :: first,increment
+       INTEGER, INTENT(IN) :: n
+       REAL(SP), DIMENSION(n) :: myarth
+     END FUNCTION myarth
+   END INTERFACE
+   REAL(SP) :: del,fsum
+   INTEGER :: it
+
+  IF (n == 1) THEN
+     s=0.5*(b-a)*SUM(func(ctx, (/ a,b /) ))
+  ELSE
+     it=2**(n-2)
+     del=(b-a)/it
+     fsum=SUM(func(ctx, myarth(a+0.5*del,del,it)))
+     s=0.5*(s+del*fsum)
+  ENDIF
+
+END SUBROUTINE MYTRAPZD_CTX
+
+!---------------------------------------------------------------!
+!---------------------------------------------------------------!
+
+FUNCTION FUNCINT_CTX(ctx, func, a, b)
+
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP
+   IMPLICIT NONE
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
+   REAL(SP), INTENT(IN) :: a,b
+   REAL(SP) :: funcint_ctx
+   INTERFACE
+       FUNCTION func(ctx, x)
+             USE fsps_context_types, ONLY: fsps_context_t
+             USE fsps_types, ONLY: SP
+             TYPE(fsps_context_t), INTENT(IN) :: ctx
+             REAL(SP), DIMENSION(:), INTENT(IN) :: x
+             REAL(SP), DIMENSION(SIZE(x)) :: func
+     END FUNCTION func
+  END INTERFACE
+  INTERFACE 
+     SUBROUTINE MYPOLINT(xa,ya,x,y,dy)
+          USE fsps_types, ONLY: SP
+       REAL(SP), DIMENSION(:), INTENT(IN) :: xa,ya
+       REAL(SP), INTENT(IN) :: x
+       REAL(SP), INTENT(OUT) :: y,dy
+     END SUBROUTINE MYPOLINT
+  END INTERFACE
+  INTERFACE
+     SUBROUTINE MYTRAPZD_CTX(ctx, func, a, b, s, n)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE fsps_types, ONLY: SP
+       TYPE(fsps_context_t), INTENT(IN) :: ctx
+       REAL(SP), INTENT(IN) :: a,b
+       REAL(SP), INTENT(INOUT) :: s
+       INTEGER, INTENT(IN) :: n
+       INTERFACE
+          FUNCTION func(ctx, x)
+             USE fsps_context_types, ONLY: fsps_context_t
+             USE fsps_types, ONLY: SP
+             TYPE(fsps_context_t), INTENT(IN) :: ctx
+             REAL(SP), DIMENSION(:), INTENT(IN) :: x
+             REAL(SP), DIMENSION(SIZE(x)) :: func
+          END FUNCTION func
+       END INTERFACE
+     END SUBROUTINE MYTRAPZD_CTX
+  END INTERFACE
+  INTEGER, PARAMETER :: JMAX=20,JMAXP=JMAX+1,K=5,KM=K-1
+  REAL(SP), PARAMETER :: EPS=1.0e-7
+  REAL(SP), DIMENSION(JMAXP) :: h,s
+  REAL(SP) :: dqromb,zero=0.0
+  INTEGER :: j
+
+  h(1)=1.0
+  DO j=1,JMAX
+   CALL mytrapzd_ctx(ctx, func, a, b, s(j), j)
+     IF (j >= K) THEN
+        CALL mypolint(h(j-KM:j),s(j-KM:j),zero,funcint_ctx,dqromb)
+        IF (abs(dqromb) <= EPS*ABS(funcint_ctx)) RETURN
+     ENDIF
+     s(j+1)=s(j)
+     h(j+1)=0.25*h(j)
+  ENDDO
+
+  WRITE(*,*) 'FUNCINT_CTX ERROR:',a,b
+
+END FUNCTION FUNCINT_CTX
 
 

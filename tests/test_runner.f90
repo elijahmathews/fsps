@@ -5,11 +5,10 @@ PROGRAM TEST_RUNNER
   ! parameters, and compares outputs with a relative tolerance.
 
   USE, INTRINSIC :: IEEE_ARITHMETIC
-   USE sps_vars
-   USE sps_utils
+      USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
+      USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
-         USE fsps_context, ONLY: fsps_context_create, fsps_context_sync_from_globals, &
-            fsps_context_set_pset, fsps_context_apply_globals
+         USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
   IMPLICIT NONE
 
   ! Exit codes
@@ -160,7 +159,7 @@ PROGRAM TEST_RUNNER
   ! file header before we know if dimensions match.
   
    CALL fsps_context_create(ctx)
-   imf_type = 1
+   ctx%imf_type_val = 1
    pset%zmet = 10
   
   WRITE(*,*) 'Initializing FSPS...'
@@ -257,9 +256,7 @@ PROGRAM TEST_RUNNER
   pset%zred  = 0.0
   pset%dust1 = 0.0
   pset%dust2 = 0.0
-   add_neb_emission = 1
-   CALL fsps_context_sync_from_globals(ctx)
-   CALL fsps_context_apply_globals(ctx)
+   ctx%add_neb_emission_val = 1
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE SSP_GEN (SSP)', ctx, pset)
    CALL SSP_GEN(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
@@ -271,7 +268,6 @@ PROGRAM TEST_RUNNER
   pset%tau   = 2.0   
   pset%dust1 = 1.0   
   pset%dust2 = 0.3
-   CALL fsps_context_sync_from_globals(ctx)
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE SSP_GEN (CSP)', ctx, pset)
    CALL SSP_GEN(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
@@ -531,11 +527,11 @@ CONTAINS
       TYPE(fsps_context_t), INTENT(IN) :: ctx
       TYPE(PARAMS), INTENT(IN) :: pset
       WRITE(*,*) '--- STATE:', TRIM(label)
-      WRITE(*,*) '  imf_type=', imf_type, ' ctx_imf_type=', ctx%imf_type_val
-      WRITE(*,*) '  imf_lower_limit=', imf_lower_limit, ' imf_upper_limit=', imf_upper_limit
-      WRITE(*,*) '  dust_type=', dust_type, ' add_dust_emission=', add_dust_emission
-      WRITE(*,*) '  add_neb_emission=', add_neb_emission, ' nebemlineinspec=', nebemlineinspec
-      WRITE(*,*) '  interpolation_type=', interpolation_type, ' tiny_logt=', tiny_logt
+      WRITE(*,*) '  imf_type=', ctx%imf_type_val
+      WRITE(*,*) '  imf_lower_limit=', ctx%state%imf_lower_limit, ' imf_upper_limit=', ctx%state%imf_upper_limit
+      WRITE(*,*) '  dust_type=', ctx%dust_type_val, ' add_dust_emission=', ctx%add_dust_emission_val
+      WRITE(*,*) '  add_neb_emission=', ctx%add_neb_emission_val, ' nebemlineinspec=', ctx%nebemlineinspec_val
+      WRITE(*,*) '  interpolation_type=', ctx%interpolation_type_val, ' tiny_logt=', ctx%tiny_logt_val
       WRITE(*,*) '  pset: sfh=', pset%sfh, ' tau=', pset%tau, ' const=', pset%const, ' fburst=', pset%fburst
       WRITE(*,*) '  pset: sf_start=', pset%sf_start, ' sf_trunc=', pset%sf_trunc, ' tburst=', pset%tburst
       WRITE(*,*) '  pset: dust1=', pset%dust1, ' dust2=', pset%dust2, ' zred=', pset%zred

@@ -8,19 +8,19 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
   !smoothed by a wavelength dependent velocity dispersion.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, tiny_number, clight, mypi
   USE sps_utils, ONLY : locate,linterp,tsum,linterparr
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   
-  REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec
-  REAL(SP), INTENT(in), DIMENSION(nspec)    :: lambda
-  REAL(SP), INTENT(in), DIMENSION(nspec), OPTIONAL :: ires
+   REAL(SP), INTENT(inout), DIMENSION(:) :: spec
+   REAL(SP), INTENT(in), DIMENSION(:)    :: lambda
+   REAL(SP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
   REAL(SP), INTENT(in) :: sigma,minl,maxl
-  REAL(SP), DIMENSION(nspec) :: tspec,tnspec,vel,func,gauss,psf,lnlam
-  REAL(SP) :: ckms,cg,xmax,xmin,fwhm,psig,dlstep,sigmal
-  INTEGER :: i,j,il,ih,m=4,grange
+    REAL(SP), DIMENSION(SIZE(lambda)) :: tspec,tnspec,vel,func,psf,lnlam
+   REAL(SP) :: ckms,xmax,fwhm,psig,dlstep,sigmal
+    INTEGER :: i,il,ih,m=4,grange,n
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -31,7 +31,8 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
 
   IF (sigma.LE.tiny_number) RETURN
 
-  ckms = clight/1E13
+   n = SIZE(lambda)
+   ckms = clight/1E13
 
   tspec = spec
 
@@ -43,7 +44,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
         
         spec = 0.0
 
-        DO i=1,nspec
+      DO i=1,n
            
            IF (lambda(i).LT.minl.OR.lambda(i).GT.maxl) THEN
               spec(i)=tspec(i)
@@ -61,7 +62,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
            ENDIF
 
            xmax = lambda(i)*(m*sigmal/ckms+1)
-           ih   = MIN(locate(lambda(1:nspec),xmax),nspec)
+           ih   = MIN(locate(lambda(1:n),xmax),n)
            il   = MAX(2*i-ih,1)
            
            IF (il.EQ.ih) THEN
@@ -82,23 +83,23 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
      !min/max wavelength parameters through the density of the lnlam grid
      ELSE
         
-        dlstep = (LOG(maxl)-LOG(minl))/nspec
-        DO i=1,nspec
+        dlstep = (LOG(maxl)-LOG(minl))/n
+        DO i=1,n
            lnlam(i) = i*dlstep+LOG(minl)
         ENDDO
         
-        tspec = linterparr(LOG(lambda(1:nspec)),spec(1:nspec),lnlam)
+        tspec = linterparr(LOG(lambda(1:n)),spec(1:n),lnlam)
         
         fwhm   = sigma*2.35482/ckms/dlstep
         psig   = fwhm/2.0/SQRT(-2.0*LOG(0.5)) ! equivalent sigma for kernel
-        grange = FLOOR(m*psig)	              ! range for kernel (-range:range)
+      grange = FLOOR(m*psig)  ! range for kernel (-range:range)
         
         DO i=1,2*grange+1
            psf(i) = 1.d0/SQRT(2.*mypi)/psig*EXP(-((i-grange-1)/psig)**2/2.)
         ENDDO
         psf(1:2*grange+1) = psf(1:2*grange+1) / SUM(psf(1:2*grange+1))
         
-        DO i=grange+1,nspec-grange
+        DO i=grange+1,n-grange
            tnspec(i) = SUM( psf(1:2*grange+1)*tspec(i-grange:i+grange) )
         ENDDO
         
@@ -106,7 +107,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
         DO i=1,grange
            tnspec(i)=tspec(i)
         ENDDO
-        DO i=nspec-grange+1,nspec
+        DO i=n-grange+1,n
            tnspec(i)=tspec(i)
         ENDDO
         
@@ -120,7 +121,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
   !convolve at fixed sigma_wavelength
   ELSE
      
-     DO i=1,nspec
+   DO i=1,n
 
         IF (lambda(i).LT.minl.OR.lambda(i).GT.maxl) THEN
            spec(i)=tspec(i)
@@ -128,7 +129,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
         ENDIF
 
         xmax = lambda(i)*(m*sigma+1)
-        ih   = MIN(locate(lambda(1:nspec),xmax),nspec)
+      ih   = MIN(locate(lambda(1:n),xmax),n)
         il   = MAX(2*i-ih,1)
 
         IF (il.EQ.ih) THEN
@@ -142,7 +143,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
         ENDIF
 
         !gauss = 1/SQRT(2*mypi)/sigma*EXP(-(lambda-lambda(i))**2/2/sigma**2)
-        !DO j=1,nspec
+      !DO j=1,n
         !   spec(i) = spec(i) + gauss(j)*tspec(j)
         !ENDDO
  

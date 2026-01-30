@@ -1,5 +1,5 @@
 MODULE FSPS_CONTEXT_TYPES
-  USE sps_vars, ONLY: SP, PARAMS, COMPSPOUT, TLSF, OBSDAT, &
+  USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, TLSF, OBSDAT, &
        ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
        n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
        nemline, nebnz, nebnage, nebnip, nagndust, ntabmax

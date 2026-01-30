@@ -5,32 +5,44 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
   !
   !N.B. variables not otherwise defined come from sps_vars.f90
    use fsps_context_types, ONLY: fsps_context_t
-   use sps_vars
+   use fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline, tiny_number
   use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
                        csp_gen, sfhinfo, linterp, agn_dust, &
                        smoothspec, igm_absorb, getindx, getmags
+     IMPLICIT NONE
 
-  implicit none
-
+     INTERFACE
+        SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
+             lbol,sfr,mags,spec,mdust,mformed,indx,emlines)
+          USE fsps_types, ONLY: SP, COMPSPOUT, nemline
+          INTEGER, INTENT(in) :: write_compsp
+          REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
+          REAL(SP), DIMENSION(:), INTENT(in)    :: spec
+          REAL(SP), DIMENSION(:), INTENT(in)   :: mags
+          REAL(SP), DIMENSION(:), INTENT(in)    :: indx
+          REAL(SP), DIMENSION(nemline), INTENT(in)  :: emlines
+          TYPE(COMPSPOUT), INTENT(inout) :: cspo
+        END SUBROUTINE SAVE_COMPSP
+     END INTERFACE
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER, INTENT(in) :: write_compsp,nzin
   CHARACTER(100), INTENT(in) :: outfile
-  REAL(SP), INTENT(in), DIMENSION(ntfull, nzin) :: lbol_ssp,mass_ssp
-  REAL(SP), INTENT(in), DIMENSION(nspec, ntfull, nzin) :: tspec_ssp
+  REAL(SP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
+  REAL(SP), INTENT(in), DIMENSION(:,:,:) :: tspec_ssp
   TYPE(PARAMS), intent(in) :: pset
 
-  TYPE(COMPSPOUT), INTENT(inout), DIMENSION(ntfull) :: ocompsp
+  TYPE(COMPSPOUT), INTENT(inout), DIMENSION(:) :: ocompsp
 
-  REAL(SP), DIMENSION(nspec, ntfull, nzin)   :: spec_ssp
-  REAL(SP), DIMENSION(nemline, ntfull, nzin) :: emlin_ssp
+   REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
+   REAL(SP), ALLOCATABLE :: emlin_ssp(:,:,:)
   REAL(SP), DIMENSION(nemline) :: emlin_csp
   REAL(SP) :: lbol_csp, mass_csp, mdust_csp
   REAL(SP) :: age, mass_frac, tsfr, zred, frac_linear, maxtime
-  REAL(SP), DIMENSION(nspec) :: spec_csp
-  REAL(SP), DIMENSION(nbands)  :: mags
-  REAL(SP), DIMENSION(nindx)   :: indx
-  INTEGER :: i, nage
+   REAL(SP), ALLOCATABLE :: spec_csp(:)
+   REAL(SP), ALLOCATABLE :: mags(:)
+   REAL(SP), ALLOCATABLE :: indx(:)
+   INTEGER :: i, nage
 
   ! ------ Various checks and setup ------
 
@@ -46,6 +58,12 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      add_agn_dust => ctx%add_agn_dust_val, &
      redshift_colors => ctx%redshift_colors_val )
 
+   ALLOCATE(spec_ssp(nspec, ntfull, nzin))
+   ALLOCATE(emlin_ssp(nemline, ntfull, nzin))
+   ALLOCATE(spec_csp(nspec))
+   ALLOCATE(mags(nbands))
+   ALLOCATE(indx(nindx))
+
   IF (check_sps_setup.EQ.0) THEN
      WRITE(*,*) 'COMPSP ERROR: '//&
           'SPS_SETUP must be run before calling COMPSP. '
@@ -58,7 +76,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      STOP
   ENDIF
 
-  call setup_tabular_sfh(pset, nzin)
+   call setup_tabular_sfh(ctx, pset, nzin)
 
   ! Make sure various variables are set correctly
   IF (pset%tage.GT.tiny_number) THEN
@@ -67,7 +85,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      maxtime = 10**time_full(ntfull)
   endif
 
-  CALL COMPSP_WARNING(maxtime, pset, nzin, write_compsp)
+   CALL COMPSP_WARNING(ctx, maxtime, pset, nzin, write_compsp)
 
   ! Setup output files
   if ((pset%tage.gt.0).or.&
@@ -131,7 +149,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
           pset, age, nzin, mass_csp, lbol_csp, spec_csp,&
           mdust_csp,emlin_ssp,emlin_csp)
 
-     call sfhinfo(pset, age, mass_frac, tsfr, frac_linear)
+   call sfhinfo(ctx, pset, age, mass_frac, tsfr, frac_linear)
      if (pset%tage.le.0) then
         mass_csp  = mass_csp * mass_frac
         lbol_csp  = log10(10**lbol_csp * mass_frac)
@@ -162,7 +180,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      endif
      !add AGN dust
      IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.tiny_number) THEN
-        spec_csp = agn_dust(spec_lambda, spec_csp, pset, lbol_csp)
+      spec_csp = agn_dust(ctx, spec_lambda, spec_csp, pset, lbol_csp)
      ENDIF
      ! Compute spectral indices
      if (write_compsp.EQ.4) then
@@ -201,12 +219,14 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
 
 end subroutine compsp
 
-SUBROUTINE COMPSP_WARNING(maxtime,pset,nzin,write_compsp)
+SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
 
   !check that variables are properly set
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP, PARAMS, tiny_number, verbose
   IMPLICIT NONE
+  TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER, INTENT(in) :: nzin, write_compsp
   REAL(SP), INTENT(in) :: maxtime
   TYPE(PARAMS), INTENT(in) :: pset
@@ -220,12 +240,12 @@ SUBROUTINE COMPSP_WARNING(maxtime,pset,nzin,write_compsp)
 
   !the isochrones don't go past 10**10.15 yrs, so warn the user
   !that this will be an extrapolation
-  IF ((maxtime.GT.10**10.2).AND.(isoc_type.NE.'mist').AND.(isoc_type.NE.'bpss')) THEN
+   IF ((maxtime.GT.10**10.2).AND.(ctx%state%isoc_type.NE.'mist').AND.(ctx%state%isoc_type.NE.'bpss')) THEN
      WRITE(*,*) 'COMPSP WARNING: log(Tmax)>10.2 yrs -'//&
           ' linear extrapolation beyond this point for log(Tmax)=:',&
           LOG10(maxtime)
   ENDIF
-  IF (maxtime.GT.10**10.35.AND.isoc_type.EQ.'mist') THEN
+   IF (maxtime.GT.10**10.35.AND.ctx%state%isoc_type.EQ.'mist') THEN
      WRITE(*,*) 'COMPSP WARNING: log(Tmax)>10.35 yrs -'//&
           ' linear extrapolation beyond this point for log(Tmax)=:',&
           LOG10(maxtime)
@@ -296,13 +316,13 @@ SUBROUTINE COMPSP_WARNING(maxtime,pset,nzin,write_compsp)
      STOP
   ENDIF
 
-  IF ((pset%sfh.EQ.2.OR.pset%sfh.EQ.3).AND.(nzin.NE.nz.AND.nzin.NE.1)) THEN
+   IF ((pset%sfh.EQ.2.OR.pset%sfh.EQ.3).AND.(nzin.NE.ctx%state%nz.AND.nzin.NE.1)) THEN
      WRITE(*,*) 'COMPSP_ERROR: sfh=2 or 3 but nzin NE (nz OR 1)'
      STOP
   ENDIF
 
-  IF (nzin.NE.1.AND.nzin.NE.nz) THEN
-     WRITE(*,*) 'COMPSP_ERROR: nzin NE 1 and nzin NE nz:',nz
+  IF (nzin.NE.1.AND.nzin.NE.ctx%state%nz) THEN
+     WRITE(*,*) 'COMPSP_ERROR: nzin NE 1 and nzin NE nz:',ctx%state%nz
      STOP
   ENDIF
 
@@ -314,7 +334,7 @@ SUBROUTINE COMPSP_WARNING(maxtime,pset,nzin,write_compsp)
      STOP
   ENDIF
 
-  if ((pset%dust1.gt.tiny_number).and.(compute_light_ages.eq.1)) then
+   if ((pset%dust1.gt.tiny_number).and.(ctx%compute_light_ages_val.eq.1)) then
      WRITE(*,*) 'COMPSP WARNING: compute_light_ages does not take into'//&
           ' account age-dependent dust (dust1 > 0)'
   ENDIF
@@ -327,7 +347,7 @@ END SUBROUTINE COMPSP_WARNING
 
 SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP, PARAMS, tiny_number, verbose
   USE sps_utils, ONLY : vactoair
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
@@ -344,25 +364,26 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
      nspec => ctx%state%nspec, &
      ntfull => ctx%state%ntfull, &
      spec_lambda => ctx%state%spec_lambda, &
+     output_home => ctx%output_home, &
      vactoair_flag => ctx%vactoair_flag_val )
 
   !open output file for magnitudes
   IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) THEN
-   OPEN(10,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.mags',&
+   OPEN(10,FILE=TRIM(output_home)//'/OUTPUTS/'//TRIM(outfile)//'.mags',&
           STATUS='REPLACE')
    CALL COMPSP_HEADER(ctx, 10, pset)
   ENDIF
 
   !open output file for spectra
   IF (write_compsp.EQ.2.OR.write_compsp.EQ.3) THEN
-   OPEN(20,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.spec',&
+   OPEN(20,FILE=TRIM(output_home)//'/OUTPUTS/'//TRIM(outfile)//'.spec',&
           STATUS='REPLACE')
    CALL COMPSP_HEADER(ctx, 20, pset)
   ENDIF
 
   !open output file for indices
   IF (write_compsp.EQ.4) THEN
-   OPEN(30,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.indx',&
+   OPEN(30,FILE=TRIM(output_home)//'/OUTPUTS/'//TRIM(outfile)//'.indx',&
           STATUS='REPLACE')
    CALL COMPSP_HEADER(ctx, 30, pset)
   ENDIF
@@ -457,7 +478,7 @@ SUBROUTINE COMPSP_HEADER(ctx, unit, pset)
 
   !writes headers for the .mag, .spec, .indx files
 
-   USE sps_vars
+   USE fsps_types, ONLY: PARAMS
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -506,21 +527,23 @@ SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
 
   !routine to print and save outputs
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP, COMPSPOUT, nemline, tiny_number
   IMPLICIT NONE
   INTEGER, INTENT(in) :: write_compsp
   REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
-  REAL(SP), DIMENSION(nspec), INTENT(in)    :: spec
-  REAL(SP), DIMENSION(nbands), INTENT(in)   :: mags
-  REAL(SP), DIMENSION(nindx), INTENT(in)    :: indx
+  REAL(SP), DIMENSION(:), INTENT(in)    :: spec
+  REAL(SP), DIMENSION(:), INTENT(in)   :: mags
+  REAL(SP), DIMENSION(:), INTENT(in)    :: indx
   REAL(SP), DIMENSION(nemline), INTENT(in)  :: emlines
   TYPE(COMPSPOUT), INTENT(inout) :: cspo
   CHARACTER(34) :: fmt
+  INTEGER :: nbands
 
   !-----------------------------------------------------!
 
   fmt = '(F7.4,1x,3(F8.4,1x),000(F7.3,1x))'
-  WRITE(fmt(21:23),'(I3,1x,I4)') nbands
+   nbands = SIZE(mags)
+   WRITE(fmt(21:23),'(I3,1x,I4)') nbands
 
   !dump info into output structure
   cspo%age      = time

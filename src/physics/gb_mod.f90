@@ -4,16 +4,16 @@ SUBROUTINE MOD_GB(ctx, zz, t, age, delt, dell, pagb, redgb, agb, &
   !routine to modify TP-AGB stars, HB+RGB, and post-AGB stars. 
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, nm
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER,  INTENT(in) :: t, nn,zz
-  REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: logl,logt
-  REAL(SP), INTENT(in), DIMENSION(nt,nm)    :: phase
+   REAL(SP), INTENT(inout), DIMENSION(:,:) :: logl,logt
+   REAL(SP), INTENT(in), DIMENSION(:,:)    :: phase
   REAL(SP), INTENT(inout), DIMENSION(nm)    :: wght
   REAL(SP), INTENT(in) :: delt, dell, pagb, redgb, agb
-  REAL(SP), INTENT(in), DIMENSION(nt) :: age
+   REAL(SP), INTENT(in), DIMENSION(:) :: age
   INTEGER  :: i
   REAL(SP) :: age8=8.0_sp,age91=9.1_sp,twght
 

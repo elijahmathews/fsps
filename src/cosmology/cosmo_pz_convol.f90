@@ -1,4 +1,4 @@
-SUBROUTINE PZ_CONVOL(yield,zave,spec_pz,lbol_pz,mass_pz)
+SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
 
   !routine to weight SSP(Z) by the MDF: P(Z)=Z**zpow*EXP(-Z/p).  
   !The yield is the only input. 
@@ -7,16 +7,18 @@ SUBROUTINE PZ_CONVOL(yield,zave,spec_pz,lbol_pz,mass_pz)
   !variables spec_ssp_zz, mass_ssp_zz, and lbol_ssp_zz
   !The average metallicity is returned as zave
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP
   USE sps_utils, ONLY : linterp
   IMPLICIT NONE
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
   
   INTEGER  :: i,t,z
   REAL(SP) :: norm
-  REAL(SP), INTENT(out), DIMENSION(nspec,ntfull) :: spec_pz
-  REAL(SP), INTENT(out), DIMENSION(ntfull) :: mass_pz, lbol_pz
+   REAL(SP), INTENT(out), DIMENSION(:,:) :: spec_pz
+   REAL(SP), INTENT(out), DIMENSION(:) :: mass_pz, lbol_pz
   REAL(SP), INTENT(out)    :: zave
-  REAL(SP), DIMENSION(nz)  ::  pzz1
+   REAL(SP), ALLOCATABLE :: pzz1(:)
   REAL(SP), DIMENSION(100) :: pzz2,zz2,zzspec
   REAL(SP), INTENT(in) :: yield
 
@@ -28,11 +30,19 @@ SUBROUTINE PZ_CONVOL(yield,zave,spec_pz,lbol_pz,mass_pz)
   norm    = 0.0
   zave    = 0.0
 
-  !if using the Padova+BaSeL model, just use the native Z grid
+  ASSOCIATE( &
+     nspec => ctx%state%nspec, ntfull => ctx%state%ntfull, nt => ctx%state%nt, &
+     nz => ctx%state%nz, zlegend => ctx%state%zlegend, zpow2 => ctx%state%zpow2, &
+     spec_ssp_zz => ctx%state%spec_ssp_zz, mass_ssp_zz => ctx%state%mass_ssp_zz, &
+     lbol_ssp_zz => ctx%state%lbol_ssp_zz )
+
+   IF (.NOT. ALLOCATED(pzz1)) ALLOCATE(pzz1(nz))
+
+   !if using the Padova+BaSeL model, just use the native Z grid
   IF (nz.EQ.22) THEN
 
      !define P(Z)
-     pzz1 = zlegend**zpow2 * EXP(-zlegend/yield)
+   pzz1 = zlegend**zpow2 * EXP(-zlegend/yield)
      
      !integrate over P(Z)
      DO z=1,nz-1
@@ -81,12 +91,14 @@ SUBROUTINE PZ_CONVOL(yield,zave,spec_pz,lbol_pz,mass_pz)
              (pzz2(z+1)*zz2(z+1)+pzz2(z)*zz2(z))/2.
      ENDDO
 
-  ENDIF
+   ENDIF
 
  
-  spec_pz = spec_pz / norm
-  lbol_pz = lbol_pz / norm
-  mass_pz = mass_pz / norm
-  zave    = zave    / norm
+   spec_pz = spec_pz / norm
+   lbol_pz = lbol_pz / norm
+   mass_pz = mass_pz / norm
+   zave    = zave    / norm
+
+   END ASSOCIATE
 
 END SUBROUTINE PZ_CONVOL

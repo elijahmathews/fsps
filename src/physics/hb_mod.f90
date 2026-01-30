@@ -15,15 +15,15 @@ SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
   !sets the turn-on time for this modification.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, nm, gsig4pi, bhb_sbs_time
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-  REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
+  REAL(SP), INTENT(inout), DIMENSION(:,:) :: mini,mact,&
        logl,logt,logg,phase
   REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
   REAL(SP), DIMENSION(nm) :: tphase=0.0
-  INTEGER, INTENT(inout), DIMENSION(nt) :: nmass
+  INTEGER, INTENT(inout), DIMENSION(:) :: nmass
   REAL(SP), INTENT(inout) :: hb_wght
   INTEGER, INTENT(in) :: t
   REAL(SP), INTENT(in) :: f_bhb, hbtime
@@ -34,16 +34,16 @@ SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
   INTEGER :: j, i, flip=0, tnhb
   REAL(SP) :: tgrad=0., hblum=-999.,minteff=1E6
   REAL(SP), DIMENSION(nhb) :: dumarr=0.
+   CHARACTER(LEN=64) :: isoc_type
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
-
-   ASSOCIATE(isoc_type => ctx%state%isoc_type)
 
    hblum   = -999.
    flip    = 0
    hb_wght = 0.
    tphase  = phase(t,:)
+   isoc_type = ctx%state%isoc_type
 
   !we need to count the total number of HB stars in 
   !these isochrones.  Also the minimum Teff for the HB
@@ -61,8 +61,6 @@ SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
      ENDDO
      i=1
    ENDIF
-
-   END ASSOCIATE
 
   DO j=2,nm
 

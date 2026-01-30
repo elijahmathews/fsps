@@ -34,39 +34,42 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! total_weights:
   !    The weights(masses) for each SSP in the composite
 
-   use sps_vars, only: ntfull, nspec, tiny_number, SFHPARAMS, PARAMS, SP, nemline
+   use fsps_types, only: SFHPARAMS, PARAMS, SP, nemline, tiny_number
    use fsps_context_types, only: fsps_context_t
   use sps_utils, only: locate, sfh_weight, sfhinfo, add_dust
   implicit none
    type(fsps_context_t), intent(inout) :: ctx
 
-  real(SP), intent(in), dimension(ntfull, nzin) :: mass_ssp, lbol_ssp
-  real(SP), intent(in), dimension(nspec, ntfull, nzin) :: spec_ssp
+   real(SP), intent(in), dimension(:,:) :: mass_ssp, lbol_ssp
+   real(SP), intent(in), dimension(:,:,:) :: spec_ssp
   type(PARAMS), intent(in) :: pset
   real(SP), intent(in) :: tage
   integer, intent(in) :: nzin
 
   real(SP), intent(out) :: mass_csp, lbol_csp, mdust_csp
-  real(SP), intent(out), dimension(nspec) :: spec_csp
+   real(SP), intent(out), dimension(:) :: spec_csp
 
-  real(SP), DIMENSION(nemline, ntfull, nzin), intent(in) :: emlin_ssp
-  real(SP), DIMENSION(nemline), intent(out) :: emlin_csp
+   real(SP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
+   real(SP), DIMENSION(nemline), intent(out) :: emlin_csp
 
   !real(SP), intent(out), dimension(ntfull, nzin) :: total_weights
   !real(SP), intent(out), dimension(nspec) :: spec_young,spec_old
 
-  real(SP), dimension(nspec) :: lw_age, temp_spec !,csp1, csp2
+   real(SP), dimension(SIZE(spec_csp)) :: lw_age, temp_spec !,csp1, csp2
   real(SP), dimension(nemline) :: ncsp1, ncsp2, nlw_age, temp_lin
-  real(SP), dimension(ntfull, nzin) :: total_weights
-  real(SP), dimension(ntfull) :: w1, w2
-  integer :: i, j, k, imin, imax, i_tesc
+   real(SP), dimension(SIZE(mass_ssp,1), SIZE(mass_ssp,2)) :: total_weights
+   real(SP), dimension(SIZE(mass_ssp,1)) :: w1, w2
+   integer :: i, j, k, imin, imax, i_tesc, ntfull, nspec
   type(SFHPARAMS) :: sfhpars
   real(SP) :: m1, m2, frac_linear, mfrac, sfr, fburst
   real(SP) :: t1, t2, dt, zbin, dz  ! for tabular calculations
   real(SP) :: lbol_age, mass_age ! for mass and lbol weighted ages
 
   ! ------- Setup ----------
-  ASSOCIATE( &
+   ntfull = SIZE(mass_ssp,1)
+   nspec = SIZE(spec_ssp,1)
+
+   ASSOCIATE( &
      time_full => ctx%state%time_full, &
      tiny_logt => ctx%tiny_logt_val, &
      zlegend => ctx%state%zlegend, &
@@ -106,14 +109,14 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! But it speeds up the matrix multiply later
      imin = max(imax - 2, 1)
      ! These come pre-normalized to 1 Msun
-     total_weights(:, 1) = sfh_weight(sfhpars, imin, imax)
+   total_weights(:, 1) = sfh_weight(ctx, sfhpars, imin, imax)
    endif
 
   ! Tau and delayed-tau.
   if ((pset%sfh.eq.1).or.(pset%sfh.eq.4)) then
      imin = 0
      sfhpars%type = pset%sfh
-     total_weights(:, 1) = sfh_weight(sfhpars, imin, imax)
+   total_weights(:, 1) = sfh_weight(ctx, sfhpars, imin, imax)
      ! Could save some loops by having proper normalization analytically from sfh_weight
      m1 = sum(total_weights(1:imax, 1))
      if (m1.lt.tiny_number) m1 = 1.0
@@ -127,7 +130,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      imin = 0
      ! Constant
      sfhpars%type = 0
-     w1 = sfh_weight(sfhpars, imin, imax)
+   w1 = sfh_weight(ctx, sfhpars, imin, imax)
      m1 = sum(w1(1:imax))
      ! Burst.  These weights come pre-normalized to 1 Msun.
      ! If burst happens after age of system then we kill it entirely.
@@ -136,7 +139,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
         w2 = 0.
         fburst = 0.
      else
-        w2 = sfh_weight(sfhpars, imin, imax)
+      w2 = sfh_weight(ctx, sfhpars, imin, imax)
         fburst = pset%fburst
         ! We'll need to add any early bursts when summing later
         imax = max(imax, min(max(locate(time_full, log10(sfhpars%tb)) + 2, 1), ntfull))
@@ -156,7 +159,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! sfhpars%tq, for small speed increase.
      ! imin = min(max(locate(time_full, log10(sfhpars%tq)), 0), ntfull-1)
      sfhpars%type = 4
-     w1 = sfh_weight(sfhpars, imin, imax)
+   w1 = sfh_weight(ctx, sfhpars, imin, imax)
      m1 = sum(w1(1:imax))
      ! Linear portion.  Need to set `use_simha_limits` flag to get correct
      ! integration limits. Could set imax here to be just after sfhpars%tq,
@@ -165,7 +168,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! imin = 0
      sfhpars%type = 5
      sfhpars%use_simha_limits = 1
-     w2 = sfh_weight(sfhpars, imin, imax)
+   w2 = sfh_weight(ctx, sfhpars, imin, imax)
      sfhpars%use_simha_limits = 0
      m2 = sum(w2(1:imax))
      ! Normalize and sum.  need to be careful of divide by zero here, if all
@@ -173,7 +176,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      if (m1.lt.tiny_number) m1 = 1.0
      if (m2.lt.tiny_number) m2 = 1.0
      ! need to get the fraction of the mass formed in the linear portion
-     call sfhinfo(pset, tage, mfrac, sfr, frac_linear)
+   call sfhinfo(ctx, pset, tage, mfrac, sfr, frac_linear)
      total_weights(:, 1) = (w1 / m1) * (1 - frac_linear) + frac_linear * (w2 / m2)
      ! imax = min(max(locate(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
   endif
@@ -218,7 +221,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
 
         ! Get the weights for this bin in the tabulated sfh and add to the
         ! total weight, after normalizing.
-        w1 = sfh_weight(sfhpars, imin, imax)
+      w1 = sfh_weight(ctx, sfhpars, imin, imax)
         m1 = sum(w1)
         if (m1.lt.tiny_number) m1 = 1.0
         ! This is where we'd assign to specific metallicities, if taking that
@@ -340,7 +343,7 @@ subroutine convert_sfhparams(pset, tage, sfh)
   !       - `sf_slope` is the fractional change in the SFR in inverse years.  It is
   !          positive for SFR that increases with *lookback* time.
   !
-  use sps_vars, only: tiny_number, SFHPARAMS, PARAMS, SP
+   use fsps_types, only: SFHPARAMS, PARAMS, SP, tiny_number
   implicit none
 
   type(PARAMS), intent(in) :: pset

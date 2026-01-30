@@ -1,6 +1,6 @@
 PROGRAM AUTOSPS
 
-   USE sps_vars
+   USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT
    USE sps_utils
    USE fsps_context, ONLY: fsps_context_create
    USE fsps_context_types, ONLY: fsps_context_t
@@ -10,13 +10,14 @@ PROGRAM AUTOSPS
    INTEGER :: z
    TYPE(fsps_context_t) :: ctx
 
-  REAL(SP), ALLOCATABLE :: spec_ssp(:,:)
-  REAL(SP), ALLOCATABLE :: mass_ssp(:),lbol_ssp(:)
+   REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
+   REAL(SP), ALLOCATABLE :: mass_ssp(:,:),lbol_ssp(:,:)
   TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
 
   CHARACTER(100) :: file1='',aux
   CHARACTER(3)  :: str
   TYPE(PARAMS)  :: pset
+   REAL(SP) :: tuniv
 
   ! Variables for library selection
   CHARACTER(10) :: iso_in, spec_in
@@ -55,10 +56,10 @@ PROGRAM AUTOSPS
 
   ! --- Allocate Memory ---
   IF (.NOT. ALLOCATED(spec_ssp)) THEN
-      ALLOCATE(spec_ssp(ntfull, nspec))
-      ALLOCATE(mass_ssp(ntfull))
-      ALLOCATE(lbol_ssp(ntfull))
-      ALLOCATE(ocompsp(ntfull))
+     ALLOCATE(spec_ssp(ctx%state%nspec, ctx%state%ntfull, ctx%state%nz))
+     ALLOCATE(mass_ssp(ctx%state%ntfull, ctx%state%nz))
+     ALLOCATE(lbol_ssp(ctx%state%ntfull, ctx%state%nz))
+     ALLOCATE(ocompsp(ctx%state%ntfull))
   END IF
 
   !set IMF
@@ -68,15 +69,15 @@ PROGRAM AUTOSPS
        '3=van Dokkum 2008, 4=Dave 2008, 5=tabulated)'
   READ(5,'(A)')  aux
   IF (LEN(TRIM(aux)).EQ.0) THEN
-     imf_type = 0
+     ctx%imf_type_val = 0
   ELSE
-     READ(aux,'(I1)') imf_type
+     READ(aux,'(I1)') ctx%imf_type_val
   ENDIF
-  IF (imf_type.LT.0.OR.imf_type.GT.5) THEN
-     WRITE(*,*) 'ERROR: imf out of bounds: ',imf_type
+  IF (ctx%imf_type_val.LT.0.OR.ctx%imf_type_val.GT.5) THEN
+     WRITE(*,*) 'ERROR: imf out of bounds: ',ctx%imf_type_val
      STOP
   ENDIF
-  WRITE(6,'(" ---> Using IMF",1x,I1)') imf_type
+  WRITE(6,'(" ---> Using IMF",1x,I1)') ctx%imf_type_val
 
   !set SFH
   WRITE(6,*)
@@ -119,19 +120,19 @@ PROGRAM AUTOSPS
      !set metallicity
      WRITE(6,*)
      ! Dynamic prompt using the loaded nz
-     WRITE(6,'("enter metallicity index [1-",I0,"; def:",I0,"]:")') nz, nz
+     WRITE(6,'("enter metallicity index [1-",I0,"; def:",I0,"]:")') ctx%state%nz, ctx%state%nz
      READ(5,'(A)')  aux
      IF (len(trim(aux)).EQ.0) THEN
-        pset%zmet = nz  ! Default to the last index (usually safest/solar-ish)
+        pset%zmet = ctx%state%nz  ! Default to the last index (usually safest/solar-ish)
      ELSE
         READ(aux,'(I2)') pset%zmet
      ENDIF
-     IF (pset%zmet.LT.1.OR.pset%zmet.GT.nz) THEN
+     IF (pset%zmet.LT.1.OR.pset%zmet.GT.ctx%state%nz) THEN
         WRITE(*,*) 'ERROR: Z out of bounds: ',pset%zmet
         STOP
      ENDIF
      WRITE(6,'(" ---> Using metallicity",1x,I2," corresponding to log(Z/Zsol)=",1x,F5.2)') &
-          pset%zmet,LOG10(zlegend(pset%zmet)/zsol)
+          pset%zmet,LOG10(ctx%state%zlegend(pset%zmet)/ctx%state%zsol)
   ENDIF
 
   !set dust
@@ -142,7 +143,7 @@ PROGRAM AUTOSPS
   IF (len(trim(aux)).NE.0) THEN
      READ(aux,'(A3)') str
      IF (str(1:1).EQ.'y') THEN
-        dust_type  = 1
+      ctx%dust_type_val  = 1
         pset%dust1 = 1.0
         pset%dust2 = 0.3
      ENDIF
@@ -166,15 +167,16 @@ PROGRAM AUTOSPS
   
   IF (pset%sfh.EQ.2) THEN
      ! We already called SPS_SETUP(-1) at the top, so variables are ready.
-     DO z=1,nz
+     DO z=1,ctx%state%nz
         pset%zmet=z
-      CALL SSP_GEN(ctx, pset, mass_ssp_zz(:,z), lbol_ssp_zz(:,z), spec_ssp_zz(:,:,z))
+      CALL SSP_GEN(ctx, pset, mass_ssp(:,z), lbol_ssp(:,z), spec_ssp(:,:,z))
      ENDDO
-     CALL COMPSP(ctx, 3, nz, file1, mass_ssp_zz, lbol_ssp_zz, spec_ssp_zz, pset, ocompsp)
+     CALL COMPSP(ctx, 3, ctx%state%nz, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
   ELSE
      ! We already called SPS_SETUP(-1), so speclib is populated.
-   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
-   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+   CALL SSP_GEN(ctx, pset, mass_ssp(:,pset%zmet), lbol_ssp(:,pset%zmet), spec_ssp(:,:,pset%zmet))
+   CALL COMPSP(ctx, 3, 1, file1, mass_ssp(:,pset%zmet:pset%zmet), lbol_ssp(:,pset%zmet:pset%zmet), &
+        spec_ssp(:,:,pset%zmet:pset%zmet), pset, ocompsp)
   ENDIF
 
   ! Clean up

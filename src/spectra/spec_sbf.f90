@@ -4,8 +4,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
   !SBFs for each point.  SBF magnitudes are a light-weighted average
   !of the stellar luminosities over stellar mass
 
-     USE fsps_context_types, ONLY: fsps_context_t
-     USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time
   USE sps_utils, ONLY : imf_weight,mod_hb,add_bs,mod_gb,getmags,getspec
   IMPLICIT NONE
 
@@ -15,25 +15,31 @@ SUBROUTINE SBF(ctx, pset, outfile)
   INTEGER       :: i,j
   CHARACTER(34) :: fmt
   REAL(SP)      :: zero=0.0,hb_wght
-  REAL(SP), DIMENSION(nspec)  :: tspec,tspec2,spec1,spec2
-  REAL(SP), DIMENSION(nbands) :: mags
-  REAL(SP), DIMENSION(nm)     :: wght
-  REAL(SP), DIMENSION(nt,nm)  :: mini,mact,logl,logt,logg,ffco,phase,lmdot
-  INTEGER, DIMENSION(nt)      :: nmass
-  REAL(SP), DIMENSION(nt)     :: time
+     REAL(SP), DIMENSION(nm)     :: wght
+     REAL(SP), ALLOCATABLE :: tspec(:),tspec2(:),spec1(:),spec2(:)
+     REAL(SP), ALLOCATABLE :: mags(:)
+     REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),ffco(:,:),phase(:,:),lmdot(:,:)
+     INTEGER, ALLOCATABLE  :: nmass(:)
+     REAL(SP), ALLOCATABLE :: time(:)
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
 
   !set up the format 
   ASSOCIATE( &
-       nbands => ctx%state%nbands, &
+       nbands => ctx%state%nbands, nspec => ctx%state%nspec, nt => ctx%state%nt, &
        OUTPUT_HOME => ctx%output_home, &
        mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
        logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
        logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
        lmdot_isoc => ctx%state%lmdot_isoc, phase_isoc => ctx%state%phase_isoc, &
        nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc )
+
+  ALLOCATE(tspec(nspec),tspec2(nspec),spec1(nspec),spec2(nspec))
+  ALLOCATE(mags(nbands))
+  ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
+  ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+  ALLOCATE(nmass(nt),time(nt))
 
   fmt = '(F7.4,1x,3(F8.4,1x),000(F7.3,1x))'
   WRITE(fmt(21:23),'(I3,1x,I4)') nbands

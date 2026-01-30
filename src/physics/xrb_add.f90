@@ -3,7 +3,7 @@ SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
   ! Routine to add emission from X-ray binaries
 
   USE fsps_context_types, ONLY: fsps_context_t
-  USE sps_vars
+  USE fsps_types, ONLY: SP, PARAMS
   USE sps_utils, ONLY : locate,tsum
   IMPLICIT NONE
 
@@ -11,9 +11,9 @@ SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
   INTEGER :: t,a1,z1
   REAL(SP) :: da,dz,tmpz
   TYPE(PARAMS), INTENT(in) :: pset
-  REAL(SP), INTENT(in), DIMENSION(nspec,ntfull)    :: sspi
-  REAL(SP), INTENT(inout), DIMENSION(nspec,ntfull) :: sspo
-  REAL(SP), DIMENSION(nspec) :: tmpspec
+  REAL(SP), INTENT(in), DIMENSION(:,:)    :: sspi
+  REAL(SP), INTENT(inout), DIMENSION(:,:) :: sspo
+  REAL(SP), DIMENSION(SIZE(sspi,1)) :: tmpspec
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!

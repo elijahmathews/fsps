@@ -7,7 +7,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !This routine also redshifts the spectrum, if necessary.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, tiny_number, mag2cgs
   USE sps_utils, ONLY : linterp, tsum
   IMPLICIT NONE
 
@@ -15,18 +15,21 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
   INTEGER  :: i
   REAL(SP), INTENT(in) :: zred
-  REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec
-  REAL(SP), INTENT(inout), DIMENSION(nbands) :: mags
-  INTEGER, DIMENSION(nbands), INTENT(in), OPTIONAL  :: mag_compute
-  INTEGER, DIMENSION(nbands) :: magflag
-  REAL(SP), DIMENSION(nspec)  :: tspec
+   REAL(SP), INTENT(inout), DIMENSION(:) :: spec
+   REAL(SP), INTENT(inout), DIMENSION(:) :: mags
+   INTEGER, DIMENSION(:), INTENT(in), OPTIONAL  :: mag_compute
+   INTEGER, DIMENSION(SIZE(mags)) :: magflag
+   REAL(SP), DIMENSION(SIZE(spec))  :: tspec
   REAL(SP) :: const, dm
+   INTEGER :: n_spec, n_bands
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
 
-  ASSOCIATE( &
-     nbands => ctx%state%nbands, nspec => ctx%state%nspec, &
+   n_spec = SIZE(spec)
+   n_bands = SIZE(mags)
+
+   ASSOCIATE( &
      spec_lambda => ctx%state%spec_lambda, bands => ctx%state%bands, &
      cosmospl => ctx%state%cosmospl, magvega => ctx%state%magvega, &
      compute_vega_mags => ctx%compute_vega_mags_val, &
@@ -49,7 +52,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !redshift the spectrum
   IF (ABS(zred).GT.tiny_number) THEN
      !write(*,*) "getmags: interpolating"
-     DO i=1,nspec
+     DO i=1,n_spec
         tspec(i) = MAX(linterp(spec_lambda*(1+zred),spec,&
                        spec_lambda(i)),0.0)
      ENDDO
@@ -65,7 +68,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   ENDIF
 
   !integrate over each filter
-  DO i=1,nbands
+   DO i=1,n_bands
      IF (magflag(i).EQ.0) CYCLE
      mags(i) = TSUM(spec_lambda,tspec*bands(:,i)/spec_lambda)
      IF (mags(i).LE.tiny_number) THEN
@@ -80,9 +83,9 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
   !put magnitudes in the Vega system if keyword is set
   !(V-band is the first element in the array)
-   IF (compute_vega_mags.EQ.1.AND.compute_light_ages.EQ.0) &
-       mags(2:nbands) = (mags(2:nbands)-mags(1)) - &
-       (magvega(2:nbands)-magvega(1)) + mags(1)
+      IF (compute_vega_mags.EQ.1.AND.compute_light_ages.EQ.0) &
+         mags(2:n_bands) = (mags(2:n_bands)-mags(1)) - &
+         (magvega(2:n_bands)-magvega(1)) + mags(1)
 
    END ASSOCIATE
 

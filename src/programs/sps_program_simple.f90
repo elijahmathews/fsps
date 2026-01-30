@@ -1,7 +1,7 @@
  PROGRAM SIMPLE
 
   !set up modules
-  USE sps_vars
+  USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT
   USE sps_utils
   USE fsps_context, ONLY: fsps_context_create
   USE fsps_context_types, ONLY: fsps_context_t
@@ -12,9 +12,9 @@
 
   TYPE(fsps_context_t) :: ctx
   !define variable for SSP spectrum
-  REAL(SP), ALLOCATABLE :: spec_ssp(:,:)
+  REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
   !define variables for Mass and Lbol info
-  REAL(SP), ALLOCATABLE :: mass_ssp(:), lbol_ssp(:)
+  REAL(SP), ALLOCATABLE :: mass_ssp(:,:), lbol_ssp(:,:)
   CHARACTER(100) :: file1=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
@@ -31,7 +31,7 @@
 
   CALL fsps_context_create(ctx)
 
-  imf_type  = 0             !define the IMF (1=Chabrier 2003)
+  ctx%imf_type_val  = 0             !define the IMF (1=Chabrier 2003)
                             !see sps_vars.f90 for details of this var
   pset%zmet = 10            !define the metallicity (see the manual)
                             !20 = solar metallacity
@@ -39,11 +39,11 @@
   CALL SPS_SETUP(ctx, pset%zmet) !read in the isochrones and spectral libraries
 
   ! Allocate memory now that SPS_SETUP has defined ntfull/nspec
-  IF (.NOT. ALLOCATED(spec_ssp)) THEN
-      ALLOCATE(spec_ssp(ntfull, nspec))
-      ALLOCATE(mass_ssp(ntfull))
-      ALLOCATE(lbol_ssp(ntfull))
-      ALLOCATE(ocompsp(ntfull))
+      IF (.NOT. ALLOCATED(spec_ssp)) THEN
+        ALLOCATE(spec_ssp(ctx%state%nspec, ctx%state%ntfull, 1))
+        ALLOCATE(mass_ssp(ctx%state%ntfull, 1))
+        ALLOCATE(lbol_ssp(ctx%state%ntfull, 1))
+        ALLOCATE(ocompsp(ctx%state%ntfull))
   END IF
 
   !define the parameter set.  These are the default values, specified 
@@ -59,10 +59,10 @@
   pset%fbhb  = 0.0   !fraction of blue HB stars
   pset%sbss  = 0.0   !specific frequency of BS stars
 
-  add_neb_emission=1
+  ctx%add_neb_emission_val=1
 
   !compute the SSP
-  CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+  CALL SSP_GEN(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags and write out mags and spec for SSP
   file1 = 'SSP_BPASS.out'
   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
@@ -73,7 +73,7 @@
   ! with a simple dust model, at a particular time 
   ! (rather than outputing all the time info)
 
-  imf_type  = 0                !define the IMF (0=Salpeter)
+  ctx%imf_type_val  = 0                !define the IMF (0=Salpeter)
                                !see sps_vars.f90 for details of this var
 
   !NB: you only need to re-run SPS_SETUP if you have changed the metallicity
@@ -89,7 +89,7 @@
   !pset%tage  = 12.5  !age at which we want the mags
 
   !compute the CSP
-  CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+  CALL SSP_GEN(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags, and write out mags and spec for CSP
   file1 = 'CSP.out'
   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)

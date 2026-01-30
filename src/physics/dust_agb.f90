@@ -1,16 +1,21 @@
-FUNCTION COMPUTE_TAU1(cstar,mact,logt,logl,logg,zz,lmdot)
+FUNCTION COMPUTE_TAU1(ctx, cstar, mact, logt, logl, logg, zz, lmdot)
 
   !routine to compute tau at 1um from input
   !stellar parameters.  See Villaume et al. (2015)
   
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP, msun, newton, rsun, yr2sc, clight, mypi
   IMPLICIT NONE
+  TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER, INTENT(in) :: cstar
   REAL(SP), INTENT(in)  :: mact,logt,logl,logg, zz,lmdot
-  REAL(SP) :: compute_tau1, radius, period, vexp, vexp_max
+   REAL(SP) :: compute_tau1, radius, period, vexp
   REAL(SP) :: rin, delta, kappa, delta_agb, mdot
 
-  !-----------------------------------------------------------!
+   !-----------------------------------------------------------!
+   !unused inputs retained for interface compatibility
+   IF (logt < -1.0e30_sp) CONTINUE
+   IF (zz < -1.0e30_sp) CONTINUE
   !write(*,*) 'in function: ', cstar
   !dust-to-gas ratio depends on C/O
   IF (cstar.EQ.1) THEN
@@ -43,8 +48,8 @@ FUNCTION COMPUTE_TAU1(cstar,mact,logt,logl,logg,zz,lmdot)
   vexp     = MAX(MIN(vexp,15.0),3.0)
 
   !mass-loss rate in Msun/yr
-  IF (use_isoc_mdot.EQ.1) THEN
-     IF (isoc_type.NE.'mist') THEN
+  IF (ctx%use_isoc_mdot_val.EQ.1) THEN
+     IF (ctx%state%isoc_type.NE.'mist') THEN
         WRITE(*,*) 'ADD_AGB_DUST ERROR: use_isoc_mist=1 but isoc_type NE MIST!'
         STOP
      ENDIF
@@ -89,7 +94,7 @@ END FUNCTION COMPUTE_TAU1
 !------------------------------------------------------------!
 
 SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
-     tco,lmdot)
+   tco,lmdot)
 
   !routine to add a circumstellar dust shell to AGB stars
   !computes the optical depth at 1um from stellar parameters
@@ -97,17 +102,17 @@ SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
   !ratio and Teff.
   
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, gsig4pi, tiny_number, nteff_dagb, ntau_dagb
   USE sps_utils, ONLY: locate, smoothspec
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
-  REAL(SP), DIMENSION(nspec), INTENT(inout) :: tspec
+   REAL(SP), DIMENSION(:), INTENT(inout) :: tspec
   REAL(SP), INTENT(in)  :: weight,mact,logt,logl,logg,zz,tco,lmdot
   INTEGER :: cstar,jlo,klo
   REAL(SP) :: tau1,dj,dk, compute_tau1, loggi
-  REAL(SP), DIMENSION(nspec) :: dusty
+   REAL(SP), DIMENSION(SIZE(tspec)) :: dusty
   
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
@@ -131,7 +136,7 @@ SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
         loggi = logg
     ENDIF
    !compute tau1 based on input stellar parameters
-   tau1 = compute_tau1(cstar,mact,logt,logl,loggi,zz,lmdot)
+   tau1 = compute_tau1(ctx, cstar,mact,logt,logl,loggi,zz,lmdot)
 
   !allow the user to manually adjust the tau1 value
   !by an overall scale factor

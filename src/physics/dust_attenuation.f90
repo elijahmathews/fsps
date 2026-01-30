@@ -1,25 +1,29 @@
-FUNCTION ATTN_CURVE(lambda,dtype,pset)
+FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
 
   ! Routine to generate and return the attenuation curve for a chosen dust type.
   ! The V-band optical depth is 1 unless option 3 (Witt & Gordon models) is
   ! selected as those grids fully predict the actual attn curves.
 
-  USE sps_vars
+       USE fsps_context_types, ONLY: fsps_context_t
+       USE fsps_types, ONLY: SP, PARAMS
   USE sps_utils, ONLY : locate
   IMPLICIT NONE
 
+  TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER, INTENT(in) :: dtype
   TYPE(PARAMS), INTENT(in) :: pset
   REAL(SP) :: tauv=1.0
   INTEGER  :: w63,w1,w2
   REAL(SP) :: eb,zero=0.0,dd63=6300.00,lamv=5500.0,dlam=350.0,lamuvb=2175.0
-  REAL(SP), INTENT(in), DIMENSION(nspec) :: lambda
-  REAL(SP), DIMENSION(nspec) :: x,a,b,y,fa,fb,hack,cal00,reddy
-  REAL(SP), DIMENSION(nspec) :: attn_curve,drude,tmp
+  REAL(SP), INTENT(in), DIMENSION(:) :: lambda
+  REAL(SP), DIMENSION(SIZE(lambda)) :: x,a,b,y,fa,fb,hack,cal00,reddy
+  REAL(SP), DIMENSION(SIZE(lambda)) :: attn_curve,drude,tmp
+  INTEGER :: n
 
   !---------------------------------------------------------------------!
 
-  attn_curve = 0.0
+     n = SIZE(lambda)
+     attn_curve = 0.0
 
   IF (dtype.LT.0.OR.dtype.GT.6) THEN
      WRITE(*,*) 'ATTN_CURVE ERROR: dust_type out of range:',dtype
@@ -39,6 +43,8 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
   ELSE IF (dtype.EQ.1) THEN
 
      tmp = 0.0
+
+       ASSOCIATE(mwdindex => ctx%state%mwdindex)
 
      !use CCM89 extinction curve parameterization
      x = 1E4/lambda
@@ -100,6 +106,7 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
           a(:mwdindex(6)) + b(:mwdindex(6))/pset%mwr
 
      attn_curve = tauv*tmp
+     END ASSOCIATE
 
 
   !------------------Calzetti et al. 2000 attenuation-------------------!
@@ -114,7 +121,7 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
           0.011*(1E4/lambda(1:w63))**3) + 1.78
      cal00 = cal00/0.44/4.05  !R=4.05
      w63   = locate(cal00,zero)
-     IF (w63.NE.nspec) THEN
+       IF (w63.NE.n) THEN
         cal00(w63+1:) = 0.0
      ENDIF
 
@@ -124,7 +131,7 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
 
   ELSE IF (dtype.EQ.3) THEN
 
-     attn_curve = wgdust(:,pset%wgp1,pset%wgp2,pset%wgp3)
+     attn_curve = ctx%state%wgdust(:,pset%wgp1,pset%wgp2,pset%wgp3)
 
   !------------------Kriek & Conroy 2013 attenuation-------------------!
 
@@ -140,7 +147,7 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
      !R=4.05 NB: I'm not sure I have this normalization correct...
      cal00 = cal00/0.44/4.05
      w63   = locate(cal00,zero)
-     IF (w63.NE.nspec) THEN
+       IF (w63.NE.n) THEN
         cal00(w63+1:) = 0.0
      ENDIF
 
@@ -158,7 +165,7 @@ FUNCTION ATTN_CURVE(lambda,dtype,pset)
 
   ELSE IF (dtype.EQ.5) THEN
 
-     attn_curve = tauv*g03smcextn
+     attn_curve = tauv*ctx%state%g03smcextn
 
   !------------------Reddy et al. (2015) attenuation-------------------!
 

@@ -3,17 +3,25 @@ PROGRAM SPEC_BIN
   !routine to convert ascii spectral files to binary
   !must be run twice for each value of isoc_type var
 
-   USE sps_vars
+   USE fsps_types, ONLY: SP, basel_str, ndim_logt, ndim_logg
    USE sps_utils, ONLY: fsps_resolve_paths
+   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
   INTEGER  :: z,dumi1,i,j,status
   REAL(SP) :: dumr1,d2,d3
   CHARACTER(6) :: zstype
   CHARACTER(100) :: arg_spec_type
+  CHARACTER(LEN=250) :: SPS_HOME
+  TYPE(fsps_context_t) :: ctx
+   INTEGER :: nzinit, nspec
+   CHARACTER(LEN=64) :: spec_type
+   REAL(SP), ALLOCATABLE :: zlegendinit(:)
+   REAL(SP), ALLOCATABLE :: speclib(:,:,:,:)
 
   !----------------------------------------------------------------!
 
-   CALL fsps_resolve_paths()
+   CALL fsps_resolve_paths(ctx)
+   SPS_HOME = ctx%sps_home
   
   ! Read spec_type from command line or default to 'miles'
   CALL GET_COMMAND_ARGUMENT(1, arg_spec_type, STATUS=status)

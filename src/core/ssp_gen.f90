@@ -16,8 +16,9 @@
 
 SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
-  USE sps_vars
-  USE sps_utils
+   USE fsps_types, ONLY: SP, PARAMS, nm, verbose, bhb_sbs_time, time_res_incr
+  USE sps_utils, ONLY: locate, imf_weight, mod_hb, add_bs, mod_gb, add_remnants, &
+     getspec, add_nebular, add_xrb, smoothspec
   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
 
@@ -28,20 +29,20 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !array of IMF weights
   REAL(SP), DIMENSION(nm) :: wght
   !SSP spectrum
-  REAL(SP), INTENT(inout), DIMENSION(nspec,ntfull) :: spec_ssp
-  REAL(SP), DIMENSION(nspec,ntfull) :: tspec_ssp
+  REAL(SP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
+  REAL(SP), DIMENSION(SIZE(spec_ssp,1), SIZE(spec_ssp,2)) :: tspec_ssp
   !Mass and Lbol info
-  REAL(SP), INTENT(inout), DIMENSION(ntfull) :: mass_ssp, lbol_ssp
+  REAL(SP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
 
   !temp arrays for the isochrone data
-  REAL(SP), DIMENSION(nt,nm) :: mini,mact,logl,logt,logg,&
-     ffco,phase,lmdot
+  REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
+     ffco(:,:),phase(:,:),lmdot(:,:)
   REAL(SP), DIMENSION(nm) :: temp_mini
   !arrays holding the number of mass elements for each
   !isochrone and the age of each isochrone
-  INTEGER, DIMENSION(nt)     :: nmass
-  REAL(SP), DIMENSION(nt)    :: time
-  REAL(SP), DIMENSION(nspec) :: tspec
+  INTEGER, ALLOCATABLE :: nmass(:)
+  REAL(SP), ALLOCATABLE :: time(:)
+  REAL(SP), DIMENSION(SIZE(spec_ssp,1)) :: tspec
   !structure containing all necessary parameters
   !(TYPE objects defined in sps_vars.f90)
   TYPE(PARAMS), INTENT(in) :: pset
@@ -71,6 +72,10 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
        add_neb_emission => ctx%add_neb_emission_val, add_xrb_emission => ctx%add_xrb_emission_val, &
        smooth_lsf => ctx%smooth_lsf_val, smooth_velocity => ctx%smooth_velocity_val, &
        sps_home => ctx%sps_home )
+
+   ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
+   ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+   ALLOCATE(nmass(nt),time(nt))
 
   IF (check_sps_setup.EQ.0) THEN
      WRITE(*,*) 'SSP_GEN ERROR0: '//&

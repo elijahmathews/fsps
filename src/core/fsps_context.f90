@@ -1,14 +1,5 @@
 MODULE FSPS_CONTEXT
-            USE sps_vars, ONLY: SP, PARAMS, COMPSPOUT, ntfull, nspec, nbands, nt, nindx, time_full, &
-               SPS_HOME, DATA_HOME, OUTPUT_HOME, isoc_type, spec_type, str_dustem, &
-            imf_type, dust_type, compute_vega_mags, vactoair_flag, &
-            tpagb_norm_type, pzcon, interpolation_type, add_agb_dust_model, &
-            add_stellar_remnants, add_agn_dust, use_wr_spectra, add_xrb_emission, &
-            smooth_lsf, smoothspec_fast, add_dust_emission, add_neb_emission, &
-            add_neb_continuum, cloudy_dust, add_igm_absorption, nebemlineinspec, &
-            smooth_velocity, redshift_colors, compute_light_ages, use_isoc_mdot, &
-            setup_nebular_gaussians, om0, ol0, H0, tiny_logt, imf_upper_limit, &
-            imf_lower_limit, logt_wmb_hot, nebular_smooth_init
+            USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT
   USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
   USE sps_utils
   IMPLICIT NONE
@@ -16,18 +7,6 @@ MODULE FSPS_CONTEXT
    INTEGER, PARAMETER :: FSPS_ERR_UNKNOWN_INT_PARAM = 101
    INTEGER, PARAMETER :: FSPS_ERR_UNKNOWN_FLOAT_PARAM = 102
    INTEGER, PARAMETER :: FSPS_ERR_UNKNOWN_STRING_PARAM = 103
-
-   INTERFACE
-       SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE sps_vars
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-          TYPE(PARAMS), INTENT(in) :: pset
-          REAL(SP), DIMENSION(ntfull), INTENT(out) :: mass_ssp, lbol_ssp
-          REAL(SP), DIMENSION(nspec, ntfull), INTENT(out) :: spec_ssp
-       END SUBROUTINE SSP_GEN
-   END INTERFACE
-
 
 CONTAINS
 
@@ -41,7 +20,39 @@ CONTAINS
       ctx%sps_home = ''
       ctx%data_home = ''
       ctx%output_home = ''
-      CALL fsps_context_sync_from_globals(ctx)
+         ctx%om0_val = 0.27
+         ctx%ol0_val = 0.73
+         ctx%H0_val = 72.0
+         ctx%tpagb_norm_type_val = 2
+         ctx%pzcon_val = 0
+         ctx%interpolation_type_val = 0
+         ctx%tiny_logt_val = 0.0
+         ctx%compute_light_ages_val = 0
+         ctx%add_dust_emission_val = 1
+         ctx%add_agn_dust_val = 1
+         ctx%add_agb_dust_model_val = 1
+         ctx%use_wr_spectra_val = 1
+         ctx%logt_wmb_hot_val = 0.0
+         ctx%add_neb_emission_val = 0
+         ctx%add_neb_continuum_val = 1
+         ctx%cloudy_dust_val = 0
+         ctx%add_igm_absorption_val = 0
+         ctx%add_xrb_emission_val = 0
+         ctx%add_stellar_remnants_val = 1
+         ctx%smoothspec_fast_val = 1
+         ctx%smooth_velocity_val = 1
+         ctx%smooth_lsf_val = 0
+         ctx%dust_type_val = 0
+         ctx%imf_type_val = 2
+         ctx%compute_vega_mags_val = 0
+         ctx%vactoair_flag_val = 0
+         ctx%redshift_colors_val = 0
+         ctx%use_isoc_mdot_val = 0
+         ctx%setup_nebular_gaussians_val = 0
+         ctx%nebular_smooth_init_val = 100.0
+         ctx%nebemlineinspec_val = 1
+         ctx%imf_lower_limit_val = 0.08
+         ctx%imf_upper_limit_val = 120.0
   END SUBROUTINE fsps_context_create
 
   SUBROUTINE fsps_context_setup(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
@@ -83,19 +94,15 @@ CONTAINS
 
       ctx%zin = zin
       ctx%initialized = .TRUE.
-      ctx%sps_home = TRIM(SPS_HOME)
-      ctx%data_home = TRIM(DATA_HOME)
-      ctx%output_home = TRIM(OUTPUT_HOME)
-      IF (LEN_TRIM(ctx%isoc_type_name) == 0 .AND. ALLOCATED(isoc_type)) THEN
-         ctx%isoc_type_name = TRIM(isoc_type)
+      IF (LEN_TRIM(ctx%isoc_type_name) == 0) THEN
+         ctx%isoc_type_name = TRIM(ctx%state%isoc_type)
       END IF
-      IF (LEN_TRIM(ctx%spec_type_name) == 0 .AND. ALLOCATED(spec_type)) THEN
-         ctx%spec_type_name = TRIM(spec_type)
+      IF (LEN_TRIM(ctx%spec_type_name) == 0) THEN
+         ctx%spec_type_name = TRIM(ctx%state%spec_type)
       END IF
       IF (LEN_TRIM(ctx%dust_type_name) == 0) THEN
-         ctx%dust_type_name = TRIM(str_dustem)
+         ctx%dust_type_name = TRIM(ctx%state%str_dustem)
       END IF
-      CALL fsps_context_sync_from_globals(ctx)
       CALL fsps_context_prepare_pset(ctx)
   END SUBROUTINE fsps_context_setup
 
@@ -111,27 +118,23 @@ CONTAINS
      spec_name = TRIM(ctx%spec_type_name)
      dust_name = TRIM(ctx%dust_type_name)
 
-     IF (.NOT. ALLOCATED(isoc_type)) THEN
-        IF (LEN_TRIM(isoc_name) /= 0) need_setup = .TRUE.
-     ELSE IF (LEN_TRIM(isoc_name) /= 0 .AND. TRIM(isoc_type) /= isoc_name) THEN
+     IF (LEN_TRIM(isoc_name) /= 0 .AND. TRIM(ctx%state%isoc_type) /= isoc_name) THEN
         need_setup = .TRUE.
      END IF
 
-     IF (.NOT. ALLOCATED(spec_type)) THEN
-        IF (LEN_TRIM(spec_name) /= 0) need_setup = .TRUE.
-     ELSE IF (LEN_TRIM(spec_name) /= 0 .AND. TRIM(spec_type) /= spec_name) THEN
+     IF (LEN_TRIM(spec_name) /= 0 .AND. TRIM(ctx%state%spec_type) /= spec_name) THEN
         need_setup = .TRUE.
      END IF
 
      IF (.NOT. need_setup) THEN
-        IF (LEN_TRIM(isoc_name) == 0 .AND. ALLOCATED(isoc_type)) THEN
-           ctx%isoc_type_name = TRIM(isoc_type)
+        IF (LEN_TRIM(isoc_name) == 0) THEN
+           ctx%isoc_type_name = TRIM(ctx%state%isoc_type)
         END IF
-        IF (LEN_TRIM(spec_name) == 0 .AND. ALLOCATED(spec_type)) THEN
-           ctx%spec_type_name = TRIM(spec_type)
+        IF (LEN_TRIM(spec_name) == 0) THEN
+           ctx%spec_type_name = TRIM(ctx%state%spec_type)
         END IF
         IF (LEN_TRIM(dust_name) == 0) THEN
-           ctx%dust_type_name = TRIM(str_dustem)
+           ctx%dust_type_name = TRIM(ctx%state%str_dustem)
         END IF
         RETURN
      END IF
@@ -148,12 +151,9 @@ CONTAINS
       CALL SPS_SETUP(ctx, ctx%zin, isoc_name, spec_name, dust_name)
      END IF
 
-     IF (ALLOCATED(isoc_type)) ctx%isoc_type_name = TRIM(isoc_type)
-     IF (ALLOCATED(spec_type)) ctx%spec_type_name = TRIM(spec_type)
-     ctx%dust_type_name = TRIM(str_dustem)
-     ctx%sps_home = TRIM(SPS_HOME)
-     ctx%data_home = TRIM(DATA_HOME)
-     ctx%output_home = TRIM(OUTPUT_HOME)
+   ctx%isoc_type_name = TRIM(ctx%state%isoc_type)
+   ctx%spec_type_name = TRIM(ctx%state%spec_type)
+   ctx%dust_type_name = TRIM(ctx%state%str_dustem)
   END SUBROUTINE fsps_context_ensure_setup
 
   SUBROUTINE fsps_context_destroy(ctx)
@@ -397,95 +397,6 @@ CONTAINS
     END SELECT
   END SUBROUTINE fsps_context_set_param_str
 
-  SUBROUTINE fsps_context_sync_from_globals(ctx)
-    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      ctx%om0_val = om0
-      ctx%ol0_val = ol0
-      ctx%H0_val = H0
-      ctx%tiny_logt_val = tiny_logt
-      ctx%imf_upper_limit_val = imf_upper_limit
-      ctx%imf_lower_limit_val = imf_lower_limit
-      ctx%logt_wmb_hot_val = logt_wmb_hot
-      ctx%nebular_smooth_init_val = nebular_smooth_init
-    ctx%imf_type_val = imf_type
-      ctx%tpagb_norm_type_val = tpagb_norm_type
-      ctx%pzcon_val = pzcon
-      ctx%interpolation_type_val = interpolation_type
-      ctx%add_agb_dust_model_val = add_agb_dust_model
-    ctx%dust_type_val = dust_type
-      ctx%add_dust_emission_val = add_dust_emission
-    ctx%compute_vega_mags_val = compute_vega_mags
-    ctx%vactoair_flag_val = vactoair_flag
-      ctx%add_agn_dust_val = add_agn_dust
-      ctx%use_wr_spectra_val = use_wr_spectra
-    ctx%add_neb_emission_val = add_neb_emission
-    ctx%add_neb_continuum_val = add_neb_continuum
-    ctx%cloudy_dust_val = cloudy_dust
-    ctx%add_igm_absorption_val = add_igm_absorption
-      ctx%nebemlineinspec_val = nebemlineinspec
-    ctx%add_xrb_emission_val = add_xrb_emission
-    ctx%add_stellar_remnants_val = add_stellar_remnants
-    ctx%smooth_velocity_val = smooth_velocity
-    ctx%smooth_lsf_val = smooth_lsf
-    ctx%smoothspec_fast_val = smoothspec_fast
-      ctx%redshift_colors_val = redshift_colors
-      ctx%compute_light_ages_val = compute_light_ages
-      ctx%use_isoc_mdot_val = use_isoc_mdot
-      ctx%setup_nebular_gaussians_val = setup_nebular_gaussians
-  END SUBROUTINE fsps_context_sync_from_globals
-
-  SUBROUTINE fsps_context_apply_globals(ctx)
-    TYPE(fsps_context_t), INTENT(IN) :: ctx
-         ntfull = ctx%state%ntfull
-         nspec = ctx%state%nspec
-         nbands = ctx%state%nbands
-         nt = ctx%state%nt
-         nindx = ctx%state%nindx
-      om0 = ctx%om0_val
-      ol0 = ctx%ol0_val
-      H0 = ctx%H0_val
-      tiny_logt = ctx%tiny_logt_val
-      imf_upper_limit = ctx%imf_upper_limit_val
-      imf_lower_limit = ctx%imf_lower_limit_val
-      logt_wmb_hot = ctx%logt_wmb_hot_val
-      nebular_smooth_init = ctx%nebular_smooth_init_val
-    imf_type = ctx%imf_type_val
-      tpagb_norm_type = ctx%tpagb_norm_type_val
-      pzcon = ctx%pzcon_val
-      interpolation_type = ctx%interpolation_type_val
-      add_agb_dust_model = ctx%add_agb_dust_model_val
-    dust_type = ctx%dust_type_val
-      add_dust_emission = ctx%add_dust_emission_val
-    compute_vega_mags = ctx%compute_vega_mags_val
-    vactoair_flag = ctx%vactoair_flag_val
-      add_agn_dust = ctx%add_agn_dust_val
-      use_wr_spectra = ctx%use_wr_spectra_val
-    add_neb_emission = ctx%add_neb_emission_val
-    add_neb_continuum = ctx%add_neb_continuum_val
-    cloudy_dust = ctx%cloudy_dust_val
-    add_igm_absorption = ctx%add_igm_absorption_val
-      nebemlineinspec = ctx%nebemlineinspec_val
-    add_xrb_emission = ctx%add_xrb_emission_val
-    add_stellar_remnants = ctx%add_stellar_remnants_val
-    smooth_velocity = ctx%smooth_velocity_val
-    smooth_lsf = ctx%smooth_lsf_val
-    smoothspec_fast = ctx%smoothspec_fast_val
-      redshift_colors = ctx%redshift_colors_val
-      compute_light_ages = ctx%compute_light_ages_val
-      use_isoc_mdot = ctx%use_isoc_mdot_val
-      setup_nebular_gaussians = ctx%setup_nebular_gaussians_val
-      IF (ASSOCIATED(ctx%state%time_full)) THEN
-         IF (ALLOCATED(time_full)) THEN
-            IF (SIZE(time_full) /= ctx%state%ntfull) THEN
-               DEALLOCATE(time_full)
-            END IF
-         END IF
-         IF (.NOT. ALLOCATED(time_full)) THEN
-            ALLOCATE(time_full(ctx%state%ntfull))
-         END IF
-         time_full = ctx%state%time_full
-      END IF
-  END SUBROUTINE fsps_context_apply_globals
 
    SUBROUTINE fsps_context_get_paths(ctx, sps_home_out, data_home_out, output_home_out)
       TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -500,11 +411,10 @@ CONTAINS
 
    SUBROUTINE fsps_context_compute_ssp(ctx, mass_ssp, lbol_ssp, spec_ssp)
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(SP), DIMENSION(ntfull), INTENT(out) :: mass_ssp, lbol_ssp
-      REAL(SP), DIMENSION(nspec, ntfull), INTENT(out) :: spec_ssp
+      REAL(SP), DIMENSION(:), INTENT(out) :: mass_ssp, lbol_ssp
+      REAL(SP), DIMENSION(:,:), INTENT(out) :: spec_ssp
 
         CALL fsps_context_ensure_setup(ctx)
-      CALL fsps_context_apply_globals(ctx)
       CALL fsps_context_prepare_pset(ctx)
       CALL SSP_GEN(ctx, ctx%pset, mass_ssp, lbol_ssp, spec_ssp)
    END SUBROUTINE fsps_context_compute_ssp
@@ -513,12 +423,11 @@ CONTAINS
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
       INTEGER, INTENT(IN) :: write_compsp, nzin
       CHARACTER(LEN=*), INTENT(IN) :: outfile
-      REAL(SP), DIMENSION(ntfull, nzin), INTENT(IN) :: mass_ssp, lbol_ssp
-      REAL(SP), DIMENSION(nspec, ntfull, nzin), INTENT(IN) :: spec_ssp
-      TYPE(COMPSPOUT), DIMENSION(ntfull), INTENT(INOUT) :: ocompsp
+      REAL(SP), DIMENSION(:,:), INTENT(IN) :: mass_ssp, lbol_ssp
+      REAL(SP), DIMENSION(:,:,:), INTENT(IN) :: spec_ssp
+      TYPE(COMPSPOUT), DIMENSION(:), INTENT(INOUT) :: ocompsp
 
         CALL fsps_context_ensure_setup(ctx)
-      CALL fsps_context_apply_globals(ctx)
       CALL fsps_context_prepare_pset(ctx)
       CALL COMPSP(ctx, write_compsp, nzin, outfile, mass_ssp, lbol_ssp, spec_ssp, ctx%pset, ocompsp)
    END SUBROUTINE fsps_context_compute_csp
@@ -527,11 +436,11 @@ CONTAINS
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
       IF (.NOT. ALLOCATED(ctx%pset%mag_compute)) THEN
-          ALLOCATE(ctx%pset%mag_compute(nbands))
+           ALLOCATE(ctx%pset%mag_compute(ctx%state%nbands))
           ctx%pset%mag_compute = 1
       END IF
       IF (.NOT. ALLOCATED(ctx%pset%ssp_gen_age)) THEN
-          ALLOCATE(ctx%pset%ssp_gen_age(nt))
+           ALLOCATE(ctx%pset%ssp_gen_age(ctx%state%nt))
           ctx%pset%ssp_gen_age = 1
       END IF
    END SUBROUTINE fsps_context_prepare_pset

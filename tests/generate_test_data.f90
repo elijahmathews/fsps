@@ -3,15 +3,17 @@ PROGRAM GENERATE_TEST_DATA
   ! Generates reference data for FSPS regression testing.
   ! Uses allocatable arrays to support multiple compile-time configurations.
 
-   USE sps_vars
+   USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
    USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_context, ONLY: fsps_context_create, fsps_context_sync_from_globals, fsps_context_apply_globals
+   USE fsps_context, ONLY: fsps_context_create
   IMPLICIT NONE
 
   ! Variables for SSP generation (allocatable)
-  REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: spec_ssp
-  REAL(SP), ALLOCATABLE, DIMENSION(:)   :: mass_ssp, lbol_ssp
+   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: spec_ssp
+   REAL(SP), ALLOCATABLE, DIMENSION(:,:,:) :: spec_ssp3
+   REAL(SP), ALLOCATABLE, DIMENSION(:)   :: mass_ssp, lbol_ssp
+   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: mass_ssp2, lbol_ssp2
   
   ! Variables for CSP generation (allocatable)
   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
@@ -94,7 +96,7 @@ PROGRAM GENERATE_TEST_DATA
   ! We call this FIRST so we can be sure parameters like ntfull/nspec are set
   ! before we allocate (though they are static in the current codebase).
    CALL fsps_context_create(ctx)
-  imf_type = 1          
+   ctx%imf_type_val = 1          
   pset%zmet = 10        
   
   ! Use defaults unless overridden by arguments
@@ -119,7 +121,10 @@ PROGRAM GENERATE_TEST_DATA
   ALLOCATE(spec_ssp(nspec_ctx,ntfull_ctx))
   ALLOCATE(mass_ssp(ntfull_ctx))
   ALLOCATE(lbol_ssp(ntfull_ctx))
-  ALLOCATE(ocompsp(ntfull_ctx))
+   ALLOCATE(ocompsp(ntfull_ctx))
+   ALLOCATE(spec_ssp3(nspec_ctx, ntfull_ctx, 1))
+   ALLOCATE(mass_ssp2(ntfull_ctx, 1))
+   ALLOCATE(lbol_ssp2(ntfull_ctx, 1))
 
   ! Write header
   WRITE(*,*) 'Writing to file: ', TRIM(filename_out)
@@ -140,9 +145,7 @@ PROGRAM GENERATE_TEST_DATA
   pset%zred  = 0.0
   pset%dust1 = 0.0
   pset%dust2 = 0.0
-   add_neb_emission = 1
-   CALL fsps_context_sync_from_globals(ctx)
-   CALL fsps_context_apply_globals(ctx)
+   ctx%add_neb_emission_val = 1
   
   ! Allocate pset allocatable components
   IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
@@ -182,7 +185,10 @@ PROGRAM GENERATE_TEST_DATA
   END DO
 
   ! Compute CSP
-   CALL COMPSP(ctx, 3, 1, csp_dummy_file, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+   mass_ssp2(:,1) = mass_ssp
+   lbol_ssp2(:,1) = lbol_ssp
+   spec_ssp3(:,:,1) = spec_ssp
+   CALL COMPSP(ctx, 3, 1, csp_dummy_file, mass_ssp2, lbol_ssp2, spec_ssp3, pset, ocompsp)
 
   ! Write CSP Data
   WRITE(*,*) 'Saving CSP results...'

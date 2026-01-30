@@ -1,5 +1,5 @@
 MODULE FSPS_CACHE
-  USE sps_vars, ONLY: SP, ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
+   USE fsps_types, ONLY: SP, ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
        n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
        nemline, nebnz, nebnage, nebnip, nagndust, nm
   IMPLICIT NONE

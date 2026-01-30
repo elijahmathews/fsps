@@ -1,4 +1,4 @@
-function sfhlimit(tlim, sfh)
+function sfhlimit(ctx, tlim, sfh)
   ! Deal with all the logic for computing the limits of integration in the
   ! weight calculations.  This should return the input `tlim`, clipped to valid
   ! limits, such that if no SFR occurs between t1 and t2 then sfhlimit(t1, sfh)
@@ -13,9 +13,11 @@ function sfhlimit(tlim, sfh)
   ! sfh:
   !    An sfhparams structure containing the relevant special lookback times.
   !
-  use sps_vars, only: tiny_logt, SFHPARAMS, SP
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SFHPARAMS, SP
   implicit none
 
+   type(fsps_context_t), intent(in) :: ctx
   real(SP), intent(in) :: tlim
   type(SFHPARAMS), intent(in) :: sfh
 
@@ -38,8 +40,8 @@ function sfhlimit(tlim, sfh)
   endif
 
   ! Convert to log, taking care of possible zeros.
-  tlo = log10(max(tlo, 10**tiny_logt))
-  thi = log10(max(thi, 10**tiny_logt))
+   tlo = log10(max(tlo, 10**ctx%tiny_logt_val))
+   thi = log10(max(thi, 10**ctx%tiny_logt_val))
 
   ! Finally, clip proposed limit to the upper and lower value
   sfhlimit = MIN(MAX(tlim, tlo), thi)

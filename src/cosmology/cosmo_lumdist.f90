@@ -1,12 +1,14 @@
-FUNCTION GET_LUMDIST(z)
+FUNCTION GET_LUMDIST(ctx, z)
 
   !compute luminosity distance to redshift z
   !assumes flat universe w/ only matter and lambda
   !assumes om0,ol0,H0 set in sps_vars.f90
   
-  USE sps_vars
+  USE fsps_context_types, ONLY: fsps_context_t
+  USE fsps_types, ONLY: SP, clight
   USE sps_utils, ONLY : tsum
   IMPLICIT NONE
+  TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i
   INTEGER, PARAMETER :: ii=10000
   REAL(SP), INTENT(in) :: z
@@ -19,13 +21,13 @@ FUNCTION GET_LUMDIST(z)
   get_lumdist = 0.0
 
   !Hubble distance in pc
-  dhub = clight/1E13/H0*1E6
+  dhub = clight/1E13/ctx%H0_val*1E6
 
   DO i=1,ii
      zz(i) = REAL(i)/ii*z
   ENDDO
   
-  hub = SQRT( om0*(1+zz)**3 + ol0 )
+  hub = SQRT( ctx%om0_val*(1+zz)**3 + ctx%ol0_val )
 
   get_lumdist = TSUM(zz,1/hub) * (1+z) * dhub
 

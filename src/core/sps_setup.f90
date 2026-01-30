@@ -9,7 +9,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !is read.  Specifying only the metallicity of interest results
   !in a much faster setup.
 
-   USE sps_vars
+         USE fsps_types, ONLY: SP, verbose, time_res_incr, basel_str, nm, nlines, ntabmax, ndim_logt, ndim_logg, &
+            n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
+            ntau_dagb, nteff_dagb, nemline, nlam_nebcont, nebnz, nebnage, nebnip, &
+            nagndust, nagndust_spec, tiny_number, tiny30, clight, mypi, lsun
    USE fsps_cache, ONLY: fsps_setup_cache_t, fsps_cache_get_setup
   USE fsps_context_types, ONLY: fsps_context_t
   USE sps_utils, ONLY: locate, linterparr, linterp, tsum, get_tuniv, &
@@ -31,6 +34,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CHARACTER(5) :: zstype5
   REAL(SP) :: dumr1,d1,d2,logage,x,a,zero=0.0,d,one=1.0,dz,dlam
   CHARACTER(LEN=512) :: cache_key
+   CHARACTER(LEN=250) :: SPS_HOME
   LOGICAL :: cache_new
   TYPE(fsps_setup_cache_t), POINTER :: cache
   
@@ -133,6 +137,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    zmet_xrb => ctx%state%zmet_xrb, lsfinfo => ctx%state%lsfinfo, &
    cloudy_dust => ctx%cloudy_dust_val, smooth_velocity => ctx%smooth_velocity_val, &
    smooth_lsf => ctx%smooth_lsf_val, setup_nebular_gaussians => ctx%setup_nebular_gaussians_val, &
+   add_neb_emission => ctx%add_neb_emission_val, add_neb_continuum => ctx%add_neb_continuum_val, &
+   add_dust_emission => ctx%add_dust_emission_val, add_agn_dust => ctx%add_agn_dust_val, &
+   add_xrb_emission => ctx%add_xrb_emission_val, add_agb_dust_model => ctx%add_agb_dust_model_val, &
+   use_wr_spectra => ctx%use_wr_spectra_val, &
    powell_data => ctx%state%powell_data, sedfit_data => ctx%state%sedfit_data )
 
   CALL SPS_TAKEDOWN(ctx)
@@ -262,10 +270,11 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDIF
 
   ! Resolve paths and attach or create shared caches
-  CALL fsps_resolve_paths()
+   CALL fsps_resolve_paths(ctx)
+   SPS_HOME = ctx%sps_home
 
   WRITE(cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A)') &
-       TRIM(SPS_HOME), TRIM(isoc_type), TRIM(spec_type), TRIM(str_dustem), &
+      TRIM(ctx%sps_home), TRIM(isoc_type), TRIM(spec_type), TRIM(str_dustem), &
        zin, smooth_velocity, setup_nebular_gaussians, add_neb_emission, add_neb_continuum, &
        add_dust_emission, add_agn_dust, add_xrb_emission, add_agb_dust_model, TRIM(alt_filter_file)
 
@@ -779,8 +788,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
           (LOG10(zlegendinit(i1+1)/zsol_spec)-LOG10(zlegendinit(i1)/zsol_spec))
      dz = MIN(MAX(dz,0.0),1.0) !no extrapolation!
 
-     speclib(:,z,:,:) = (1-dz)*LOG10(speclibinit(:,i1,:,:)+tiny_number) + &
-          dz*LOG10(speclibinit(:,i1+1,:,:)+tiny_number)
+   speclib(:,z,:,:) = REAL((1-dz)*LOG10(speclibinit(:,i1,:,:)+tiny_number) + &
+      dz*LOG10(speclibinit(:,i1+1,:,:)+tiny_number), KIND(speclib))
      speclib(:,z,:,:) = 10**speclib(:,z,:,:)
 
   ENDDO
@@ -852,8 +861,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
           (LOG10(zwmb(i1+1)/zsol_spec)-LOG10(zwmb(i1)/zsol_spec))
      dz = MIN(MAX(dz,0.0),1.0) !no extrapolation!
 
-     wmb_spec(:,z,:,:) = (1-dz)*LOG10(wmbsi(:,i1,:,:)+tiny_number) + &
-          dz*LOG10(wmbsi(:,i1+1,:,:)+tiny_number)
+   wmb_spec(:,z,:,:) = REAL((1-dz)*LOG10(wmbsi(:,i1,:,:)+tiny_number) + &
+      dz*LOG10(wmbsi(:,i1+1,:,:)+tiny_number), KIND(wmb_spec))
      wmb_spec(:,z,:,:) = 10**wmb_spec(:,z,:,:)
 
   ENDDO
@@ -1426,10 +1435,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         DO i=1,nemline
            IF (smooth_velocity.EQ.1) THEN
               !smoothing variable is km/s
-              dlam = nebem_line_pos(i)*nebular_smooth_init/clight*1E13
+              dlam = nebem_line_pos(i)*ctx%nebular_smooth_init_val/clight*1E13
            ELSE
               !smoothing variable is A
-              dlam = nebular_smooth_init
+              dlam = ctx%nebular_smooth_init_val
            ENDIF
            !broaden the line to at least the resolution element
            !of the spectrum (x2).
@@ -1674,7 +1683,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      ENDIF
 
      !put Sun magnitudes in the Vega system if keyword is set
-     IF (compute_vega_mags.EQ.1.AND.magsun(i).NE.99.0) &
+   IF (ctx%compute_vega_mags_val.EQ.1.AND.magsun(i).NE.99.0) &
           magsun(i) = (magsun(i)-magsun(1)) - &
           (magvega(i)-magvega(1)) + magsun(1)
 
@@ -1823,12 +1832,12 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   DO i=1,500
      a = (i-1)/499.*(1-1/1001.)+1/1001.
      cosmospl(i,1) = 1/a-1  !redshift
-     cosmospl(i,2) = get_tuniv(cosmospl(i,1))   ! Tuniv in Gyr
-     cosmospl(i,3) = get_lumdist(cosmospl(i,1)) ! Lum Dist in pc
+   cosmospl(i,2) = get_tuniv(ctx, cosmospl(i,1))   ! Tuniv in Gyr
+   cosmospl(i,3) = get_lumdist(ctx, cosmospl(i,1)) ! Lum Dist in pc
   ENDDO
 
   !set Tuniv
-  tuniv = get_tuniv(zero)
+   tuniv = get_tuniv(ctx, zero)
 
   !----------------------------------------------------------------!
   !-----------------read in index definitions----------------------!
@@ -1938,30 +1947,5 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    END ASSOCIATE
 
    END ASSOCIATE
-
-   ! Sync key dimensions and library identifiers back to globals for
-   ! routines that still size automatic arrays from sps_vars.
-   nt = ctx%state%nt
-   nz = ctx%state%nz
-   nspec = ctx%state%nspec
-   nzinit = ctx%state%nzinit
-   nbands = ctx%state%nbands
-   nindx = ctx%state%nindx
-   ntfull = ctx%state%ntfull
-   nspec_xrb = ctx%state%nspec_xrb
-   nt_xrb = ctx%state%nt_xrb
-   nz_xrb = ctx%state%nz_xrb
-   zsol = ctx%state%zsol
-   zsol_spec = ctx%state%zsol_spec
-   isoc_type = TRIM(ctx%state%isoc_type)
-   spec_type = TRIM(ctx%state%spec_type)
-   str_dustem = ctx%state%str_dustem
-   tiny_logt = ctx%tiny_logt_val
-   IF (ASSOCIATED(ctx%state%time_full)) time_full = ctx%state%time_full
-   IF (ASSOCIATED(ctx%state%zlegend)) zlegend = ctx%state%zlegend
-   IF (ASSOCIATED(ctx%state%zlegendinit)) zlegendinit = ctx%state%zlegendinit
-   IF (ASSOCIATED(ctx%state%spec_lambda)) spec_lambda = ctx%state%spec_lambda
-   IF (ASSOCIATED(ctx%state%spec_nu)) spec_nu = ctx%state%spec_nu
-   IF (ASSOCIATED(ctx%state%spec_res)) spec_res = ctx%state%spec_res
 
 END SUBROUTINE SPS_SETUP

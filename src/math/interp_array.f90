@@ -2,7 +2,7 @@ FUNCTION LINTERPARR(xin,yin,xout)
 
   !routine to linearly interpolate a function yin(xin) at xout
 
-  USE sps_vars
+  USE fsps_types, ONLY: SP
   USE sps_utils, ONLY: locate
   IMPLICIT NONE
   REAL(SP), DIMENSION(:), INTENT(in) :: xin,yin

@@ -1,4 +1,4 @@
-function sfh_weight(sfh, imin, imax)
+function sfh_weight(ctx, sfh, imin, imax)
   ! Function to calculate the weights
   !
   ! Inputs
@@ -23,24 +23,59 @@ function sfh_weight(sfh, imin, imax)
   !   array of shape `ntfull` that gives the proper weights for the SSPs to
   !   produce the SFH.
 
-  use sps_vars, only: ntfull, time_full, tiny_logt, &
-                      SFHPARAMS, SP
-  use sps_utils, only: intsfwght, sfhlimit, locate
+   use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SFHPARAMS, SP
+   use sps_utils, only: locate
   implicit none
 
+   interface
+       function delta_time(ctx, logt1, logt2)
+          use fsps_context_types, only: fsps_context_t
+          use fsps_types, only: SP
+          type(fsps_context_t), intent(in) :: ctx
+          real(SP), intent(in) :: logt1, logt2
+          real(SP) :: delta_time
+       end function delta_time
+   end interface
+
+   interface
+       function intsfwght(ctx, sspind, logt, sfh)
+          use fsps_context_types, only: fsps_context_t
+          use fsps_types, only: SFHPARAMS, SP
+          type(fsps_context_t), intent(in) :: ctx
+          integer, intent(in) :: sspind
+          real(SP), dimension(2), intent(in) :: logt
+          type(SFHPARAMS), intent(in) :: sfh
+          real(SP) :: intsfwght
+       end function intsfwght
+    end interface
+
+   interface
+       function sfhlimit(ctx, tlim, sfh)
+          use fsps_context_types, only: fsps_context_t
+          use fsps_types, only: SFHPARAMS, SP
+          type(fsps_context_t), intent(in) :: ctx
+          real(SP), intent(in) :: tlim
+          type(SFHPARAMS), intent(in) :: sfh
+          real(SP) :: sfhlimit
+       end function sfhlimit
+    end interface
+
+   type(fsps_context_t), intent(in) :: ctx
   type(SFHPARAMS), intent(in) :: sfh
   integer, intent(in) :: imin, imax
 
-  real(SP), dimension(ntfull) ::sfh_weight
+   real(SP), dimension(ctx%state%ntfull) ::sfh_weight
 
   integer :: i, istart
   real(SP), dimension(2) :: tlim
-  real(SP) :: dt, delta_time, log_tb
-  real(SP), dimension(ntfull) :: tmp_wght !left=0., right=0.
+   real(SP) :: dt, log_tb
+   real(SP), dimension(ctx%state%ntfull) :: tmp_wght !left=0., right=0.
 
 
   ! Check if this is an SSP.  If so, do simple weights and return.
-  if (sfh%type.eq.-1) then
+   ASSOCIATE(time_full => ctx%state%time_full, ntfull => ctx%state%ntfull, tiny_logt => ctx%tiny_logt_val)
+   if (sfh%type.eq.-1) then
      sfh_weight = 0.
      ! Check for burst out of valid limits.
      ! N.B. we allow bursts before sf_start (sfh%tb > sfh%tage)
@@ -55,9 +90,9 @@ function sfh_weight(sfh, imin, imax)
      endif
 
      istart = min(max(locate(time_full, log_tb), 1), ntfull-1)
-     dt = delta_time(time_full(istart), time_full(istart+1))
-     sfh_weight(istart) = delta_time(log_tb, time_full(istart+1)) / dt
-     sfh_weight(istart+1) = delta_time(time_full(istart), log_tb) / dt
+   dt = delta_time(ctx, time_full(istart), time_full(istart+1))
+   sfh_weight(istart) = delta_time(ctx, log_tb, time_full(istart+1)) / dt
+   sfh_weight(istart+1) = delta_time(ctx, time_full(istart), log_tb) / dt
      return
   endif
 
@@ -71,28 +106,28 @@ function sfh_weight(sfh, imin, imax)
         ! There is a younger (`left`) bin, and we calculate its contribution to
         ! the weight.
         ! First calculate actual limits for the younger bin.
-        tlim(1) = sfhlimit(time_full(i-1), sfh)
-        tlim(2) = sfhlimit(time_full(i), sfh)
+      tlim(1) = sfhlimit(ctx, time_full(i-1), sfh)
+      tlim(2) = sfhlimit(ctx, time_full(i), sfh)
         ! The elements of `tlim` will be equal if there is no valid SFR in the
         ! younger bin; only proceed if there is a non-zero sfr in the younger bin.
         if (tlim(1).ne.tlim(2)) then
-           dt = delta_time(time_full(i-1), time_full(i))
+           dt = delta_time(ctx, time_full(i-1), time_full(i))
            ! Note sign flip here
            !left(i) = 0. - intsfwght(i-1, tlim, sfh) / dt
-           tmp_wght(i) = tmp_wght(i) - intsfwght(i-1, tlim, sfh) / dt
+           tmp_wght(i) = tmp_wght(i) - intsfwght(ctx, i-1, tlim, sfh) / dt
         endif
      endif
      if (i.lt.ntfull) then
         ! There is an older (`right`) bin, we calculate its contribution to the
         ! weight.
-        tlim(1) = sfhlimit(time_full(i), sfh)
-        tlim(2) = sfhlimit(time_full(i+1), sfh)
+      tlim(1) = sfhlimit(ctx, time_full(i), sfh)
+      tlim(2) = sfhlimit(ctx, time_full(i+1), sfh)
         ! The elements of `tlim` will be equal if there is no valid SFR in the
         ! older bin; only proceed if there is a non-zero sfr in the older bin.
         if (tlim(1).ne.tlim(2)) then
-           dt = delta_time(time_full(i), time_full(i+1))
+           dt = delta_time(ctx, time_full(i), time_full(i+1))
            !right(i) = intsfwght(i+1, tlim, sfh) / dt
-           tmp_wght(i) = tmp_wght(i) + intsfwght(i+1, tlim, sfh) / dt
+           tmp_wght(i) = tmp_wght(i) + intsfwght(ctx, i+1, tlim, sfh) / dt
         endif
      endif
   enddo
@@ -102,36 +137,40 @@ function sfh_weight(sfh, imin, imax)
   !   (i.e., nearest neighbor extrapolation), so the t~0 weight gets added to
   !   sfh_weight(1)
   if (imin.eq.0) then
-     tlim(1) = sfhlimit(tiny_logt, sfh)
-     tlim(2) = sfhlimit(time_full(1), sfh)
+     tlim(1) = sfhlimit(ctx, tiny_logt, sfh)
+     tlim(2) = sfhlimit(ctx, time_full(1), sfh)
      if (tlim(1).ne.tlim(2)) then
-        dt = delta_time(tiny_logt, time_full(1))
+        dt = delta_time(ctx, tiny_logt, time_full(1))
         ! Contribution of i=1 to younger bin.
-        tmp_wght(1) = tmp_wght(1) - intsfwght(0, tlim, sfh) / dt
+        tmp_wght(1) = tmp_wght(1) - intsfwght(ctx, 0, tlim, sfh) / dt
         ! Contribution of i=0 to older bin
-        tmp_wght(1) = tmp_wght(1) + intsfwght(1, tlim, sfh) / dt
+        tmp_wght(1) = tmp_wght(1) + intsfwght(ctx, 1, tlim, sfh) / dt
      endif
   endif
 
-  sfh_weight = tmp_wght
+   sfh_weight = tmp_wght
+
+   END ASSOCIATE
 
 end function sfh_weight
 
 
-function delta_time(logt1, logt2)
+function delta_time(ctx, logt1, logt2)
   ! Dumb function to properly calculate dt based on interpolation type.
   !
   ! Returns (logt2 - logt1), or (10**logt2 - 10**logt1)
 
-  use sps_vars, only: interpolation_type, SP
+  use fsps_context_types, only: fsps_context_t
+   use fsps_types, only: SP
   implicit none
 
+  type(fsps_context_t), intent(in) :: ctx
   real(SP), intent(in) :: logt1, logt2
   real(SP) :: delta_time
 
-  if (interpolation_type.eq.0) then
+  if (ctx%interpolation_type_val.eq.0) then
      delta_time = logt2 - logt1
-  else if (interpolation_type.eq.1) then
+  else if (ctx%interpolation_type_val.eq.1) then
      delta_time = 10**logt2 - 10**logt1
   endif
 

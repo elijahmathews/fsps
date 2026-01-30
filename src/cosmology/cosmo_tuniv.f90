@@ -1,11 +1,13 @@
-FUNCTION GET_TUNIV(z)
+FUNCTION GET_TUNIV(ctx, z)
 
   !compute age of Universe in Gyr at redshift z
   !assumes flat universe w/ only matter and lambda
   !assumes om0,ol0,H0 set in sps_vars.f90
   
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_types, ONLY: SP
   IMPLICIT NONE
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i
   INTEGER, PARAMETER :: ii=10000
   REAL(SP), INTENT(in) :: z
@@ -18,13 +20,13 @@ FUNCTION GET_TUNIV(z)
   get_tuniv = 0.0
 
   !Hubble time in Gyr
-  thub = 0.978E3 / H0
+   thub = 0.978E3 / ctx%H0_val
 
   DO i=1,ii
      lnstig(i) = REAL(i)/ii*(LOG(1E4)-LOG(1+z))+LOG(1+z)
   ENDDO
   
-  hub = SQRT( om0*EXP(lnstig)**3 + ol0 )
+   hub = SQRT( ctx%om0_val*EXP(lnstig)**3 + ctx%ol0_val )
 
   DO i=1,ii-1
      get_tuniv = get_tuniv + 0.5*(1/hub(i)+1/hub(i+1))

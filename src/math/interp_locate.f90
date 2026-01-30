@@ -1,6 +1,6 @@
 FUNCTION LOCATE(xx,x)
 
-  USE sps_vars
+   USE fsps_types, ONLY: SP
   IMPLICIT NONE
   REAL(SP), DIMENSION(:), INTENT(IN) :: xx
   REAL(SP), INTENT(IN) :: x

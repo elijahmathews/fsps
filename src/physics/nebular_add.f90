@@ -4,7 +4,7 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
   !to input SSPs (sspi).  Returns SSPs as output (sspo).
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_vars
+   USE fsps_types, ONLY: SP, PARAMS, nemline, nebnage, nebnz, nebnip, clight, mypi, hplank, lsun
   USE sps_utils, ONLY : locate,tsum
   IMPLICIT NONE
 
@@ -12,11 +12,11 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
   INTEGER :: t,i,nti,a1,z1,u1
   REAL(SP) :: da,dz,du,dlam,qq
   TYPE(PARAMS), INTENT(in) :: pset
-  REAL(SP), INTENT(in), DIMENSION(nspec,ntfull)    :: sspi
-  REAL(SP), INTENT(inout), DIMENSION(nspec,ntfull) :: sspo
-  REAL(SP), INTENT(inout), DIMENSION(nemline,ntfull), OPTIONAL :: nebemline
+   REAL(SP), INTENT(in), DIMENSION(:,:)    :: sspi
+   REAL(SP), INTENT(inout), DIMENSION(:,:) :: sspo
+   REAL(SP), INTENT(inout), DIMENSION(:,:), OPTIONAL :: nebemline
   REAL(SP), DIMENSION(nemline) :: tmpnebline
-  REAL(SP), DIMENSION(nspec)   :: tmpnebcont
+   REAL(SP), DIMENSION(SIZE(sspi,1))   :: tmpnebcont
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
@@ -70,7 +70,7 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
    ENDIF
 
    sspo = sspi
-  nebemline = 0.0
+   IF (PRESENT(nebemline)) nebemline = 0.0
 
   DO t=1,nti
 

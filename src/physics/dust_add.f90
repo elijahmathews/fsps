@@ -31,25 +31,25 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
   !  The dust mass required to produce the absorbed luminosity for the given dust emission parameters
 
 
-   USE sps_vars
+   USE fsps_types, ONLY: SP, PARAMS, nemline, mypi, clight, tiny_number
    USE fsps_context_types, ONLY: fsps_context_t
   USE sps_utils, ONLY : tsum, locate, attn_curve, linterparr
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
-  REAL(SP), DIMENSION(nspec), INTENT(in) :: csp1,csp2
+   REAL(SP), DIMENSION(:), INTENT(in) :: csp1,csp2
   TYPE(PARAMS), INTENT(in) :: pset
-  REAL(SP), DIMENSION(nspec), INTENT(out) :: specdust
+   REAL(SP), DIMENSION(:), INTENT(out) :: specdust
   REAL(SP), INTENT(out) :: mdust
   REAL(SP), DIMENSION(nemline), INTENT(in) :: ncsp1,ncsp2
   REAL(SP), DIMENSION(nemline), INTENT(out) :: nebdust
-  INTEGER :: i,qlo,ulo,iself=0
-  REAL(SP), DIMENSION(nspec)  :: diff_dust,tau_diff,cspi
+   INTEGER :: qlo,ulo,iself=0
+   REAL(SP), DIMENSION(SIZE(csp1))  :: diff_dust,tau_diff,cspi
   REAL(SP), DIMENSION(nemline)  :: diff_dust_neb,ncspi
-  REAL(SP), DIMENSION(nspec)  :: nu,dumin,dumax
-  REAL(SP), DIMENSION(nspec)  :: mduste,duste,oduste,sduste,tduste
-  REAL(SP) :: clump_ave,lboln,lbold,labs,gamma,norm,dq,du
+   REAL(SP), DIMENSION(SIZE(csp1))  :: nu,dumin,dumax
+    REAL(SP), DIMENSION(SIZE(csp1))  :: mduste,duste,oduste,tduste
+   REAL(SP) :: lboln,lbold,labs,gamma,norm,dq,du
 
   !---------------------------------------------------------------!
 
@@ -101,7 +101,7 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
   !---------------------------------------------------------------!
 
   !compute attenuation curve for diffuse dust
-  tau_diff = attn_curve(spec_lambda,dust_type,pset)
+   tau_diff = attn_curve(ctx, spec_lambda,dust_type,pset)
 
   !combine old and young stars, attenuating the young
   !with a fixed power-law attn curve, and allowing a fraction

@@ -24,5 +24,6 @@ spec_bin
 # Test executables
 generate_test_data
 test_cache
+test_contexts
 test_fsps
 test_runner
