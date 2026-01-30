@@ -1,4 +1,4 @@
-SUBROUTINE ADD_DUST(pset,csp1,csp2,specdust,mdust,ncsp1,ncsp2,nebdust)
+SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdust)
 
   ! Inputs
   ! ---------
@@ -31,9 +31,12 @@ SUBROUTINE ADD_DUST(pset,csp1,csp2,specdust,mdust,ncsp1,ncsp2,nebdust)
   !  The dust mass required to produce the absorbed luminosity for the given dust emission parameters
 
 
-  USE sps_vars
+   USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
   USE sps_utils, ONLY : tsum, locate, attn_curve, linterparr
   IMPLICIT NONE
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   REAL(SP), DIMENSION(nspec), INTENT(in) :: csp1,csp2
   TYPE(PARAMS), INTENT(in) :: pset
@@ -49,6 +52,20 @@ SUBROUTINE ADD_DUST(pset,csp1,csp2,specdust,mdust,ncsp1,ncsp2,nebdust)
   REAL(SP) :: clump_ave,lboln,lbold,labs,gamma,norm,dq,du
 
   !---------------------------------------------------------------!
+
+  ASSOCIATE( &
+     dust_type => ctx%dust_type_val, &
+     add_dust_emission => ctx%add_dust_emission_val, &
+     nebemlineinspec => ctx%nebemlineinspec_val, &
+     nqpah_dustem => ctx%state%nqpah_dustem, &
+     numin_dustem => ctx%state%numin_dustem, &
+     ndim_dustem => ctx%state%ndim_dustem, &
+     spec_lambda => ctx%state%spec_lambda, &
+     nebem_line_pos => ctx%state%nebem_line_pos, &
+     qpaharr => ctx%state%qpaharr, &
+     uminarr => ctx%state%uminarr, &
+     dustem_dustem => ctx%state%dustem_dustem, &
+     dustem2_dustem => ctx%state%dustem2_dustem )
   !----------------------Test input params------------------------!
   !---------------------------------------------------------------!
 
@@ -204,5 +221,6 @@ SUBROUTINE ADD_DUST(pset,csp1,csp2,specdust,mdust,ncsp1,ncsp2,nebdust)
      ENDIF
 
   ENDIF
+  END ASSOCIATE
 
 END SUBROUTINE ADD_DUST

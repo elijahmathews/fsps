@@ -24,6 +24,9 @@ SETUP INSTRUCTIONS
     on the command line without editing the Makefile:
             make FC=ifort
 
+        Build artifacts are written under build/. Test objects are placed
+        in build/tests (not in the tests/ source directory).
+
         To install system-wide (shared library, header, data, and drivers), run:
             make shared
             make install PREFIX=/usr
@@ -31,6 +34,9 @@ SETUP INSTRUCTIONS
         This installs data to $PREFIX/share/fsps/data and the shared library to
         $PREFIX/lib (or your distro's libdir if you override LIBDIR). For system
         installs, set FSPS_DATA_HOME=/usr/share/fsps to locate the data directory.
+
+    C driver note: the C API is context-only.
+    See doc/FSPS_C_API.md and doc/DEGLOBALIFY_MIGRATION.md for usage.
 
 3.  email cconroy@cfa.harvard.edu so that I can keep you posted on updates.  
       -> this step is actually important!  Every code has bugs.  If I

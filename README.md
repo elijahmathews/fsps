@@ -54,6 +54,7 @@ FSPS ships a C driver intended for use by language bindings (e.g., Python-FSPS r
 For pkg-config users, `make install` installs fsps.pc to the pkg-config directory.
 
 See [doc/FSPS_C_API.md](doc/FSPS_C_API.md) for the API reference, array layout, and error handling.
+Migration notes for wrappers are in [doc/DEGLOBALIFY_MIGRATION.md](doc/DEGLOBALIFY_MIGRATION.md).
 
 Contents
 ---------
@@ -64,8 +65,8 @@ fsps root directory:
 autosps and simple.  You may wish to use this directory for all
 outputs of the fsps routines.
 
- * `build`: Contains the compiled object files (`.o`) and Fortran modules (`.mod`).
-This directory is automatically created when you run `make`.
+* `build`: Contains the compiled object files (`.o`) and Fortran modules (`.mod`).
+	Test objects are placed in `build/tests`. This directory is automatically created when you run `make`.
 
  * [`data`](data): Contains model inputs and lookup tables. Subdirectories include:
 	 - `data/isochrones`: isochrone libraries (BaSTI, Padova, MIST, etc.)
@@ -84,4 +85,4 @@ output files (not actively maintained).
 spectra, SFH, math, cosmology, ABI, and program entry points).
 
 * [`tests`](tests): Contains the regression test suite and scripts for generating
-reference comparison data.
+reference comparison data. Test build artifacts are placed under `build/tests`.

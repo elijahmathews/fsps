@@ -13,10 +13,10 @@ From the repo root:
 
 The shared library is created at build/libfsps.so.* (with symlinks build/libfsps.so and build/libfsps.so.<soname>). The C header is include/fsps.h.
 
-## Initialization
-
-- `fsps_initialize(int zin)`
-- `fsps_initialize_full(int zin, int compute_vega_mags, int vactoair_flag, const char *isoc, const char *spec, const char *dust)`
+## Initialization (context-based)
+- `fsps_context_create(int *handle, int *status)`
+- `fsps_context_setup(int zin, const char *isoc, const char *spec, const char *dust, int handle, int *status)`
+- `fsps_context_destroy(int handle, int *status)`
 
 Notes:
 - `zin = -1` loads the full metallicity grid (required for full-Z interpolation and full-Z SSP dumps).
@@ -24,11 +24,9 @@ Notes:
 
 ## Parameter setting
 
-- `fsps_set_int(key, value)`
-- `fsps_set_float(key, value)`
-- `fsps_set_str(key, value)`
-- `fsps_set_mag_compute(n_bands, mask)`
-- `fsps_set_ssp_gen_age(n_age, mask)`
+- `fsps_context_set_int(handle, key, value, status)`
+- `fsps_context_set_float(handle, key, value, status)`
+- `fsps_context_set_str(handle, key, value, status)`
 
 ## Driver version and locking
 
@@ -37,30 +35,30 @@ Notes:
 
 Note: The lock is a cooperative in-process guard only. It is not a real mutex and does not provide thread or interprocess safety.
 
-Parameter names match FSPS variable names. Use `fsps_validate_params()` to catch common invalid settings.
+Parameter names match FSPS variable names.
 
 ## Computation
 
-- `fsps_compute(spec)` — SSP/CSP depending on `sfh`.
-- `fsps_compute_csp(zcontinuous)` — convenience wrapper for z-grid CSP computation (0–3).
-- `fsps_compute_ssp(zin)` / `fsps_compute_ssps()`
-- `fsps_compute_zdep(ztype)` — lower-level z-interpolation call.
+Context-based SSP compute (requires prior `fsps_context_setup`):
+- `fsps_context_compute_ssp(int handle, double *spec, double *mass, double *lbol, int *status)`
+
+Note: `spec` is column-major with dimensions `[nspec, ntfull]`.
 
 ## Output
 
-- `fsps_get_spec(spec)` / `fsps_get_spec_peraa(spec)`
-- `fsps_get_mags(zred, mags)` / `fsps_get_mags_mask(zred, mags, mask)`
-- `fsps_get_stats(age, mass, lbol, sfr, mdust, mformed, emlines)`
-- `fsps_get_indices(spec, indices)`
+Context-based output access is currently limited to SSP arrays returned from `fsps_context_compute_ssp`.
 
 ## Metadata
 
-- `fsps_get_dims(nspec, ntfull)` and direct getters `fsps_get_nspec`, `fsps_get_ntfull`, `fsps_get_nbands`, `fsps_get_nz`, `fsps_get_nemline`
-- Size helpers: `fsps_get_nt`, `fsps_get_nm`, `fsps_get_ntabmax`, `fsps_get_nindx`
-- `fsps_get_lambda`, `fsps_get_emlambda`, `fsps_get_res`, `fsps_get_filter_data`
-- `fsps_get_zlegend`, `fsps_get_zsol`, `fsps_get_timefull`
-- `fsps_get_isochrone_dimensions`, `fsps_get_nmass_isochrone`
-- `fsps_get_libraries`
+- `fsps_context_get_dims(handle, &nspec, &ntfull, &status)`
+- `fsps_context_get_nspec(handle, &nspec, &status)`
+- `fsps_context_get_ntfull(handle, &ntfull, &status)`
+- `fsps_context_get_nbands(handle, &nbands, &status)`
+- `fsps_context_get_nindx(handle, &nindx, &status)`
+- `fsps_context_get_nz(handle, &nz, &status)`
+- `fsps_context_get_nemline(handle, &nemline, &status)`
+- `fsps_context_get_zsol(handle, &zsol, &status)`
+- `fsps_context_get_paths(handle, sps_home, sps_len, data_home, data_len, output_home, out_len)`
 
 ## Error handling
 
@@ -71,6 +69,8 @@ The driver records the last error or warning internally:
 - `fsps_set_debug(1)` to print error/warning messages to stdout.
 
 `status == 0` means no error recorded. Non-zero values correspond to driver-specific warning/error codes.
+
+Context-based setters return status directly. A non-zero status indicates an unknown key or invalid handle.
 
 ## Array layout
 
@@ -83,7 +83,18 @@ All arrays are passed as flat C buffers. The driver uses Fortran order internall
 
 ## Thread safety
 
-FSPS uses global state and is not thread-safe. Do not call these APIs concurrently from multiple threads.
+FSPS is not thread-safe. Do not call these APIs concurrently from multiple threads.
+
+## Minimal example (C)
+
+```c
+int h = 0, status = 0;
+fsps_context_create(&h, &status);
+fsps_context_setup(-1, "mist", "miles", "DL07", h, &status);
+fsps_context_set_int(h, "zmet", 1, &status);
+fsps_context_compute_ssp(h, spec, mass, lbol, &status);
+fsps_context_destroy(h, &status);
+```
 
 ## Pkg-config
 

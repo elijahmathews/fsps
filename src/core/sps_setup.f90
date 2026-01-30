@@ -1,4 +1,4 @@
-SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
+SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !read in isochrones and spectral libraries for all metallicities.
   !read in band-pass info and the spectrum for Vega.
@@ -9,16 +9,19 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !is read.  Specifying only the metallicity of interest results
   !in a much faster setup.
 
-  USE sps_vars
+   USE sps_vars
+   USE fsps_cache, ONLY: fsps_setup_cache_t, fsps_cache_get_setup
+  USE fsps_context_types, ONLY: fsps_context_t
   USE sps_utils, ONLY: locate, linterparr, linterp, tsum, get_tuniv, &
      get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
   IMPLICIT NONE
+  TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER, INTENT(in) :: zin
   CHARACTER(LEN=*), INTENT(in), OPTIONAL :: isoc_type_in
   CHARACTER(LEN=*), INTENT(in), OPTIONAL :: spec_type_in
   CHARACTER(LEN=*), INTENT(in), OPTIONAL :: dust_type_in
 
-  INTEGER :: stat=1,n,i,j,m,jj,k,i1,i2,stat2=1
+   INTEGER :: stat=1,n,i,j,m,jj,k,i1,i2
   INTEGER, PARAMETER :: ntlam=1221,nspec_agb=6146,nspec_aringer=9032
   INTEGER, PARAMETER :: nlamwr=1963,nspec_pagb=9281
   INTEGER, PARAMETER :: nzwmb=12, nspec_wmb=5508
@@ -27,6 +30,9 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   CHARACTER(6) :: zstype
   CHARACTER(5) :: zstype5
   REAL(SP) :: dumr1,d1,d2,logage,x,a,zero=0.0,d,one=1.0,dz,dlam
+  CHARACTER(LEN=512) :: cache_key
+  LOGICAL :: cache_new
+  TYPE(fsps_setup_cache_t), POINTER :: cache
   
   CHARACTER(5), ALLOCATABLE :: zlegend_str(:)
   CHARACTER(5), ALLOCATABLE :: zz_str_xrb(:)
@@ -66,7 +72,70 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
 
-  CALL SPS_TAKEDOWN()
+  ASSOCIATE( &
+     zsol => ctx%state%zsol, zsol_spec => ctx%state%zsol_spec, &
+     isoc_type => ctx%state%isoc_type, spec_type => ctx%state%spec_type, &
+     nt => ctx%state%nt, nz => ctx%state%nz, nspec => ctx%state%nspec, &
+     nzinit => ctx%state%nzinit, nbands => ctx%state%nbands, &
+     nindx => ctx%state%nindx, ntfull => ctx%state%ntfull, &
+     nspec_xrb => ctx%state%nspec_xrb, nt_xrb => ctx%state%nt_xrb, &
+     nz_xrb => ctx%state%nz_xrb, check_sps_setup => ctx%state%check_sps_setup, &
+     tuniv => ctx%state%tuniv, whlam5000 => ctx%state%whlam5000, &
+     whlylim => ctx%state%whlylim, zpow2 => ctx%state%zpow2, &
+     mwdindex => ctx%state%mwdindex, cosmospl => ctx%state%cosmospl, &
+     ntabsfh => ctx%state%ntabsfh, sfh_tab => ctx%state%sfh_tab, &
+     imf_alpha => ctx%state%imf_alpha, imf_vdmc => ctx%state%imf_vdmc, &
+     imf_mdave => ctx%state%imf_mdave, n_user_imf => ctx%state%n_user_imf, &
+     imf_user_alpha => ctx%state%imf_user_alpha, salp_ind => ctx%state%salp_ind, &
+     imf_lower_limit => ctx%state%imf_lower_limit, &
+     imf_upper_limit => ctx%state%imf_upper_limit, &
+     imf_lower_bound => ctx%state%imf_lower_bound, mlim_bh => ctx%state%mlim_bh, &
+     mlim_ns => ctx%state%mlim_ns, alt_filter_file => ctx%state%alt_filter_file, &
+     indexdefined => ctx%state%indexdefined, wgdust => ctx%state%wgdust, &
+     g03smcextn => ctx%state%g03smcextn, bands => ctx%state%bands, &
+     magsun => ctx%state%magsun, magvega => ctx%state%magvega, &
+     filter_leff => ctx%state%filter_leff, vega_spec => ctx%state%vega_spec, &
+     sun_spec => ctx%state%sun_spec, spec_lambda => ctx%state%spec_lambda, &
+     spec_nu => ctx%state%spec_nu, spec_res => ctx%state%spec_res, &
+     speclib_logt => ctx%state%speclib_logt, speclib_logg => ctx%state%speclib_logg, &
+     speclib => ctx%state%speclib, wmb_logt => ctx%state%wmb_logt, &
+     wmb_logg => ctx%state%wmb_logg, wmb_spec => ctx%state%wmb_spec, &
+     agb_spec_o => ctx%state%agb_spec_o, agb_logt_o => ctx%state%agb_logt_o, &
+     agb_spec_c => ctx%state%agb_spec_c, agb_logt_c => ctx%state%agb_logt_c, &
+     agb_logt_car => ctx%state%agb_logt_car, agb_spec_car => ctx%state%agb_spec_car, &
+     pagb_spec => ctx%state%pagb_spec, pagb_logt => ctx%state%pagb_logt, &
+     wrn_spec => ctx%state%wrn_spec, wrc_spec => ctx%state%wrc_spec, &
+     wrn_logt => ctx%state%wrn_logt, wrc_logt => ctx%state%wrc_logt, &
+     ndim_dustem => ctx%state%ndim_dustem, numin_dustem => ctx%state%numin_dustem, &
+     nqpah_dustem => ctx%state%nqpah_dustem, str_dustem => ctx%state%str_dustem, &
+     qpaharr => ctx%state%qpaharr, uminarr => ctx%state%uminarr, &
+     lambda_dustem => ctx%state%lambda_dustem, dustem_dustem => ctx%state%dustem_dustem, &
+     dustem2_dustem => ctx%state%dustem2_dustem, flux_dagb => ctx%state%flux_dagb, &
+     tau1_dagb => ctx%state%tau1_dagb, teff_dagb => ctx%state%teff_dagb, &
+     nebem_line_pos => ctx%state%nebem_line_pos, nebem_line => ctx%state%nebem_line, &
+     xnebem_line => ctx%state%xnebem_line, nebem_cont => ctx%state%nebem_cont, &
+     xnebem_cont => ctx%state%xnebem_cont, nebem_logz => ctx%state%nebem_logz, &
+     nebem_age => ctx%state%nebem_age, nebem_logu => ctx%state%nebem_logu, &
+     neb_res_min => ctx%state%neb_res_min, gaussnebarr => ctx%state%gaussnebarr, &
+     agndust_tau => ctx%state%agndust_tau, agndust_spec => ctx%state%agndust_spec, &
+     mact_isoc => ctx%state%mact_isoc, logl_isoc => ctx%state%logl_isoc, &
+     logt_isoc => ctx%state%logt_isoc, logg_isoc => ctx%state%logg_isoc, &
+     ffco_isoc => ctx%state%ffco_isoc, phase_isoc => ctx%state%phase_isoc, &
+     mini_isoc => ctx%state%mini_isoc, lmdot_isoc => ctx%state%lmdot_isoc, &
+     nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc, &
+     zlegend => ctx%state%zlegend, zlegendinit => ctx%state%zlegendinit, &
+     spec_ssp_zz => ctx%state%spec_ssp_zz, mass_ssp_zz => ctx%state%mass_ssp_zz, &
+     lbol_ssp_zz => ctx%state%lbol_ssp_zz, time_full => ctx%state%time_full, &
+     weight_ssp => ctx%state%weight_ssp, spec_young => ctx%state%spec_young, &
+     spec_old => ctx%state%spec_old, bpass_spec_ssp => ctx%state%bpass_spec_ssp, &
+     bpass_mass_ssp => ctx%state%bpass_mass_ssp, lam_xrb => ctx%state%lam_xrb, &
+   spec_xrb => ctx%state%spec_xrb, ages_xrb => ctx%state%ages_xrb, &
+   zmet_xrb => ctx%state%zmet_xrb, lsfinfo => ctx%state%lsfinfo, &
+   cloudy_dust => ctx%cloudy_dust_val, smooth_velocity => ctx%smooth_velocity_val, &
+   smooth_lsf => ctx%smooth_lsf_val, setup_nebular_gaussians => ctx%setup_nebular_gaussians_val, &
+   powell_data => ctx%state%powell_data, sedfit_data => ctx%state%sedfit_data )
+
+  CALL SPS_TAKEDOWN(ctx)
 
   IF (verbose.EQ.1) THEN
      WRITE(*,*)
@@ -75,13 +144,21 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
   ! Initialize Library Variables
   IF (PRESENT(isoc_type_in)) THEN
-     isoc_type = isoc_type_in
+     IF (LEN_TRIM(isoc_type_in) > 0) THEN
+        isoc_type = isoc_type_in
+     ELSE
+        isoc_type = 'mist'
+     END IF
   ELSE
      isoc_type = 'mist'
   END IF
   
   IF (PRESENT(spec_type_in)) THEN
-     spec_type = spec_type_in
+     IF (LEN_TRIM(spec_type_in) > 0) THEN
+        spec_type = spec_type_in
+     ELSE
+        spec_type = 'miles'
+     END IF
   ELSE
      spec_type = 'miles'
   END IF
@@ -183,58 +260,147 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      WRITE(*,*) 'SPS_SETUP ERROR: zin GT nz', zin,nz
      STOP
   ENDIF
-  
 
-  ! Allocate arrays
-  ALLOCATE(indexdefined(7,nindx))
-  ALLOCATE(wgdust(nspec,18,6,2))
-  ALLOCATE(g03smcextn(nspec))
-  ALLOCATE(bands(nspec,nbands))
-  ALLOCATE(magsun(nbands),magvega(nbands),filter_leff(nbands))
-  ALLOCATE(vega_spec(nspec),sun_spec(nspec))
-  ALLOCATE(spec_lambda(nspec),spec_nu(nspec))
-  ALLOCATE(spec_res(nspec))
-  ALLOCATE(speclib(nspec,nz,ndim_logt,ndim_logg))
-  ALLOCATE(wmb_spec(nspec,nz,ndim_wmb_logt,ndim_wmb_logg))
-  ALLOCATE(agb_spec_o(nspec,n_agb_o))
-  ALLOCATE(agb_logt_o(nz,n_agb_o))
-  ALLOCATE(agb_spec_c(nspec,n_agb_c))
-  ALLOCATE(agb_logt_c(n_agb_c))
-  ALLOCATE(agb_spec_car(nspec,n_agb_car))
-  ALLOCATE(pagb_spec(nspec,ndim_pagb,2))
-  ALLOCATE(wrn_spec(nspec,ndim_wr,nz),wrc_spec(nspec,ndim_wr,nz))
-  
-  ! Dust models
-  ALLOCATE(qpaharr(nqpah_dustem))
-  ALLOCATE(uminarr(numin_dustem))
-  ALLOCATE(lambda_dustem(ndim_dustem))
-  ALLOCATE(dustem_dustem(ndim_dustem,numin_dustem*2))
-  ALLOCATE(dustem2_dustem(nspec,nqpah_dustem,numin_dustem*2))
-  
-  ALLOCATE(flux_dagb(nspec,2,nteff_dagb,ntau_dagb))
-  ALLOCATE(nebem_cont(nspec,nebnz,nebnage,nebnip),xnebem_cont(nspec,nebnz,nebnage,nebnip))
-  ALLOCATE(neb_res_min(nspec))
-  ALLOCATE(gaussnebarr(nspec,nemline))
-  ALLOCATE(agndust_spec(nspec,nagndust))
-  ALLOCATE(mact_isoc(nz,nt,nm),logl_isoc(nz,nt,nm),logt_isoc(nz,nt,nm),logg_isoc(nz,nt,nm))
-  ALLOCATE(ffco_isoc(nz,nt,nm),phase_isoc(nz,nt,nm),mini_isoc(nz,nt,nm),lmdot_isoc(nz,nt,nm))
-  ALLOCATE(nmass_isoc(nz,nt))
-  ALLOCATE(timestep_isoc(nz,nt))
-  ALLOCATE(zlegend(nz))
-  ALLOCATE(zlegendinit(nzinit))
-  ALLOCATE(spec_ssp_zz(nspec,ntfull,nz))
-  ALLOCATE(mass_ssp_zz(ntfull,nz),lbol_ssp_zz(ntfull,nz))
-  ALLOCATE(time_full(ntfull))
-  ALLOCATE(weight_ssp(ntfull,nz))
-  ALLOCATE(spec_young(nspec),spec_old(nspec))
-  ALLOCATE(bpass_spec_ssp(nspec,nt,nz))
-  ALLOCATE(bpass_mass_ssp(nt,nz))
-  ALLOCATE(lam_xrb(nspec_xrb))
-  ALLOCATE(spec_xrb(nspec,nt_xrb,nz_xrb))
-  ALLOCATE(ages_xrb(nt_xrb))
-  ALLOCATE(zmet_xrb(nz_xrb))
-  
-  ALLOCATE(lsfinfo%lsf(nspec))
+  ! Resolve paths and attach or create shared caches
+  CALL fsps_resolve_paths()
+
+  WRITE(cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A)') &
+       TRIM(SPS_HOME), TRIM(isoc_type), TRIM(spec_type), TRIM(str_dustem), &
+       zin, smooth_velocity, setup_nebular_gaussians, add_neb_emission, add_neb_continuum, &
+       add_dust_emission, add_agn_dust, add_xrb_emission, add_agb_dust_model, TRIM(alt_filter_file)
+
+  CALL fsps_cache_get_setup(cache_key, ctx%setup_cache, cache_new)
+  cache => ctx%setup_cache
+
+  IF (cache_new) THEN
+     cache%isoc_type = TRIM(isoc_type)
+     cache%spec_type = TRIM(spec_type)
+     cache%dust_type = TRIM(str_dustem)
+     cache%alt_filter_file = alt_filter_file
+     cache%nz = nz
+     cache%nt = nt
+     cache%nspec = nspec
+     cache%nzinit = nzinit
+     cache%nbands = nbands
+     cache%nindx = nindx
+     cache%ntfull = ntfull
+     cache%nspec_xrb = nspec_xrb
+     cache%nt_xrb = nt_xrb
+     cache%nz_xrb = nz_xrb
+     cache%smooth_velocity = smooth_velocity
+     cache%setup_nebular_gaussians = setup_nebular_gaussians
+     cache%add_neb_emission = add_neb_emission
+     cache%add_neb_continuum = add_neb_continuum
+     cache%add_dust_emission = add_dust_emission
+     cache%add_agn_dust = add_agn_dust
+     cache%add_xrb_emission = add_xrb_emission
+     cache%add_agb_dust_model = add_agb_dust_model
+     cache%use_wr_spectra = use_wr_spectra
+
+     ALLOCATE(cache%indexdefined(7,nindx))
+     ALLOCATE(cache%wgdust(nspec,18,6,2))
+     ALLOCATE(cache%g03smcextn(nspec))
+     ALLOCATE(cache%bands(nspec,nbands))
+     ALLOCATE(cache%magsun(nbands),cache%magvega(nbands),cache%filter_leff(nbands))
+     ALLOCATE(cache%vega_spec(nspec),cache%sun_spec(nspec))
+     ALLOCATE(cache%spec_lambda(nspec),cache%spec_nu(nspec))
+     ALLOCATE(cache%spec_res(nspec))
+     ALLOCATE(cache%speclib(nspec,nz,ndim_logt,ndim_logg))
+     ALLOCATE(cache%wmb_spec(nspec,nz,ndim_wmb_logt,ndim_wmb_logg))
+     ALLOCATE(cache%agb_spec_o(nspec,n_agb_o))
+     ALLOCATE(cache%agb_logt_o(nz,n_agb_o))
+     ALLOCATE(cache%agb_spec_c(nspec,n_agb_c))
+     ALLOCATE(cache%agb_logt_c(n_agb_c))
+     ALLOCATE(cache%agb_spec_car(nspec,n_agb_car))
+     ALLOCATE(cache%pagb_spec(nspec,ndim_pagb,2))
+     ALLOCATE(cache%wrn_spec(nspec,ndim_wr,nz),cache%wrc_spec(nspec,ndim_wr,nz))
+
+     ! Dust models
+     ALLOCATE(cache%qpaharr(nqpah_dustem))
+     ALLOCATE(cache%uminarr(numin_dustem))
+     ALLOCATE(cache%lambda_dustem(ndim_dustem))
+     ALLOCATE(cache%dustem_dustem(ndim_dustem,numin_dustem*2))
+     ALLOCATE(cache%dustem2_dustem(nspec,nqpah_dustem,numin_dustem*2))
+
+     ALLOCATE(cache%flux_dagb(nspec,2,nteff_dagb,ntau_dagb))
+     ALLOCATE(cache%nebem_cont(nspec,nebnz,nebnage,nebnip),cache%xnebem_cont(nspec,nebnz,nebnage,nebnip))
+     ALLOCATE(cache%neb_res_min(nspec))
+     ALLOCATE(cache%gaussnebarr(nspec,nemline))
+     ALLOCATE(cache%agndust_spec(nspec,nagndust))
+     ALLOCATE(cache%mact_isoc(nz,nt,nm),cache%logl_isoc(nz,nt,nm),cache%logt_isoc(nz,nt,nm),cache%logg_isoc(nz,nt,nm))
+     ALLOCATE(cache%ffco_isoc(nz,nt,nm),cache%phase_isoc(nz,nt,nm),cache%mini_isoc(nz,nt,nm),cache%lmdot_isoc(nz,nt,nm))
+     ALLOCATE(cache%nmass_isoc(nz,nt))
+     ALLOCATE(cache%timestep_isoc(nz,nt))
+     ALLOCATE(cache%zlegend(nz))
+     ALLOCATE(cache%zlegendinit(nzinit))
+     ALLOCATE(cache%time_full(ntfull))
+     ALLOCATE(cache%bpass_spec_ssp(nspec,nt,nz))
+     ALLOCATE(cache%bpass_mass_ssp(nt,nz))
+     ALLOCATE(cache%lam_xrb(nspec_xrb))
+     ALLOCATE(cache%spec_xrb(nspec,nt_xrb,nz_xrb))
+     ALLOCATE(cache%ages_xrb(nt_xrb))
+     ALLOCATE(cache%zmet_xrb(nz_xrb))
+  ENDIF
+
+   ctx%state%indexdefined => cache%indexdefined
+   ctx%state%wgdust => cache%wgdust
+   ctx%state%g03smcextn => cache%g03smcextn
+   ctx%state%bands => cache%bands
+   ctx%state%magsun => cache%magsun
+   ctx%state%magvega => cache%magvega
+   ctx%state%filter_leff => cache%filter_leff
+   ctx%state%vega_spec => cache%vega_spec
+   ctx%state%sun_spec => cache%sun_spec
+   ctx%state%spec_lambda => cache%spec_lambda
+   ctx%state%spec_nu => cache%spec_nu
+   ctx%state%spec_res => cache%spec_res
+   ctx%state%speclib => cache%speclib
+   ctx%state%wmb_spec => cache%wmb_spec
+   ctx%state%agb_spec_o => cache%agb_spec_o
+   ctx%state%agb_logt_o => cache%agb_logt_o
+   ctx%state%agb_spec_c => cache%agb_spec_c
+   ctx%state%agb_logt_c => cache%agb_logt_c
+   ctx%state%agb_spec_car => cache%agb_spec_car
+   ctx%state%pagb_spec => cache%pagb_spec
+   ctx%state%wrn_spec => cache%wrn_spec
+   ctx%state%wrc_spec => cache%wrc_spec
+   ctx%state%qpaharr => cache%qpaharr
+   ctx%state%uminarr => cache%uminarr
+   ctx%state%lambda_dustem => cache%lambda_dustem
+   ctx%state%dustem_dustem => cache%dustem_dustem
+   ctx%state%dustem2_dustem => cache%dustem2_dustem
+   ctx%state%flux_dagb => cache%flux_dagb
+   ctx%state%nebem_cont => cache%nebem_cont
+   ctx%state%xnebem_cont => cache%xnebem_cont
+   ctx%state%neb_res_min => cache%neb_res_min
+   ctx%state%gaussnebarr => cache%gaussnebarr
+   ctx%state%agndust_spec => cache%agndust_spec
+   ctx%state%mact_isoc => cache%mact_isoc
+   ctx%state%logl_isoc => cache%logl_isoc
+   ctx%state%logt_isoc => cache%logt_isoc
+   ctx%state%logg_isoc => cache%logg_isoc
+   ctx%state%ffco_isoc => cache%ffco_isoc
+   ctx%state%phase_isoc => cache%phase_isoc
+   ctx%state%mini_isoc => cache%mini_isoc
+   ctx%state%lmdot_isoc => cache%lmdot_isoc
+   ctx%state%nmass_isoc => cache%nmass_isoc
+   ctx%state%timestep_isoc => cache%timestep_isoc
+   ctx%state%zlegend => cache%zlegend
+   ctx%state%zlegendinit => cache%zlegendinit
+   ctx%state%bpass_spec_ssp => cache%bpass_spec_ssp
+   ctx%state%bpass_mass_ssp => cache%bpass_mass_ssp
+   ctx%state%lam_xrb => cache%lam_xrb
+   ctx%state%spec_xrb => cache%spec_xrb
+   ctx%state%ages_xrb => cache%ages_xrb
+   ctx%state%zmet_xrb => cache%zmet_xrb
+   ctx%state%time_full => cache%time_full
+
+  ! Allocate per-context arrays
+  ALLOCATE(ctx%state%spec_ssp_zz(nspec,ntfull,nz))
+  ALLOCATE(ctx%state%mass_ssp_zz(ntfull,nz),ctx%state%lbol_ssp_zz(ntfull,nz))
+  ALLOCATE(ctx%state%weight_ssp(ntfull,nz))
+  ALLOCATE(ctx%state%spec_young(nspec),ctx%state%spec_old(nspec))
+  ALLOCATE(ctx%state%lsfinfo%lsf(nspec))
   
   ! Allocate local arrays
   ALLOCATE(tspec(nspec))
@@ -243,76 +409,110 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   ALLOCATE(zlegend_str(nz))
   ALLOCATE(zz_str_xrb(nz_xrb))
 
+  ASSOCIATE( &
+     indexdefined => ctx%state%indexdefined, wgdust => ctx%state%wgdust, &
+     g03smcextn => ctx%state%g03smcextn, bands => ctx%state%bands, &
+     magsun => ctx%state%magsun, magvega => ctx%state%magvega, &
+     filter_leff => ctx%state%filter_leff, vega_spec => ctx%state%vega_spec, &
+     sun_spec => ctx%state%sun_spec, spec_lambda => ctx%state%spec_lambda, &
+     spec_nu => ctx%state%spec_nu, spec_res => ctx%state%spec_res, &
+     speclib => ctx%state%speclib, wmb_spec => ctx%state%wmb_spec, &
+     agb_spec_o => ctx%state%agb_spec_o, agb_logt_o => ctx%state%agb_logt_o, &
+     agb_spec_c => ctx%state%agb_spec_c, agb_logt_c => ctx%state%agb_logt_c, &
+     agb_spec_car => ctx%state%agb_spec_car, pagb_spec => ctx%state%pagb_spec, &
+     wrn_spec => ctx%state%wrn_spec, wrc_spec => ctx%state%wrc_spec, &
+     qpaharr => ctx%state%qpaharr, uminarr => ctx%state%uminarr, &
+     lambda_dustem => ctx%state%lambda_dustem, dustem_dustem => ctx%state%dustem_dustem, &
+     dustem2_dustem => ctx%state%dustem2_dustem, flux_dagb => ctx%state%flux_dagb, &
+     nebem_cont => ctx%state%nebem_cont, xnebem_cont => ctx%state%xnebem_cont, &
+     neb_res_min => ctx%state%neb_res_min, gaussnebarr => ctx%state%gaussnebarr, &
+     agndust_spec => ctx%state%agndust_spec, mact_isoc => ctx%state%mact_isoc, &
+     logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
+     logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
+     phase_isoc => ctx%state%phase_isoc, mini_isoc => ctx%state%mini_isoc, &
+     lmdot_isoc => ctx%state%lmdot_isoc, nmass_isoc => ctx%state%nmass_isoc, &
+     timestep_isoc => ctx%state%timestep_isoc, zlegend => ctx%state%zlegend, &
+     zlegendinit => ctx%state%zlegendinit, spec_ssp_zz => ctx%state%spec_ssp_zz, &
+     mass_ssp_zz => ctx%state%mass_ssp_zz, lbol_ssp_zz => ctx%state%lbol_ssp_zz, &
+     time_full => ctx%state%time_full, weight_ssp => ctx%state%weight_ssp, &
+     spec_young => ctx%state%spec_young, spec_old => ctx%state%spec_old, &
+     bpass_spec_ssp => ctx%state%bpass_spec_ssp, bpass_mass_ssp => ctx%state%bpass_mass_ssp, &
+     lam_xrb => ctx%state%lam_xrb, spec_xrb => ctx%state%spec_xrb, &
+     ages_xrb => ctx%state%ages_xrb, zmet_xrb => ctx%state%zmet_xrb )
+
   ! Initialize new arrays to 0.0 or default values
-  bands = 0.0
-  magsun = 0.0
-  magvega = 0.0
-  filter_leff = 0.0
-  vega_spec = 0.0
-  sun_spec = 0.0
-  spec_lambda = 0.0
-  spec_nu = 0.0
-  spec_res = 0.0
-  speclib = 0.0
-  wmb_spec = 0.0
-  agb_spec_o = 0.0
-  agb_logt_o = 0.0
-  agb_spec_c = 0.0
-  agb_logt_c = 0.0
-  agb_spec_car = 0.0
-  pagb_spec = 0.0
-  wrn_spec = 0.0
-  wrc_spec = 0.0
-  
-  ! Dust initialization
-  dustem2_dustem = 0.0
-  
-  IF (TRIM(str_dustem) == 'THEMIS') THEN
-     qpaharr = (/0.02,0.06,0.10,0.14,0.17,0.20,0.24,0.28,0.32,0.36,0.40/)/2.2*100
-     uminarr = (/0.1,0.12,0.15,0.17,0.2,0.25,0.3,0.35,0.4,0.5,0.6,0.7,0.8,1.0,&
-       1.2,1.5,1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0,&
-       12.0, 15.0, 17.0, 20.0, 25.0, 30.0, 35.0, 40.0, 50.0, 80.0/)
-  ELSE
-     ! DL07
-     qpaharr = (/0.47,1.12,1.77,2.50,3.19,3.90,4.58/)
-     uminarr = (/0.1,0.15,0.2,0.3,0.4,0.5,0.7,0.8,1.0,1.2,1.5,2.0,&
-       2.5,3.0,4.0,5.0,7.0,8.0,12.0,15.0,20.0,25.0/)
-  END IF
-  
-  lambda_dustem = 0.0
-  dustem_dustem = 0.0
-  
-  flux_dagb = 0.0
-  nebem_cont = 0.0
-  xnebem_cont = 0.0
-  neb_res_min = 0.0
-  gaussnebarr = 0.0
-  agndust_spec = 0.0
-  mact_isoc = 0.0
-  logl_isoc = 0.0
-  logt_isoc = 0.0
-  logg_isoc = 0.0
-  ffco_isoc = 0.0
-  phase_isoc = 0.0
-  mini_isoc = 0.0
-  lmdot_isoc = 0.0
-  nmass_isoc = 0
-  timestep_isoc = 0.0
-  zlegend = -99.0
-  zlegendinit = -99.0
+  IF (cache_new) THEN
+     bands = 0.0
+     magsun = 0.0
+     magvega = 0.0
+     filter_leff = 0.0
+     vega_spec = 0.0
+     sun_spec = 0.0
+     spec_lambda = 0.0
+     spec_nu = 0.0
+     spec_res = 0.0
+     speclib = 0.0
+     wmb_spec = 0.0
+     agb_spec_o = 0.0
+     agb_logt_o = 0.0
+     agb_spec_c = 0.0
+     agb_logt_c = 0.0
+     agb_spec_car = 0.0
+     pagb_spec = 0.0
+     wrn_spec = 0.0
+     wrc_spec = 0.0
+
+     ! Dust initialization
+     dustem2_dustem = 0.0
+
+     IF (TRIM(str_dustem) == 'THEMIS') THEN
+        qpaharr = (/0.02,0.06,0.10,0.14,0.17,0.20,0.24,0.28,0.32,0.36,0.40/)/2.2*100
+        uminarr = (/0.1,0.12,0.15,0.17,0.2,0.25,0.3,0.35,0.4,0.5,0.6,0.7,0.8,1.0,&
+          1.2,1.5,1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0,&
+          12.0, 15.0, 17.0, 20.0, 25.0, 30.0, 35.0, 40.0, 50.0, 80.0/)
+     ELSE
+        ! DL07
+        qpaharr = (/0.47,1.12,1.77,2.50,3.19,3.90,4.58/)
+        uminarr = (/0.1,0.15,0.2,0.3,0.4,0.5,0.7,0.8,1.0,1.2,1.5,2.0,&
+          2.5,3.0,4.0,5.0,7.0,8.0,12.0,15.0,20.0,25.0/)
+     END IF
+
+     lambda_dustem = 0.0
+     dustem_dustem = 0.0
+
+     flux_dagb = 0.0
+     nebem_cont = 0.0
+     xnebem_cont = 0.0
+     neb_res_min = 0.0
+     gaussnebarr = 0.0
+     agndust_spec = 0.0
+     mact_isoc = 0.0
+     logl_isoc = 0.0
+     logt_isoc = 0.0
+     logg_isoc = 0.0
+     ffco_isoc = 0.0
+     phase_isoc = 0.0
+     mini_isoc = 0.0
+     lmdot_isoc = 0.0
+     nmass_isoc = 0
+     timestep_isoc = 0.0
+     zlegend = -99.0
+     zlegendinit = -99.0
+     time_full = 0.0
+     bpass_spec_ssp = 0.0
+     bpass_mass_ssp = 0.0
+     lam_xrb = 0.0
+     spec_xrb = 0.0
+     ages_xrb = 0.0
+     zmet_xrb = 0.0
+  ENDIF
+
   spec_ssp_zz = 0.0
   mass_ssp_zz = 0.0
   lbol_ssp_zz = 0.0
-  time_full = 0.0
   weight_ssp = 0.0
   spec_young = 0.0
   spec_old = 0.0
-  bpass_spec_ssp = 0.0
-  bpass_mass_ssp = 0.0
-  lam_xrb = 0.0
-  spec_xrb = 0.0
-  ages_xrb = 0.0
-  zmet_xrb = 0.0
   lsfinfo%lsf = 0.0
   
   tspec = 0.0
@@ -320,47 +520,51 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   tspec_xrb = 0.0
   zlegend_str = ''
   zz_str_xrb = ''
-  indexdefined = 0.0
+  IF (cache_new) THEN
+     indexdefined = 0.0
+     wgdust = 0.0
+     g03smcextn = 0.0
+  ENDIF
   mwdindex = 0
-  wgdust = 0.0
-  g03smcextn = 0.0
   sfh_tab = 0.0
   ntabsfh = 0
 
   !clean out all the common block arrays
-  mini_isoc     = 0.
-  mact_isoc     = 0.
-  logl_isoc     = 0.
-  logt_isoc     = 0.
-  logg_isoc     = 0.
-  ffco_isoc     = 0.
-  phase_isoc    = 0.
-  nmass_isoc    = 0
-  timestep_isoc = 0.
-  spec_lambda   = 0.
-  vega_spec     = 0.
-  sun_spec      = 0.
-  speclib       = 0.
-  speclib_logg  = 0.
-  speclib_logt  = 0.
-  agb_spec_o    = 0.
-  agb_logt_o    = 0.
-  agb_spec_c    = 0.
-  agb_logt_c    = 0.
-  n_isoc        = 0
-  m             = 1
+  IF (cache_new) THEN
+     mini_isoc     = 0.
+     mact_isoc     = 0.
+     logl_isoc     = 0.
+     logt_isoc     = 0.
+     logg_isoc     = 0.
+     ffco_isoc     = 0.
+     phase_isoc    = 0.
+     nmass_isoc    = 0
+     timestep_isoc = 0.
+     spec_lambda   = 0.
+     vega_spec     = 0.
+     sun_spec      = 0.
+     speclib       = 0.
+     speclib_logg  = 0.
+     speclib_logt  = 0.
+     agb_spec_o    = 0.
+     agb_logt_o    = 0.
+     agb_spec_c    = 0.
+     agb_logt_c    = 0.
+     n_isoc        = 0
+     m             = 1
+  ENDIF
 
 
   !----------------------------------------------------------------!
   !--------------Confirm that variables are properly set-----------!
   !----------------------------------------------------------------!
 
-  CALL fsps_resolve_paths()
-
   IF (basel_str.NE.'pdva'.AND.basel_str.NE.'wlbc') THEN
      WRITE(*,*) 'SPS_SETUP ERROR: basel_str var set to invalid type: ',basel_str
      STOP
   ENDIF
+
+  IF (cache_new) THEN
 
   !----------------------------------------------------------------!
   !----------------Read in metallicity values----------------------!
@@ -545,13 +749,13 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
      ELSE IF (spec_type(1:3).EQ.'c3k') THEN
-      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//TRIM(spec_type)//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
              recl=nspec*ndim_logg*ndim_logt*4)
      ENDIF
      IF (stat.NE.0) THEN
-        WRITE(*,*) 'SPS_SETUP ERROR: '//spec_type//&
+      WRITE(*,*) 'SPS_SETUP ERROR: '//TRIM(spec_type)//&
              ' spectral library cannot be opened Z=', zstype
         STOP
      ENDIF
@@ -1151,10 +1355,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in nebular continuum arrays.  Units are Lsun/Hz/Q
      IF (cloudy_dust.EQ.1) THEN
-      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//isoc_type//'.cont',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//TRIM(isoc_type)//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//isoc_type//'.cont',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//TRIM(isoc_type)//'.cont',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -1181,10 +1385,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in nebular emission line luminosities.  Units are Lsun/Q
      IF (cloudy_dust.EQ.1) THEN
-      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//isoc_type//'.lines',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WD_'//TRIM(isoc_type)//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ELSE
-      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//isoc_type//'.lines',&
+      OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_ND_'//TRIM(isoc_type)//'.lines',&
              STATUS='OLD',iostat=stat,ACTION='READ')
      ENDIF
      IF (stat.NE.0) THEN
@@ -1245,10 +1449,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   IF (isoc_type.EQ.'bpss') THEN
       !read in nebular continuum arrays.  Units are Lsun/Hz/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//TRIM(isoc_type)//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//isoc_type//'.cont',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//TRIM(isoc_type)//'.cont',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1275,10 +1479,10 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
 
       !read in nebular emission line luminosities.  Units are Lsun/Q
       IF (cloudy_dust.EQ.1) THEN
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_WD_'//TRIM(isoc_type)//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ELSE
-         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//isoc_type//'.lines',&
+         OPEN(99,FILE=TRIM(SPS_HOME)//'/data/nebular/ZAU_WX_ND_'//TRIM(isoc_type)//'.lines',&
                STATUS='OLD',iostat=stat,ACTION='READ')
       ENDIF
       IF (stat.NE.0) THEN
@@ -1523,17 +1727,6 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !---------------Set up extinction curve indices------------------!
   !----------------------------------------------------------------!
 
-  !these are the breakpoints for the CCM89 MW parameterization
-  DO j=1,nspec
-     x = 1E4/spec_lambda(j)
-     IF (x.GT.12.) mwdindex(6)=j
-     IF (x.GE.8.)  mwdindex(5)=j
-     IF (x.GE.5.9) mwdindex(4)=j
-     IF (x.GE.3.3) mwdindex(3)=j
-     IF (x.GE.1.1) mwdindex(2)=j
-     IF (x.GE.0.1) mwdindex(1)=j
-  ENDDO
-
   !----------------------------------------------------------------!
   !----------Set up Witt & Gordon 2000 attenuation curves----------!
   !----------------------------------------------------------------!
@@ -1602,6 +1795,27 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      !write(34,*) spec_lambda(n),g03smcextn(n)
   ENDDO
 
+  ENDIF
+
+  IF (zin.LE.0) THEN
+     zmin = 1
+     zmax = nz
+  ELSE
+     zmin = zin
+     zmax = zin
+  ENDIF
+
+  !these are the breakpoints for the CCM89 MW parameterization
+  DO j=1,nspec
+     x = 1E4/spec_lambda(j)
+     IF (x.GT.12.) mwdindex(6)=j
+     IF (x.GE.8.)  mwdindex(5)=j
+     IF (x.GE.5.9) mwdindex(4)=j
+     IF (x.GE.3.3) mwdindex(3)=j
+     IF (x.GE.1.1) mwdindex(2)=j
+     IF (x.GE.0.1) mwdindex(1)=j
+  ENDDO
+
   !----------------------------------------------------------------!
   !--------------set up the redshift-age-DL relations--------------!
   !----------------------------------------------------------------!
@@ -1620,43 +1834,47 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   !-----------------read in index definitions----------------------!
   !----------------------------------------------------------------!
 
-  OPEN(99,FILE=TRIM(SPS_HOME)//'/data/allindices.dat',&
-       STATUS='OLD',iostat=stat,ACTION='READ')
-  DO i=1,4  !burn the header
-     READ(99,*)
-  ENDDO
-  DO i=1,nindx
-     READ(99,*,IOSTAT=stat) indexdefined(:,i)
-     IF (stat.NE.0) THEN
-        WRITE(*,*) 'SPS_SETUP ERROR: error during index defintion read'
-        STOP
-     ENDIF
-     !convert the Lick indices from air to vacuum wavelengths
-     IF (i.LE.25) THEN
-        indexdefined(1:6,i) = airtovac(indexdefined(1:6,i))
-     ENDIF
-  ENDDO
-  CLOSE(99)
+  IF (cache_new) THEN
+     OPEN(99,FILE=TRIM(SPS_HOME)//'/data/allindices.dat',&
+          STATUS='OLD',iostat=stat,ACTION='READ')
+     DO i=1,4  !burn the header
+        READ(99,*)
+     ENDDO
+     DO i=1,nindx
+        READ(99,*,IOSTAT=stat) indexdefined(:,i)
+        IF (stat.NE.0) THEN
+           WRITE(*,*) 'SPS_SETUP ERROR: error during index defintion read'
+           STOP
+        ENDIF
+        !convert the Lick indices from air to vacuum wavelengths
+        IF (i.LE.25) THEN
+           indexdefined(1:6,i) = airtovac(indexdefined(1:6,i))
+        ENDIF
+     ENDDO
+     CLOSE(99)
+  ENDIF
 
   !----------------------------------------------------------------!
   !-----------------set up expanded time array---------------------!
   !----------------------------------------------------------------!
 
-  IF (isoc_type.NE.'bpss') THEN
+  IF (cache_new) THEN
+     IF (isoc_type.NE.'bpss') THEN
 
-     DO i=1,ntfull
-        IF (MOD(i-1,time_res_incr).EQ.0) THEN
-           time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)
-        ELSE
-           IF ((i-1)/time_res_incr+2.LT.nt) THEN
-              d1 = (timestep_isoc(zmin,(i-1)/time_res_incr+2)-&
-                   timestep_isoc(zmin,(i-1)/time_res_incr+1))/time_res_incr
+        DO i=1,ntfull
+           IF (MOD(i-1,time_res_incr).EQ.0) THEN
+              time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)
+           ELSE
+              IF ((i-1)/time_res_incr+2.LT.nt) THEN
+                 d1 = (timestep_isoc(zmin,(i-1)/time_res_incr+2)-&
+                      timestep_isoc(zmin,(i-1)/time_res_incr+1))/time_res_incr
+              ENDIF
+              time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)+d1
+              time_full(i) = time_full(i-1)+d1
            ENDIF
-           time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)+d1
-           time_full(i) = time_full(i-1)+d1
-        ENDIF
-     ENDDO
+        ENDDO
 
+     ENDIF
   ENDIF
 
   !----------------------------------------------------------------!
@@ -1704,7 +1922,9 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
   whlam5000 = locate(spec_lambda,5000.d0)
   whlylim   = locate(spec_lambda,912.d0)
   !define the frequency array
-  spec_nu   = clight / spec_lambda
+  IF (cache_new) THEN
+     spec_nu   = clight / spec_lambda
+  ENDIF
 
   !set flag indicating that sps_setup has been run, initializing
   !important common block vars/arrays
@@ -1714,5 +1934,34 @@ SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
      WRITE(*,*) '      ...done'
      WRITE(*,*)
   ENDIF
+
+   END ASSOCIATE
+
+   END ASSOCIATE
+
+   ! Sync key dimensions and library identifiers back to globals for
+   ! routines that still size automatic arrays from sps_vars.
+   nt = ctx%state%nt
+   nz = ctx%state%nz
+   nspec = ctx%state%nspec
+   nzinit = ctx%state%nzinit
+   nbands = ctx%state%nbands
+   nindx = ctx%state%nindx
+   ntfull = ctx%state%ntfull
+   nspec_xrb = ctx%state%nspec_xrb
+   nt_xrb = ctx%state%nt_xrb
+   nz_xrb = ctx%state%nz_xrb
+   zsol = ctx%state%zsol
+   zsol_spec = ctx%state%zsol_spec
+   isoc_type = TRIM(ctx%state%isoc_type)
+   spec_type = TRIM(ctx%state%spec_type)
+   str_dustem = ctx%state%str_dustem
+   tiny_logt = ctx%tiny_logt_val
+   IF (ASSOCIATED(ctx%state%time_full)) time_full = ctx%state%time_full
+   IF (ASSOCIATED(ctx%state%zlegend)) zlegend = ctx%state%zlegend
+   IF (ASSOCIATED(ctx%state%zlegendinit)) zlegendinit = ctx%state%zlegendinit
+   IF (ASSOCIATED(ctx%state%spec_lambda)) spec_lambda = ctx%state%spec_lambda
+   IF (ASSOCIATED(ctx%state%spec_nu)) spec_nu = ctx%state%spec_nu
+   IF (ASSOCIATED(ctx%state%spec_res)) spec_res = ctx%state%spec_res
 
 END SUBROUTINE SPS_SETUP

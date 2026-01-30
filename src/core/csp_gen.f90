@@ -1,4 +1,4 @@
-subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
+subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      pset, tage, nzin, mass_csp, lbol_csp, spec_csp, &
      mdust_csp,emlin_ssp,emlin_csp)!,total_weights,spec_young,spec_old)
   !
@@ -34,12 +34,11 @@ subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
   ! total_weights:
   !    The weights(masses) for each SSP in the composite
 
-  use sps_vars, only: ntfull, nspec, time_full, tiny_number, tiny_logt, &
-                      zlegend, nz, sfh_tab, ntabsfh, compute_light_ages, &
-                      SFHPARAMS, PARAMS, SP, nemline, dust_type, &
-                      weight_ssp, spec_young, spec_old
+   use sps_vars, only: ntfull, nspec, tiny_number, SFHPARAMS, PARAMS, SP, nemline
+   use fsps_context_types, only: fsps_context_t
   use sps_utils, only: locate, sfh_weight, sfhinfo, add_dust
   implicit none
+   type(fsps_context_t), intent(inout) :: ctx
 
   real(SP), intent(in), dimension(ntfull, nzin) :: mass_ssp, lbol_ssp
   real(SP), intent(in), dimension(nspec, ntfull, nzin) :: spec_ssp
@@ -67,17 +66,29 @@ subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
   real(SP) :: lbol_age, mass_age ! for mass and lbol weighted ages
 
   ! ------- Setup ----------
+  ASSOCIATE( &
+     time_full => ctx%state%time_full, &
+     tiny_logt => ctx%tiny_logt_val, &
+     zlegend => ctx%state%zlegend, &
+     nz => ctx%state%nz, &
+     sfh_tab => ctx%state%sfh_tab, &
+     ntabsfh => ctx%state%ntabsfh, &
+     compute_light_ages => ctx%compute_light_ages_val, &
+     dust_type => ctx%dust_type_val, &
+     weight_ssp => ctx%state%weight_ssp, &
+     spec_young => ctx%state%spec_young, &
+     spec_old => ctx%state%spec_old )
   w1 = 0.
   w2 = 0.
 
   ! Build a structure containing useful units, numbers, and switches for the
   ! weight calculations. The units of the parameters in the `sfhparams`
   ! structure are years of lookback time.
-  call convert_sfhparams(pset, tage, sfhpars)
+   call convert_sfhparams(pset, tage, sfhpars)
   ! Only calculate SFH weights for SSPs up to tage
   ! (plus the next couple, to bracket and be safe).
   imin = 0
-  imax = min(max(locate(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
+   imax = min(max(locate(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
 
   ! ----- Get SFH weights -----
 
@@ -96,8 +107,7 @@ subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
      imin = max(imax - 2, 1)
      ! These come pre-normalized to 1 Msun
      total_weights(:, 1) = sfh_weight(sfhpars, imin, imax)
-  endif
-
+   endif
 
   ! Tau and delayed-tau.
   if ((pset%sfh.eq.1).or.(pset%sfh.eq.4)) then
@@ -284,7 +294,7 @@ subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
   ! Here we add young and old spectra with dust.
   if (((pset%dust1.gt.tiny_number).or.(pset%dust2.gt.tiny_number).or.(dust_type.eq.3))&
        .and.(compute_light_ages.eq.0)) then
-     call add_dust(pset, spec_young, spec_old, spec_csp, mdust_csp, ncsp1, ncsp2, emlin_csp)
+   call add_dust(ctx, pset, spec_young, spec_old, spec_csp, mdust_csp, ncsp1, ncsp2, emlin_csp)
 
   else
      spec_csp  = spec_young + spec_old
@@ -298,6 +308,8 @@ subroutine csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
      lbol_csp  = lbol_age / 10**lbol_csp
      mass_csp  = mass_age / mass_csp
   endif
+
+   END ASSOCIATE
 
 end subroutine csp_gen
 

@@ -1,4 +1,4 @@
-SUBROUTINE GETMAGS(zred,spec,mags,mag_compute)
+SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
   !routine to calculate magnitudes in the Vega or AB systems,
   !given an input spectrum and redshift.
@@ -6,9 +6,12 @@ SUBROUTINE GETMAGS(zred,spec,mags,mag_compute)
   !magnitudes defined in accordance with Fukugita et al. 1996, Eqn 7
   !This routine also redshifts the spectrum, if necessary.
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY : linterp, tsum
   IMPLICIT NONE
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER  :: i
   REAL(SP), INTENT(in) :: zred
@@ -21,6 +24,13 @@ SUBROUTINE GETMAGS(zred,spec,mags,mag_compute)
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
+
+  ASSOCIATE( &
+     nbands => ctx%state%nbands, nspec => ctx%state%nspec, &
+     spec_lambda => ctx%state%spec_lambda, bands => ctx%state%bands, &
+     cosmospl => ctx%state%cosmospl, magvega => ctx%state%magvega, &
+     compute_vega_mags => ctx%compute_vega_mags_val, &
+     compute_light_ages => ctx%compute_light_ages_val )
 
   mags = 99.
   const= 0.0
@@ -70,9 +80,11 @@ SUBROUTINE GETMAGS(zred,spec,mags,mag_compute)
 
   !put magnitudes in the Vega system if keyword is set
   !(V-band is the first element in the array)
-  IF (compute_vega_mags.EQ.1.AND.compute_light_ages.EQ.0) &
+   IF (compute_vega_mags.EQ.1.AND.compute_light_ages.EQ.0) &
        mags(2:nbands) = (mags(2:nbands)-mags(1)) - &
        (magvega(2:nbands)-magvega(1)) + mags(1)
+
+   END ASSOCIATE
 
 
 END SUBROUTINE GETMAGS

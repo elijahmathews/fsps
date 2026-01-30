@@ -1,15 +1,18 @@
-SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
+SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
                   mass_ssp, lbol_ssp, tspec_ssp,&
                   pset, ocompsp)
   !
   !
   !N.B. variables not otherwise defined come from sps_vars.f90
-  use sps_vars
+   use fsps_context_types, ONLY: fsps_context_t
+   use sps_vars
   use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
                        csp_gen, sfhinfo, linterp, agn_dust, &
                        smoothspec, igm_absorb, getindx, getmags
 
   implicit none
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER, INTENT(in) :: write_compsp,nzin
   CHARACTER(100), INTENT(in) :: outfile
@@ -30,6 +33,18 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
   INTEGER :: i, nage
 
   ! ------ Various checks and setup ------
+
+  ASSOCIATE( &
+     check_sps_setup => ctx%state%check_sps_setup, &
+     ntfull => ctx%state%ntfull, nspec => ctx%state%nspec, &
+     nbands => ctx%state%nbands, nindx => ctx%state%nindx, &
+     time_full => ctx%state%time_full, sfh_tab => ctx%state%sfh_tab, &
+     ntabsfh => ctx%state%ntabsfh, weight_ssp => ctx%state%weight_ssp, &
+     spec_lambda => ctx%state%spec_lambda, cosmospl => ctx%state%cosmospl, &
+     add_neb_emission => ctx%add_neb_emission_val, &
+     add_igm_absorption => ctx%add_igm_absorption_val, &
+     add_agn_dust => ctx%add_agn_dust_val, &
+     redshift_colors => ctx%redshift_colors_val )
 
   IF (check_sps_setup.EQ.0) THEN
      WRITE(*,*) 'COMPSP ERROR: '//&
@@ -62,11 +77,11 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
      nage = ntfull
   endif
   IF (write_compsp.GT.0) &
-       CALL COMPSP_SETUP_OUTPUT(write_compsp, pset, outfile, 1, nage)
+     CALL COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, 1, nage)
 
   ! Isochrone case just writes the CMDs and exits
   IF (write_compsp.EQ.5) THEN
-     CALL WRITE_ISOCHRONE(outfile, pset)
+     CALL WRITE_ISOCHRONE(ctx, outfile, pset)
      RETURN
   ENDIF
 
@@ -84,7 +99,7 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
              'emission and multi-metallicity SSPs in compsp'
         STOP
      endif
-     call add_nebular(pset, tspec_ssp(:,:,1), spec_ssp(:,:,1), emlin_ssp(:,:,1))
+   call add_nebular(ctx, pset, tspec_ssp(:,:,1), spec_ssp(:,:,1), emlin_ssp(:,:,1))
   else
      emlin_ssp = 0.
   endif
@@ -112,7 +127,7 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
      ! Get the spectrum for this age.  Note this is always normalized to one
      ! solar mass formed, so we actually need to renormalize if computing all
      ! ages, which is done using info from `sfhinfo`
-     call csp_gen(mass_ssp, lbol_ssp, spec_ssp, &
+   call csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
           pset, age, nzin, mass_csp, lbol_csp, spec_csp,&
           mdust_csp,emlin_ssp,emlin_csp)
 
@@ -137,7 +152,7 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
      ! Now do a bunch of stuff with the spectrum
      ! Smooth the spectrum
      if (pset%sigma_smooth.GT.0.0) then
-        call smoothspec(spec_lambda, spec_csp, pset%sigma_smooth,&
+      call smoothspec(ctx, spec_lambda, spec_csp, pset%sigma_smooth,&
                         pset%min_wave_smooth, pset%max_wave_smooth)
      endif
      ! Add IGM absorption
@@ -151,19 +166,19 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
      ENDIF
      ! Compute spectral indices
      if (write_compsp.EQ.4) then
-        call getindx(spec_lambda, spec_csp, indx)
+      call getindx(ctx, spec_lambda, spec_csp, indx)
      else
         indx = 0.0
      endif
      ! Compute mags
      if (redshift_colors.EQ.0) then
-        call getmags(pset%zred, spec_csp, mags, pset%mag_compute)
+      call getmags(ctx, pset%zred, spec_csp, mags, pset%mag_compute)
      else
         ! here we compute the redshift at the corresponding age
         zred = min(max(linterp(cosmospl(:,2), cosmospl(:,1), age),&
                        0.0), 20.0)
         write(33,*) zred
-        call getmags(zred, spec_csp, mags, pset%mag_compute)
+      call getmags(ctx, zred, spec_csp, mags, pset%mag_compute)
      endif
 
      ! ---------
@@ -179,8 +194,10 @@ SUBROUTINE COMPSP(write_compsp, nzin, outfile,&
 
   enddo
 
-  if (write_compsp.EQ.1.OR.write_compsp.EQ.3) CLOSE(10)
-  if (write_compsp.EQ.2.OR.write_compsp.EQ.3) CLOSE(20)
+   if (write_compsp.EQ.1.OR.write_compsp.EQ.3) CLOSE(10)
+   if (write_compsp.EQ.2.OR.write_compsp.EQ.3) CLOSE(20)
+
+   END ASSOCIATE
 
 end subroutine compsp
 
@@ -308,40 +325,49 @@ END SUBROUTINE COMPSP_WARNING
 !------------------------------------------------------------!
 !------------------------------------------------------------!
 
-SUBROUTINE COMPSP_SETUP_OUTPUT(write_compsp,pset,outfile,imin,imax)
+SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
 
   USE sps_vars
   USE sps_utils, ONLY : vactoair
+   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
-  INTEGER, INTENT(in) :: imin,imax,write_compsp
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
+   INTEGER, INTENT(in) :: imin,imax,write_compsp
   REAL(SP) :: writeage
   TYPE(PARAMS), INTENT(in) :: pset
   CHARACTER(100), INTENT(in) :: outfile
 
   !-----------------------------------------------------!
 
+  ASSOCIATE( &
+     time_full => ctx%state%time_full, &
+     nspec => ctx%state%nspec, &
+     ntfull => ctx%state%ntfull, &
+     spec_lambda => ctx%state%spec_lambda, &
+     vactoair_flag => ctx%vactoair_flag_val )
+
   !open output file for magnitudes
   IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) THEN
    OPEN(10,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.mags',&
           STATUS='REPLACE')
-     CALL COMPSP_HEADER(10,pset)
+   CALL COMPSP_HEADER(ctx, 10, pset)
   ENDIF
 
   !open output file for spectra
   IF (write_compsp.EQ.2.OR.write_compsp.EQ.3) THEN
    OPEN(20,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.spec',&
           STATUS='REPLACE')
-     CALL COMPSP_HEADER(20,pset)
+   CALL COMPSP_HEADER(ctx, 20, pset)
   ENDIF
 
   !open output file for indices
   IF (write_compsp.EQ.4) THEN
    OPEN(30,FILE=TRIM(OUTPUT_HOME)//'/OUTPUTS/'//TRIM(outfile)//'.indx',&
           STATUS='REPLACE')
-     CALL COMPSP_HEADER(30,pset)
+   CALL COMPSP_HEADER(ctx, 30, pset)
   ENDIF
 
-  IF (pset%sfh.EQ.0) THEN
+   IF (pset%sfh.EQ.0) THEN
      IF (verbose.NE.0) WRITE(*,*) '  Processing SSP'
      IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) THEN
         WRITE(10,'("#   Processing SSP")')
@@ -410,6 +436,8 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(write_compsp,pset,outfile,imin,imax)
        ENDIF
    ENDIF
 
+  END ASSOCIATE
+
    !formats
 30 FORMAT('#   SFH: tabulated input, dust=(',F6.2,',',F6.2,')')
 31 FORMAT('#   log(age) log(mass) Log(lbol) log(SFR) spectra')
@@ -425,16 +453,22 @@ END SUBROUTINE COMPSP_SETUP_OUTPUT
 !------------------------------------------------------------!
 !------------------------------------------------------------!
 
-SUBROUTINE COMPSP_HEADER(unit,pset)
+SUBROUTINE COMPSP_HEADER(ctx, unit, pset)
 
   !writes headers for the .mag, .spec, .indx files
 
-  USE sps_vars
+   USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
+   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER, INTENT(in) :: unit
   TYPE(PARAMS), INTENT(in) :: pset
 
   !-----------------------------------------------------!
+
+  ASSOCIATE( &
+     zlegend => ctx%state%zlegend, zsol => ctx%state%zsol, &
+     imf_type => ctx%imf_type_val, compute_vega_mags => ctx%compute_vega_mags_val )
 
   IF (pset%sfh.NE.2) THEN
      WRITE(unit,'("#   Log(Z/Zsol): ",F6.3)') &
@@ -459,6 +493,8 @@ SUBROUTINE COMPSP_HEADER(unit,pset)
   ELSE
      WRITE(unit,'("#   Mag Zero Point: AB (not relevant for spec/indx files)")')
   ENDIF
+
+  END ASSOCIATE
 
 END SUBROUTINE COMPSP_HEADER
 

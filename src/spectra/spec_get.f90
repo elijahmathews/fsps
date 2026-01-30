@@ -1,4 +1,4 @@
-SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
+SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, spec)
 
   ! Routine to return the spectrum of a star with an input logg,logt
   ! the phase flag determines if the star is a WR, P-AGB, or TP-AGB star
@@ -7,10 +7,12 @@ SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
   ! This subroutine is a major bottleneck.  The spectra must be
   ! recomputed each time the IMF or isochrone parameters change.
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY: locate
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
   TYPE(PARAMS), INTENT(in) :: pset
   REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec  
@@ -20,6 +22,24 @@ SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
+
+   ASSOCIATE( &
+       isoc_type => ctx%state%isoc_type, &
+       zlegend => ctx%state%zlegend, zsol => ctx%state%zsol, &
+       spec_lambda => ctx%state%spec_lambda, &
+       speclib_logt => ctx%state%speclib_logt, speclib_logg => ctx%state%speclib_logg, &
+       speclib => ctx%state%speclib, whlam5000 => ctx%state%whlam5000, &
+       wmb_logt => ctx%state%wmb_logt, wmb_logg => ctx%state%wmb_logg, &
+       wmb_spec => ctx%state%wmb_spec, &
+       pagb_logt => ctx%state%pagb_logt, pagb_spec => ctx%state%pagb_spec, &
+       wrn_logt => ctx%state%wrn_logt, wrc_logt => ctx%state%wrc_logt, &
+       wrn_spec => ctx%state%wrn_spec, wrc_spec => ctx%state%wrc_spec, &
+       agb_logt_o => ctx%state%agb_logt_o, agb_spec_o => ctx%state%agb_spec_o, &
+       agb_logt_c => ctx%state%agb_logt_c, agb_spec_c => ctx%state%agb_spec_c, &
+       agb_logt_car => ctx%state%agb_logt_car, agb_spec_car => ctx%state%agb_spec_car, &
+       use_wr_spectra => ctx%use_wr_spectra_val, &
+       add_agb_dust_model => ctx%add_agb_dust_model_val, &
+       logt_wmb_hot => ctx%logt_wmb_hot_val )
 
   spec  = tiny_number
   ispec = tiny_number
@@ -198,8 +218,8 @@ SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
      !see p244-245 of Collins' "Fundamentals of Stellar Astrophysics"
      spec = 4*mypi*4*mypi*r2/lsun * ispec
 
-  ENDIF
- 
+   ENDIF
+
   !make sure the spectrum never has any zeros or negative numbers
   spec = MAX(spec,tiny_number)
   
@@ -220,7 +240,7 @@ SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
   !add circumstellar dust around AGB stars
   IF ((phase.EQ.4.OR.phase.EQ.5) &
        .AND.add_agb_dust_model.EQ.1.AND.pset%agb_dust.GT.tiny_number) THEN
-     CALL ADD_AGB_DUST(pset%agb_dust,spec,mact,&
+   CALL ADD_AGB_DUST(ctx, pset%agb_dust, spec, mact, &
           logt,LOG10(lbol),logg,zlegend(pset%zmet),ffco,lmdot)
   ENDIF
 
@@ -232,5 +252,7 @@ SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
   !     (spec_lambda*spec_lambda*spec_lambda)/ ( &
   !     EXP(hck/spec_lambda/teffi)-1 )
 
+  
+   END ASSOCIATE
   
 END SUBROUTINE GETSPEC

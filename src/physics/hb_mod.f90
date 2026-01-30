@@ -1,4 +1,4 @@
-SUBROUTINE MOD_HB(f_bhb,t,mini,mact,logl,logt,logg,phase, &
+SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
      wght,hb_wght,nmass,hbtime)
 
   !routine to modify the horizontal branch to include bluer 
@@ -14,9 +14,11 @@ SUBROUTINE MOD_HB(f_bhb,t,mini,mact,logl,logt,logg,phase, &
   !Note that the parameter bhb_sbs_time, set in sps_vars.f90,
   !sets the turn-on time for this modification.
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
        logl,logt,logg,phase
   REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
@@ -36,14 +38,16 @@ SUBROUTINE MOD_HB(f_bhb,t,mini,mact,logl,logt,logg,phase, &
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
 
-  hblum   = -999.
-  flip    = 0
-  hb_wght = 0.
-  tphase  = phase(t,:)
+   ASSOCIATE(isoc_type => ctx%state%isoc_type)
+
+   hblum   = -999.
+   flip    = 0
+   hb_wght = 0.
+   tphase  = phase(t,:)
 
   !we need to count the total number of HB stars in 
   !these isochrones.  Also the minimum Teff for the HB
-  IF (isoc_type.EQ.'bsti'.OR.isoc_type.EQ.'mist') THEN
+   IF (isoc_type.EQ.'bsti'.OR.isoc_type.EQ.'mist') THEN
      tnhb = 0
      minteff=1E6
      DO i=1,nm
@@ -56,7 +60,9 @@ SUBROUTINE MOD_HB(f_bhb,t,mini,mact,logl,logt,logg,phase, &
         ENDIF
      ENDDO
      i=1
-  ENDIF
+   ENDIF
+
+   END ASSOCIATE
 
   DO j=2,nm
 

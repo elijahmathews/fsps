@@ -88,7 +88,7 @@ END FUNCTION COMPUTE_TAU1
 !------------------------------------------------------------!
 !------------------------------------------------------------!
 
-SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,zz,&
+SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
      tco,lmdot)
 
   !routine to add a circumstellar dust shell to AGB stars
@@ -96,9 +96,12 @@ SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,zz,&
   !then looks up the corresponding DUSTY model given the C/O
   !ratio and Teff.
   
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY: locate, smoothspec
   IMPLICIT NONE
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   REAL(SP), DIMENSION(nspec), INTENT(inout) :: tspec
   REAL(SP), INTENT(in)  :: weight,mact,logt,logl,logg,zz,tco,lmdot
@@ -108,6 +111,11 @@ SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,zz,&
   
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
+
+  ASSOCIATE( &
+     isoc_type => ctx%state%isoc_type, &
+     teff_dagb => ctx%state%teff_dagb, tau1_dagb => ctx%state%tau1_dagb, &
+     flux_dagb => ctx%state%flux_dagb, spec_lambda => ctx%state%spec_lambda )
 
   IF (tco.GT.1) THEN
      cstar=1 
@@ -154,7 +162,9 @@ SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,zz,&
   !implement the dusty spectra (which are in units of 
   !flux_out/flux_in) into the AGB spectra
 !  tspec = tspec * dusty
-  CALL SMOOTHSPEC(spec_lambda,tspec,10000.d0,30000.d0,100000000.d0)
+   CALL SMOOTHSPEC(ctx, spec_lambda, tspec, 10000.d0, 30000.d0, 100000000.d0)
   tspec = tspec * dusty
+
+   END ASSOCIATE
 
 END SUBROUTINE ADD_AGB_DUST

@@ -1,4 +1,4 @@
-SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
+SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
 
   !routine to compute velocity broadening of an input spectrum
   !this is only approximate b/c we are ignoring the variation
@@ -7,9 +7,12 @@ SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
   !If optional input ires is present, then the spectrum will be
   !smoothed by a wavelength dependent velocity dispersion.
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY : locate,linterp,tsum,linterparr
   IMPLICIT NONE
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   
   REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec
   REAL(SP), INTENT(in), DIMENSION(nspec)    :: lambda
@@ -22,6 +25,10 @@ SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
  
+  ASSOCIATE( &
+     smooth_velocity => ctx%smooth_velocity_val, &
+     smoothspec_fast => ctx%smoothspec_fast_val )
+
   IF (sigma.LE.tiny_number) RETURN
 
   ckms = clight/1E13
@@ -29,7 +36,7 @@ SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
   tspec = spec
 
   !convolve at fixed sigma_velocity
-  IF (smooth_velocity.EQ.1) THEN
+   IF (smooth_velocity.EQ.1) THEN
 
      !compute smoothing the fast (and slightly less accurate) way
      IF (smoothspec_fast.EQ.1.OR.PRESENT(ires)) THEN
@@ -141,7 +148,9 @@ SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
  
     ENDDO
      
-  ENDIF
+   ENDIF
+
+   END ASSOCIATE
 
   RETURN
 

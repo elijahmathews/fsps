@@ -1,12 +1,14 @@
-SUBROUTINE ADD_NEBULAR(pset,sspi,sspo,nebemline)
+SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
 
   !routine to add nebular emission (both line and continuum)
   !to input SSPs (sspi).  Returns SSPs as output (sspo).
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY : locate,tsum
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER :: t,i,nti,a1,z1,u1
   REAL(SP) :: da,dz,du,dlam,qq
   TYPE(PARAMS), INTENT(in) :: pset
@@ -18,6 +20,22 @@ SUBROUTINE ADD_NEBULAR(pset,sspi,sspo,nebemline)
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
+
+  ASSOCIATE( &
+     time_full => ctx%state%time_full, &
+     nebem_age => ctx%state%nebem_age, &
+     nebem_logz => ctx%state%nebem_logz, nebem_logu => ctx%state%nebem_logu, &
+     nebem_line_pos => ctx%state%nebem_line_pos, neb_res_min => ctx%state%neb_res_min, &
+     gaussnebarr => ctx%state%gaussnebarr, spec_lambda => ctx%state%spec_lambda, &
+     spec_nu => ctx%state%spec_nu, whlylim => ctx%state%whlylim, &
+     nebem_cont => ctx%state%nebem_cont, xnebem_cont => ctx%state%xnebem_cont, &
+     nebem_line => ctx%state%nebem_line, xnebem_line => ctx%state%xnebem_line, &
+     isoc_type => ctx%state%isoc_type, &
+     setup_nebular_gaussians => ctx%setup_nebular_gaussians_val, &
+     nebemlineinspec => ctx%nebemlineinspec_val, &
+     smooth_velocity => ctx%smooth_velocity_val, &
+     add_neb_continuum => ctx%add_neb_continuum_val, &
+     add_xrb_emission => ctx%add_xrb_emission_val )
 
   !locate the maximum nebular age point in the full time array
   !right now we only include nebular emission for ages<=2x10^7 yr
@@ -49,9 +67,9 @@ SUBROUTINE ADD_NEBULAR(pset,sspi,sspo,nebemline)
              EXP(-(spec_lambda-nebem_line_pos(i))**2/2/dlam**2)  / &
              clight*nebem_line_pos(i)**2
      ENDDO
-  ENDIF
+   ENDIF
 
-  sspo = sspi
+   sspo = sspi
   nebemline = 0.0
 
   DO t=1,nti
@@ -132,7 +150,8 @@ SUBROUTINE ADD_NEBULAR(pset,sspi,sspo,nebemline)
         ENDDO
      ENDIF
 
-  ENDDO
+   ENDDO
 
+   END ASSOCIATE
 
 END SUBROUTINE ADD_NEBULAR

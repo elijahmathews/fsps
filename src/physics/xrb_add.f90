@@ -1,11 +1,13 @@
-SUBROUTINE ADD_XRB(pset,sspi,sspo)
+SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
 
   ! Routine to add emission from X-ray binaries
 
+  USE fsps_context_types, ONLY: fsps_context_t
   USE sps_vars
   USE sps_utils, ONLY : locate,tsum
   IMPLICIT NONE
 
+  TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER :: t,a1,z1
   REAL(SP) :: da,dz,tmpz
   TYPE(PARAMS), INTENT(in) :: pset
@@ -16,7 +18,14 @@ SUBROUTINE ADD_XRB(pset,sspi,sspo)
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!
 
-  !set up the interpolation variables for logZ
+    ASSOCIATE( &
+      zlegend => ctx%state%zlegend, zsol => ctx%state%zsol, &
+      zmet_xrb => ctx%state%zmet_xrb, nz_xrb => ctx%state%nz_xrb, &
+      ages_xrb => ctx%state%ages_xrb, nt_xrb => ctx%state%nt_xrb, &
+      time_full => ctx%state%time_full, spec_xrb => ctx%state%spec_xrb, &
+      nt => ctx%state%nt )
+
+    !set up the interpolation variables for logZ
   tmpz = log10(zlegend(pset%zmet)/zsol)
   z1   = MAX(MIN(locate(zmet_xrb,tmpz),nz_xrb-1),1)
   dz   = (tmpz-zmet_xrb(z1))/(zmet_xrb(z1+1)-zmet_xrb(z1))
@@ -41,6 +50,8 @@ SUBROUTINE ADD_XRB(pset,sspi,sspo)
      sspo(:,t) = sspo(:,t) + pset%frac_xrb * tmpspec
 
   ENDDO
+
+  END ASSOCIATE
 
 
 END SUBROUTINE ADD_XRB

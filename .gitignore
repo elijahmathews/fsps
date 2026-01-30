@@ -15,11 +15,14 @@ build/
 *.mod
 *.exe
 
-# Executables produced by Makefile
+# Main executables produced by Makefile
 autosps
 simple
 lesssimple
 spec_bin
+
+# Test executables
 generate_test_data
-test_runner
+test_cache
 test_fsps
+test_runner

@@ -10,7 +10,7 @@ jobs:
   c-driver:
     runs-on: ubuntu-latest
     env:
-      SPS_HOME: ${{ github.workspace }}
+      FSPS_DATA_HOME: ${{ github.workspace }}
       # Run full metallicity tests
       FSPS_FULL_Z_TEST: "1"
     steps:
@@ -28,5 +28,9 @@ jobs:
           make test_c
 
       - name: Run C driver test
+        run: |
+          ./test_fsps
+      
+      - name: Run context isolation test
         run: |
           ./test_fsps

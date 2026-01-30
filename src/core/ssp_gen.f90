@@ -14,12 +14,14 @@
 !-----------------------------------------------------------!
 !-----------------------------------------------------------!
 
-SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
+SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   USE sps_vars
   USE sps_utils
+  USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
 
+  TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER :: i=1, j=1, stat,ii,klo,khi !,tlo,thi
   !weight given to the entire horizontal branch
   REAL(SP) :: hb_wght,dt,tco
@@ -33,7 +35,8 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
 
   !temp arrays for the isochrone data
   REAL(SP), DIMENSION(nt,nm) :: mini,mact,logl,logt,logg,&
-       ffco,phase,lmdot
+     ffco,phase,lmdot
+  REAL(SP), DIMENSION(nm) :: temp_mini
   !arrays holding the number of mass elements for each
   !isochrone and the age of each isochrone
   INTEGER, DIMENSION(nt)     :: nmass
@@ -47,6 +50,27 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
   !-----------------------------------------------------------!
   !--------------------------Setup----------------------------!
   !-----------------------------------------------------------!
+
+  ASSOCIATE( &
+       check_sps_setup => ctx%state%check_sps_setup, &
+       nz => ctx%state%nz, nt => ctx%state%nt, ntfull => ctx%state%ntfull, &
+       nspec => ctx%state%nspec, isoc_type => ctx%state%isoc_type, &
+       bpass_spec_ssp => ctx%state%bpass_spec_ssp, bpass_mass_ssp => ctx%state%bpass_mass_ssp, &
+       imf_type => ctx%imf_type_val, imf_alpha => ctx%state%imf_alpha, &
+       imf_vdmc => ctx%state%imf_vdmc, imf_mdave => ctx%state%imf_mdave, &
+     n_user_imf => ctx%state%n_user_imf, imf_user_alpha => ctx%state%imf_user_alpha, &
+       imf_lower_limit => ctx%state%imf_lower_limit, imf_upper_limit => ctx%state%imf_upper_limit, &
+       mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
+       logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
+       logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
+       phase_isoc => ctx%state%phase_isoc, lmdot_isoc => ctx%state%lmdot_isoc, &
+       nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc, &
+       zlegend => ctx%state%zlegend, time_full => ctx%state%time_full, &
+       lsfinfo => ctx%state%lsfinfo, spec_lambda => ctx%state%spec_lambda, &
+       add_stellar_remnants => ctx%add_stellar_remnants_val, &
+       add_neb_emission => ctx%add_neb_emission_val, add_xrb_emission => ctx%add_xrb_emission_val, &
+       smooth_lsf => ctx%smooth_lsf_val, smooth_velocity => ctx%smooth_velocity_val, &
+       sps_home => ctx%sps_home )
 
   IF (check_sps_setup.EQ.0) THEN
      WRITE(*,*) 'SSP_GEN ERROR0: '//&
@@ -92,9 +116,9 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
      !to re-run the setup
      IF (imf_type.EQ.5) THEN
         IF (TRIM(pset%imf_filename).EQ.'') THEN
-           OPEN(13,FILE=TRIM(SPS_HOME)//'/data/imf.dat',ACTION='READ',STATUS='OLD')
+           OPEN(13,FILE=TRIM(sps_home)//'/data/imf.dat',ACTION='READ',STATUS='OLD')
         ELSE
-           OPEN(13,FILE=TRIM(SPS_HOME)//'/data/'//TRIM(pset%imf_filename),&
+           OPEN(13,FILE=TRIM(sps_home)//'/data/'//TRIM(pset%imf_filename),&
                 ACTION='READ',STATUS='OLD')
         ENDIF
         DO i=1,100
@@ -159,24 +183,23 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
         IF (verbose.EQ.1) &
              WRITE(*,'("age=",F5.2)') time(i)
 
-        !compute IMF-based weights
-        CALL IMF_WEIGHT(mini(i,:),wght,nmass(i))
+      ! Manually copy the row to a contiguous temp array
+      temp_mini(1:nmass(i)) = mini(i, 1:nmass(i))
 
+      !compute IMF-based weights
+      CALL IMF_WEIGHT(ctx, temp_mini, wght, nmass(i))
         !modify the horizontal branch
         !need the hb weight for the blue stragglers too
-        IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-             CALL MOD_HB(pset%fbhb,i,mini,mact,logl,logt,logg,phase,&
-             wght,hb_wght,nmass,time(i))
-
+         IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
+            CALL MOD_HB(ctx, pset%fbhb, i, mini, mact, logl, logt, logg, phase, &
+            wght, hb_wght, nmass, time(i))
         !add in blue stragglers
-        IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-             CALL ADD_BS(pset%sbss,i,mini,mact,logl,logt,logg,phase,&
-             wght,hb_wght,nmass)
-
+         IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
+            CALL ADD_BS(ctx, pset%sbss, i, mini, mact, logl, logt, logg, phase, &
+            wght, hb_wght, nmass)
         !modify the TP-AGB stars and Post-AGB stars
-        CALL MOD_GB(pset%zmet,i,time,pset%delt,pset%dell,pset%pagb,&
-             pset%redgb,pset%agb,nmass(i),logl,logt,phase,wght)
-
+         CALL MOD_GB(ctx, pset%zmet, i, time, pset%delt, pset%dell, pset%pagb, &
+            pset%redgb, pset%agb, nmass(i), logl, logt, phase, wght)
         ii = 1 + (i-1)*time_res_incr
 
         !compute IMF-weighted mass of the SSP
@@ -184,7 +207,7 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
 
         !add in remant masses
         IF (add_stellar_remnants.EQ.1) THEN
-           CALL ADD_REMNANTS(mass_ssp(ii),MAXVAL(mini(i,:)))
+           CALL ADD_REMNANTS(ctx, mass_ssp(ii), MAXVAL(mini(i,:)))
         ENDIF
 
         !compute IMF-weighted bolometric luminosity (actually log(Lbol))
@@ -200,7 +223,7 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
               !IF (1.0.GE.pset%fcstar) tco = 1.0
            ENDIF
 
-           CALL GETSPEC(pset,mact(i,j),logt(i,j),&
+           CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), &
                 10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),&
                 wght(j)/MAXVAL(wght(1:nmass(i))*10**logl(i,1:nmass(i))),tspec)
 
@@ -239,7 +262,7 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
   !-------------------------------------------------------------!
 
   IF (add_neb_emission.EQ.2) THEN
-     CALL ADD_NEBULAR(pset,spec_ssp,tspec_ssp)
+     CALL ADD_NEBULAR(ctx, pset, spec_ssp, tspec_ssp)
      spec_ssp = tspec_ssp
   ENDIF
 
@@ -248,7 +271,7 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
   !-------------------------------------------------------------!
 
   IF (add_xrb_emission.EQ.1) THEN
-     CALL ADD_XRB(pset,spec_ssp,tspec_ssp)
+     CALL ADD_XRB(ctx, pset, spec_ssp, tspec_ssp)
      spec_ssp = tspec_ssp
   ENDIF
 
@@ -258,11 +281,12 @@ SUBROUTINE SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
 
   IF (smooth_lsf.EQ.1) THEN
      DO j=1,ntfull
-        CALL SMOOTHSPEC(spec_lambda,spec_ssp(:,j),99.d0,lsfinfo%minlam,&
+        CALL SMOOTHSPEC(ctx, spec_lambda, spec_ssp(:,j), 99.d0, lsfinfo%minlam, &
              lsfinfo%maxlam,lsfinfo%lsf)
      ENDDO
   ENDIF
 
+  END ASSOCIATE
 
 END SUBROUTINE SSP_GEN
 

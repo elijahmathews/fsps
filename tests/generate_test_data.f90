@@ -3,8 +3,10 @@ PROGRAM GENERATE_TEST_DATA
   ! Generates reference data for FSPS regression testing.
   ! Uses allocatable arrays to support multiple compile-time configurations.
 
-  USE sps_vars
-  USE sps_utils
+   USE sps_vars
+   USE sps_utils
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE fsps_context, ONLY: fsps_context_create, fsps_context_sync_from_globals, fsps_context_apply_globals
   IMPLICIT NONE
 
   ! Variables for SSP generation (allocatable)
@@ -14,13 +16,15 @@ PROGRAM GENERATE_TEST_DATA
   ! Variables for CSP generation (allocatable)
   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
   
-  ! Control variables
+   ! Control variables
+   TYPE(fsps_context_t) :: ctx
   TYPE(PARAMS) :: pset
-  INTEGER :: i, unit_out, status, arg_count
+   INTEGER :: i, unit_out, status, arg_count
+   INTEGER :: nspec_ctx, ntfull_ctx, nbands_ctx, nt_ctx, nindx_ctx
   CHARACTER(LEN=50) :: filename_out
   CHARACTER(LEN=100) :: csp_dummy_file
   CHARACTER(LEN=255) :: arg_val
-  CHARACTER(LEN=20) :: isoc_arg, spec_arg, dust_arg
+   CHARACTER(LEN=20) :: isoc_arg, spec_arg, dust_arg
   LOGICAL :: isoc_set, spec_set, dust_set
 
   ! Exit codes
@@ -33,9 +37,12 @@ PROGRAM GENERATE_TEST_DATA
   unit_out = 40
 
   csp_dummy_file = 'dummy_csp.out'
-  isoc_set = .FALSE.
-  spec_set = .FALSE.
-  dust_set = .FALSE.
+   isoc_set = .FALSE.
+   spec_set = .FALSE.
+   dust_set = .FALSE.
+   isoc_arg = 'mist'
+   spec_arg = 'miles'
+   dust_arg = 'DL07'
 
   WRITE(*,*) '--------------------------------------------------'
   WRITE(*,*) 'FSPS REFERENCE DATA GENERATOR'
@@ -78,37 +85,41 @@ PROGRAM GENERATE_TEST_DATA
      i = i + 1
   END DO
   
-  ! Initialize FSPS parameters (MIST/MILES defaults)
+   ! Normalize empty args (treat as defaults)
+   IF (LEN_TRIM(isoc_arg) == 0) isoc_arg = 'mist'
+   IF (LEN_TRIM(spec_arg) == 0) spec_arg = 'miles'
+   IF (LEN_TRIM(dust_arg) == 0) dust_arg = 'DL07'
+
+   ! Initialize FSPS parameters (MIST/MILES defaults)
   ! We call this FIRST so we can be sure parameters like ntfull/nspec are set
   ! before we allocate (though they are static in the current codebase).
+   CALL fsps_context_create(ctx)
   imf_type = 1          
   pset%zmet = 10        
   
-  ! Use optional arguments if set
-  IF (isoc_set .AND. spec_set .AND. dust_set) THEN
-      CALL SPS_SETUP(pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
-  ELSE IF (isoc_set .AND. spec_set) THEN
-      CALL SPS_SETUP(pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg))
-  ELSE IF (isoc_set .AND. dust_set) THEN
-      CALL SPS_SETUP(pset%zmet, isoc_type_in=TRIM(isoc_arg), dust_type_in=TRIM(dust_arg))
-  ELSE IF (spec_set .AND. dust_set) THEN
-      CALL SPS_SETUP(pset%zmet, spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
-  ELSE IF (isoc_set) THEN
-      CALL SPS_SETUP(pset%zmet, isoc_type_in=TRIM(isoc_arg))
-  ELSE IF (spec_set) THEN
-      CALL SPS_SETUP(pset%zmet, spec_type_in=TRIM(spec_arg))
-  ELSE IF (dust_set) THEN
-      CALL SPS_SETUP(pset%zmet, dust_type_in=TRIM(dust_arg))
-  ELSE
-      CALL SPS_SETUP(pset%zmet)
+  ! Use defaults unless overridden by arguments
+  CALL SPS_SETUP(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), &
+     spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
+
+  ! Cache context dimensions for local allocations
+  nspec_ctx = ctx%state%nspec
+  ntfull_ctx = ctx%state%ntfull
+  nbands_ctx = ctx%state%nbands
+  nt_ctx = ctx%state%nt
+  nindx_ctx = ctx%state%nindx
+
+  IF (nspec_ctx <= 0 .OR. ntfull_ctx <= 0) THEN
+     WRITE(*,*) 'ERROR: SPS_SETUP did not initialize dimensions.'
+     WRITE(*,*) 'nspec=', nspec_ctx, ' ntfull=', ntfull_ctx
+     STOP EXIT_FAILURE
   END IF
 
   ! Memory allocation
-  WRITE(*,*) 'Allocating memory (nspec:', nspec, ' ntfull:', ntfull, ')...'
-  ALLOCATE(spec_ssp(ntfull,nspec))
-  ALLOCATE(mass_ssp(ntfull))
-  ALLOCATE(lbol_ssp(ntfull))
-  ALLOCATE(ocompsp(ntfull))
+  WRITE(*,*) 'Allocating memory (nspec:', nspec_ctx, ' ntfull:', ntfull_ctx, ')...'
+  ALLOCATE(spec_ssp(nspec_ctx,ntfull_ctx))
+  ALLOCATE(mass_ssp(ntfull_ctx))
+  ALLOCATE(lbol_ssp(ntfull_ctx))
+  ALLOCATE(ocompsp(ntfull_ctx))
 
   ! Write header
   WRITE(*,*) 'Writing to file: ', TRIM(filename_out)
@@ -116,9 +127,9 @@ PROGRAM GENERATE_TEST_DATA
        FORM='UNFORMATTED', ACCESS='STREAM')
 
   WRITE(*,*) 'Writing Header...'
-  WRITE(unit_out) nspec
-  WRITE(unit_out) ntfull
-  WRITE(unit_out) nbands
+   WRITE(unit_out) nspec_ctx
+   WRITE(unit_out) ntfull_ctx
+   WRITE(unit_out) nbands_ctx
 
   ! Test Case 1: Simple SSP (Solar, Chabrier)
   WRITE(*,*) 'Running Test Case 1: SSP (Solar, Chabrier)...'
@@ -129,19 +140,21 @@ PROGRAM GENERATE_TEST_DATA
   pset%zred  = 0.0
   pset%dust1 = 0.0
   pset%dust2 = 0.0
-  add_neb_emission = 1 
+   add_neb_emission = 1
+   CALL fsps_context_sync_from_globals(ctx)
+   CALL fsps_context_apply_globals(ctx)
   
   ! Allocate pset allocatable components
   IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
-  ALLOCATE(pset%mag_compute(nbands))
+   ALLOCATE(pset%mag_compute(nbands_ctx))
   pset%mag_compute = 1
   
   IF (ALLOCATED(pset%ssp_gen_age)) DEALLOCATE(pset%ssp_gen_age)
-  ALLOCATE(pset%ssp_gen_age(nt))
+   ALLOCATE(pset%ssp_gen_age(nt_ctx))
   pset%ssp_gen_age = 1
 
   ! Compute SSP
-  CALL SSP_GEN(pset, mass_ssp, lbol_ssp, spec_ssp)
+   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Write SSP Data
   WRITE(*,*) 'Saving SSP results...'
@@ -158,22 +171,22 @@ PROGRAM GENERATE_TEST_DATA
   pset%dust2 = 0.3
   
   ! Re-run SSP_GEN
-  CALL SSP_GEN(pset, mass_ssp, lbol_ssp, spec_ssp)
+   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Manually allocate components of ocompsp array elements
-  DO i = 1, ntfull
-     IF (.NOT. ALLOCATED(ocompsp(i)%mags)) ALLOCATE(ocompsp(i)%mags(nbands))
-     IF (.NOT. ALLOCATED(ocompsp(i)%spec)) ALLOCATE(ocompsp(i)%spec(nspec))
-     IF (.NOT. ALLOCATED(ocompsp(i)%indx)) ALLOCATE(ocompsp(i)%indx(nindx))
+  DO i = 1, ntfull_ctx
+     IF (.NOT. ALLOCATED(ocompsp(i)%mags)) ALLOCATE(ocompsp(i)%mags(nbands_ctx))
+     IF (.NOT. ALLOCATED(ocompsp(i)%spec)) ALLOCATE(ocompsp(i)%spec(nspec_ctx))
+     IF (.NOT. ALLOCATED(ocompsp(i)%indx)) ALLOCATE(ocompsp(i)%indx(nindx_ctx))
      IF (.NOT. ALLOCATED(ocompsp(i)%emlines)) ALLOCATE(ocompsp(i)%emlines(nemline))
   END DO
 
   ! Compute CSP
-  CALL COMPSP(3, 1, csp_dummy_file, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+   CALL COMPSP(ctx, 3, 1, csp_dummy_file, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
 
   ! Write CSP Data
   WRITE(*,*) 'Saving CSP results...'
-  DO i = 1, ntfull
+   DO i = 1, ntfull_ctx
      WRITE(unit_out) ocompsp(i)%age
      WRITE(unit_out) ocompsp(i)%mass_csp
      WRITE(unit_out) ocompsp(i)%lbol_csp
@@ -192,7 +205,7 @@ PROGRAM GENERATE_TEST_DATA
   IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
   IF (ALLOCATED(pset%ssp_gen_age)) DEALLOCATE(pset%ssp_gen_age)
   
-  CALL SPS_TAKEDOWN()
+   CALL SPS_TAKEDOWN(ctx)
 
   WRITE(*,*) 'Complete. Data saved.'
 

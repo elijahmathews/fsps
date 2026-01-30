@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     
     env:
-      SPS_HOME: ${{ github.workspace }}
+      FSPS_DATA_HOME: ${{ github.workspace }}
       FSPS_TEST_RTOL: 1.0E-5  # Set global relative tolerance here
 
     strategy:

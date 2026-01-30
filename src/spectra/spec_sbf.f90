@@ -1,13 +1,15 @@
-SUBROUTINE SBF(pset,outfile)
+SUBROUTINE SBF(ctx, pset, outfile)
 
   !routine to read in an isochrone (logt,logl,z) and produce 
   !SBFs for each point.  SBF magnitudes are a light-weighted average
   !of the stellar luminosities over stellar mass
 
-  USE sps_vars
+     USE fsps_context_types, ONLY: fsps_context_t
+     USE sps_vars
   USE sps_utils, ONLY : imf_weight,mod_hb,add_bs,mod_gb,getmags,getspec
   IMPLICIT NONE
 
+     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   CHARACTER(100), INTENT(in) :: outfile
   TYPE(PARAMS), INTENT(in)   :: pset
   INTEGER       :: i,j
@@ -24,6 +26,15 @@ SUBROUTINE SBF(pset,outfile)
   !-----------------------------------------------------------!
 
   !set up the format 
+  ASSOCIATE( &
+       nbands => ctx%state%nbands, &
+       OUTPUT_HOME => ctx%output_home, &
+       mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
+       logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
+       logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
+       lmdot_isoc => ctx%state%lmdot_isoc, phase_isoc => ctx%state%phase_isoc, &
+       nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc )
+
   fmt = '(F7.4,1x,3(F8.4,1x),000(F7.3,1x))'
   WRITE(fmt(21:23),'(I3,1x,I4)') nbands
 
@@ -52,30 +63,30 @@ SUBROUTINE SBF(pset,outfile)
   DO i=1,nt
 
      !compute IMF-based weights
-     CALL IMF_WEIGHT(mini(i,:),wght,nmass(i))
+     CALL IMF_WEIGHT(ctx, mini(i,:), wght, nmass(i))
      
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too
      IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-          CALL MOD_HB(pset%fbhb,i,mini,mact,logl,logt,logg,phase,&
-          wght,hb_wght,nmass,time(i))
+          CALL MOD_HB(ctx, pset%fbhb, i, mini, mact, logl, logt, logg, phase, &
+          wght, hb_wght, nmass, time(i))
 
      !add in blue stragglers
      IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-          CALL ADD_BS(pset%sbss,i,mini,mact,logl,logt,logg,phase,&
-          wght,hb_wght,nmass)
+          CALL ADD_BS(ctx, pset%sbss, i, mini, mact, logl, logt, logg, phase, &
+          wght, hb_wght, nmass)
 
      !modify the TP-AGB stars and Post-AGB stars
-     CALL MOD_GB(pset%zmet,i,time,pset%delt,pset%dell,pset%pagb,&
-          pset%redgb,pset%agb,nmass(i),logl,logt,phase,wght)
+     CALL MOD_GB(ctx, pset%zmet, i, time, pset%delt, pset%dell, pset%pagb, &
+          pset%redgb, pset%agb, nmass(i), logl, logt, phase, wght)
  
      spec1 = 0.0
      spec2 = 0.0
      DO j=1,nmass(i)
            
         !get spectrum of ith star
-        CALL GETSPEC(pset,mact(i,j),logt(i,j),10**logl(i,j),logg(i,j),&
-             phase(i,j),ffco(i,j),lmdot(i,j),wght(j),tspec)
+        CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), 10**logl(i,j), logg(i,j), &
+             phase(i,j), ffco(i,j), lmdot(i,j), wght(j), tspec)
 
         !compute first and second moments of flux for
         !all stars and also by evolutionary phase
@@ -87,12 +98,14 @@ SUBROUTINE SBF(pset,outfile)
      !compute the SBF
      tspec2 = spec2/spec1
 
-     CALL GETMAGS(zero,tspec2,mags)
+   CALL GETMAGS(ctx, zero, tspec2, mags)
      WRITE(56,fmt) time(i),0.0,0.0,0.0,mags
 
   ENDDO
 
   CLOSE(56)
+
+     END ASSOCIATE
 
 END SUBROUTINE SBF
  

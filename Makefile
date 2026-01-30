@@ -25,6 +25,7 @@ LIB_SONAME ?= 3
 SRC_DIR := src
 TEST_DIR := tests
 BUILD_DIR := build
+TEST_BUILD_DIR := $(BUILD_DIR)/tests
 SRC_SUBDIRS := core programs spectra sfh physics cosmology math io imf abi
 SRC_DIRS := $(addprefix $(SRC_DIR)/, $(SRC_SUBDIRS))
 
@@ -49,7 +50,8 @@ PROGS = simple lesssimple autosps spec_bin
 
 # The common object files required by the programs
 # We wrap them in addprefix to place them inside the build directory
-COMMON_NAMES = sps_vars.o sps_utils.o compsp.o csp_gen.o ssp_gen.o \
+COMMON_NAMES = sps_vars.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o ssp_gen.o \
+	fsps_context.o \
 	spec_mags.o interp_locate.o integrate_funcint.o sps_setup.o cosmo_pz_convol.o \
 	cosmo_tuniv.o integrate_sfhw.o imf.o imf_weight.o dust_add.o \
 	spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o remnants_add.o spec_indices.o \
@@ -66,7 +68,7 @@ COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 # ===================================
 
 
-.PHONY: all clean shared test test_c_driver test_c check install uninstall \
+.PHONY: all clean shared test test_cache test_c_driver test_c_contexts test_c check install uninstall \
 	install-lib install-headers install-bin install-pkgconfig install-data
 
 all: $(PROGS)
@@ -77,26 +79,48 @@ all: $(PROGS)
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 
+# Ensure test build directory exists
+$(TEST_BUILD_DIR): | $(BUILD_DIR)
+	@mkdir -p $(TEST_BUILD_DIR)
+
 # Pattern rule: Compile any .f90 found in VPATH to .o in BUILD_DIR
 $(BUILD_DIR)/%.o: %.f90 | $(BUILD_DIR)
 	$(FC) $(FCFLAGS) -c $< -o $@
 
 # Specific dependencies to enforce compilation order
 
-# sps_utils.o specifically depends on sps_vars.o
-$(BUILD_DIR)/sps_utils.o: $(BUILD_DIR)/sps_vars.o
+# Module dependency ordering
+$(BUILD_DIR)/fsps_cache.o: $(BUILD_DIR)/sps_vars.o
 
-# All other common objects depend on both vars and utils.
-REST_OF_COMMON = $(filter-out $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o, $(COMMON_OBJS))
+$(BUILD_DIR)/fsps_context_types.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o
 
-$(REST_OF_COMMON): $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
+# sps_utils.o specifically depends on sps_vars.o and context types
+$(BUILD_DIR)/sps_utils.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o $(BUILD_DIR)/fsps_context_types.o
+
+# All other common objects depend on vars, cache, utils, and context types.
+REST_OF_COMMON = $(filter-out $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
+	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o, $(COMMON_OBJS))
+
+$(REST_OF_COMMON): $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
+	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o
 
 # Main program objects also wait for modules
 $(BUILD_DIR)/sps_program_simple.o $(BUILD_DIR)/sps_program_lesssimple.o $(BUILD_DIR)/sps_program_autosps.o $(BUILD_DIR)/sps_program_spec_bin.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
 
+# Test object compilation (keep artifacts out of tests/)
+$(TEST_BUILD_DIR)/generate_test_data.o: $(TEST_DIR)/generate_test_data.f90 | $(TEST_BUILD_DIR)
+	$(FC) $(FCFLAGS) -c $< -o $@
+
+$(TEST_BUILD_DIR)/test_runner.o: $(TEST_DIR)/test_runner.f90 | $(TEST_BUILD_DIR)
+	$(FC) $(FCFLAGS) -c $< -o $@
+
+$(TEST_BUILD_DIR)/test_cache.o: $(TEST_DIR)/test_cache.f90 | $(TEST_BUILD_DIR)
+	$(FC) $(FCFLAGS) -c $< -o $@
+
 # Dependencies for test objects
-$(BUILD_DIR)/generate_test_data.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
-$(BUILD_DIR)/test_runner.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
+$(TEST_BUILD_DIR)/generate_test_data.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context.o
+$(TEST_BUILD_DIR)/test_runner.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context.o $(BUILD_DIR)/fsps_context_types.o
+$(TEST_BUILD_DIR)/test_cache.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o
 
 # --- Linking Rules ---
 
@@ -122,25 +146,31 @@ shared: $(COMMON_OBJS)
 
 # --- Test Targets ---
 
-generate_test_data: $(BUILD_DIR)/generate_test_data.o $(COMMON_OBJS)
+generate_test_data: $(TEST_BUILD_DIR)/generate_test_data.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-test_runner: $(BUILD_DIR)/test_runner.o $(COMMON_OBJS)
+test_runner: $(TEST_BUILD_DIR)/test_runner.o $(COMMON_OBJS)
 	$(FC) $(FCFLAGS) -o $@ $^
 
-test: test_runner
+test_cache: $(TEST_BUILD_DIR)/test_cache.o $(COMMON_OBJS)
+	$(FC) $(FCFLAGS) -o $@ $^
+
+test: test_runner test_cache
 
 test_c_driver: shared
 	gcc -O3 -o test_fsps $(TEST_DIR)/test_c_driver.c -Iinclude -L$(BUILD_DIR) -lfsps -lgfortran -Wl,-rpath,$(BUILD_DIR)
 
-test_c: test_c_driver
+test_c_contexts: shared
+	gcc -O3 -o test_contexts $(TEST_DIR)/test_c_contexts.c -Iinclude -L$(BUILD_DIR) -lfsps -lgfortran -Wl,-rpath,$(BUILD_DIR)
+
+test_c: test_c_driver test_c_contexts
 
 check: test_c
 
 # --- Utilities ---
 
 clean:
-	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_fsps
+	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_cache test_fsps test_contexts
 
 # --- Install Targets ---
 

@@ -1,7 +1,11 @@
 MODULE FSPS_C_DRIVER
-  USE ISO_C_BINDING
-  USE sps_vars
-  USE sps_utils
+   USE ISO_C_BINDING
+     USE sps_vars
+     USE sps_utils
+     USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
+        fsps_context_destroy, fsps_context_set_param_int, fsps_context_set_param_float, &
+        fsps_context_set_param_str, fsps_context_compute_ssp, fsps_context_get_paths, &
+        fsps_context_apply_globals, fsps_context_prepare_pset, fsps_context_ensure_setup
   IMPLICIT NONE
 
   ! 1. GLOBAL STATE POINTERS
@@ -9,16 +13,119 @@ MODULE FSPS_C_DRIVER
   TYPE(COMPSPOUT), POINTER :: global_ocompsp(:) => NULL()
    INTEGER, ALLOCATABLE :: has_ssp(:)
    INTEGER, ALLOCATABLE :: has_ssp_age(:,:)
+   ! Context pool for handle-based API
+   TYPE(fsps_context_t), ALLOCATABLE :: ctx_pool(:)
+   LOGICAL, ALLOCATABLE :: ctx_inuse(:)
    ! Driver error state
    INTEGER :: fsps_last_status = 0
    CHARACTER(LEN=256) :: fsps_last_error = ''
    INTEGER :: fsps_debug = 0
    INTEGER :: fsps_lock_state = 0
+   TYPE(fsps_context_t), SAVE :: fsps_default_ctx
+   LOGICAL :: fsps_default_ctx_ready = .FALSE.
    INTEGER, PARAMETER :: fsps_driver_version_major = 1
    INTEGER, PARAMETER :: fsps_driver_version_minor = 0
    INTEGER, PARAMETER :: fsps_driver_version_patch = 0
 
 CONTAINS
+
+   SUBROUTINE fsps_ensure_default_ctx()
+      IF (.NOT. fsps_default_ctx_ready) THEN
+         CALL fsps_context_create(fsps_default_ctx)
+         fsps_default_ctx_ready = .TRUE.
+      END IF
+   END SUBROUTINE fsps_ensure_default_ctx
+
+   SUBROUTINE fsps_context_alloc_slot(slot)
+      INTEGER, INTENT(OUT) :: slot
+      INTEGER :: i, n
+      TYPE(fsps_context_t), ALLOCATABLE :: new_pool(:)
+      LOGICAL, ALLOCATABLE :: new_inuse(:)
+
+      IF (.NOT. ALLOCATED(ctx_pool)) THEN
+         ALLOCATE(ctx_pool(1))
+         ALLOCATE(ctx_inuse(1))
+         ctx_inuse = .FALSE.
+      END IF
+
+      slot = 0
+      DO i = 1, SIZE(ctx_pool)
+         IF (.NOT. ctx_inuse(i)) THEN
+            slot = i
+            EXIT
+         END IF
+      END DO
+
+      IF (slot == 0) THEN
+         n = SIZE(ctx_pool)
+         ALLOCATE(new_pool(n+1))
+         ALLOCATE(new_inuse(n+1))
+         new_pool(1:n) = ctx_pool
+         new_inuse(1:n) = ctx_inuse
+         new_inuse(n+1) = .FALSE.
+         CALL MOVE_ALLOC(new_pool, ctx_pool)
+         CALL MOVE_ALLOC(new_inuse, ctx_inuse)
+         slot = n + 1
+      END IF
+   END SUBROUTINE fsps_context_alloc_slot
+
+   SUBROUTINE fsps_ensure_legacy_state()
+      INTEGER :: i
+
+      IF (.NOT. ASSOCIATED(global_pset)) THEN
+         ALLOCATE(global_pset)
+      END IF
+
+      IF (.NOT. ALLOCATED(global_pset%mag_compute)) THEN
+         ALLOCATE(global_pset%mag_compute(nbands))
+         global_pset%mag_compute = 1
+      ELSE IF (SIZE(global_pset%mag_compute) /= nbands) THEN
+         DEALLOCATE(global_pset%mag_compute)
+         ALLOCATE(global_pset%mag_compute(nbands))
+         global_pset%mag_compute = 1
+      END IF
+
+      IF (.NOT. ALLOCATED(global_pset%ssp_gen_age)) THEN
+         ALLOCATE(global_pset%ssp_gen_age(nt))
+         global_pset%ssp_gen_age = 1
+      ELSE IF (SIZE(global_pset%ssp_gen_age) /= nt) THEN
+         DEALLOCATE(global_pset%ssp_gen_age)
+         ALLOCATE(global_pset%ssp_gen_age(nt))
+         global_pset%ssp_gen_age = 1
+      END IF
+
+      IF (ASSOCIATED(global_ocompsp)) THEN
+         IF (SIZE(global_ocompsp) /= ntfull) THEN
+            DO i = 1, SIZE(global_ocompsp)
+               IF (ALLOCATED(global_ocompsp(i)%mags))    DEALLOCATE(global_ocompsp(i)%mags)
+               IF (ALLOCATED(global_ocompsp(i)%spec))    DEALLOCATE(global_ocompsp(i)%spec)
+               IF (ALLOCATED(global_ocompsp(i)%indx))    DEALLOCATE(global_ocompsp(i)%indx)
+               IF (ALLOCATED(global_ocompsp(i)%emlines)) DEALLOCATE(global_ocompsp(i)%emlines)
+            END DO
+            DEALLOCATE(global_ocompsp)
+         END IF
+      END IF
+
+      IF (.NOT. ASSOCIATED(global_ocompsp)) THEN
+         ALLOCATE(global_ocompsp(ntfull))
+         DO i = 1, ntfull
+            ALLOCATE(global_ocompsp(i)%mags(nbands))
+            ALLOCATE(global_ocompsp(i)%spec(nspec))
+            ALLOCATE(global_ocompsp(i)%indx(nindx))
+            ALLOCATE(global_ocompsp(i)%emlines(nemline))
+         END DO
+      END IF
+
+      IF (.NOT. ALLOCATED(has_ssp)) ALLOCATE(has_ssp(nz))
+      IF (.NOT. ALLOCATED(has_ssp_age)) ALLOCATE(has_ssp_age(nz, nt))
+      has_ssp = 0
+      has_ssp_age = 0
+   END SUBROUTINE fsps_ensure_legacy_state
+
+   SUBROUTINE fsps_copy_pset_from_ctx(ctx)
+      TYPE(fsps_context_t), INTENT(IN) :: ctx
+      global_pset = ctx%pset
+   END SUBROUTINE fsps_copy_pset_from_ctx
 
    ! Record a driver error or warning.
    SUBROUTINE fsps_set_error(status, message)
@@ -84,76 +191,377 @@ CONTAINS
       patch = fsps_driver_version_patch
    END SUBROUTINE fsps_get_driver_version
 
-  SUBROUTINE fsps_clear_driver_state()
-    INTEGER :: i
+     ! -------------------------------------------------------------------------
+     ! CONTEXT-BASED C API
+     ! -------------------------------------------------------------------------
+     SUBROUTINE fsps_context_create_handle(handle, status) &
+            BIND(C, name="fsps_context_create")
+       INTEGER(C_INT), INTENT(OUT) :: handle
+       INTEGER(C_INT), INTENT(OUT) :: status
+       INTEGER :: slot
 
-    IF (ASSOCIATED(global_ocompsp)) THEN
-       DO i = 1, SIZE(global_ocompsp)
-          IF (ALLOCATED(global_ocompsp(i)%mags))    DEALLOCATE(global_ocompsp(i)%mags)
-          IF (ALLOCATED(global_ocompsp(i)%spec))    DEALLOCATE(global_ocompsp(i)%spec)
-          IF (ALLOCATED(global_ocompsp(i)%indx))    DEALLOCATE(global_ocompsp(i)%indx)
-          IF (ALLOCATED(global_ocompsp(i)%emlines)) DEALLOCATE(global_ocompsp(i)%emlines)
-       END DO
-       DEALLOCATE(global_ocompsp)
-       global_ocompsp => NULL()
-    END IF
+       CALL fsps_context_alloc_slot(slot)
+       CALL fsps_context_create(ctx_pool(slot))
+       ctx_inuse(slot) = .TRUE.
+       handle = slot
+       status = 0
+     END SUBROUTINE fsps_context_create_handle
 
-    IF (ASSOCIATED(global_pset)) THEN
-       IF (ALLOCATED(global_pset%mag_compute)) DEALLOCATE(global_pset%mag_compute)
-       IF (ALLOCATED(global_pset%ssp_gen_age)) DEALLOCATE(global_pset%ssp_gen_age)
-       DEALLOCATE(global_pset)
-       global_pset => NULL()
-    END IF
+     SUBROUTINE fsps_context_destroy_handle(handle, status) &
+            BIND(C, name="fsps_context_destroy")
+       INTEGER(C_INT), VALUE :: handle
+       INTEGER(C_INT), INTENT(OUT) :: status
 
-    IF (ALLOCATED(has_ssp)) DEALLOCATE(has_ssp)
-    IF (ALLOCATED(has_ssp_age)) DEALLOCATE(has_ssp_age)
-  END SUBROUTINE fsps_clear_driver_state
+       status = 0
+       IF (.NOT. ALLOCATED(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (handle < 1 .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
 
-   ! Allocate driver-owned buffers after SPS_SETUP.
-   SUBROUTINE fsps_initialize_state(zin)
-      INTEGER, INTENT(IN) :: zin
-      INTEGER :: i
+       CALL fsps_context_destroy(ctx_pool(handle))
+       ctx_inuse(handle) = .FALSE.
+     END SUBROUTINE fsps_context_destroy_handle
 
-      IF (ASSOCIATED(global_ocompsp) .OR. ASSOCIATED(global_pset)) THEN
-          CALL fsps_clear_driver_state()
+     SUBROUTINE fsps_context_setup_handle(zin, c_isoc, c_spec, c_dust, handle, status) &
+            BIND(C, name="fsps_context_setup")
+       INTEGER(C_INT), VALUE :: zin
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_isoc
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_spec
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_dust
+       INTEGER(C_INT), VALUE :: handle
+       INTEGER(C_INT), INTENT(OUT) :: status
+       CHARACTER(LEN=64) :: isoc_type_in
+       CHARACTER(LEN=64) :: spec_type_in
+       CHARACTER(LEN=64) :: dust_type_in
+
+       status = 0
+       IF (.NOT. ALLOCATED(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (handle < 1 .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
+
+       CALL c_to_f_string(c_isoc, isoc_type_in)
+       CALL c_to_f_string(c_spec, spec_type_in)
+       CALL c_to_f_string(c_dust, dust_type_in)
+
+       IF (LEN_TRIM(isoc_type_in) == 0 .AND. LEN_TRIM(spec_type_in) == 0 .AND. &
+           LEN_TRIM(dust_type_in) == 0) THEN
+          CALL fsps_context_setup(ctx_pool(handle), zin)
+       ELSE IF (LEN_TRIM(spec_type_in) == 0 .AND. LEN_TRIM(dust_type_in) == 0) THEN
+          CALL fsps_context_setup(ctx_pool(handle), zin, TRIM(isoc_type_in))
+       ELSE IF (LEN_TRIM(dust_type_in) == 0) THEN
+          CALL fsps_context_setup(ctx_pool(handle), zin, TRIM(isoc_type_in), TRIM(spec_type_in))
+       ELSE
+          CALL fsps_context_setup(ctx_pool(handle), zin, TRIM(isoc_type_in), TRIM(spec_type_in), TRIM(dust_type_in))
+       END IF
+     END SUBROUTINE fsps_context_setup_handle
+
+     SUBROUTINE fsps_context_set_int_handle(handle, c_key, value, status) &
+            BIND(C, name="fsps_context_set_int")
+       INTEGER(C_INT), VALUE :: handle
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_key
+       INTEGER(C_INT), VALUE :: value
+       INTEGER(C_INT), INTENT(OUT) :: status
+       CHARACTER(LEN=64) :: key
+
+       status = 0
+       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
+
+       CALL c_to_f_string(c_key, key)
+       CALL fsps_context_set_param_int(ctx_pool(handle), TRIM(key), value, status)
+     END SUBROUTINE fsps_context_set_int_handle
+
+     SUBROUTINE fsps_context_set_float_handle(handle, c_key, value, status) &
+            BIND(C, name="fsps_context_set_float")
+       INTEGER(C_INT), VALUE :: handle
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_key
+       REAL(C_DOUBLE), VALUE :: value
+       INTEGER(C_INT), INTENT(OUT) :: status
+       CHARACTER(LEN=64) :: key
+
+       status = 0
+       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
+
+       CALL c_to_f_string(c_key, key)
+       CALL fsps_context_set_param_float(ctx_pool(handle), TRIM(key), value, status)
+     END SUBROUTINE fsps_context_set_float_handle
+
+     SUBROUTINE fsps_context_set_str_handle(handle, c_key, c_val, status) &
+            BIND(C, name="fsps_context_set_str")
+       INTEGER(C_INT), VALUE :: handle
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_key
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_val
+       INTEGER(C_INT), INTENT(OUT) :: status
+       CHARACTER(LEN=64) :: key
+       CHARACTER(LEN=128) :: val
+
+       status = 0
+       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
+
+       CALL c_to_f_string(c_key, key)
+       CALL c_to_f_string(c_val, val)
+       CALL fsps_context_set_param_str(ctx_pool(handle), TRIM(key), TRIM(val), status)
+     END SUBROUTINE fsps_context_set_str_handle
+
+     SUBROUTINE fsps_context_compute_ssp_handle(handle, c_spec, c_mass, c_lbol, status) &
+            BIND(C, name="fsps_context_compute_ssp")
+       INTEGER(C_INT), VALUE :: handle
+       TYPE(C_PTR), VALUE :: c_spec
+       TYPE(C_PTR), VALUE :: c_mass
+       TYPE(C_PTR), VALUE :: c_lbol
+       INTEGER(C_INT), INTENT(OUT) :: status
+       REAL(C_DOUBLE), POINTER :: spec_ptr(:,:)
+       REAL(C_DOUBLE), POINTER :: mass_ptr(:)
+       REAL(C_DOUBLE), POINTER :: lbol_ptr(:)
+
+       status = 0
+       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+          status = 1
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          status = 1
+          RETURN
+       END IF
+
+       CALL c_f_pointer(c_spec, spec_ptr, [nspec, ntfull])
+       CALL c_f_pointer(c_mass, mass_ptr, [ntfull])
+       CALL c_f_pointer(c_lbol, lbol_ptr, [ntfull])
+       CALL fsps_context_compute_ssp(ctx_pool(handle), mass_ptr, lbol_ptr, spec_ptr)
+     END SUBROUTINE fsps_context_compute_ssp_handle
+
+     SUBROUTINE fsps_context_get_paths_handle(handle, c_sps, sps_len, c_data, data_len, c_out, out_len) &
+            BIND(C, name="fsps_context_get_paths")
+       INTEGER(C_INT), VALUE :: handle
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(OUT) :: c_sps
+       INTEGER(C_INT), VALUE :: sps_len
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(OUT) :: c_data
+       INTEGER(C_INT), VALUE :: data_len
+       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(OUT) :: c_out
+       INTEGER(C_INT), VALUE :: out_len
+       INTEGER(C_INT) :: status
+       CHARACTER(LEN=250) :: sps_path, data_path, out_path
+
+       status = 0
+       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+          CALL f_to_c_string('', c_sps, sps_len)
+          CALL f_to_c_string('', c_data, data_len)
+          CALL f_to_c_string('', c_out, out_len)
+          RETURN
+       END IF
+       IF (.NOT. ctx_inuse(handle)) THEN
+          CALL f_to_c_string('', c_sps, sps_len)
+          CALL f_to_c_string('', c_data, data_len)
+          CALL f_to_c_string('', c_out, out_len)
+          RETURN
+       END IF
+
+       CALL fsps_context_get_paths(ctx_pool(handle), sps_path, data_path, out_path)
+       CALL f_to_c_string(TRIM(sps_path), c_sps, sps_len)
+       CALL f_to_c_string(TRIM(data_path), c_data, data_len)
+       CALL f_to_c_string(TRIM(out_path), c_out, out_len)
+     END SUBROUTINE fsps_context_get_paths_handle
+
+    SUBROUTINE fsps_context_get_dims_handle(handle, n_spec, n_time, status) &
+           BIND(C, name="fsps_context_get_dims")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_spec, n_time
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      n_spec = 0
+      n_time = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
       END IF
 
-      IF (.NOT. ASSOCIATED(global_pset)) ALLOCATE(global_pset)
+      n_spec = ctx_pool(handle)%state%nspec
+      n_time = ctx_pool(handle)%state%ntfull
+    END SUBROUTINE fsps_context_get_dims_handle
 
-      ! Allocate internal arrays
-      IF (ALLOCATED(global_pset%mag_compute)) DEALLOCATE(global_pset%mag_compute)
-      ALLOCATE(global_pset%mag_compute(nbands))
-      global_pset%mag_compute = 1
+    SUBROUTINE fsps_context_get_nspec_handle(handle, n_spec, status) &
+           BIND(C, name="fsps_context_get_nspec")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_spec
+      INTEGER(C_INT), INTENT(OUT) :: status
 
-      IF (ALLOCATED(global_pset%ssp_gen_age)) DEALLOCATE(global_pset%ssp_gen_age)
-      ALLOCATE(global_pset%ssp_gen_age(nt))
-      global_pset%ssp_gen_age = 1
+      status = 0
+      n_spec = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
 
-      ! Allocate Output Container
-       ! Output container alloc below
-      ALLOCATE(global_ocompsp(ntfull))
-    
-      DO i = 1, ntfull
-          ALLOCATE(global_ocompsp(i)%mags(nbands))
-          ALLOCATE(global_ocompsp(i)%spec(nspec))
-          ALLOCATE(global_ocompsp(i)%indx(nindx))
-          ALLOCATE(global_ocompsp(i)%emlines(nemline))
-      END DO
+      n_spec = ctx_pool(handle)%state%nspec
+    END SUBROUTINE fsps_context_get_nspec_handle
 
-      ! Initialize cache flags for SSPs
-      IF (ALLOCATED(has_ssp)) DEALLOCATE(has_ssp)
-      IF (ALLOCATED(has_ssp_age)) DEALLOCATE(has_ssp_age)
-      ALLOCATE(has_ssp(nz))
-      ALLOCATE(has_ssp_age(nz,nt))
-      has_ssp = 0
-      has_ssp_age = 0
+    SUBROUTINE fsps_context_get_ntfull_handle(handle, n_time, status) &
+           BIND(C, name="fsps_context_get_ntfull")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_time
+      INTEGER(C_INT), INTENT(OUT) :: status
 
-      ! Set Default Parameters
-      global_pset%sfh = 0
-      global_pset%zmet = zin
-      imf_type = 1 
-      dust_type = 0  
-   END SUBROUTINE fsps_initialize_state
+      status = 0
+      n_time = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
+
+      n_time = ctx_pool(handle)%state%ntfull
+    END SUBROUTINE fsps_context_get_ntfull_handle
+
+    SUBROUTINE fsps_context_get_nbands_handle(handle, n_bands, status) &
+           BIND(C, name="fsps_context_get_nbands")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_bands
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      n_bands = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
+
+      n_bands = ctx_pool(handle)%state%nbands
+    END SUBROUTINE fsps_context_get_nbands_handle
+
+    SUBROUTINE fsps_context_get_nindx_handle(handle, n_indices, status) &
+           BIND(C, name="fsps_context_get_nindx")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_indices
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      n_indices = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
+
+      n_indices = ctx_pool(handle)%state%nindx
+    END SUBROUTINE fsps_context_get_nindx_handle
+
+    SUBROUTINE fsps_context_get_nz_handle(handle, n_z, status) &
+           BIND(C, name="fsps_context_get_nz")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_z
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      n_z = 0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
+
+      n_z = ctx_pool(handle)%state%nz
+    END SUBROUTINE fsps_context_get_nz_handle
+
+    SUBROUTINE fsps_context_get_nemline_handle(handle, n_line, status) &
+           BIND(C, name="fsps_context_get_nemline")
+      INTEGER(C_INT), VALUE :: handle
+      INTEGER(C_INT), INTENT(OUT) :: n_line
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      n_line = nemline
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         n_line = 0
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         n_line = 0
+         RETURN
+      END IF
+    END SUBROUTINE fsps_context_get_nemline_handle
+
+    SUBROUTINE fsps_context_get_zsol_handle(handle, z_sol, status) &
+           BIND(C, name="fsps_context_get_zsol")
+      INTEGER(C_INT), VALUE :: handle
+      REAL(C_DOUBLE), INTENT(OUT) :: z_sol
+      INTEGER(C_INT), INTENT(OUT) :: status
+
+      status = 0
+      z_sol = 0.0
+      IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
+         status = 1
+         RETURN
+      END IF
+      IF (.NOT. ctx_inuse(handle)) THEN
+         status = 1
+         RETURN
+      END IF
+
+      z_sol = ctx_pool(handle)%state%zsol
+    END SUBROUTINE fsps_context_get_zsol_handle
+
+#ifdef FSPS_ENABLE_LEGACY
 
   ! -------------------------------------------------------------------------
   ! INITIALIZATION
@@ -163,7 +571,8 @@ CONTAINS
     INTEGER(C_INT), VALUE :: zin
 
       ! Call standard FSPS setup
-      CALL SPS_SETUP(zin, 'mist', 'miles', 'DL07')
+         CALL fsps_ensure_default_ctx()
+         CALL SPS_SETUP(fsps_default_ctx, zin, 'mist', 'miles', 'DL07')
       CALL fsps_initialize_state(zin)
   END SUBROUTINE fsps_initialize
 
@@ -184,19 +593,21 @@ CONTAINS
     compute_vega_mags = compute_vega_mags0
     vactoair_flag = vactoair_flag0
 
+      CALL fsps_ensure_default_ctx()
+
     CALL c_to_f_string(c_isoc, isoc_type_in)
     CALL c_to_f_string(c_spec, spec_type_in)
     CALL c_to_f_string(c_dust, dust_type_in)
 
     IF (LEN_TRIM(isoc_type_in) == 0 .AND. LEN_TRIM(spec_type_in) == 0 .AND. &
         LEN_TRIM(dust_type_in) == 0) THEN
-       CALL SPS_SETUP(zin)
+       CALL SPS_SETUP(fsps_default_ctx, zin)
     ELSE IF (LEN_TRIM(spec_type_in) == 0 .AND. LEN_TRIM(dust_type_in) == 0) THEN
-       CALL SPS_SETUP(zin, TRIM(isoc_type_in))
+       CALL SPS_SETUP(fsps_default_ctx, zin, TRIM(isoc_type_in))
     ELSE IF (LEN_TRIM(dust_type_in) == 0) THEN
-       CALL SPS_SETUP(zin, TRIM(isoc_type_in), TRIM(spec_type_in))
+       CALL SPS_SETUP(fsps_default_ctx, zin, TRIM(isoc_type_in), TRIM(spec_type_in))
     ELSE
-       CALL SPS_SETUP(zin, TRIM(isoc_type_in), TRIM(spec_type_in), TRIM(dust_type_in))
+       CALL SPS_SETUP(fsps_default_ctx, zin, TRIM(isoc_type_in), TRIM(spec_type_in), TRIM(dust_type_in))
     END IF
 
     CALL fsps_initialize_state(zin)
@@ -496,7 +907,7 @@ CONTAINS
     ALLOCATE(ssp_lbol(ntfull))
     ALLOCATE(ssp_spec(nspec, ntfull))
     
-    CALL SSP_GEN(global_pset, ssp_mass, ssp_lbol, ssp_spec)
+   CALL SSP_GEN(fsps_default_ctx, global_pset, ssp_mass, ssp_lbol, ssp_spec)
 
     IF (global_pset%sfh .EQ. 0) THEN
        ! --- SSP Mode ---
@@ -514,8 +925,8 @@ CONTAINS
        ! This avoids guessing the changing signature of CSP_GEN.
        ! args: (ztype, n_z, outfile, mass_in, lbol_in, spec_in, pset, ocompsp_out)
        ! ztype=0 (Single Z), n_z=1
-       CALL COMPSP(0, 1, junk_file, ssp_mass, ssp_lbol, ssp_spec, &
-                   global_pset, global_ocompsp)
+      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, ssp_mass, ssp_lbol, ssp_spec, &
+              global_pset, global_ocompsp)
        
        ! Copy result to output buffer
        DO i=1, ntfull
@@ -563,7 +974,7 @@ CONTAINS
 
     old_z = global_pset%zmet
     global_pset%zmet = zidx
-    CALL SSP_GEN(global_pset, mass_ssp_zz(:,zidx), lbol_ssp_zz(:,zidx), &
+   CALL SSP_GEN(fsps_default_ctx, global_pset, mass_ssp_zz(:,zidx), lbol_ssp_zz(:,zidx), &
                  spec_ssp_zz(:,:,zidx))
     has_ssp(zidx) = 1
     has_ssp_age(zidx,:) = global_pset%ssp_gen_age
@@ -600,8 +1011,8 @@ CONTAINS
     CASE (0)
        zmet = global_pset%zmet
        IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
-       CALL COMPSP(0, 1, junk_file, mass_ssp_zz(:,zmet), lbol_ssp_zz(:,zmet), &
-                   spec_ssp_zz(:,:,zmet), global_pset, global_ocompsp)
+      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, mass_ssp_zz(:,zmet), lbol_ssp_zz(:,zmet), &
+              spec_ssp_zz(:,:,zmet), global_pset, global_ocompsp)
     CASE (1)
        zpos = global_pset%logzsol
        zlo = MAX(MIN(locate(LOG10(zlegend/zsol), zpos), nz-1), 1)
@@ -609,20 +1020,20 @@ CONTAINS
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
        CALL ztinterp(zpos, spec, lbol, mass)
-       CALL COMPSP(0, 1, junk_file, mass, lbol, spec, global_pset, global_ocompsp)
+      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, mass, lbol, spec, global_pset, global_ocompsp)
     CASE (2)
        zpos = global_pset%logzsol
        DO zmet = 1, nz
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
        CALL ztinterp(zpos, spec, lbol, mass, zpow=global_pset%pmetals)
-       CALL COMPSP(0, 1, junk_file, mass, lbol, spec, global_pset, global_ocompsp)
+      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, mass, lbol, spec, global_pset, global_ocompsp)
     CASE (3)
        DO zmet = 1, nz
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
-       CALL COMPSP(0, nz, junk_file, mass_ssp_zz, lbol_ssp_zz, spec_ssp_zz, &
-                   global_pset, global_ocompsp)
+      CALL COMPSP(fsps_default_ctx, 0, nz, junk_file, mass_ssp_zz, lbol_ssp_zz, spec_ssp_zz, &
+              global_pset, global_ocompsp)
     CASE DEFAULT
        CALL fsps_set_error(306, "[FSPS-C] Error: Unknown ztype in fsps_compute_zdep")
     END SELECT
@@ -684,7 +1095,7 @@ CONTAINS
      
      DO i = 1, ntfull
         tspec = global_ocompsp(i)%spec
-        CALL GETMAGS(REAL(zred, SP), tspec, f_mags(:,i), all_bands)
+      CALL GETMAGS(fsps_default_ctx, REAL(zred, SP), tspec, f_mags(:,i), all_bands)
      END DO
      
   END SUBROUTINE fsps_get_mags
@@ -705,7 +1116,7 @@ CONTAINS
 
      DO i = 1, ntfull
         tspec = global_ocompsp(i)%spec
-        CALL GETMAGS(REAL(zred, SP), tspec, f_mags(:,i), f_mc)
+      CALL GETMAGS(fsps_default_ctx, REAL(zred, SP), tspec, f_mags(:,i), f_mc)
      END DO
 
   END SUBROUTINE fsps_get_mags_mask
@@ -790,7 +1201,7 @@ CONTAINS
         lamarr = spec_lambda
      END IF
 
-     CALL GETINDX(lamarr, f_spec, f_indices)
+   CALL GETINDX(fsps_default_ctx, lamarr, f_spec, f_indices)
   END SUBROUTINE fsps_get_indices
 
    ! Return a stellar spectrum for stellar parameters.
@@ -806,9 +1217,9 @@ CONTAINS
     END IF
 
     CALL C_F_POINTER(c_spec, f_spec, [nspec])
-    CALL GETSPEC(global_pset, REAL(mact, SP), REAL(logt, SP), REAL(lbol, SP), &
-                 REAL(logg, SP), REAL(phase, SP), REAL(ffco, SP), &
-                 REAL(lmdot, SP), REAL(wght, SP), f_spec)
+   CALL GETSPEC(fsps_default_ctx, global_pset, REAL(mact, SP), REAL(logt, SP), REAL(lbol, SP), &
+             REAL(logg, SP), REAL(phase, SP), REAL(ffco, SP), &
+             REAL(lmdot, SP), REAL(wght, SP), f_spec)
   END SUBROUTINE fsps_stellar_spectrum
 
   ! -------------------------------------------------------------------------
@@ -838,7 +1249,9 @@ CONTAINS
      IF (ALLOCATED(has_ssp)) DEALLOCATE(has_ssp)
      IF (ALLOCATED(has_ssp_age)) DEALLOCATE(has_ssp_age)
 
-     CALL SPS_TAKEDOWN()
+     IF (fsps_default_ctx_ready) THEN
+        CALL SPS_TAKEDOWN(fsps_default_ctx)
+     END IF
   END SUBROUTINE fsps_finalize
 
   ! -------------------------------------------------------------------------
@@ -1096,8 +1509,8 @@ CONTAINS
       CALL C_F_POINTER(c_wave, f_wave, [nspec])
       CALL C_F_POINTER(c_spec, f_spec, [nspec])
 
-      CALL SMOOTHSPEC(f_wave, f_spec, REAL(sigma_broad, SP), &
-                              REAL(minw, SP), REAL(maxw, SP))
+      CALL SMOOTHSPEC(fsps_default_ctx, f_wave, f_spec, REAL(sigma_broad, SP), &
+                  REAL(minw, SP), REAL(maxw, SP))
    END SUBROUTINE fsps_smooth_spectrum
 
    ! Write isochrone data to a .cmd file.
@@ -1105,7 +1518,7 @@ CONTAINS
       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_outfile
       CHARACTER(LEN=100) :: outfile
       CALL c_to_f_string(c_outfile, outfile)
-      CALL WRITE_ISOCHRONE(TRIM(outfile), global_pset)
+      CALL WRITE_ISOCHRONE(fsps_default_ctx, TRIM(outfile), global_pset)
    END SUBROUTINE fsps_write_isochrone
 
    SUBROUTINE fsps_get_setup_vars(cvms, vta_flag) BIND(C, name="fsps_get_setup_vars")
@@ -1127,6 +1540,8 @@ CONTAINS
       CALL f_to_c_string(spec_type, c_spec, c_spec_len)
       CALL f_to_c_string(str_dustem, c_dust, c_dust_len)
    END SUBROUTINE fsps_get_libraries
+
+#endif
 
    ! Convert a null-terminated C string into a Fortran fixed-length string.
    SUBROUTINE c_to_f_string(c_ptr, f_str)

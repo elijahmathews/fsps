@@ -1,11 +1,14 @@
 PROGRAM AUTOSPS
 
-  USE sps_vars
-  USE sps_utils
+   USE sps_vars
+   USE sps_utils
+   USE fsps_context, ONLY: fsps_context_create
+   USE fsps_context_types, ONLY: fsps_context_t
   
   IMPLICIT NONE
 
-  INTEGER :: z
+   INTEGER :: z
+   TYPE(fsps_context_t) :: ctx
 
   REAL(SP), ALLOCATABLE :: spec_ssp(:,:)
   REAL(SP), ALLOCATABLE :: mass_ssp(:),lbol_ssp(:)
@@ -45,9 +48,10 @@ PROGRAM AUTOSPS
   ENDIF
 
   ! --- Initialize Environment Immediately ---
-  WRITE(6,*) 'Initializing libraries...'
+   WRITE(6,*) 'Initializing libraries...'
+   CALL fsps_context_create(ctx)
   ! We load ALL metallicities (-1) so we can query nz and zlegend
-  CALL SPS_SETUP(-1, TRIM(iso_in), TRIM(spec_in))
+   CALL SPS_SETUP(ctx, -1, TRIM(iso_in), TRIM(spec_in))
 
   ! --- Allocate Memory ---
   IF (.NOT. ALLOCATED(spec_ssp)) THEN
@@ -164,13 +168,13 @@ PROGRAM AUTOSPS
      ! We already called SPS_SETUP(-1) at the top, so variables are ready.
      DO z=1,nz
         pset%zmet=z
-        CALL SSP_GEN(pset,mass_ssp_zz(:,z),lbol_ssp_zz(:,z),spec_ssp_zz(:,:,z))
+      CALL SSP_GEN(ctx, pset, mass_ssp_zz(:,z), lbol_ssp_zz(:,z), spec_ssp_zz(:,:,z))
      ENDDO
-     CALL COMPSP(3,nz,file1,mass_ssp_zz,lbol_ssp_zz,spec_ssp_zz,pset,ocompsp)
+     CALL COMPSP(ctx, 3, nz, file1, mass_ssp_zz, lbol_ssp_zz, spec_ssp_zz, pset, ocompsp)
   ELSE
      ! We already called SPS_SETUP(-1), so speclib is populated.
-     CALL SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
-     CALL COMPSP(3,1,file1,mass_ssp,lbol_ssp,spec_ssp,pset,ocompsp)
+   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
   ENDIF
 
   ! Clean up

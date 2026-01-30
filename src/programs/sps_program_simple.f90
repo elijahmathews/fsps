@@ -2,18 +2,20 @@
 
   !set up modules
   USE sps_vars
-  USE sps_utils  
+  USE sps_utils
+  USE fsps_context, ONLY: fsps_context_create
+  USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
 
   !NB: the various structure types are defined in sps_vars.f90
   !    variables not explicitly defined here are defined in sps_vars.f90
 
-  INTEGER :: i
+  TYPE(fsps_context_t) :: ctx
   !define variable for SSP spectrum
   REAL(SP), ALLOCATABLE :: spec_ssp(:,:)
   !define variables for Mass and Lbol info
   REAL(SP), ALLOCATABLE :: mass_ssp(:), lbol_ssp(:)
-  CHARACTER(100) :: file1='', file2=''
+  CHARACTER(100) :: file1=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
@@ -27,12 +29,14 @@
   ! with no dust, and the 'default' assumptions regarding the 
   ! locations of the isochrones
 
+  CALL fsps_context_create(ctx)
+
   imf_type  = 0             !define the IMF (1=Chabrier 2003)
                             !see sps_vars.f90 for details of this var
   pset%zmet = 10            !define the metallicity (see the manual)
                             !20 = solar metallacity
 
-  CALL SPS_SETUP(pset%zmet) !read in the isochrones and spectral libraries
+  CALL SPS_SETUP(ctx, pset%zmet) !read in the isochrones and spectral libraries
 
   ! Allocate memory now that SPS_SETUP has defined ntfull/nspec
   IF (.NOT. ALLOCATED(spec_ssp)) THEN
@@ -58,10 +62,10 @@
   add_neb_emission=1
 
   !compute the SSP
-  CALL SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
+  CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !compute mags and write out mags and spec for SSP
   file1 = 'SSP_BPASS.out'
-  CALL COMPSP(3,1,file1,mass_ssp,lbol_ssp,spec_ssp,pset,ocompsp)
+  CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
 
 
 
@@ -75,7 +79,7 @@
   !NB: you only need to re-run SPS_SETUP if you have changed the metallicity
   !    or, even better (but slower), you can call SPS_SETUP(-1) and this will
   !    set up all the metallicities at once.
-  CALL SPS_SETUP(pset%zmet)    !read in the isochrones and spectral libraries
+  CALL SPS_SETUP(ctx, pset%zmet)    !read in the isochrones and spectral libraries
 
   !define the parameter set. 
   pset%sfh   = 1     !set SFH to "CSP"; sfh=1 means a normal tau model
@@ -85,10 +89,10 @@
   !pset%tage  = 12.5  !age at which we want the mags
 
   !compute the CSP
-  CALL SSP_GEN(pset,mass_ssp,lbol_ssp,spec_ssp)
+  CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !compute mags, and write out mags and spec for CSP
   file1 = 'CSP.out'
-  CALL COMPSP(3,1,file1,mass_ssp,lbol_ssp,spec_ssp,pset,ocompsp)
+  CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
 
   !compute basic SFH statistics for the last entry in the ocompsp array
   !results are returned in the variables ssfr6,...,ave_age

@@ -36,14 +36,17 @@ END FUNCTION INTIND
 !------------------------------------------------------------!
 !------------------------------------------------------------!
 
-SUBROUTINE GETINDX(lambda,spec,indices)
+SUBROUTINE GETINDX(ctx, lambda, spec, indices)
 
   !routine to calculate indices from an input spectrum
   !indices are defined in fsps/data/allindices.dat
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY : intind, locate
   IMPLICIT NONE
+
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER :: j
   REAL(SP), INTENT(in), DIMENSION(nspec) :: spec,lambda
@@ -52,6 +55,10 @@ SUBROUTINE GETINDX(lambda,spec,indices)
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
+
+  ASSOCIATE( &
+     indexdefined => ctx%state%indexdefined, &
+     nindx => ctx%state%nindx )
 
   indices = 999.
 
@@ -102,6 +109,8 @@ SUBROUTINE GETINDX(lambda,spec,indices)
      IF (indexdefined(6,j).GT.lambda(nspec)) indices(j) = 999.0
      IF (indexdefined(3,j).LT.lambda(1)) indices(j) = 999.0
 
-  ENDDO
+   ENDDO
+
+   END ASSOCIATE
 
 END SUBROUTINE GETINDX

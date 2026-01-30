@@ -1,13 +1,15 @@
-SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
+SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
   !routine to write all isochrones and CMDs at a given metallicity
   !note that the output age grid is the native spacing, not boosted
   !by the parameter time_res_incr
 
-  USE sps_vars
+     USE fsps_context_types, ONLY: fsps_context_t
+     USE sps_vars
   USE sps_utils, ONLY : getmags,getspec,imf_weight,mod_hb,mod_gb,add_bs
   IMPLICIT NONE
 
+     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER :: i,tt,zz
   TYPE(PARAMS), INTENT(in) :: pset
   CHARACTER(100), INTENT(in)  :: outfile
@@ -23,6 +25,17 @@ SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
+
+  ASSOCIATE( &
+       nbands => ctx%state%nbands, &
+       OUTPUT_HOME => ctx%output_home, &
+       isoc_type => ctx%state%isoc_type, &
+       mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
+       logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
+       logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
+       lmdot_isoc => ctx%state%lmdot_isoc, phase_isoc => ctx%state%phase_isoc, &
+       nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc, &
+       zlegend => ctx%state%zlegend, mact_isoc_full => ctx%state%mact_isoc )
 
   hb_wght = 0.0
   wght    = 0.0
@@ -50,33 +63,33 @@ SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
   DO tt=1,nt
 
      !compute IMF-based weights
-     CALL IMF_WEIGHT(mini(tt,:),wght,nmass(tt))
+     CALL IMF_WEIGHT(ctx, mini(tt,:), wght, nmass(tt))
 
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too
      IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-          CALL MOD_HB(pset%fbhb,tt,mini,mact,logl,logt,logg,phase,&
-          wght,hb_wght,nmass,timestep_isoc(zz,tt))
+          CALL MOD_HB(ctx, pset%fbhb, tt, mini, mact, logl, logt, logg, phase, &
+          wght, hb_wght, nmass, timestep_isoc(zz,tt))
 
      !add in blue stragglers
      IF (timestep_isoc(zz,tt).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-          CALL ADD_BS(pset%sbss,tt,mini,mact,logl,logt,logg,phase,&
-          wght,hb_wght,nmass)
+          CALL ADD_BS(ctx, pset%sbss, tt, mini, mact, logl, logt, logg, phase, &
+          wght, hb_wght, nmass)
 
      !modify the RGB and/or AGB stars
-     CALL MOD_GB(zz,tt,timestep_isoc(zz,:),pset%delt,&
-          pset%dell,pset%pagb,pset%redgb,pset%agb,nmass(tt),logl,logt,phase,wght)
+     CALL MOD_GB(ctx, zz, tt, timestep_isoc(zz,:), pset%delt, &
+          pset%dell, pset%pagb, pset%redgb, pset%agb, nmass(tt), logl, logt, phase, wght)
 
      DO i=1,nmass(tt)
         
         !get the spectrum
-        CALL GETSPEC(pset,mact(tt,i),logt(tt,i),10**logl(tt,i),&
-             logg(tt,i),phase(tt,i),ffco(tt,i),lmdot(tt,i),wght(i),spec)
+        CALL GETSPEC(ctx, pset, mact(tt,i), logt(tt,i), 10**logl(tt,i), &
+             logg(tt,i), phase(tt,i), ffco(tt,i), lmdot(tt,i), wght(i), spec)
         !calculate magnitudes
-        CALL GETMAGS(dz,spec,mags)
+     CALL GETMAGS(ctx, dz, spec, mags)
 
         IF (isoc_type.EQ.'bsti') THEN
-           loggi = LOG10( gsig4pi*mact_isoc(zz,tt,i)/&
+           loggi = LOG10( gsig4pi*mact_isoc_full(zz,tt,i)/&
                 logl(tt,i) ) + 4*logt(tt,i)
         ELSE
            loggi = logg(tt,i)
@@ -92,5 +105,7 @@ SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
   ENDDO
 
   CLOSE(40)
+
+     END ASSOCIATE
 
 END SUBROUTINE WRITE_ISOCHRONE

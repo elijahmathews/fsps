@@ -1,4 +1,4 @@
-SUBROUTINE ADD_BS(s_bs,t,mini,mact,logl,logt,logg,phase, &
+SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
      wght,hb_wght,nmass)
 
   !routine to add blue straggler stars into older 
@@ -16,10 +16,12 @@ SUBROUTINE ADD_BS(s_bs,t,mini,mact,logl,logt,logg,phase, &
   !Note that the parameter bhb_sbs_time, set in sps_vars.f90,
   !sets the turn-on time for this modification
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   USE sps_utils, ONLY : linterp
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
        logl,logt,logg,phase
   REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
@@ -35,7 +37,9 @@ SUBROUTINE ADD_BS(s_bs,t,mini,mact,logl,logt,logg,phase, &
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
 
-  tol = 0.0
+   IF (ctx%zin < -999999) CONTINUE
+
+   tol = 0.0
   bs_wght = s_bs * hb_wght
   
   !find the extent of the t~0 MS

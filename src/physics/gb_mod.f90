@@ -1,11 +1,13 @@
-SUBROUTINE MOD_GB(zz,t,age,delt,dell,pagb,redgb,agb,&
+SUBROUTINE MOD_GB(ctx, zz, t, age, delt, dell, pagb, redgb, agb, &
      nn,logl,logt,phase,wght)
 
   !routine to modify TP-AGB stars, HB+RGB, and post-AGB stars. 
 
-  USE sps_vars
+   USE fsps_context_types, ONLY: fsps_context_t
+   USE sps_vars
   IMPLICIT NONE
 
+   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER,  INTENT(in) :: t, nn,zz
   REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: logl,logt
   REAL(SP), INTENT(in), DIMENSION(nt,nm)    :: phase
@@ -18,6 +20,11 @@ SUBROUTINE MOD_GB(zz,t,age,delt,dell,pagb,redgb,agb,&
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
  
+  ASSOCIATE( &
+     isoc_type => ctx%state%isoc_type, &
+     tpagb_norm_type => ctx%tpagb_norm_type_val, &
+     zlegend => ctx%state%zlegend, zsol => ctx%state%zsol )
+
   DO i=1,nn
 
      !modify TP-AGB stars
@@ -73,6 +80,8 @@ SUBROUTINE MOD_GB(zz,t,age,delt,dell,pagb,redgb,agb,&
         wght(i) = wght(i)*redgb
      ENDIF
 
-  ENDDO
+   ENDDO
+
+   END ASSOCIATE
 
 END SUBROUTINE MOD_GB

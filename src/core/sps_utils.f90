@@ -1,9 +1,12 @@
 MODULE SPS_UTILS
 
+   USE fsps_context_types, ONLY: fsps_context_t
+
   INTERFACE
-     SUBROUTINE SPS_SETUP(zin, isoc_type_in, spec_type_in, dust_type_in)
-       USE sps_vars
+       SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
+          USE fsps_context_types, ONLY: fsps_context_t
        INTEGER, INTENT(in) :: zin
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        CHARACTER(LEN=*), INTENT(in), OPTIONAL :: isoc_type_in
        CHARACTER(LEN=*), INTENT(in), OPTIONAL :: spec_type_in
        CHARACTER(LEN=*), INTENT(in), OPTIONAL :: dust_type_in
@@ -11,18 +14,22 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE ADD_AGB_DUST(weight,tspec,mact,logt,logl,logg,&
+     SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, &
           zz,tco,lmdot)
+       USE fsps_context_types, ONLY: fsps_context_t
        USE sps_vars
+       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), DIMENSION(nspec), INTENT(out) :: tspec
        REAL(SP), INTENT(in)  :: weight,mact,logt,logl,logg,zz,tco,lmdot
      END SUBROUTINE ADD_AGB_DUST
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE ADD_BS(s_bs,t,mini,mact,logl,logt,logg,phase, &
+   SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
           wght,hb_wght,nmass)
-       USE sps_vars
+     USE fsps_context_types, ONLY: fsps_context_t
+     USE sps_vars
+     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
             logl,logt,logg,phase
        REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
@@ -32,21 +39,25 @@ MODULE SPS_UTILS
      END SUBROUTINE ADD_BS
   END INTERFACE
 
-  INTERFACE
-     SUBROUTINE ADD_DUST(pset,csp1,csp2,specdust,mdust,ncsp1,ncsp2,nebdust)
-       USE sps_vars
-       REAL(SP), INTENT(out) :: mdust
-       REAL(SP), DIMENSION(nspec), INTENT(in) :: csp1,csp2
-       TYPE(PARAMS), INTENT(in) :: pset
-       REAL(SP), DIMENSION(nspec), INTENT(out) :: specdust
-       REAL(SP), DIMENSION(nemline), INTENT(in) :: ncsp1,ncsp2
-       REAL(SP), DIMENSION(nemline), INTENT(out) :: nebdust
-     END SUBROUTINE ADD_DUST
-  END INTERFACE
+   INTERFACE
+       SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdust)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
+          REAL(SP), INTENT(out) :: mdust
+          REAL(SP), DIMENSION(nspec), INTENT(in) :: csp1,csp2
+          TYPE(PARAMS), INTENT(in) :: pset
+          REAL(SP), DIMENSION(nspec), INTENT(out) :: specdust
+          REAL(SP), DIMENSION(nemline), INTENT(in) :: ncsp1,ncsp2
+          REAL(SP), DIMENSION(nemline), INTENT(out) :: nebdust
+       END SUBROUTINE ADD_DUST
+   END INTERFACE
 
   INTERFACE
-     SUBROUTINE ADD_NEBULAR(pset,sspi,sspo,nebemline)
-       USE sps_vars
+       SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        TYPE(PARAMS), INTENT(in) :: pset
        REAL(SP), INTENT(in), DIMENSION(nspec,ntfull)    :: sspi
        REAL(SP), INTENT(inout), DIMENSION(nspec,ntfull) :: sspo
@@ -55,8 +66,10 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE ADD_XRB(pset,sspi,sspo)
-       USE sps_vars
+       SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        TYPE(PARAMS), INTENT(in) :: pset
        REAL(SP), INTENT(in), DIMENSION(nspec,ntfull)    :: sspi
        REAL(SP), INTENT(inout), DIMENSION(nspec,ntfull) :: sspo
@@ -64,8 +77,10 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE ADD_REMNANTS(mass,maxmass)
-       USE sps_vars
+       SUBROUTINE ADD_REMNANTS(ctx, mass, maxmass)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(inout) :: mass
        REAL(SP), INTENT(in) :: maxmass
      END SUBROUTINE ADD_REMNANTS
@@ -100,9 +115,11 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE COMPSP(write_compsp,nzin,outfile,mass_ssp,&
-          lbol_ssp,spec_ssp,pset,ocompsp)
+     SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile, mass_ssp, &
+          lbol_ssp, spec_ssp, pset, ocompsp)
+       USE fsps_context_types, ONLY: fsps_context_t
        USE sps_vars
+       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        INTEGER, INTENT(in) :: write_compsp,nzin
        REAL(SP), INTENT(in), DIMENSION(ntfull,nzin) :: lbol_ssp,mass_ssp
        REAL(SP), INTENT(in), DIMENSION(nspec,ntfull,nzin) :: spec_ssp
@@ -122,11 +139,13 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE CSP_GEN(mass_ssp, lbol_ssp, spec_ssp, pset, tage, nzin,&
-                        mass_csp, lbol_csp, spec_csp, mdust_csp,emlin_ssp,emlin_csp)
+     SUBROUTINE CSP_GEN(ctx, mass_ssp, lbol_ssp, spec_ssp, pset, tage, nzin,&
+                        mass_csp, lbol_csp, spec_csp, mdust_csp, emlin_ssp, emlin_csp)
+       USE fsps_context_types, ONLY: fsps_context_t
        USE sps_vars
-       REAL(SP), DIMENSION(ntfull), INTENT(in) :: mass_ssp, lbol_ssp
-       REAL(SP), DIMENSION(nspec, ntfull), INTENT(in) :: spec_ssp
+       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
+       REAL(SP), DIMENSION(ntfull, nzin), INTENT(in) :: mass_ssp, lbol_ssp
+       REAL(SP), DIMENSION(nspec, ntfull, nzin), INTENT(in) :: spec_ssp
        TYPE(PARAMS), intent(in) :: pset
        REAL(SP), INTENT(in)  :: tage
        INTEGER, INTENT(IN) :: nzin
@@ -161,8 +180,10 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE GETINDX(lambda,spec,indices)
-       USE sps_vars
+       SUBROUTINE GETINDX(ctx, lambda, spec, indices)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(in), DIMENSION(nspec) :: spec,lambda
        REAL(SP), INTENT(inout), DIMENSION(nindx) :: indices
      END SUBROUTINE GETINDX
@@ -185,8 +206,10 @@ MODULE SPS_UTILS
   END INTERFACE
   
   INTERFACE
-     SUBROUTINE GETMAGS(zred,spec,mags,mag_compute)
-       USE sps_vars
+       SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(in) :: zred
        REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec
        REAL(SP), DIMENSION(nbands) :: mags
@@ -195,11 +218,13 @@ MODULE SPS_UTILS
   END INTERFACE
   
   INTERFACE
-     SUBROUTINE GETSPEC(pset,mact,logt,lbol,logg,phase,ffco,lmdot,wght,spec)
-       USE sps_vars
-       REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
-       TYPE(PARAMS), INTENT(in) :: pset
-       REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec 
+       SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, spec)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
+          REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
+          TYPE(PARAMS), INTENT(in) :: pset
+          REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec 
      END SUBROUTINE GETSPEC
   END INTERFACE
 
@@ -240,8 +265,10 @@ MODULE SPS_UTILS
   END INTERFACE 
 
   INTERFACE
-     SUBROUTINE IMF_WEIGHT(mini,wght,nmass)
-       USE sps_vars
+       SUBROUTINE IMF_WEIGHT(ctx, mini, wght, nmass)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
        REAL(SP), INTENT(in), DIMENSION(nm)    :: mini
        INTEGER, INTENT(in) :: nmass
@@ -276,9 +303,11 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE MOD_GB(zz,t,age,delt,dell,pagb,redgb,agb,&
-          nn,logl,logt,phase,wght)
+     SUBROUTINE MOD_GB(ctx, zz, t, age, delt, dell, pagb, redgb, agb, &
+          nn, logl, logt, phase, wght)
+       USE fsps_context_types, ONLY: fsps_context_t
        USE sps_vars
+       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        INTEGER,  INTENT(in) :: t, nn,zz
        REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: logl,logt
        REAL(SP), INTENT(in), DIMENSION(nt,nm)    :: phase
@@ -289,9 +318,11 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE MOD_HB(f_bhb,t,mini,mact,logl,logt,logg,phase, &
-          wght,hb_wght,nmass,hbtime)
-       USE sps_vars
+   SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
+      wght, hb_wght, nmass, hbtime)
+     USE fsps_context_types, ONLY: fsps_context_t
+     USE sps_vars
+     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(inout), DIMENSION(nt,nm) :: mini,mact,&
             logl,logt,logg,phase
        REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
@@ -304,8 +335,10 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE SBF(pset,outfile)
-       USE sps_vars
+       SUBROUTINE SBF(ctx, pset, outfile)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        CHARACTER(100), INTENT(in) :: outfile
        TYPE(PARAMS), INTENT(in)    :: pset
      END SUBROUTINE SBF
@@ -355,8 +388,10 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE SMOOTHSPEC(lambda,spec,sigma,minl,maxl,ires)
-       USE sps_vars
+       SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        REAL(SP), INTENT(inout), DIMENSION(nspec) :: spec
        REAL(SP), INTENT(in), DIMENSION(nspec) :: lambda
        REAL(SP), INTENT(in), DIMENSION(nspec), OPTIONAL :: ires
@@ -373,10 +408,12 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE WRITE_ISOCHRONE(outfile,pset)
-       USE sps_vars
-       TYPE(PARAMS), INTENT(in) :: pset
-       CHARACTER(100), INTENT(in)  :: outfile
+       SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
+          USE fsps_context_types, ONLY: fsps_context_t
+          USE sps_vars
+          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
+          TYPE(PARAMS), INTENT(in) :: pset
+          CHARACTER(100), INTENT(in)  :: outfile
      END SUBROUTINE WRITE_ISOCHRONE
   END INTERFACE
 
@@ -480,103 +517,19 @@ CONTAINS
     ENDIF
   END SUBROUTINE fsps_resolve_paths
 
-  SUBROUTINE SPS_TAKEDOWN()
-    USE sps_vars
-    IMPLICIT NONE
+   SUBROUTINE SPS_TAKEDOWN(ctx)
+      USE sps_vars
+      USE fsps_cache, ONLY: fsps_cache_release_setup
+      USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
+      IMPLICIT NONE
+      TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
-    ! Deallocate all arrays
-    IF (ALLOCATED(isoc_type)) DEALLOCATE(isoc_type)
-    IF (ALLOCATED(spec_type)) DEALLOCATE(spec_type)
-    IF (ALLOCATED(indexdefined)) DEALLOCATE(indexdefined)
-    IF (ALLOCATED(wgdust)) DEALLOCATE(wgdust)
-    IF (ALLOCATED(g03smcextn)) DEALLOCATE(g03smcextn)
-    IF (ALLOCATED(bands)) DEALLOCATE(bands)
-    IF (ALLOCATED(magsun)) DEALLOCATE(magsun)
-    IF (ALLOCATED(magvega)) DEALLOCATE(magvega)
-    IF (ALLOCATED(filter_leff)) DEALLOCATE(filter_leff)
-    IF (ALLOCATED(vega_spec)) DEALLOCATE(vega_spec)
-    IF (ALLOCATED(sun_spec)) DEALLOCATE(sun_spec)
-    IF (ALLOCATED(spec_lambda)) DEALLOCATE(spec_lambda)
-    IF (ALLOCATED(spec_nu)) DEALLOCATE(spec_nu)
-    IF (ALLOCATED(spec_res)) DEALLOCATE(spec_res)
-    IF (ALLOCATED(speclib)) DEALLOCATE(speclib)
-    IF (ALLOCATED(wmb_spec)) DEALLOCATE(wmb_spec)
-    IF (ALLOCATED(agb_spec_o)) DEALLOCATE(agb_spec_o)
-    IF (ALLOCATED(agb_logt_o)) DEALLOCATE(agb_logt_o)
-    IF (ALLOCATED(agb_spec_c)) DEALLOCATE(agb_spec_c)
-    IF (ALLOCATED(agb_logt_c)) DEALLOCATE(agb_logt_c)
-    IF (ALLOCATED(agb_spec_car)) DEALLOCATE(agb_spec_car)
-    IF (ALLOCATED(pagb_spec)) DEALLOCATE(pagb_spec)
-    IF (ALLOCATED(wrn_spec)) DEALLOCATE(wrn_spec)
-    IF (ALLOCATED(wrc_spec)) DEALLOCATE(wrc_spec)
-    IF (ALLOCATED(qpaharr)) DEALLOCATE(qpaharr)
-    IF (ALLOCATED(uminarr)) DEALLOCATE(uminarr)
-    IF (ALLOCATED(lambda_dustem)) DEALLOCATE(lambda_dustem)
-    IF (ALLOCATED(dustem_dustem)) DEALLOCATE(dustem_dustem)
-    IF (ALLOCATED(dustem2_dustem)) DEALLOCATE(dustem2_dustem)
-    IF (ALLOCATED(flux_dagb)) DEALLOCATE(flux_dagb)
-    IF (ALLOCATED(nebem_cont)) DEALLOCATE(nebem_cont)
-    IF (ALLOCATED(xnebem_cont)) DEALLOCATE(xnebem_cont)
-    IF (ALLOCATED(neb_res_min)) DEALLOCATE(neb_res_min)
-    IF (ALLOCATED(gaussnebarr)) DEALLOCATE(gaussnebarr)
-    IF (ALLOCATED(agndust_spec)) DEALLOCATE(agndust_spec)
-    IF (ALLOCATED(mact_isoc)) DEALLOCATE(mact_isoc)
-    IF (ALLOCATED(logl_isoc)) DEALLOCATE(logl_isoc)
-    IF (ALLOCATED(logt_isoc)) DEALLOCATE(logt_isoc)
-    IF (ALLOCATED(logg_isoc)) DEALLOCATE(logg_isoc)
-    IF (ALLOCATED(ffco_isoc)) DEALLOCATE(ffco_isoc)
-    IF (ALLOCATED(phase_isoc)) DEALLOCATE(phase_isoc)
-    IF (ALLOCATED(mini_isoc)) DEALLOCATE(mini_isoc)
-    IF (ALLOCATED(lmdot_isoc)) DEALLOCATE(lmdot_isoc)
-    IF (ALLOCATED(nmass_isoc)) DEALLOCATE(nmass_isoc)
-    IF (ALLOCATED(timestep_isoc)) DEALLOCATE(timestep_isoc)
-    IF (ALLOCATED(zlegend)) DEALLOCATE(zlegend)
-    IF (ALLOCATED(zlegendinit)) DEALLOCATE(zlegendinit)
-    IF (ALLOCATED(spec_ssp_zz)) DEALLOCATE(spec_ssp_zz)
-    IF (ALLOCATED(mass_ssp_zz)) DEALLOCATE(mass_ssp_zz)
-    IF (ALLOCATED(lbol_ssp_zz)) DEALLOCATE(lbol_ssp_zz)
-    IF (ALLOCATED(time_full)) DEALLOCATE(time_full)
-    IF (ALLOCATED(weight_ssp)) DEALLOCATE(weight_ssp)
-    IF (ALLOCATED(spec_young)) DEALLOCATE(spec_young)
-    IF (ALLOCATED(spec_old)) DEALLOCATE(spec_old)
-    IF (ALLOCATED(bpass_spec_ssp)) DEALLOCATE(bpass_spec_ssp)
-    IF (ALLOCATED(bpass_mass_ssp)) DEALLOCATE(bpass_mass_ssp)
-    IF (ALLOCATED(lam_xrb)) DEALLOCATE(lam_xrb)
-    IF (ALLOCATED(spec_xrb)) DEALLOCATE(spec_xrb)
-    IF (ALLOCATED(ages_xrb)) DEALLOCATE(ages_xrb)
-    IF (ALLOCATED(zmet_xrb)) DEALLOCATE(zmet_xrb)
+      IF (ASSOCIATED(ctx%setup_cache)) THEN
+         CALL fsps_cache_release_setup(ctx%setup_cache)
+         NULLIFY(ctx%setup_cache)
+      ENDIF
 
-    IF (ALLOCATED(lsfinfo%lsf)) DEALLOCATE(lsfinfo%lsf)
-
-    IF (ALLOCATED(powell_data%mags)) DEALLOCATE(powell_data%mags)
-    IF (ALLOCATED(powell_data%magerr)) DEALLOCATE(powell_data%magerr)
-    IF (ALLOCATED(powell_data%spec)) DEALLOCATE(powell_data%spec)
-    IF (ALLOCATED(powell_data%specerr)) DEALLOCATE(powell_data%specerr)
-
-    IF (ALLOCATED(sedfit_data%mags)) DEALLOCATE(sedfit_data%mags)
-    IF (ALLOCATED(sedfit_data%magerr)) DEALLOCATE(sedfit_data%magerr)
-    IF (ALLOCATED(sedfit_data%spec)) DEALLOCATE(sedfit_data%spec)
-    IF (ALLOCATED(sedfit_data%specerr)) DEALLOCATE(sedfit_data%specerr)
-
-    ! Reset dimensions
-    nspec = 0
-    nt = 0
-    nz = 0
-    nbands = 0
-    nindx = 0
-    ntfull = 0
-    nzinit = 0
-    nspec_xrb = 0
-    nt_xrb = 0
-    nz_xrb = 0
-    ndim_dustem = 0
-    numin_dustem = 0
-    nqpah_dustem = 0
-    n_user_imf = 0
-
-    ! Reset flag
-    check_sps_setup = 0
-
-  END SUBROUTINE SPS_TAKEDOWN
+      CALL fsps_context_state_destroy(ctx%state)
+   END SUBROUTINE SPS_TAKEDOWN
 
 END MODULE SPS_UTILS
