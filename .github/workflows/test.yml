@@ -1,4 +1,4 @@
-name: FSPS Regression Tests
+name: FSPS Tests
 
 on:
   push:
@@ -7,12 +7,40 @@ on:
     branches: [ master, feature/c-driver-api ]
 
 jobs:
-  test-matrix:
+  unit-tests:
     runs-on: ubuntu-latest
+
+    env:
+      FSPS_DATA_HOME: ${{ github.workspace }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install GFortran
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gfortran
+
+    - name: Compile FSPS and Unit Tests
+      run: |
+        make clean
+        make tests_units
+
+    - name: Run Unit Tests
+      run: |
+        ./tests_units
+
+  regression-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
     
     env:
       FSPS_DATA_HOME: ${{ github.workspace }}
-      FSPS_TEST_RTOL: 1.0E-5  # Set global relative tolerance here
+      # Set global relative tolerance here
+      FSPS_TEST_RTOL: 1.0E-5
+      # We force FFLAGS to include the matrix flags + standard flags + silence underflows
+      FFLAGS: "-cpp -O3 -fPIC -ffpe-summary=invalid,zero,overflow"
 
     strategy:
       fail-fast: false
@@ -57,10 +85,9 @@ jobs:
         sudo apt-get install -y gfortran
 
     - name: Compile FSPS and Test Runner
-      # We force FFLAGS to include the matrix flags + standard flags + silence underflows
       run: |
         make clean
-        make test FFLAGS="-cpp -O3 -fPIC -ffpe-summary=invalid,zero,overflow"
+        make test
 
     - name: Run Test
       run: |

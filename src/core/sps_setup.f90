@@ -15,8 +15,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
             nagndust, nagndust_spec, tiny_number, tiny30, clight, mypi, lsun
    USE fsps_cache, ONLY: fsps_setup_cache_t, fsps_cache_get_setup
   USE fsps_context_types, ONLY: fsps_context_t
-  USE sps_utils, ONLY: locate, linterparr, linterp, tsum, get_tuniv, &
-     get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
+   USE sps_utils, ONLY: get_tuniv, get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
+   USE fsps_interpolation, ONLY: find_interval, interpolate_linear
+   USE fsps_integration, ONLY: integrate_trapezoid_array
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER, INTENT(in) :: zin
@@ -782,8 +784,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !in fact be the best thing to do.  Either way, its not ideal.
   DO z=1,nz
 
-     i1 = MIN(MAX(locate(LOG10(zlegendinit/zsol_spec),&
-          LOG10(zlegend(z)/zsol)),1),nzinit-1)
+   i1 = MIN(MAX(find_interval(LOG10(zlegendinit/zsol_spec),&
+      LOG10(zlegend(z)/zsol)),1),nzinit-1)
      dz = (LOG10(zlegend(z)/zsol)-LOG10(zlegendinit(i1)/zsol_spec)) / &
           (LOG10(zlegendinit(i1+1)/zsol_spec)-LOG10(zlegendinit(i1)/zsol_spec))
      dz = MIN(MAX(dz,0.0),1.0) !no extrapolation!
@@ -840,7 +842,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      !input spectral grid
      DO i=1,ndim_wmb_logt
         DO j=1,ndim_wmb_logg
-           wmbsi(:,z,i,j) = MAX(linterparr(wmb_lam,wmb_specinit(:,i,j),&
+          wmbsi(:,z,i,j) = MAX(interpolate_linear(wmb_lam,wmb_specinit(:,i,j),&
                 spec_lambda),tiny_number)
         ENDDO
      ENDDO
@@ -855,7 +857,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !in fact be the best thing to do.  Either way, its not ideal.
   DO z=1,nz
 
-     i1 = MIN(MAX(locate(LOG10(zwmb/zsol_spec),&
+   i1 = MIN(MAX(find_interval(LOG10(zwmb/zsol_spec),&
           LOG10(zlegend(z)/zsol)),1),nzwmb-1)
      dz = (LOG10(zlegend(z)/zsol)-LOG10(zwmb(i1)/zsol_spec)) / &
           (LOG10(zwmb(i1+1)/zsol_spec)-LOG10(zwmb(i1)/zsol_spec))
@@ -887,7 +889,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !now interpolate the master Teff array to the particular Z array
   DO i=1,nz
-     i1 = MIN(MAX(locate(tagb_logz_o,LOG10(zlegend(i)/zsol_spec)),1),22-1)
+   i1 = MIN(MAX(find_interval(tagb_logz_o,LOG10(zlegend(i)/zsol_spec)),1),22-1)
      dz = (LOG10(zlegend(i)/zsol_spec)-tagb_logz_o(i1)) / &
           (tagb_logz_o(i1+1)-tagb_logz_o(i1))
      agb_logt_o(i,:) = (1-dz)*tagb_logt_o(i1,:)+dz*tagb_logt_o(i1+1,:)
@@ -925,7 +927,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(95)
   !interpolate to the main spectral grid
   DO i=1,n_agb_o
-     agb_spec_o(:,i) = MAX(linterparr(agb_lam,agb_specinit_o(:,i),&
+   agb_spec_o(:,i) = MAX(interpolate_linear(agb_lam,agb_specinit_o(:,i),&
           spec_lambda),tiny_number)
   ENDDO
 
@@ -943,7 +945,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(96)
   !interpolate to the main spectral grid
   DO i=1,n_agb_c
-     agb_spec_c(:,i) = MAX(linterparr(agb_lam,agb_specinit_c(:,i),&
+   agb_spec_c(:,i) = MAX(interpolate_linear(agb_lam,agb_specinit_c(:,i),&
           spec_lambda),tiny_number)
   ENDDO
 
@@ -979,7 +981,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(96)
   !interpolate to the main spectral grid
   DO i=1,n_agb_car
-     agb_spec_car(:,i) = MAX(linterparr(aringer_lam,aringer_specinit(:,i),&
+   agb_spec_car(:,i) = MAX(interpolate_linear(aringer_lam,aringer_specinit(:,i),&
           spec_lambda),tiny_number)
   ENDDO
 
@@ -1029,7 +1031,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !interpolate to the main spectral array
   DO j=1,2
      DO i=1,ndim_pagb
-        pagb_spec(:,i,j) = MAX(linterparr(pagb_lam,pagb_specinit(:,i,j),&
+      pagb_spec(:,i,j) = MAX(interpolate_linear(pagb_lam,pagb_specinit(:,i,j),&
              spec_lambda),tiny_number)
      ENDDO
   ENDDO
@@ -1080,13 +1082,13 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !interpolate to the main array
   DO j=1,nz
-     i1 = MIN(MAX(locate(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
+   i1 = MIN(MAX(find_interval(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
      dz = (LOG10(zlegend(j)/zsol_spec)-twrzmet(i1))/(twrzmet(i1+1)-twrzmet(i1))
      dz = MIN(MAX(dz,0.0),1.)
      DO i=1,ndim_wr
         tspecwr = (1-dz)*LOG10(twrn(:,i,i1)+tiny_number) + &
              dz*LOG10(twrn(:,i,i1+1)+tiny_number)
-        wrn_spec(:,i,j) = 10**linterparr(LOG10(tlamwr),tspecwr,&
+      wrn_spec(:,i,j) = 10**interpolate_linear(LOG10(tlamwr),tspecwr,&
              LOG10(spec_lambda))-tiny_number
      ENDDO
   ENDDO
@@ -1111,13 +1113,13 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !interpolate to the main array
   DO j=1,nz
-     i1 = MIN(MAX(locate(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
+   i1 = MIN(MAX(find_interval(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
      dz = (LOG10(zlegend(j)/zsol_spec)-twrzmet(i1))/(twrzmet(i1+1)-twrzmet(i1))
      dz = MIN(MAX(dz,0.0),1.)
      DO i=1,ndim_wr
         tspecwr = (1-dz)*LOG10(twrc(:,i,i1)+tiny_number) + &
              dz*LOG10(twrc(:,i,i1+1)+tiny_number)
-        wrc_spec(:,i,j) = 10**linterparr(LOG10(tlamwr),tspecwr,&
+      wrc_spec(:,i,j) = 10**interpolate_linear(LOG10(tlamwr),tspecwr,&
              LOG10(spec_lambda))-tiny_number
      ENDDO
   ENDDO
@@ -1251,8 +1253,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      !now interpolate the dust spectra onto the master wavelength array
      DO j=1,numin_dustem*2
         !the dust models only extend to 1um
-        jj = MAX(locate(spec_lambda/1E4,one), 1)
-        dustem2_dustem(jj:,k,j) = linterparr(lambda_dustem,&
+      jj = MAX(find_interval(spec_lambda/1E4,one), 1)
+      dustem2_dustem(jj:,k,j) = interpolate_linear(lambda_dustem,&
              dustem_dustem(:,j),spec_lambda(jj:))
      ENDDO
 
@@ -1286,8 +1288,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
            STOP
         ENDIF
         !interpolate the dust spectra onto the master wavelength array
-        jj = MAX(locate(spec_lambda,lambda_dagb(1)), 1)
-        flux_dagb(jj:,1,i,j) = linterparr(lambda_dagb(1:nlam),&
+      jj = MAX(find_interval(spec_lambda,lambda_dagb(1)), 1)
+      flux_dagb(jj:,1,i,j) = interpolate_linear(lambda_dagb(1:nlam),&
              fluxin_dagb(1:nlam),spec_lambda(jj:))
      ENDDO
   ENDDO
@@ -1315,8 +1317,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
            STOP
         ENDIF
         !interpolate the dust spectra onto the master wavelength array
-        jj = MAX(locate(spec_lambda,lambda_dagb(1)), 1)
-        flux_dagb(jj:,2,i,j) = linterparr(lambda_dagb(1:nlam),&
+      jj = MAX(find_interval(spec_lambda,lambda_dagb(1)), 1)
+      flux_dagb(jj:,2,i,j) = interpolate_linear(lambda_dagb(1:nlam),&
              fluxin_dagb(1:nlam),spec_lambda(jj:))
      ENDDO
   ENDDO
@@ -1347,10 +1349,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      READ(99,*) agndust_lam(i),agndust_specinit(i,:)
   ENDDO
 
-  i1 = MAX(locate(spec_lambda,agndust_lam(1)), 1)
-  i2 = MAX(locate(spec_lambda,agndust_lam(nagndust_spec)), 1)
+   i1 = MAX(find_interval(spec_lambda,agndust_lam(1)), 1)
+   i2 = MAX(find_interval(spec_lambda,agndust_lam(nagndust_spec)), 1)
   DO i=1,nagndust
-     agndust_spec(i1:i2,i) = 10**linterparr(LOG10(agndust_lam),&
+   agndust_spec(i1:i2,i) = 10**interpolate_linear(LOG10(agndust_lam),&
           LOG10(agndust_specinit(:,i)+tiny30),LOG10(spec_lambda(i1:i2)))-tiny30
   ENDDO
 
@@ -1385,7 +1387,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
               READ(99,*,iostat=stat) readcontneb
               !interpolate onto the main wavelength grid
               !some values in the table are 0.0, set a floor of 1E-95
-              nebem_cont(:,i,j,k) = linterparr(readlambneb,&
+                nebem_cont(:,i,j,k) = interpolate_linear(readlambneb,&
                    LOG10(readcontneb+10**(-95.d0)),spec_lambda)
            ENDDO
         ENDDO
@@ -1425,7 +1427,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      !define the minimum resolution of the emission lines
      !based on the resolution of the spectral library
      DO i=1,nemline
-        j = MIN(MAX(locate(spec_lambda,nebem_line_pos(i)),1),nspec-1)
+      j = MIN(MAX(find_interval(spec_lambda,nebem_line_pos(i)),1),nspec-1)
         neb_res_min(i) = spec_lambda(j+1)-spec_lambda(j)
      ENDDO
 
@@ -1479,7 +1481,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
                READ(99,*,iostat=stat) readcontneb
                !interpolate onto the main wavelength grid
                !some values in the table are 0.0, set a floor of 1E-95
-               xnebem_cont(:,i,j,k) = linterparr(readlambneb,&
+                  xnebem_cont(:,i,j,k) = interpolate_linear(readlambneb,&
                      LOG10(readcontneb+10**(-95.d0)),spec_lambda)
             ENDDO
          ENDDO
@@ -1551,7 +1553,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      DO i=1,nt_xrb
         READ(98,*) tspec_xrb
         !interpolate to the main wavelength array
-        spec_xrb(:,i,j) = MAX(linterparr(lam_xrb,tspec_xrb,spec_lambda),tiny_number)
+      spec_xrb(:,i,j) = MAX(interpolate_linear(lam_xrb,tspec_xrb,spec_lambda),tiny_number)
      ENDDO
      CLOSE(98)
   ENDDO
@@ -1580,8 +1582,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !interpolate the Vega spectrum onto the wavelength grid
   !and convert to fnu
-  jj = locate(spec_lambda,tvega_lam(ntlam))
-  vega_spec(:jj) = 10**linterparr(LOG10(tvega_lam),&
+   jj = find_interval(spec_lambda,tvega_lam(ntlam))
+   vega_spec(:jj) = 10**interpolate_linear(LOG10(tvega_lam),&
           LOG10(tvega_spec+tiny_number),LOG10(spec_lambda(:jj)))
   vega_spec = vega_spec*spec_lambda**2
   vega_spec(jj+1:) = tiny_number
@@ -1601,8 +1603,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CLOSE(98)
 
   !interpolate the Solar spectrum onto the wavelength grid
-  jj = locate(spec_lambda,tsun_lam(ntlam))
-  sun_spec(:jj) = 10**linterparr(LOG10(tsun_lam),&
+   jj = find_interval(spec_lambda,tsun_lam(ntlam))
+   sun_spec(:jj) = 10**interpolate_linear(LOG10(tsun_lam),&
           LOG10(tsun_spec+tiny_number),LOG10(spec_lambda(:jj)))
   sun_spec(jj+1:) = tiny_number
 
@@ -1654,29 +1656,35 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      ENDIF
 
      !interpolate the filter onto the master wavelength array
-     i1 = MAX(locate(spec_lambda,readlamb(1)),1)
-     i2 = locate(spec_lambda,readlamb(jj))
-     IF (i1.NE.i2) bands(i1:i2,i) = &
-          linterparr(readlamb(1:jj),readband(1:jj),spec_lambda(i1:i2))
+     IF (jj.GE.2) THEN
+      i1 = MAX(find_interval(spec_lambda,readlamb(1)),1)
+      i2 = find_interval(spec_lambda,readlamb(jj))
+      i2 = MAX(MIN(i2, SIZE(spec_lambda)), 1)
+      IF (i2.GE.i1) THEN
+         IF (i1.NE.i2) bands(i1:i2,i) = &
+            interpolate_linear(readlamb(1:jj),readband(1:jj),spec_lambda(i1:i2))
+      ENDIF
+     ENDIF
 
      !normalize
-     dumr1 = TSUM(spec_lambda,bands(:,i)/spec_lambda)
+    dumr1 = integrate_trapezoid_array(spec_lambda,bands(:,i)/spec_lambda)
+       IF (ieee_is_nan(dumr1)) dumr1 = 0.0
      !in this case the band is entirely outside the wavelength array
      IF (dumr1.LE.tiny_number) dumr1=1.0
      bands(:,i) = bands(:,i) / dumr1
      bands(:,i) = MAX(bands(:,i),0.0)  !force no negative values
 
      !compute absolute magnitude of the Sun
-     magsun(i) = TSUM(spec_lambda,sun_spec*bands(:,i)/spec_lambda)
-     IF (magsun(i).LT.2*tiny_number) THEN
+   magsun(i) = integrate_trapezoid_array(spec_lambda,sun_spec*bands(:,i)/spec_lambda)
+     IF (ieee_is_nan(magsun(i)) .OR. magsun(i).LT.2*tiny_number) THEN
         magsun(i) = 99.0
      ELSE
         magsun(i) = -2.5*LOG10(magsun(i)) - 48.60
      ENDIF
 
      !compute mags of Vega
-     magvega(i) = TSUM(spec_lambda,vega_spec*bands(:,i)/spec_lambda)
-     IF (magvega(i).LE.tiny_number) THEN
+   magvega(i) = integrate_trapezoid_array(spec_lambda,vega_spec*bands(:,i)/spec_lambda)
+     IF (ieee_is_nan(magvega(i)) .OR. magvega(i).LE.tiny_number) THEN
         magvega(i) = 99.0
      ELSE
         magvega(i) = -2.5 * LOG10(magvega(i)) - 48.60
@@ -1703,9 +1711,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
            WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
            EXIT
         ENDIF
-        d = TSUM(spec_lambda,(spec_lambda/lami(j))**(-1.0)*bands(:,ind(j))/&
-             spec_lambda)
-        bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
+       d = integrate_trapezoid_array(spec_lambda,(spec_lambda/lami(j))**(-1.0)*bands(:,ind(j))/&
+            spec_lambda)
+         IF (ieee_is_nan(d)) d = tiny_number
+         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
      ENDDO
 
      !normalize the MIPS photometry to a BB (beta=2)
@@ -1717,9 +1726,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
            WRITE(*,*) 'SPS_SETUP ERROR: trying to index a filter that does not exist!'
            EXIT
         ENDIF
-        d = TSUM(spec_lambda,(spec_lambda/lami(j))**(-2.0)*bands(:,ind(j))/&
-             spec_lambda)
-        bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
+       d = integrate_trapezoid_array(spec_lambda,(spec_lambda/lami(j))**(-2.0)*bands(:,ind(j))/&
+            spec_lambda)
+         IF (ieee_is_nan(d)) d = tiny_number
+         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
      ENDDO
   ENDIF
 
@@ -1727,9 +1737,14 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !NB: These are sometimes referred to as "pivot" wavelengths
   ! in the literature.  See Bessell & Murphy 2012 A.2.1 for details'
   DO i=1,nbands
-     filter_leff(i) = TSUM(spec_lambda,spec_lambda*bands(:,i)) / &
-          TSUM(spec_lambda,bands(:,i)/spec_lambda)
-     filter_leff(i) = SQRT(filter_leff(i))
+   filter_leff(i) = integrate_trapezoid_array(spec_lambda,spec_lambda*bands(:,i))
+     d = integrate_trapezoid_array(spec_lambda,bands(:,i)/spec_lambda)
+     IF (ieee_is_nan(filter_leff(i)) .OR. ieee_is_nan(d) .OR. d.LE.tiny_number) THEN
+        filter_leff(i) = 0.0
+     ELSE
+        filter_leff(i) = filter_leff(i) / d
+        filter_leff(i) = SQRT(filter_leff(i))
+     ENDIF
   ENDDO
 
   !----------------------------------------------------------------!
@@ -1774,7 +1789,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
               ELSE IF (spec_lambda(n).LT.wglam(1)) THEN
                  wgdust(n,i,j,k) = wgtmp(1,i,k,j)
               ELSE
-                 wgdust(n,i,j,k) = linterp(wglam,wgtmp(:,i,k,j),&
+                 wgdust(n,i,j,k) = interpolate_linear(wglam,wgtmp(:,i,k,j),&
                       spec_lambda(n))
               ENDIF
            ENDDO
@@ -1799,7 +1814,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      ELSE IF (spec_lambda(n).LT.g03lam(1)) THEN
         g03smcextn(n) = g03smc(1)
      ELSE
-        g03smcextn(n) = linterp(g03lam,g03smc,spec_lambda(n))
+      g03smcextn(n) = interpolate_linear(g03lam,g03smc,spec_lambda(n))
      ENDIF
      !write(34,*) spec_lambda(n),g03smcextn(n)
   ENDDO
@@ -1916,7 +1931,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      DO n=1,nspec
         IF (spec_lambda(n).GE.lsfinfo%minlam.AND.&
              spec_lambda(n).LE.lsfinfo%maxlam) THEN
-           lsfinfo%lsf(n) = linterp(lsflam(1:i-1),lsfsig(1:i-1),&
+          lsfinfo%lsf(n) = interpolate_linear(lsflam(1:i-1),lsfsig(1:i-1),&
                 spec_lambda(n))
         ENDIF
      ENDDO
@@ -1928,8 +1943,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !----------------------------------------------------------------!
   !----------------------------------------------------------------!
 
-  whlam5000 = locate(spec_lambda,5000.d0)
-  whlylim   = locate(spec_lambda,912.d0)
+   whlam5000 = find_interval(spec_lambda,5000.d0)
+   whlylim   = find_interval(spec_lambda,912.d0)
   !define the frequency array
   IF (cache_new) THEN
      spec_nu   = clight / spec_lambda

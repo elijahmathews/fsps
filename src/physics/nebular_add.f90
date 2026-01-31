@@ -5,7 +5,9 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP, PARAMS, nemline, nebnage, nebnz, nebnip, clight, mypi, hplank, lsun
-  USE sps_utils, ONLY : locate,tsum
+   USE fsps_interpolation, ONLY: find_interval
+   USE fsps_integration, ONLY: integrate_trapezoid_array
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -39,13 +41,13 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
 
   !locate the maximum nebular age point in the full time array
   !right now we only include nebular emission for ages<=2x10^7 yr
-  nti = locate(time_full,nebem_age(nebnage))
+   nti = find_interval(time_full,nebem_age(nebnage))
 
   !set up the interpolation variables for logZ and logU
-  z1 = MAX(MIN(locate(nebem_logz,pset%gas_logz),nebnz-1),1)
+   z1 = MAX(MIN(find_interval(nebem_logz,pset%gas_logz),nebnz-1),1)
   dz = (pset%gas_logz-nebem_logz(z1))/(nebem_logz(z1+1)-nebem_logz(z1))
   dz = MAX(MIN(dz,1.0),0.0) !no extrapolation
-  u1 = MAX(MIN(locate(nebem_logu,pset%gas_logu),nebnip-1),1)
+   u1 = MAX(MIN(find_interval(nebem_logu,pset%gas_logu),nebnip-1),1)
   du = (pset%gas_logu-nebem_logu(u1))/(nebem_logu(u1+1)-nebem_logu(u1))
   du = MAX(MIN(du,1.0),0.0) !no extrapolation
 
@@ -80,12 +82,17 @@ SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
      !the number of ionizing photons is computed here
      !some fraction of the stars are "runaways" which means
      !that they are not embedded in the HII region
-     qq = tsum(spec_nu(:whlylim),sspi(:whlylim,t)/spec_nu(:whlylim))/&
-          hplank*lsun
-     qq = qq * (1-pset%frac_obrun)
+     IF (whlylim.LT.2) THEN
+        qq = 0.0
+     ELSE
+        qq = integrate_trapezoid_array(spec_nu(:whlylim),sspi(:whlylim,t)/spec_nu(:whlylim))/&
+             hplank*lsun
+        IF (ieee_is_nan(qq)) qq = 0.0
+        qq = qq * (1-pset%frac_obrun)
+     ENDIF
 
      !set up age interpolant
-     a1 = MAX(MIN(locate(nebem_age,time_full(t)),nebnage-1),1)
+   a1 = MAX(MIN(find_interval(nebem_age,time_full(t)),nebnage-1),1)
      da = (time_full(t)-nebem_age(a1))/(nebem_age(a1+1)-nebem_age(a1))
      da = MAX(MIN(da,1.0),0.0) !no extrapolations
 

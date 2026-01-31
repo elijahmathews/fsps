@@ -7,7 +7,8 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : locate, tsum
+   USE fsps_interpolation, ONLY: find_interval
+   USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -47,9 +48,9 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
         STOP
      ENDIF
 
-     tlo = MAX(MIN(locate(time_full,tpos),ntfull-1),1)
+   tlo = MAX(MIN(find_interval(time_full,tpos),ntfull-1),1)
      dt  = (tpos - time_full(tlo)) / (time_full(tlo+1) - time_full(tlo))
-     zlo = MAX(MIN(locate(LOG10(zlegend/zsol),zpos),nz-1),1)
+   zlo = MAX(MIN(find_interval(LOG10(zlegend/zsol),zpos),nz-1),1)
      dz  = (zpos-LOG10(zlegend(zlo)/zsol)) / &
           ( LOG10(zlegend(zlo+1)/zsol) - LOG10(zlegend(zlo)/zsol) )
 
@@ -82,7 +83,7 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
            ! triangular kernel given by w1,w2,w3.  The smoothed SSPs
            ! are then interpolated to the target metallicity.  
            mdf = 0.
-           zlo = MAX(MIN(locate(LOG10(zlegend/zsol),zpos),nz-1),1)
+           zlo = MAX(MIN(find_interval(LOG10(zlegend/zsol),zpos),nz-1),1)
            dz  = (zpos-LOG10(zlegend(zlo)/zsol)) / &
                 ( LOG10(zlegend(zlo+1)/zsol) - LOG10(zlegend(zlo)/zsol) )
            ! Here the weights for the mdf are a combination of the
@@ -117,7 +118,7 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
      !interpolate to a single metallicity and return a grid of ages
      ELSE
 
-        zlo = MAX(MIN(locate(LOG10(zlegend/zsol),zpos),nz-1),1)
+      zlo = MAX(MIN(find_interval(LOG10(zlegend/zsol),zpos),nz-1),1)
         dz  = (zpos-LOG10(zlegend(zlo)/zsol)) / &
              ( LOG10(zlegend(zlo+1)/zsol) - LOG10(zlegend(zlo)/zsol) )
         

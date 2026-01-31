@@ -6,7 +6,7 @@ FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
 
        USE fsps_context_types, ONLY: fsps_context_t
        USE fsps_types, ONLY: SP, PARAMS
-  USE sps_utils, ONLY : locate
+     USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -113,14 +113,14 @@ FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
 
   ELSE IF (dtype.EQ.2) THEN
 
-     w63   = locate(lambda,dd63)
+     w63   = find_interval(lambda,dd63)
      cal00 = 0.0
      cal00(w63+1:) = 1.17*( -1.857+1.04*(1E4/lambda(w63+1:)) ) + 1.78
      cal00(1:w63)  = 1.17*(-2.156+1.509*(1E4/lambda(1:w63))-&
           0.198*(1E4/lambda(1:w63))**2 + &
           0.011*(1E4/lambda(1:w63))**3) + 1.78
      cal00 = cal00/0.44/4.05  !R=4.05
-     w63   = locate(cal00,zero)
+     w63   = find_interval(cal00,zero)
        IF (w63.NE.n) THEN
         cal00(w63+1:) = 0.0
      ENDIF
@@ -138,7 +138,7 @@ FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
   ELSE IF (dtype.EQ.4) THEN
 
      !Calzetti curve
-     w63   = locate(lambda,dd63)
+     w63   = find_interval(lambda,dd63)
      cal00 = 0.0
      cal00(w63+1:) = 1.17*( -1.857+1.04*(1E4/lambda(w63+1:)) ) + 1.78
      cal00(1:w63)  = 1.17*(-2.156+1.509*(1E4/lambda(1:w63))-&
@@ -146,7 +146,7 @@ FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
           0.011*(1E4/lambda(1:w63))**3) + 1.78
      !R=4.05 NB: I'm not sure I have this normalization correct...
      cal00 = cal00/0.44/4.05
-     w63   = locate(cal00,zero)
+     w63   = find_interval(cal00,zero)
        IF (w63.NE.n) THEN
         cal00(w63+1:) = 0.0
      ENDIF
@@ -175,15 +175,15 @@ FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
 
      ! see Eqn. 8 in Reddy et al. (2015)
      
-     w1   = locate(lambda,1500.d0)
-     w2   = locate(lambda,6000.d0)
+     w1   = find_interval(lambda,1500.d0)
+     w2   = find_interval(lambda,6000.d0)
      reddy(w1:w2) = -5.726 + 4.004/(lambda(w1:w2)/1E4) - 0.525/(lambda(w1:w2)/1E4)**2 + &
           0.029/(lambda(w1:w2)/1E4)**3 + 2.505
 
      reddy(1:w1) = reddy(w1) ! constant extrapolation blueward
      
-     w1   = locate(lambda,6000.d0)
-     w2   = locate(lambda,28500.d0)
+     w1   = find_interval(lambda,6000.d0)
+     w2   = find_interval(lambda,28500.d0)
      ! note the last term is not in Reddy et al. but was included to make the
      ! two functions continuous at 0.6um
      reddy(w1:w2) = -2.672 - 0.010/(lambda(w1:w2)/1E4) + 1.532/(lambda(w1:w2)/1E4)**2 + &

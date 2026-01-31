@@ -172,40 +172,6 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-       FUNCTION FUNCINT(func, a, b)
-          USE fsps_types, ONLY: SP
-       REAL(SP), INTENT(IN) :: a,b
-       REAL(SP) :: funcint
-       INTERFACE
-          FUNCTION func(x)
-             USE fsps_types, ONLY: SP
-             REAL(SP), DIMENSION(:), INTENT(IN) :: x
-             REAL(SP), DIMENSION(SIZE(x)) :: func
-          END FUNCTION func
-       END INTERFACE
-     END FUNCTION FUNCINT
-  END INTERFACE
-
-  INTERFACE
-       FUNCTION FUNCINT_CTX(ctx, func, a, b)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP
-          TYPE(fsps_context_t), INTENT(IN) :: ctx
-       REAL(SP), INTENT(IN) :: a,b
-       REAL(SP) :: funcint_ctx
-       INTERFACE
-          FUNCTION func(ctx, x)
-             USE fsps_context_types, ONLY: fsps_context_t
-             USE fsps_types, ONLY: SP
-             TYPE(fsps_context_t), INTENT(IN) :: ctx
-             REAL(SP), DIMENSION(:), INTENT(IN) :: x
-             REAL(SP), DIMENSION(SIZE(x)) :: func
-          END FUNCTION func
-       END INTERFACE
-     END FUNCTION FUNCINT_CTX
-  END INTERFACE
-
-  INTERFACE
      SUBROUTINE GETZMET(smass,pos)
           USE fsps_types, ONLY: SP, PARAMS
        REAL(SP), INTENT(in) :: smass
@@ -309,54 +275,6 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-       FUNCTION IMF(ctx, mass)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP
-          TYPE(fsps_context_t), INTENT(IN) :: ctx
-       REAL(SP), DIMENSION(:), INTENT(in) :: mass
-       REAL(SP), DIMENSION(size(mass)) :: imf
-     END FUNCTION IMF
-  END INTERFACE 
-
-  INTERFACE
-       SUBROUTINE IMF_WEIGHT(ctx, mini, wght, nmass)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP, nm
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
-       REAL(SP), INTENT(in), DIMENSION(nm)    :: mini
-       INTEGER, INTENT(in) :: nmass
-     END SUBROUTINE IMF_WEIGHT
-  END INTERFACE 
-
-  INTERFACE
-     FUNCTION LINTERP(xin,yin,xout)
-          USE fsps_types, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: xin,yin
-       REAL(SP), INTENT(in)  :: xout
-       REAL(SP) :: linterp
-     END FUNCTION LINTERP
-  END INTERFACE
-
-  INTERFACE
-     FUNCTION LINTERPARR(xin,yin,xout)
-          USE fsps_types, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: xin,yin
-       REAL(SP), INTENT(in), DIMENSION(:) :: xout
-       REAL(SP), DIMENSION(SIZE(xout)) :: linterparr
-     END FUNCTION LINTERPARR
-  END INTERFACE
-
-  INTERFACE
-     FUNCTION LOCATE(xx,x)
-          USE fsps_types, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(IN) :: xx
-       REAL(SP), INTENT(IN) :: x
-       INTEGER :: locate
-     END FUNCTION LOCATE
-  END INTERFACE
-
-  INTERFACE
      SUBROUTINE MOD_GB(ctx, zz, t, age, delt, dell, pagb, redgb, agb, &
           nn, logl, logt, phase, wght)
        USE fsps_context_types, ONLY: fsps_context_t
@@ -439,14 +357,6 @@ MODULE SPS_UTILS
        INTEGER, INTENT(in) :: imin, imax
           REAL(SP), DIMENSION(ctx%state%ntfull) :: sfh_weight
      END FUNCTION SFH_WEIGHT
-  END INTERFACE
-
-  INTERFACE
-     FUNCTION TSUM(xin,yin)
-          USE fsps_types, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: xin,yin
-       REAL(SP) :: tsum
-     END FUNCTION TSUM
   END INTERFACE
 
   INTERFACE

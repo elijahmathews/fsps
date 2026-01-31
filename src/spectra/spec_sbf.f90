@@ -6,7 +6,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time
-  USE sps_utils, ONLY : imf_weight,mod_hb,add_bs,mod_gb,getmags,getspec
+   USE sps_utils, ONLY : mod_hb,add_bs,mod_gb,getmags,getspec
+   USE fsps_imf, ONLY: compute_imf_weights
   IMPLICIT NONE
 
      TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -69,7 +70,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
   DO i=1,nt
 
      !compute IMF-based weights
-     CALL IMF_WEIGHT(ctx, mini(i,:), wght, nmass(i))
+   CALL compute_imf_weights(ctx, mini(i,:), wght, nmass(i))
      
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too

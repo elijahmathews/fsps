@@ -6,7 +6,7 @@ FUNCTION GET_LUMDIST(ctx, z)
   
   USE fsps_context_types, ONLY: fsps_context_t
   USE fsps_types, ONLY: SP, clight
-  USE sps_utils, ONLY : tsum
+  USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i
@@ -29,7 +29,7 @@ FUNCTION GET_LUMDIST(ctx, z)
   
   hub = SQRT( ctx%om0_val*(1+zz)**3 + ctx%ol0_val )
 
-  get_lumdist = TSUM(zz,1/hub) * (1+z) * dhub
+  get_lumdist = integrate_trapezoid_array(zz,1/hub) * (1+z) * dhub
 
 
 END FUNCTION GET_LUMDIST

@@ -3,7 +3,8 @@ FUNCTION INTIND(lam,func,lo,hi)
   !perform integral over spectrum for index computation
 
    USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : tsum, locate
+   USE fsps_integration, ONLY: integrate_trapezoid_array
+   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
    INTEGER :: l1,l2
@@ -15,8 +16,8 @@ FUNCTION INTIND(lam,func,lo,hi)
   !---------------------------------------------------------------!
 
   !take care of the ends
-   l1 = MAX(MIN(locate(lam,lo),SIZE(lam)-1),1)
-   l2 = MAX(MIN(locate(lam,hi),SIZE(lam)-1),2)
+   l1 = MAX(MIN(find_interval(lam,lo),SIZE(lam)-1),1)
+   l2 = MAX(MIN(find_interval(lam,hi),SIZE(lam)-1),2)
   f1 = (func(l1+1)-func(l1))/(lam(l1+1)-lam(l1))*&
        (lo-lam(l1))+func(l1)
   f2 = (func(l2+1)-func(l2))/(lam(l2+1)-lam(l2))*&
@@ -25,7 +26,7 @@ FUNCTION INTIND(lam,func,lo,hi)
   IF (l1.EQ.l2) THEN
      intind = (f2+f1)/2.*(hi-lo)
   ELSE
-     intind = TSUM(lam(l1+1:l2),func(l1+1:l2))
+   intind = integrate_trapezoid_array(lam(l1+1:l2),func(l1+1:l2))
      intind = intind + (lam(l1+1)-lo)*(f1+func(l1+1))/2.
      intind = intind + (hi-lam(l2))*(f2+func(l2))/2.
   ENDIF
@@ -43,7 +44,7 @@ SUBROUTINE GETINDX(ctx, lambda, spec, indices)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : intind, locate
+   USE sps_utils, ONLY : intind
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx

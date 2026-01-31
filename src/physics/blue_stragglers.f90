@@ -18,7 +18,8 @@ SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP, nm, gsig4pi
-  USE sps_utils, ONLY : linterp
+   USE fsps_interpolation, ONLY: interpolate_linear
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -46,15 +47,20 @@ SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
   maxt = 1
   DO WHILE(logl(1,maxt).LT.3.5)
      maxt = maxt+1
+     IF (maxt.GE.SIZE(logl,2)) EXIT
   ENDDO
+  maxt = MIN(maxt, SIZE(logl,2))
+  IF (maxt.LT.2) RETURN
 
   !find the MS turn-off at the current age
-  i=0
-  DO WHILE (tol.LT.0.2)
-     i = i+1
-     msspl = linterp(logt(1,1:maxt),logl(1,1:maxt),logt(t,i))
-     tol   = ABS(msspl-logl(t,i))
-  ENDDO
+   i=0
+   DO WHILE (tol.LT.0.2 .AND. i.LT.nmass(t))
+       i = i+1
+    msspl = interpolate_linear(logt(1,1:maxt),logl(1,1:maxt),logt(t,i))
+       IF (ieee_is_nan(msspl)) RETURN
+       tol   = ABS(msspl-logl(t,i))
+   ENDDO
+   IF (i.LT.2) RETURN
 
   !now add the BS stars
   DO k=1,nbs
@@ -62,11 +68,13 @@ SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
      !distribute them uniformly from L_TO to L_TO+0.75 dex
      !luminosity offset by 0.2 dex to better match NGC 5466
      logl(t,nmass(t)+k) = k*0.75/nbs + logl(t,i-1) + 0.2
-     mini(t,nmass(t)+k) = linterp(logl(1,1:maxt),mini(1,1:maxt),&
-          logl(t,nmass(t)+k))
+      mini(t,nmass(t)+k) = interpolate_linear(logl(1,1:maxt),mini(1,1:maxt),&
+         logl(t,nmass(t)+k))
+        IF (ieee_is_nan(mini(t,nmass(t)+k))) mini(t,nmass(t)+k) = mini(t,i-1)
      mact(t,nmass(t)+k) = mini(t,nmass(t)+k)
-     logt(t,nmass(t)+k) = linterp(logl(1,1:maxt),logt(1,1:maxt),&
-          logl(t,nmass(t)+k))
+      logt(t,nmass(t)+k) = interpolate_linear(logl(1,1:maxt),logt(1,1:maxt),&
+         logl(t,nmass(t)+k))
+        IF (ieee_is_nan(logt(t,nmass(t)+k))) logt(t,nmass(t)+k) = logt(t,i-1)
      logg(t,nmass(t)+k) = LOG10( gsig4pi*mact(t,nmass(t)+k)/&
           10**logl(t,nmass(t)+k) ) + 4*logt(t,nmass(t)+k)
      phase(t,nmass(t)+k) = 7.

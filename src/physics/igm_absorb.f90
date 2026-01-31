@@ -5,7 +5,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !that allows the user to scale the IGM optical depth
 
    USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : locate
+  USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
    REAL(SP), DIMENSION(:), INTENT(in) :: lam,spec
@@ -40,7 +40,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !Ly series line blanketing
   DO i=1,nly
      IF (lam(1).GT.lyw(i)) CONTINUE
-   vv = MIN(MAX(locate(lam,lyw(i)),1),SIZE(lam))
+  vv = MIN(MAX(find_interval(lam,lyw(i)),1),SIZE(lam))
      tau(1:vv) = tau(1:vv) + lycoeff(i) * &
           (lobs(1:vv)/lyw(i))**3.46
      !add metal blanketing (this has ~no effect)
@@ -51,7 +51,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
 
   !LyC absorption
   IF (lam(1).LT.lylim) THEN
-   vv = MIN(MAX(locate(lam,lylim),1),SIZE(lam))
+  vv = MIN(MAX(find_interval(lam,lylim),1),SIZE(lam))
      !approximation to Eqn 16 in Madau (1995); see his footnote 3
      tau(1:vv) = tau(1:vv) + &
           (0.25*xc(1:vv)**3*(z1**0.46-xc(1:vv)**0.46)) + &

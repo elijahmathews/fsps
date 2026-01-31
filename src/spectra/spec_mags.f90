@@ -8,7 +8,9 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP, tiny_number, mag2cgs
-  USE sps_utils, ONLY : linterp, tsum
+   USE fsps_interpolation, ONLY: interpolate_linear
+   USE fsps_integration, ONLY: integrate_trapezoid_array
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -28,6 +30,11 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
    n_spec = SIZE(spec)
    n_bands = SIZE(mags)
+
+   IF (n_spec.LT.2) THEN
+      mags = 99.0
+      RETURN
+   ENDIF
 
    ASSOCIATE( &
      spec_lambda => ctx%state%spec_lambda, bands => ctx%state%bands, &
@@ -52,14 +59,20 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !redshift the spectrum
   IF (ABS(zred).GT.tiny_number) THEN
      !write(*,*) "getmags: interpolating"
-     DO i=1,n_spec
-        tspec(i) = MAX(linterp(spec_lambda*(1+zred),spec,&
-                       spec_lambda(i)),0.0)
-     ENDDO
+   DO i=1,n_spec
+    tspec(i) = interpolate_linear(spec_lambda*(1+zred),spec, spec_lambda(i))
+    IF (ieee_is_nan(tspec(i))) tspec(i) = 0.0
+    tspec(i) = MAX(tspec(i),0.0)
+   ENDDO
 
      !compute additional terms for cosmological mags
-     dm    = 5*LOG10(linterp(cosmospl(:,1),cosmospl(:,3),zred)/10.)
-     const = dm - 2.5*LOG10(1+zred)
+   dm    = interpolate_linear(cosmospl(:,1),cosmospl(:,3),zred)
+     IF (ieee_is_nan(dm) .OR. dm.LE.tiny_number) THEN
+        const = 0.0
+     ELSE
+        dm    = 5*LOG10(dm/10.)
+        const = dm - 2.5*LOG10(1+zred)
+     ENDIF
 
   ELSE
 
@@ -70,8 +83,8 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !integrate over each filter
    DO i=1,n_bands
      IF (magflag(i).EQ.0) CYCLE
-     mags(i) = TSUM(spec_lambda,tspec*bands(:,i)/spec_lambda)
-     IF (mags(i).LE.tiny_number) THEN
+    mags(i) = integrate_trapezoid_array(spec_lambda,tspec*bands(:,i)/spec_lambda)
+       IF (ieee_is_nan(mags(i)) .OR. mags(i).LE.tiny_number) THEN
         mags(i) = 99.0
      ELSE
         IF (compute_light_ages.EQ.0) THEN

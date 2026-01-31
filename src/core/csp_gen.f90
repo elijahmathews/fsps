@@ -36,7 +36,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
 
    use fsps_types, only: SFHPARAMS, PARAMS, SP, nemline, tiny_number
    use fsps_context_types, only: fsps_context_t
-  use sps_utils, only: locate, sfh_weight, sfhinfo, add_dust
+   use sps_utils, only: sfh_weight, sfhinfo, add_dust
+   use fsps_interpolation, only: find_interval
   implicit none
    type(fsps_context_t), intent(inout) :: ctx
 
@@ -91,7 +92,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! Only calculate SFH weights for SSPs up to tage
   ! (plus the next couple, to bracket and be safe).
   imin = 0
-   imax = min(max(locate(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
+   imax = min(max(find_interval(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
 
   ! ----- Get SFH weights -----
 
@@ -142,7 +143,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
       w2 = sfh_weight(ctx, sfhpars, imin, imax)
         fburst = pset%fburst
         ! We'll need to add any early bursts when summing later
-        imax = max(imax, min(max(locate(time_full, log10(sfhpars%tb)) + 2, 1), ntfull))
+      imax = max(imax, min(max(find_interval(time_full, log10(sfhpars%tb)) + 2, 1), ntfull))
      endif
      ! Sum with proper relative normalization.  Beware divide by zero.
      if (m1.lt.tiny_number) m1 = 1.0
@@ -216,8 +217,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
         dt = (sfhpars%tage - sfhpars%tq)
         m2 = sfh_tab(2, j+1) * (1 + sfhpars%sf_slope/2. * (sfhpars%tage + sfhpars%tq - 2*t1)) * dt
         ! min and max ssps to consider, being conservative.
-        imin = min(max(locate(time_full, log10(t1)) - 1, 0), ntfull)
-        imax = min(max(locate(time_full, log10(t2)) + 2, 0), ntfull)
+      imin = min(max(find_interval(time_full, log10(t1)) - 1, 0), ntfull)
+      imax = min(max(find_interval(time_full, log10(t2)) + 2, 0), ntfull)
 
         ! Get the weights for this bin in the tabulated sfh and add to the
         ! total weight, after normalizing.
@@ -228,7 +229,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
         ! into account.  This scheme assumes entire bin is at average of the
         ! two enclosing Z values.
         if (nzin.gt.1) then
-           k = max(min(locate(zlegend, zbin), nz-1), 1)
+           k = max(min(find_interval(zlegend, zbin), nz-1), 1)
            dz = (log10(zbin) - log10(zlegend(k))) / &
                 (log10(zlegend(k+1)) - log10(zlegend(k)))
            dz = max(min(dz, 1.0), -1.0) !don't extrapolate
@@ -263,7 +264,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! dust_tesc will include some contribution from young star dust due to the
   ! interpolation, and changing dust_tesc by values smaller than half the ssp
   ! age grid resolution will have no effect on the output.
-  i_tesc = locate(time_full, pset%dust_tesc)
+   i_tesc = find_interval(time_full, pset%dust_tesc)
   do i=max(imin, 1), imax
      do k=1,nzin
         if (total_weights(i, k).gt.tiny_number) then

@@ -6,7 +6,8 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
      USE fsps_context_types, ONLY: fsps_context_t
      USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time, gsig4pi
-  USE sps_utils, ONLY : getmags,getspec,imf_weight,mod_hb,mod_gb,add_bs
+     USE sps_utils, ONLY : getmags,getspec,mod_hb,mod_gb,add_bs
+     USE fsps_imf, ONLY: compute_imf_weights
   IMPLICIT NONE
 
      TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -69,7 +70,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   DO tt=1,nt
 
      !compute IMF-based weights
-     CALL IMF_WEIGHT(ctx, mini(tt,:), wght, nmass(tt))
+     CALL compute_imf_weights(ctx, mini(tt,:), wght, nmass(tt))
 
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too

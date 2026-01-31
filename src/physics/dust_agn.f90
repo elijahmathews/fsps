@@ -2,7 +2,8 @@ FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
 
      USE fsps_context_types, ONLY: fsps_context_t
      USE fsps_types, ONLY: SP, PARAMS, nagndust
-     USE sps_utils, ONLY: locate,attn_curve
+     USE sps_utils, ONLY: attn_curve
+     USE fsps_interpolation, ONLY: find_interval
      IMPLICIT NONE
 
      TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -20,7 +21,7 @@ FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
             dust_type => ctx%dust_type_val)
 
     !interpolate in tau_agn
-    jlo = MIN(MAX(locate(agndust_tau,pset%agn_tau),1),&
+     jlo = MIN(MAX(find_interval(agndust_tau,pset%agn_tau),1),&
          nagndust-1)
     dj  = (pset%agn_tau-agndust_tau(jlo)) / &
          (agndust_tau(jlo+1)-agndust_tau(jlo))

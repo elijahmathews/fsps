@@ -9,7 +9,7 @@ SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
 
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : linterp
+   USE fsps_interpolation, ONLY: interpolate_linear
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
   
@@ -73,7 +73,7 @@ SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
         DO i=1,nspec
            !interpolate
            DO z=1,100
-              zzspec(z) = 10**linterp(log10(zlegend),&
+                zzspec(z) = 10**interpolate_linear(log10(zlegend),&
                    log10(spec_ssp_zz(i,t,:)),log10(zz2(z)))
            ENDDO
            !integrate

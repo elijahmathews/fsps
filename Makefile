@@ -28,6 +28,8 @@ BUILD_DIR := build
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 SRC_SUBDIRS := core programs spectra sfh physics cosmology math io imf abi
 SRC_DIRS := $(addprefix $(SRC_DIR)/, $(SRC_SUBDIRS))
+TEST_SUBDIRS := math imf
+TEST_DIRS := $(addprefix $(TEST_DIR)/, $(TEST_SUBDIRS))
 
 # Module directory flags:
 # Gfortran uses -J to specify where to put/find .mod files
@@ -43,7 +45,7 @@ FCFLAGS := $(FFLAGS) -fPIC $(MOD_FLAG)$(BUILD_DIR) -I$(BUILD_DIR)
 # ===================================
 
 # Tell make to look for source files in these directories
-VPATH = $(SRC_DIRS):$(TEST_DIR)
+VPATH = $(SRC_DIRS):$(TEST_DIR):$(TEST_DIRS)
 
 # The list of programs to build (executables)
 PROGS = simple lesssimple autosps spec_bin
@@ -51,23 +53,38 @@ PROGS = simple lesssimple autosps spec_bin
 # The common object files required by the programs
 # We wrap them in addprefix to place them inside the build directory
 COMMON_NAMES = fsps_types.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o \
-	ssp_gen.o fsps_context.o spec_mags.o interp_locate.o integrate_funcint.o sps_setup.o \
-	cosmo_pz_convol.o cosmo_tuniv.o integrate_sfhw.o imf.o imf_weight.o dust_add.o spec_get.o \
-	spec_sbf.o blue_stragglers.o hb_mod.o remnants_add.o spec_indices.o spec_smooth.o \
-	gb_mod.o nebular_add.o xrb_add.o write_isochrone.o sfh_stats.o interp_linear.o \
-	integrate_tsum.o dust_agb.o interp_array.o interp_zt.o vacair_conv.o igm_absorb.o \
-	cosmo_lumdist.o dust_attenuation.o sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o \
-	dust_agn.o fsps_c_driver.o
+	ssp_gen.o fsps_context.o spec_mags.o sps_setup.o cosmo_pz_convol.o cosmo_tuniv.o \
+	integrate_sfhw.o fsps_integration.o fsps_interpolation.o fsps_special_functions.o \
+	fsps_imf.o dust_add.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o remnants_add.o \
+	spec_indices.o spec_smooth.o gb_mod.o nebular_add.o xrb_add.o write_isochrone.o sfh_stats.o \
+	dust_agb.o interp_zt.o vacair_conv.o igm_absorb.o cosmo_lumdist.o dust_attenuation.o \
+	sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o dust_agn.o fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
+
+# Test utilities must come before tests
+TEST_UTILS_OBJ = $(TEST_BUILD_DIR)/test_utils.o
+
+# Unit test object files
+TEST_MOD_OBJS = \
+	$(TEST_BUILD_DIR)/test_fsps_imf.o \
+	$(TEST_BUILD_DIR)/test_fsps_integration.o \
+    $(TEST_BUILD_DIR)/test_fsps_interpolation.o \
+    $(TEST_BUILD_DIR)/test_fsps_special_functions.o
+
+# Main unit test driver
+TEST_DRIVER_OBJ = $(TEST_BUILD_DIR)/test_fsps.o
+
+# Group them for linking
+UNIT_TEST_ALL_OBJS = $(TEST_UTILS_OBJ) $(TEST_MOD_OBJS) $(TEST_DRIVER_OBJ)
 
 # ===================================
 # Rules
 # ===================================
 
 
-.PHONY: all clean shared test test_cache test_c_driver test_c_contexts test_c check install uninstall \
-	install-lib install-headers install-bin install-pkgconfig install-data
+.PHONY: all clean shared test test_cache test_c_driver test_c_contexts test_c test_units tests_units \
+	check install uninstall install-lib install-headers install-bin install-pkgconfig install-data
 
 all: $(PROGS)
 
@@ -99,13 +116,43 @@ $(BUILD_DIR)/sps_utils.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o $(BU
 
 # All other common objects depend on vars, cache, utils, and context types.
 REST_OF_COMMON = $(filter-out $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
-	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o, $(COMMON_OBJS))
+	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o $(BUILD_DIR)/fsps_interpolation.o \
+	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o, $(COMMON_OBJS))
 
 $(REST_OF_COMMON): $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
-	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o
+	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o $(BUILD_DIR)/fsps_interpolation.o \
+	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o
+
+# Core math modules depend on fsps_types
+$(BUILD_DIR)/fsps_interpolation.o $(BUILD_DIR)/fsps_special_functions.o: $(BUILD_DIR)/fsps_types.o
+
+# Ensure IMF module builds after integration module
+$(BUILD_DIR)/fsps_imf.o: $(BUILD_DIR)/fsps_integration.o
+
+# Ensure SSP generation builds after IMF module
+$(BUILD_DIR)/ssp_gen.o: $(BUILD_DIR)/fsps_imf.o
+
+# Integration of SFH weights depends on special functions
+$(BUILD_DIR)/integrate_sfhw.o: $(BUILD_DIR)/fsps_special_functions.o
 
 # Main program objects also wait for modules
 $(BUILD_DIR)/sps_program_simple.o $(BUILD_DIR)/sps_program_lesssimple.o $(BUILD_DIR)/sps_program_autosps.o $(BUILD_DIR)/sps_program_spec_bin.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/sps_utils.o
+
+# Pattern rule: Compile any test .f90 found in VPATH to .o in TEST_BUILD_DIR
+$(TEST_BUILD_DIR)/%.o: %.f90 | $(TEST_BUILD_DIR)
+	$(FC) $(FCFLAGS) -c $< -o $@
+
+# Test utilities depends on fsps_types
+$(TEST_UTILS_OBJ): $(BUILD_DIR)/fsps_types.o
+
+# Test modules and driver depend on Test Utils (to get 'use test_utils_mod')
+$(TEST_MOD_OBJS) $(TEST_DRIVER_OBJ): $(TEST_UTILS_OBJ)
+
+# Test modules depend on the core FSPS library objects they test
+$(TEST_MOD_OBJS): $(COMMON_OBJS)
+
+# The main test driver depends on the individual test modules
+$(TEST_DRIVER_OBJ): $(TEST_MOD_OBJS)
 
 # Test object compilation (keep artifacts out of tests/)
 $(TEST_BUILD_DIR)/generate_test_data.o: $(TEST_DIR)/generate_test_data.f90 | $(TEST_BUILD_DIR)
@@ -165,12 +212,20 @@ test_c_contexts: shared
 
 test_c: test_c_driver test_c_contexts
 
+# Link the unit test executable
+tests_units: $(UNIT_TEST_ALL_OBJS) $(COMMON_OBJS)
+	$(FC) $(FCFLAGS) -o $@ $^
+
+# Run the unit tests
+test_units: tests_units
+	./tests_units
+
 check: test_c
 
 # --- Utilities ---
 
 clean:
-	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_cache test_fsps test_contexts
+	rm -rf $(BUILD_DIR) $(PROGS) generate_test_data test_runner test_cache test_fsps test_contexts tests_units
 
 # --- Install Targets ---
 

@@ -25,7 +25,7 @@ function sfh_weight(ctx, sfh, imin, imax)
 
    use fsps_context_types, only: fsps_context_t
    use fsps_types, only: SFHPARAMS, SP
-   use sps_utils, only: locate
+   use fsps_interpolation, only: find_interval
   implicit none
 
    interface
@@ -89,7 +89,7 @@ function sfh_weight(ctx, sfh, imin, imax)
         return
      endif
 
-     istart = min(max(locate(time_full, log_tb), 1), ntfull-1)
+   istart = min(max(find_interval(time_full, log_tb), 1), ntfull-1)
    dt = delta_time(ctx, time_full(istart), time_full(istart+1))
    sfh_weight(istart) = delta_time(ctx, log_tb, time_full(istart+1)) / dt
    sfh_weight(istart+1) = delta_time(ctx, time_full(istart), log_tb) / dt

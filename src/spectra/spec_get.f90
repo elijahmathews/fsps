@@ -11,7 +11,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
       USE fsps_types, ONLY: SP, PARAMS, tiny_number, tiny30, verbose, clight, mypi, msun, newton, yr2sc, lsun, gsig4pi, &
          cstar_aringer, n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
          ndim_logt, ndim_logg
-   USE sps_utils, ONLY: locate, add_agb_dust
+   USE sps_utils, ONLY: add_agb_dust
+   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -59,7 +60,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   IF (phase.EQ.6.0.AND.logt.GE.4.699) THEN
     
      flag = flag+1
-     jlo = MIN(MAX(locate(pagb_logt,logt),1),ndim_pagb-1)
+   jlo = MIN(MAX(find_interval(pagb_logt,logt),1),ndim_pagb-1)
      t   = (logt-pagb_logt(jlo)) / &
           (pagb_logt(jlo+1)-pagb_logt(jlo))
      t = MIN(MAX(t,0.0),1.0) !no extrapolation
@@ -88,7 +89,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
         !WN spectra
         flag = flag+1
-        jlo  = MIN(MAX(locate(wrn_logt,twr),1),ndim_wr-1)
+      jlo  = MIN(MAX(find_interval(wrn_logt,twr),1),ndim_wr-1)
         t    = (twr-wrn_logt(jlo))/(wrn_logt(jlo+1)-wrn_logt(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
         !the WR library is normalized to unity
@@ -99,7 +100,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      
         !WC spectra
         flag = flag+1
-        jlo  = MIN(MAX(locate(wrc_logt,twr),1),ndim_wr-1)
+      jlo  = MIN(MAX(find_interval(wrc_logt,twr),1),ndim_wr-1)
         t    = (twr-wrc_logt(jlo))/(wrc_logt(jlo+1)-wrc_logt(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
         !the WR library is normalized to unity
@@ -112,7 +113,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   ELSE IF (phase.EQ.5.0.AND.logt.LT.3.6.AND.ffco.LE.1.0) THEN
      
      flag = flag+1
-     jlo  = MAX(MIN(locate(agb_logt_o(pset%zmet,:),logt),n_agb_o-1),1)
+   jlo  = MAX(MIN(find_interval(agb_logt_o(pset%zmet,:),logt),n_agb_o-1),1)
      t    = (logt - agb_logt_o(pset%zmet,jlo)) / &
           (agb_logt_o(pset%zmet,jlo+1)-agb_logt_o(pset%zmet,jlo))
      t    = MIN(MAX(t,0.0),1.0) !no extrapolation
@@ -129,7 +130,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      !use Aringer et al. (2009) synthetic spectra
      IF (cstar_aringer.EQ.1) THEN 
-        jlo  = MAX(MIN(locate(agb_logt_car,logt),n_agb_car-1),1)
+      jlo  = MAX(MIN(find_interval(agb_logt_car,logt),n_agb_car-1),1)
         t    = (logt - agb_logt_car(jlo)) / &
              (agb_logt_car(jlo+1)-agb_logt_car(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
@@ -138,7 +139,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      !use LW02 empirical spectra
      ELSE
-        jlo  = MAX(MIN(locate(agb_logt_c,logt),n_agb_c-1),1)
+      jlo  = MAX(MIN(find_interval(agb_logt_c,logt),n_agb_c-1),1)
         t    = (logt - agb_logt_c(jlo)) / &
              (agb_logt_c(jlo+1)-agb_logt_c(jlo))
         t    = MIN(MAX(t,0.0),1.0)
@@ -153,8 +154,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      flag = flag+1
 
-     jlo = MIN(MAX(locate(wmb_logt,logt),1),ndim_wmb_logt-1)
-     klo = MIN(MAX(locate(wmb_logg,loggi),1),ndim_wmb_logg-1)
+   jlo = MIN(MAX(find_interval(wmb_logt,logt),1),ndim_wmb_logt-1)
+   klo = MIN(MAX(find_interval(wmb_logg,loggi),1),ndim_wmb_logg-1)
      t   = (logt-wmb_logt(jlo)) / (wmb_logt(jlo+1)-wmb_logt(jlo))
      t   = MIN(MAX(t,0.0),1.0) !no extrapolation (this means >50K -> 50K)
      u   = (loggi-wmb_logg(klo))  / (wmb_logg(klo+1)-wmb_logg(klo))
@@ -173,8 +174,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      flag = flag+1
 
      !find the subgrid containing point i 
-     jlo = MIN(MAX(locate(speclib_logt,logt),1),ndim_logt-1)
-     klo = MIN(MAX(locate(speclib_logg,loggi),1),ndim_logg-1)
+   jlo = MIN(MAX(find_interval(speclib_logt,logt),1),ndim_logt-1)
+   klo = MIN(MAX(find_interval(speclib_logg,loggi),1),ndim_logg-1)
      t   = (logt-speclib_logt(jlo))/(speclib_logt(jlo+1)-speclib_logt(jlo))
      t   = MIN(MAX(t,0.0),1.0) !no extrapolation
      u   = (loggi-speclib_logg(klo))/(speclib_logg(klo+1)-speclib_logg(klo))
@@ -218,7 +219,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      !at long last the extra factor of 4pi (below) has been found!
      !see p244-245 of Collins' "Fundamentals of Stellar Astrophysics"
-     spec = 4*mypi*4*mypi*r2/lsun * ispec
+   spec = 4*mypi*4*mypi*r2/lsun * ispec
 
    ENDIF
 

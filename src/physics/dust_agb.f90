@@ -103,7 +103,8 @@ SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
   
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_types, ONLY: SP, gsig4pi, tiny_number, nteff_dagb, ntau_dagb
-  USE sps_utils, ONLY: locate, smoothspec
+   USE sps_utils, ONLY: smoothspec
+   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -145,9 +146,9 @@ SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
   IF (tau1.LE.tiny_number) RETURN
 
   !find dusty model given tau1,tco,Teff
-  jlo = MIN(MAX(locate(teff_dagb(cstar+1,:),10**logt),1),&
+  jlo = MIN(MAX(find_interval(teff_dagb(cstar+1,:),10**logt),1),&
        nteff_dagb-1)
-  klo = MIN(MAX(locate(tau1_dagb(cstar+1,:),LOG10(tau1)),1),ntau_dagb-1)
+  klo = MIN(MAX(find_interval(tau1_dagb(cstar+1,:),LOG10(tau1)),1),ntau_dagb-1)
 
   dj   = (10**logt-teff_dagb(cstar+1,jlo)) / &
        (teff_dagb(cstar+1,jlo+1)-teff_dagb(cstar+1,jlo))
@@ -163,6 +164,7 @@ SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, zz, &
        dj*(1-dk)*flux_dagb(:,cstar+1,jlo+1,klo) + &
        dj*dk*flux_dagb(:,cstar+1,jlo+1,klo+1) + &
        (1-dj)*dk*flux_dagb(:,cstar+1,jlo,klo+1) 
+
 
   !implement the dusty spectra (which are in units of 
   !flux_out/flux_in) into the AGB spectra

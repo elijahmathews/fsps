@@ -29,7 +29,7 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
   !
    use fsps_context_types, only: fsps_context_t
    use fsps_types, only: PARAMS, SP, tiny_number
-  use sps_utils, only: locate
+   use fsps_interpolation, only: find_interval
   implicit none
 
   type(fsps_context_t), intent(in) :: ctx
@@ -180,7 +180,7 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
   ! Tabular.  Simple linear interpolation to get the sfr.
   ! The table is in units of yrs of forward time and M_sun/yr.
    if ((pset%sfh.eq.2).or.(pset%sfh.eq.3)) then
-     itab = max(min(locate(sfh_tab(1, 1:ntabsfh), age*1e9), ntabsfh-1), 1)
+   itab = max(min(find_interval(sfh_tab(1, 1:ntabsfh), age*1e9), ntabsfh-1), 1)
      m = (sfh_tab(2, itab+1) - sfh_tab(2, itab)) / (sfh_tab(1, itab+1) - sfh_tab(1, itab))
      sfr = sfh_tab(2, itab) + m * (age*1e9 - sfh_tab(1, itab))
      sfr = max(sfr, 0.0) * 1e9 ! convert to per Gyr

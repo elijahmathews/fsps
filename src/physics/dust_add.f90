@@ -33,7 +33,10 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
 
    USE fsps_types, ONLY: SP, PARAMS, nemline, mypi, clight, tiny_number
    USE fsps_context_types, ONLY: fsps_context_t
-  USE sps_utils, ONLY : tsum, locate, attn_curve, linterparr
+   USE sps_utils, ONLY : attn_curve
+   USE fsps_interpolation, ONLY: find_interval, interpolate_linear
+   USE fsps_integration, ONLY: integrate_trapezoid_array
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -123,7 +126,8 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
                cspi*pset%frac_nodust
 
   !as above, for nebular line luminosities
-  diff_dust_neb = linterparr(spec_lambda,diff_dust,nebem_line_pos)
+   diff_dust_neb = interpolate_linear(spec_lambda,diff_dust,nebem_line_pos)
+   WHERE (ieee_is_nan(diff_dust_neb)) diff_dust_neb = 1.0
   ncspi = ncsp1 * EXP(-pset%dust1*(nebem_line_pos/5500.)**(pset%dust1_index))*&
        (1-pset%frac_obrun) + ncsp1*pset%frac_obrun + ncsp2
   nebdust  = ncspi*diff_dust_neb*(1-pset%frac_nodust) + &
@@ -148,20 +152,22 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
         !compute Lbol both before and after dust attenuation
         !this will determine the normalization of the dust emission
         nu    = clight/spec_lambda
-        lbold = TSUM(nu,specdust)
-        lboln = TSUM(nu,csp1+csp2)
+         lbold = integrate_trapezoid_array(nu,specdust)
+         lboln = integrate_trapezoid_array(nu,csp1+csp2)
+            IF (ieee_is_nan(lbold)) lbold = 0.0
+            IF (ieee_is_nan(lboln)) lboln = 0.0
         IF (nebemlineinspec.EQ.0) THEN
            lboln = lboln + SUM(ncsp1) + SUM(ncsp2) - SUM(nebdust)
         ENDIF
 
         !set up qpah interpolation
-        qlo = MAX(MIN(locate(qpaharr,pset%duste_qpah),nqpah_dustem-1),1)
+      qlo = MAX(MIN(find_interval(qpaharr,pset%duste_qpah),nqpah_dustem-1),1)
         dq  = (pset%duste_qpah-qpaharr(qlo))/(qpaharr(qlo+1)-qpaharr(qlo))
         dq  = MIN(MAX(dq,0.0),1.0)  !no extrapolation
 
         !set up Umin interpolation
         !set limits on Umin: 0.1<Umin<25.0
-        ulo = MAX(MIN(locate(uminarr,pset%duste_umin),numin_dustem),1)
+      ulo = MAX(MIN(find_interval(uminarr,pset%duste_umin),numin_dustem-1),1)
         du  = (pset%duste_umin-uminarr(ulo))/(uminarr(ulo+1)-uminarr(ulo))
         du  = MIN(MAX(du,0.0),1.0)  !no extrapolation
 
@@ -185,8 +191,12 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
         !normalize the dust emission to the luminosity absorbed by 
         !the dust, i.e., demand that Lbol remains the same
         labs = (lboln-lbold)
-        norm   = TSUM(nu,mduste)
-        duste  = mduste/norm * labs
+         norm   = integrate_trapezoid_array(nu,mduste)
+            IF (ieee_is_nan(norm) .OR. norm.LE.tiny_number) THEN
+                mdust = tiny_number
+                RETURN
+            ENDIF
+            duste  = mduste/norm * labs
         duste  = MAX(duste,tiny_number)
 
         !include dust self-absorption
@@ -199,8 +209,10 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
            duste  = duste * diff_dust
            tduste = tduste + duste
 
-           lbold = TSUM(nu,duste)  !after  self-abs
-           lboln = TSUM(nu,oduste) !before self-abs
+           lbold = integrate_trapezoid_array(nu,duste)  !after  self-abs
+           lboln = integrate_trapezoid_array(nu,oduste) !before self-abs
+           IF (ieee_is_nan(lbold)) lbold = 0.0
+           IF (ieee_is_nan(lboln)) lboln = 0.0
 
            duste = MAX(mduste/norm*(lboln-lbold),tiny_number)
 

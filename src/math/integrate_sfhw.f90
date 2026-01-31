@@ -32,7 +32,7 @@ function intsfwght(ctx, sspind, logt, sfh)
   !    The exact definite integral between the limits specified in `logt`.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP
+   use fsps_types, only: SFHPARAMS, SP, tiny_number
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
@@ -77,7 +77,9 @@ function sfwght_log(ctx, sspind, logt, sfh)
   !    The exact indefinite integral, evaluated at `logt`.  Scalar float.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP
+   use fsps_types, only: SFHPARAMS, SP, tiny_number
+   use fsps_special_functions, only: exponential_integral
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
@@ -85,10 +87,9 @@ function sfwght_log(ctx, sspind, logt, sfh)
   type(SFHPARAMS), intent(in) :: sfh
 
   real(SP) :: sfwght_log
-   real(SP), external :: ei
 
    real(SP) :: loge
-  real(SP) :: logage, tprime ! intermediate time variables
+   real(SP) :: logage, tprime, ei ! intermediate time variables
   real(SP) :: a, b, c ! dummy variables used to break up long expressions
 
   REAL(SP), PARAMETER :: e=2.7182818284590452353602874713526624977572_sp
@@ -108,16 +109,30 @@ function sfwght_log(ctx, sspind, logt, sfh)
      
   else if (sfh%type.eq.1) then
      ! SFR = exponential ~ exp(-T/tau)
+     if (sfh%tau.le.tiny_number) then
+        sfwght_log = 0.0
+        return
+     endif
      tprime = 10**logt / sfh%tau
-     sfwght_log = (logage - logt) * exp(tprime) + loge * ei(tprime)
+     if (tprime.le.tiny_number) tprime = tiny_number
+     ei = exponential_integral(tprime)
+     if (.not. ieee_is_finite(ei)) ei = 0.0
+   sfwght_log = (logage - logt) * exp(tprime) + loge * ei
 
   else if (sfh%type.eq.4) then
      ! SFR = delayed exponential ~ T/tau exp(-T/tau)
+     if (sfh%tau.le.tiny_number) then
+        sfwght_log = 0.0
+        return
+     endif
      tprime = 10**logt / sfh%tau ! t/tau
+     if (tprime.le.tiny_number) tprime = tiny_number
      a = (10**logt - sfh%tage - sfh%tau) * (logt - logage)
      b = sfh%tau * loge
      c = (sfh%tage + sfh%tau) * loge
-     sfwght_log = (a - b) * exp(tprime) + c * ei(tprime)
+     ei = exponential_integral(tprime)
+     if (.not. ieee_is_finite(ei)) ei = 0.0
+   sfwght_log = (a - b) * exp(tprime) + c * ei
      
   else if (sfh%type.eq.5) then
      !SFR = linear ~ (1 - sf_slope * (T - T_trunc)), T > T_trunc
@@ -160,7 +175,7 @@ function sfwght_lin(ctx, sspind, t, sfh)
   !    The indefinite integral, evaluated at `t`
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP
+   use fsps_types, only: SFHPARAMS, SP, tiny_number
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind 
@@ -187,11 +202,19 @@ function sfwght_lin(ctx, sspind, t, sfh)
 
   else if (sfh%type.eq.1) then
      ! SFR = exponential ~ 1/tau * exp(-T/tau)
+     if (sfh%tau.le.tiny_number) then
+        sfwght_lin = 0.0
+        return
+     endif
      tprime = t / sfh%tau
      sfwght_lin = (age - t + sfh%tau) * exp(tprime)
 
   else if (sfh%type.eq.4) then
      ! SFR = delayed exponential ~ T/tau**2 * exp(-T/tau)
+     if (sfh%tau.le.tiny_number) then
+        sfwght_lin = 0.0
+        return
+     endif
      tprime = t / sfh%tau
      a = sfh%tage * age - (sfh%tage + age) * (t - sfh%tau) + &
           t**2 - 2*t*sfh%tau + 2*sfh%tau**2

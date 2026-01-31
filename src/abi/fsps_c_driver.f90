@@ -1,7 +1,8 @@
 MODULE FSPS_C_DRIVER
     USE ISO_C_BINDING
        USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
-       USE sps_utils
+      USE sps_utils
+      USE fsps_interpolation, ONLY: find_interval
      USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
         fsps_context_destroy, fsps_context_set_param_int, fsps_context_set_param_float, &
         fsps_context_set_param_str, fsps_context_compute_ssp, fsps_context_get_paths, &
@@ -1056,7 +1057,7 @@ CONTAINS
               fsps_default_ctx%state%spec_ssp_zz(:,:,zmet:zmet), global_pset, global_ocompsp)
     CASE (1)
        zpos = global_pset%logzsol
-       zlo = MAX(MIN(locate(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), zpos), &
+        zlo = MAX(MIN(find_interval(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), zpos), &
             fsps_default_ctx%state%nz-1), 1)
        DO zmet = zlo, zlo+1
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
@@ -1113,10 +1114,10 @@ CONTAINS
        n_t = fsps_default_ctx%state%nt
        n_spec = fsps_default_ctx%state%nspec
        ALLOCATE(time(n_t))
-       zlo = MAX(MIN(locate(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), &
+       zlo = MAX(MIN(find_interval(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), &
           REAL(zpos, SP)), fsps_default_ctx%state%nz-1), 1)
        time = fsps_default_ctx%state%timestep_isoc(zlo,:)
-       tlo = MAX(MIN(locate(time, REAL(tpos, SP)), n_t-1), 1)
+      tlo = MAX(MIN(find_interval(time, REAL(tpos, SP)), n_t-1), 1)
 
     DO zmet = zlo, zlo+1
        IF (has_ssp_age(zmet,tlo) == 0 .OR. has_ssp_age(zmet,tlo+1) == 0) THEN

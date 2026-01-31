@@ -5,7 +5,7 @@ FUNCTION AIRTOVAC(lam)
   !this code was adapted from the IDL routine airtovac.pro
 
   USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : locate
+  USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   INTEGER :: vv,nn
@@ -25,7 +25,7 @@ FUNCTION AIRTOVAC(lam)
   
   !no conversion for wavelengths <2000A
   IF (lam(1).LT.2000.D0) THEN
-     vv = MIN(MAX(locate(lam(1:nn),2000.D0),1),nn)
+    vv = MIN(MAX(find_interval(lam(1:nn),2000.D0),1),nn)
      fact(1:vv) = 1.0
   ENDIF
 
@@ -45,7 +45,7 @@ FUNCTION VACTOAIR(lam)
   !this code was adapted from the IDL routine vactoair.pro
 
   USE fsps_types, ONLY: SP
-  USE sps_utils, ONLY : locate
+  USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   INTEGER :: vv,nn
@@ -61,7 +61,7 @@ FUNCTION VACTOAIR(lam)
 
   !no conversion for wavelengths <2000A
    IF (lam(1).LT.2000.D0) THEN
-     vv = MIN(MAX(locate(lam(1:nn),2000.D0),1),nn)
+    vv = MIN(MAX(find_interval(lam(1:nn),2000.D0),1),nn)
      fact(1:vv) = 1.0
   ENDIF
 

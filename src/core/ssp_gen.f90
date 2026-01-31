@@ -17,8 +17,10 @@
 SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
    USE fsps_types, ONLY: SP, PARAMS, nm, verbose, bhb_sbs_time, time_res_incr
-  USE sps_utils, ONLY: locate, imf_weight, mod_hb, add_bs, mod_gb, add_remnants, &
+  USE sps_utils, ONLY: mod_hb, add_bs, mod_gb, add_remnants, &
      getspec, add_nebular, add_xrb, smoothspec
+  USE fsps_interpolation, ONLY: find_interval
+   USE fsps_imf, ONLY: compute_imf_weights
   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
 
@@ -192,7 +194,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
       temp_mini(1:nmass(i)) = mini(i, 1:nmass(i))
 
       !compute IMF-based weights
-      CALL IMF_WEIGHT(ctx, temp_mini, wght, nmass(i))
+      CALL compute_imf_weights(ctx, temp_mini, wght, nmass(i))
         !modify the horizontal branch
         !need the hb weight for the blue stragglers too
          IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
@@ -228,9 +230,9 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
               !IF (1.0.GE.pset%fcstar) tco = 1.0
            ENDIF
 
-           CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), &
-                10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),&
-                wght(j)/MAXVAL(wght(1:nmass(i))*10**logl(i,1:nmass(i))),tspec)
+          CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), &
+             10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),&
+             wght(j)/MAXVAL(wght(1:nmass(i))*10**logl(i,1:nmass(i))),tspec)
 
            !only construct SSPs for particular evolutionary
            !phases if evtype NE -1
@@ -251,7 +253,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   IF (time_res_incr.GT.1) THEN
      DO j=1,ntfull
         IF (MOD(j-1,time_res_incr).EQ.0) CYCLE
-        klo = MAX(MIN(locate(time,time_full(j)),nt-1),1)
+      klo = MAX(MIN(find_interval(time,time_full(j)),nt-1),1)
         dt  = (time_full(j)-time(klo))/(time(klo+1)-time(klo))
         klo = 1+(klo-1)*time_res_incr
         khi = klo+time_res_incr

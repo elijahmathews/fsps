@@ -6,9 +6,10 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
   !N.B. variables not otherwise defined come from sps_vars.f90
    use fsps_context_types, ONLY: fsps_context_t
    use fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline, tiny_number
-  use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
-                       csp_gen, sfhinfo, linterp, agn_dust, &
-                       smoothspec, igm_absorb, getindx, getmags
+   use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
+                                  csp_gen, sfhinfo, agn_dust, &
+                                  smoothspec, igm_absorb, getindx, getmags
+   use fsps_interpolation, only: interpolate_linear
      IMPLICIT NONE
 
      INTERFACE
@@ -193,7 +194,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
       call getmags(ctx, pset%zred, spec_csp, mags, pset%mag_compute)
      else
         ! here we compute the redshift at the corresponding age
-        zred = min(max(linterp(cosmospl(:,2), cosmospl(:,1), age),&
+      zred = min(max(interpolate_linear(cosmospl(:,2), cosmospl(:,1), age),&
                        0.0), 20.0)
         write(33,*) zred
       call getmags(ctx, zred, spec_csp, mags, pset%mag_compute)

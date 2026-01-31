@@ -4,7 +4,7 @@ SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
 
   USE fsps_context_types, ONLY: fsps_context_t
   USE fsps_types, ONLY: SP, PARAMS
-  USE sps_utils, ONLY : locate,tsum
+  USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
@@ -27,7 +27,7 @@ SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
 
     !set up the interpolation variables for logZ
   tmpz = log10(zlegend(pset%zmet)/zsol)
-  z1   = MAX(MIN(locate(zmet_xrb,tmpz),nz_xrb-1),1)
+  z1   = MAX(MIN(find_interval(zmet_xrb,tmpz),nz_xrb-1),1)
   dz   = (tmpz-zmet_xrb(z1))/(zmet_xrb(z1+1)-zmet_xrb(z1))
   dz   = MAX(MIN(dz,1.0),0.0) !no extrapolation
 
@@ -36,7 +36,7 @@ SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
   DO t=1,nt
 
      !set up age interpolant
-     a1 = MAX(MIN(locate(ages_xrb,time_full(t)),nt_xrb-1),1)
+    a1 = MAX(MIN(find_interval(ages_xrb,time_full(t)),nt_xrb-1),1)
      da = (time_full(t)-ages_xrb(a1))/(ages_xrb(a1+1)-ages_xrb(a1))
      
      IF (da.LT.0.0.OR.da.GT.1.0) CYCLE
