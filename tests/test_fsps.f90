@@ -34,10 +34,26 @@ program test_fsps
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
-    call print_summary_line("fsps_imf", (tests_imf - failures_imf), tests_imf)
-    call print_summary_line("fsps_integration", (tests_integration - failures_integration), tests_integration)
-    call print_summary_line("fsps_interpolation", (tests_interpolation - failures_interpolation), tests_interpolation)
-    call print_summary_line("fsps_special_functions", (tests_special_functions - failures_special_functions), tests_special_functions)
+    call print_summary_line( &
+        "fsps_imf", &
+        (tests_imf - failures_imf), &
+        tests_imf &
+    )
+    call print_summary_line( &
+        "fsps_integration", &
+        (tests_integration - failures_integration), &
+        tests_integration &
+    )
+    call print_summary_line( &
+        "fsps_interpolation", &
+        (tests_interpolation - failures_interpolation), &
+        tests_interpolation &
+    )
+    call print_summary_line( &
+        "fsps_special_functions", &
+        (tests_special_functions - failures_special_functions), &
+        tests_special_functions &
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
@@ -51,6 +67,7 @@ program test_fsps
 
     print *
     call print_summary_line("Result", grand_total_tests, grand_total_tests)
+    print *
 
     if (grand_total_failures == 0) then
         stop 0
