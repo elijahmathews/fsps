@@ -2,7 +2,7 @@ FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
 
      USE fsps_context_types, ONLY: fsps_context_t
      USE fsps_types, ONLY: SP, PARAMS, nagndust
-     USE sps_utils, ONLY: attn_curve
+     USE fsps_dust, ONLY: compute_attenuation_curve
      USE fsps_interpolation, ONLY: find_interval
      IMPLICIT NONE
 
@@ -30,7 +30,7 @@ FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
     agnspeci  = (1-dj)*agndust_spec(:,jlo) + dj*agndust_spec(:,jlo+1)
 
     !attenuate the AGN emission by the diffuse dust
-     agnspeci = agnspeci*EXP(-attn_curve(ctx, lam, dust_type, pset))
+     agnspeci = agnspeci*EXP(-compute_attenuation_curve(lam, dust_type, pset, ctx))
 
     agn_dust = spec + 10**lbol_csp*pset%fagn*agnspeci
   END ASSOCIATE

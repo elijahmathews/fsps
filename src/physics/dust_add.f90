@@ -33,7 +33,7 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
 
    USE fsps_types, ONLY: SP, PARAMS, nemline, mypi, clight, tiny_number
    USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_utils, ONLY : attn_curve
+   USE fsps_dust, ONLY: compute_attenuation_curve
    USE fsps_interpolation, ONLY: find_interval, interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -104,7 +104,7 @@ SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdus
   !---------------------------------------------------------------!
 
   !compute attenuation curve for diffuse dust
-   tau_diff = attn_curve(ctx, spec_lambda,dust_type,pset)
+   tau_diff = compute_attenuation_curve(spec_lambda, dust_type, pset, ctx)
 
   !combine old and young stars, attenuating the young
   !with a fixed power-law attn curve, and allowing a fraction

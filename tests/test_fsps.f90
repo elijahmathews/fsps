@@ -17,6 +17,9 @@ program test_fsps
     use test_fsps_special_functions_mod, only: run_fsps_special_functions_tests, &
                                            failures_special_functions => total_failures, &
                                            tests_special_functions => total_tests
+    use test_fsps_dust_mod, only: run_fsps_dust_tests, &
+                                  failures_dust => total_failures, &
+                                  tests_dust => total_tests
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
@@ -31,6 +34,7 @@ program test_fsps
     call run_fsps_integration_tests()
     call run_fsps_interpolation_tests()
     call run_fsps_special_functions_tests()
+    call run_fsps_dust_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -54,19 +58,26 @@ program test_fsps
         (tests_special_functions - failures_special_functions), &
         tests_special_functions &
     )
+    call print_summary_line( \
+        "fsps_dust", \
+        (tests_dust - failures_dust), \
+        tests_dust \
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
                            failures_interpolation + &
-                           failures_special_functions
+                           failures_special_functions + &
+                           failures_dust
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
                         tests_interpolation + &
-                        tests_special_functions
+                        tests_special_functions + &
+                        tests_dust
 
     print *
-    call print_summary_line("Result", grand_total_tests, grand_total_tests)
+    call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)
     print *
 
     if (grand_total_failures == 0) then
