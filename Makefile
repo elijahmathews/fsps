@@ -55,10 +55,10 @@ PROGS = simple lesssimple autosps spec_bin
 COMMON_NAMES = fsps_types.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o \
 	ssp_gen.o fsps_context.o spec_mags.o sps_setup.o cosmo_pz_convol.o cosmo_tuniv.o \
 	integrate_sfhw.o fsps_integration.o fsps_interpolation.o fsps_special_functions.o \
-	fsps_imf.o fsps_dust.o dust_add.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o remnants_add.o \
-	spec_indices.o spec_smooth.o gb_mod.o nebular_add.o xrb_add.o write_isochrone.o sfh_stats.o \
-	dust_agb.o interp_zt.o vacair_conv.o igm_absorb.o cosmo_lumdist.o dust_attenuation.o \
-	sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o dust_agn.o fsps_c_driver.o
+	fsps_imf.o fsps_dust.o dust_add.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o \
+	remnants_add.o spec_indices.o spec_smooth.o gb_mod.o nebular_add.o xrb_add.o \
+	write_isochrone.o sfh_stats.o dust_agb.o interp_zt.o vacair_conv.o igm_absorb.o \
+	cosmo_lumdist.o sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o dust_agn.o fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 
