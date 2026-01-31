@@ -130,9 +130,10 @@ contains
             ! Record the relative step size for extrapolation
             h(j+1) = 0.25_sp * h(j)
 
-            ! Perform Richardson Extrapolation after K steps
-            if (j >= K_ORDER) then
-                call polynomial_extrapolation(h(j-K_ORDER+1:j+1), s(j-K_ORDER+1:j+1), &
+            if (j >= K_ORDER - 1) then
+                ! We need the last K_ORDER points ending at current step (j+1).
+                ! Start index: (j + 1) - K_ORDER + 1 = j - K_ORDER + 2
+                call polynomial_extrapolation(h(j-K_ORDER+2:j+1), s(j-K_ORDER+2:j+1), &
                                      zero_h, res, dqromb)
                 
                 ! Check for convergence
@@ -178,8 +179,10 @@ contains
             res = s(j+1)
             h(j+1) = 0.25_sp * h(j)
 
-            if (j >= K_ORDER) then
-                call polynomial_extrapolation(h(j-K_ORDER+1:j+1), s(j-K_ORDER+1:j+1), &
+            if (j >= K_ORDER - 1) then
+                ! We need the last K_ORDER points ending at current step (j+1).
+                ! Start index: (j + 1) - K_ORDER + 1 = j - K_ORDER + 2
+                call polynomial_extrapolation(h(j-K_ORDER+2:j+1), s(j-K_ORDER+2:j+1), &
                                      zero_h, res, dqromb)
                 if (abs(dqromb) <= EPS * abs(res)) return
             end if

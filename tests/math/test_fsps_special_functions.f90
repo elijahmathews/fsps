@@ -27,6 +27,7 @@ contains
         call test_ei_small_x()
         call test_ei_large_x()
         call test_ei_edge_cases()
+        call test_ei_transition()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
 
@@ -111,5 +112,50 @@ contains
         call assert_is_nan(res, "Ei(-1.0) is NaN", total_tests, total_failures)
 
     end subroutine test_ei_edge_cases
+
+    ! ------------------------------------------------------------------------
+    ! TEST SUITE: BEHAVIOR AROUND TRANSITION (x == 40)
+    ! ------------------------------------------------------------------------
+    subroutine test_ei_transition()
+        real(sp) :: x, expected, res
+        
+        call print_group("Transition Behavior (x ≈ 40)")
+
+        ! Case 1: x = 39.8
+        ! Reference: scipy.special.expi(39.8) = 4970429108552322.0
+        x = 39.8_sp
+        expected = 4970429108552322.0_sp
+        res = exponential_integral(x)
+        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(39.8)", total_tests, total_failures)
+
+        ! Case 2: x = 39.9
+        ! Reference: scipy.special.expi(39.9) = 5479032048901892.0
+        x = 39.9_sp
+        expected = 5479032048901892.0_sp
+        res = exponential_integral(x)
+        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(39.9)", total_tests, total_failures)
+
+        ! Case 3: x = 40.0
+        ! Reference: scipy.special.expi(40.0) = 6039718263611238.0
+        x = 40.0_sp
+        expected = 6039718263611238.0_sp
+        res = exponential_integral(x)
+        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.0)", total_tests, total_failures)
+
+        ! Case 4: x = 40.1
+        ! Reference: scipy.special.expi(40.1) = 6657825191606925.0
+        x = 40.1_sp
+        expected = 6657825191606925.0_sp
+        res = exponential_integral(x)
+        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.1)", total_tests, total_failures)
+
+        ! Case 5: x = 40.2
+        ! Reference: scipy.special.expi(40.2) = 7339237621998727.0
+        x = 40.2_sp
+        expected = 7339237621998727.0_sp
+        res = exponential_integral(x)
+        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.2)", total_tests, total_failures)
+
+    end subroutine test_ei_transition
 
 end module test_fsps_special_functions_mod
