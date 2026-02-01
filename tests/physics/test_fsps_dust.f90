@@ -203,7 +203,8 @@ contains
         ! Test 3.2: Precision fix at 5500A
         w_v = [5500.0_sp]
         res_v = compute_attenuation_curve(w_v, 2, settings, ctx)
-        call assert_float_equals(1.0_sp, res_v(1), 1.0e-3_sp, "Calzetti V-band normalization", total_tests, total_failures)
+        call assert_float_equals(1.0_sp, res_v(1), 1.0e-3_sp, &
+                                 "Calzetti V-band normalization", total_tests, total_failures)
 
         deallocate(ctx)
 
@@ -509,7 +510,8 @@ contains
         ! Test 3.3: Extrapolation edge case
         spectrum = 100.0_sp
         call apply_agb_dust_screen(ctx, 1.0_sp, spectrum, 1.0_sp, 3.0_sp, 3.0_sp, 0.0_sp, 1.5_sp, -5.0_sp)
-        call assert_true(all(ieee_is_finite(spectrum)) .and. all(spectrum > 0.0_sp), "AGB extrapolation safe", total_tests, total_failures)
+        call assert_true(all(ieee_is_finite(spectrum)) .and. all(spectrum > 0.0_sp), &
+                         "AGB extrapolation safe", total_tests, total_failures)
 
         ! Test 3.4: Transfer function application (0.5)
         call set_flux_dagb_constant(ctx, nlam, 0.5_sp)
@@ -599,31 +601,39 @@ contains
         spec_old = 100.0_sp
         settings%dust1 = 5.0_sp
         settings%dust2 = 1.0_sp
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
-        call assert_true(all(abs(spec_out - 100.0_sp * exp(-1.0_sp)) <= EPS), "Old stars diffuse only", total_tests, total_failures)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
+        call assert_true(all(abs(spec_out - 100.0_sp * exp(-1.0_sp)) <= EPS), &
+                         "Old stars diffuse only", total_tests, total_failures)
 
         spec_young = 100.0_sp
         spec_old = 0.0_sp
         settings%dust1 = 1.0_sp
         settings%dust2 = 1.0_sp
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
-        call assert_true(all(abs(spec_out - 100.0_sp * exp(-2.0_sp)) <= EPS), "Young stars birth+diffuse", total_tests, total_failures)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
+        call assert_true(all(abs(spec_out - 100.0_sp * exp(-2.0_sp)) <= EPS), &
+                         "Young stars birth+diffuse", total_tests, total_failures)
 
         spec_young = 100.0_sp
         spec_old = 0.0_sp
         settings%dust1 = 100.0_sp
         settings%dust2 = 0.0_sp
         settings%frac_obrun = 0.25_sp
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
-        call assert_true(all(abs(spec_out - 25.0_sp) <= LESS_SMALL_DELTA), "OB runaways", total_tests, total_failures)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
+        call assert_true(all(abs(spec_out - 25.0_sp) <= LESS_SMALL_DELTA), &
+                         "OB runaways", total_tests, total_failures)
 
         spec_young = 0.0_sp
         spec_old = 100.0_sp
         settings%frac_obrun = 0.0_sp
         settings%dust2 = 100.0_sp
         settings%frac_nodust = 0.10_sp
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
-        call assert_true(all(abs(spec_out - 10.0_sp) <= LESS_SMALL_DELTA), "Patchy ISM", total_tests, total_failures)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
+        call assert_true(all(abs(spec_out - 10.0_sp) <= LESS_SMALL_DELTA), &
+                         "Patchy ISM", total_tests, total_failures)
 
         settings%frac_nodust = 0.0_sp
         settings%dust2 = 0.0_sp
@@ -633,8 +643,10 @@ contains
         neb_old = 0.0_sp
         neb_young(1) = 1.0_sp
         ctx%state%nebem_line_pos = 5500.0_sp
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
-        call assert_float_equals(exp(-1.0_sp), neb_out(1), 1.0e-6_sp, "Nebular line attenuation", total_tests, total_failures)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
+        call assert_float_equals(exp(-1.0_sp), neb_out(1), 1.0e-6_sp, &
+                                 "Nebular line attenuation", total_tests, total_failures)
 
         call teardown_physics_context(ctx)
 
@@ -677,7 +689,8 @@ contains
         neb_young = 0.0_sp
         neb_old = 0.0_sp
 
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, neb_old, spec_out, dust_mass, neb_out)
+        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
+                                                 neb_old, spec_out, dust_mass, neb_out)
 
         freqs = clight / ctx%state%spec_lambda
         lbol_in = integrate_trapezoid_array(freqs, spec_young)
@@ -725,7 +738,8 @@ contains
         ! Test 7.3: Differential self-absorption
         transmission = [0.1_sp, 1.0_sp]
         call calculate_dust_self_absorption(nu, shape, transmission, 100.0_sp, spec_final)
-        call assert_float_equals(10.0_sp, spec_final(2) / spec_final(1), 1.0e-6_sp, "Differential self-absorption", total_tests, total_failures)
+        call assert_float_equals(10.0_sp, spec_final(2) / spec_final(1), 1.0e-6_sp, &
+                                 "Differential self-absorption", total_tests, total_failures)
 
         ! Test 8.2: Zero absorbed luminosity
         transmission = 1.0_sp

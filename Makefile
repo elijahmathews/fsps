@@ -6,7 +6,7 @@
 FC = gfortran
 
 # Default flags
-FFLAGS ?= -O3 -cpp -fPIC
+FFLAGS ?= -O3 -cpp -fPIC -ffree-line-length-132
 
 # Installation paths (override on make command line as needed)
 PREFIX ?= /usr/local
