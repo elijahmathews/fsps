@@ -7,8 +7,9 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    use fsps_context_types, ONLY: fsps_context_t
    use fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline, tiny_number
    use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
-                                  csp_gen, sfhinfo, agn_dust, &
+                                  csp_gen, sfhinfo, &
                                   smoothspec, igm_absorb, getindx, getmags
+   use fsps_dust, only: apply_agn_dust_emission
    use fsps_interpolation, only: interpolate_linear
      IMPLICIT NONE
 
@@ -180,9 +181,9 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
                               pset%igm_factor)
      endif
      !add AGN dust
-     IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.tiny_number) THEN
-      spec_csp = agn_dust(ctx, spec_lambda, spec_csp, pset, lbol_csp)
-     ENDIF
+   IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.tiny_number) THEN
+    call apply_agn_dust_emission(ctx, pset, spec_lambda, lbol_csp, spec_csp)
+   ENDIF
      ! Compute spectral indices
      if (write_compsp.EQ.4) then
       call getindx(ctx, spec_lambda, spec_csp, indx)

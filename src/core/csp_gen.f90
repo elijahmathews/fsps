@@ -36,7 +36,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
 
    use fsps_types, only: SFHPARAMS, PARAMS, SP, nemline, tiny_number
    use fsps_context_types, only: fsps_context_t
-   use sps_utils, only: sfh_weight, sfhinfo, add_dust
+   use sps_utils, only: sfh_weight, sfhinfo
+   use fsps_dust, only: apply_dust_attenuation_and_emission
    use fsps_interpolation, only: find_interval
   implicit none
    type(fsps_context_t), intent(inout) :: ctx
@@ -298,7 +299,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! Here we add young and old spectra with dust.
   if (((pset%dust1.gt.tiny_number).or.(pset%dust2.gt.tiny_number).or.(dust_type.eq.3))&
        .and.(compute_light_ages.eq.0)) then
-   call add_dust(ctx, pset, spec_young, spec_old, spec_csp, mdust_csp, ncsp1, ncsp2, emlin_csp)
+   call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, ncsp1, ncsp2, &
+                                            spec_csp, mdust_csp, emlin_csp)
 
   else
      spec_csp  = spec_young + spec_old

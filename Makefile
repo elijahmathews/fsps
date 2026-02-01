@@ -55,10 +55,10 @@ PROGS = simple lesssimple autosps spec_bin
 COMMON_NAMES = fsps_types.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o \
 	ssp_gen.o fsps_context.o spec_mags.o sps_setup.o cosmo_pz_convol.o cosmo_tuniv.o \
 	integrate_sfhw.o fsps_integration.o fsps_interpolation.o fsps_special_functions.o \
-	fsps_imf.o fsps_dust.o dust_add.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o \
+	fsps_imf.o fsps_dust.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o \
 	remnants_add.o spec_indices.o spec_smooth.o gb_mod.o nebular_add.o xrb_add.o \
-	write_isochrone.o sfh_stats.o dust_agb.o interp_zt.o vacair_conv.o igm_absorb.o \
-	cosmo_lumdist.o sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o dust_agn.o fsps_c_driver.o
+	write_isochrone.o sfh_stats.o interp_zt.o vacair_conv.o igm_absorb.o \
+	cosmo_lumdist.o sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 
@@ -84,7 +84,7 @@ UNIT_TEST_ALL_OBJS = $(TEST_UTILS_OBJ) $(TEST_MOD_OBJS) $(TEST_DRIVER_OBJ)
 # ===================================
 
 
-.PHONY: all clean shared test test_cache test_c_driver test_c_contexts test_c test_units tests_units \
+.PHONY: all clean shared test test_cache test_c_driver test_c_contexts test_c test_units tests_units unit_tests \
 	check install uninstall install-lib install-headers install-bin install-pkgconfig install-data
 
 all: $(PROGS)
@@ -118,14 +118,18 @@ $(BUILD_DIR)/sps_utils.o: $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o $(BU
 # All other common objects depend on vars, cache, utils, and context types.
 REST_OF_COMMON = $(filter-out $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
 	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o $(BUILD_DIR)/fsps_interpolation.o \
-	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o, $(COMMON_OBJS))
+	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o $(BUILD_DIR)/fsps_dust.o, $(COMMON_OBJS))
 
 $(REST_OF_COMMON): $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/sps_vars.o $(BUILD_DIR)/fsps_cache.o \
 	$(BUILD_DIR)/sps_utils.o $(BUILD_DIR)/fsps_context_types.o $(BUILD_DIR)/fsps_interpolation.o \
-	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o
+	$(BUILD_DIR)/fsps_integration.o $(BUILD_DIR)/fsps_special_functions.o $(BUILD_DIR)/fsps_dust.o
 
 # Core math modules depend on fsps_types
 $(BUILD_DIR)/fsps_interpolation.o $(BUILD_DIR)/fsps_special_functions.o: $(BUILD_DIR)/fsps_types.o
+
+# Dust module depends on core math and types
+$(BUILD_DIR)/fsps_dust.o: $(BUILD_DIR)/fsps_types.o $(BUILD_DIR)/fsps_context_types.o \
+	$(BUILD_DIR)/fsps_interpolation.o $(BUILD_DIR)/fsps_integration.o
 
 # Ensure IMF module builds after integration module
 $(BUILD_DIR)/fsps_imf.o: $(BUILD_DIR)/fsps_integration.o
@@ -220,6 +224,9 @@ tests_units: $(UNIT_TEST_ALL_OBJS) $(COMMON_OBJS)
 # Run the unit tests
 test_units: tests_units
 	./tests_units
+
+# Alias for unit tests
+unit_tests: tests_units
 
 check: test_c
 

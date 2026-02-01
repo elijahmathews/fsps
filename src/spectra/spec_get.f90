@@ -11,7 +11,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
       USE fsps_types, ONLY: SP, PARAMS, tiny_number, tiny30, verbose, clight, mypi, msun, newton, yr2sc, lsun, gsig4pi, &
          cstar_aringer, n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
          ndim_logt, ndim_logg
-   USE sps_utils, ONLY: add_agb_dust
+   USE fsps_dust, ONLY: apply_agb_dust_screen
    USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
@@ -243,8 +243,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   !add circumstellar dust around AGB stars
   IF ((phase.EQ.4.OR.phase.EQ.5) &
        .AND.add_agb_dust_model.EQ.1.AND.pset%agb_dust.GT.tiny_number) THEN
-   CALL ADD_AGB_DUST(ctx, pset%agb_dust, spec, mact, &
-          logt,LOG10(lbol),logg,zlegend(pset%zmet),ffco,lmdot)
+      CALL apply_agb_dust_screen(ctx, pset%agb_dust, spec, mact, &
+         logt,LOG10(lbol),logg,ffco,lmdot)
   ENDIF
 
 
