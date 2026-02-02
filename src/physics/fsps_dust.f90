@@ -36,6 +36,7 @@ module fsps_dust
     ! ------------------------------------------------------------------------
     ! CONSTANTS: General Dust Parameters
     ! ------------------------------------------------------------------------
+    ! TODO: Move SAFE_FLOOR and PI to fsps_types.f90
     real(sp), parameter :: SAFE_FLOOR = tiny(0.0_sp)
     real(sp), parameter :: PI = acos(-1.0_sp)
     real(sp), parameter :: V_BAND_ANGSTROMS  = 5500.0_sp
@@ -539,12 +540,6 @@ contains
 
         ! 5. Apply to Spectrum
         ! --------------------
-        ! The legacy code applies a hard-coded smoothing here before applying the DUSTY transfer function.
-        ! TODO: Determine if we can just replace this with a constant mean or linear/spline interpolation
-        !       to avoid the penalty of a full convolution.
-        call smoothspec(ctx, ctx%state%spec_lambda, spectrum, &
-                        AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX)
-        
         spectrum = spectrum * dusty_transfer_function
 
     end subroutine apply_agb_dust_screen
@@ -619,13 +614,7 @@ contains
         if (ctx%dust_type_val == 3) then
             agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
         else
-            ! -------------------------
-            ! FIXME
-            ! -------------------------
-            ! Temporarily disabling scaling by dust2 to match legacy behavior to prove regression tests pass.
-
-            ! agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
-            agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
+            agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
         end if
 
 
@@ -730,89 +719,23 @@ contains
 
         real(sp), dimension(size(nu)) :: profile_escaped
         real(sp) :: lum_escaped_profile, normalization_factor
-
-        ! -------------------------
-        ! FIXME
-        ! -------------------------
-        ! Temporarily disabling analytic dust self-absorption to prove unit tests pass.
-
-        ! <<< TEMPORARILY ADD THESE VARIABLES <<<
-        real(sp), dimension(size(nu)) :: duste, oduste, tduste
-        real(sp) :: lbold, lboln, norm
-        integer :: iself
-        ! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
-        ! >>> BEGIN COMMENT OUT NEW BLOCK >>>
         
-        ! ! 1. Calculate the shape of the dust emission that actually escapes the galaxy.
-        ! !    This is the intrinsic dust emission curve attenuated by the dust itself.
-        ! profile_escaped = shape_intrinsic * transmission_ism
+        ! 1. Calculate the shape of the dust emission that actually escapes the galaxy.
+        !    This is the intrinsic dust emission curve attenuated by the dust itself.
+        profile_escaped = shape_intrinsic * transmission_ism
         
-        ! ! 2. Integrate this profile to see how much luminosity it currently represents.
-        ! lum_escaped_profile = integrate_trapezoid_array(nu, profile_escaped)
+        ! 2. Integrate this profile to see how much luminosity it currently represents.
+        lum_escaped_profile = integrate_trapezoid_array(nu, profile_escaped)
         
-        ! ! 3. Normalize to ensure Energy Conservation.
-        ! !    The total IR energy leaving the galaxy must equal the total UV/Optical 
-        ! !    energy absorbed by the dust (L_absorbed_stellar).
-        ! if (lum_escaped_profile > SAFE_FLOOR) then
-        !     normalization_factor = lum_absorbed_initial / lum_escaped_profile
-        !     spec_final = profile_escaped * normalization_factor
-        ! else
-        !     spec_final = 0.0_sp
-        ! end if
-
-        ! >>>> END COMMENT OUT NEW BLOCK >>>>
-
-        ! <<< TEMPORARILY ADD THIS BLOCK <<<
-        
-        ! 1. Normalize the template shape (matches old 'norm')
-        norm = integrate_trapezoid_array(nu, shape_intrinsic)
-        
-        if (norm <= SAFE_FLOOR) then
+        ! 3. Normalize to ensure Energy Conservation.
+        !    The total IR energy leaving the galaxy must equal the total UV/Optical 
+        !    energy absorbed by the dust (L_absorbed_stellar).
+        if (lum_escaped_profile > SAFE_FLOOR) then
+            normalization_factor = lum_absorbed_initial / lum_escaped_profile
+            spec_final = profile_escaped * normalization_factor
+        else
             spec_final = 0.0_sp
-            return
         end if
-
-        ! 2. Initial Guess: Unattenuated shape scaled to total absorbed luminosity
-        !    (matches old: duste = mduste/norm * labs)
-        duste = shape_intrinsic / norm * lum_absorbed_initial
-        duste = max(duste, SAFE_FLOOR)
-
-        ! 3. Iterative Loop (matches old logic exactly)
-        tduste = 0.0_sp
-        iself = 0
-        lboln = 0.0_sp
-        lbold = 0.0_sp
-
-        ! The condition (lboln-lbold > 1e-2) tracks the energy absorbed in the 
-        ! PREVIOUS iteration. We force entry with iself=0.
-        do while ((lboln - lbold > 1.0e-2_sp) .or. (iself == 0))
-            oduste = duste
-            
-            ! Attenuate the current shell (matches old: duste = duste * diff_dust)
-            duste  = duste * transmission_ism
-            
-            ! Accumulate the light that ESCAPES this layer
-            ! (matches old: tduste = tduste + duste)
-            tduste = tduste + duste
-
-            ! Calculate energy lost (absorbed) in this specific step
-            lbold = integrate_trapezoid_array(nu, duste)   ! After attenuation
-            lboln = integrate_trapezoid_array(nu, oduste)  ! Before attenuation
-            
-            if (ieee_is_nan(lbold)) lbold = 0.0_sp
-            if (ieee_is_nan(lboln)) lboln = 0.0_sp
-
-            ! Create new shell equal to the energy lost in this step
-            ! (matches old: duste = MAX(mduste/norm*(lboln-lbold),tiny_number))
-            duste = shape_intrinsic / norm * (lboln - lbold)
-            duste = max(duste, SAFE_FLOOR)
-
-            iself = 1
-        end do
-
-        spec_final = tduste
-        ! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     end subroutine calculate_dust_self_absorption
 
