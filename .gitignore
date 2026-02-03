@@ -1,7 +1,7 @@
 .DS_Store
 nr
 data/spectra/CKC14/*
-OUTPUTS/*
+OUTPUTS/
 CodeToDo.txt
 runsps.f90
 metalml.f90

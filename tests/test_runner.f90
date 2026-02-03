@@ -55,9 +55,12 @@ PROGRAM TEST_RUNNER
    LOGICAL :: fail_suppression_noted
 
 
-  ! Configuration
-  unit_in = 40
-  csp_dummy_file = 'dummy_csp.out'
+   ! Configuration
+   unit_in = 40
+   csp_dummy_file = 'dummy_csp.out'
+
+   CALL ENSURE_OUTPUT_DIR('OUTPUTS/')
+
    test_passed = .TRUE.
    nfail = 0
    verbose_output = .FALSE.
@@ -560,5 +563,36 @@ CONTAINS
       WRITE(*,*) '  mass_csp(1)=', ocompsp(1)%mass_csp, ' mass_csp(n)=', ocompsp(n)%mass_csp
       WRITE(*,*) '  lbol_csp(1)=', ocompsp(1)%lbol_csp, ' lbol_csp(n)=', ocompsp(n)%lbol_csp
    END SUBROUTINE DUMP_CSP_SUMMARY
+
+   SUBROUTINE ENSURE_OUTPUT_DIR(path)
+      CHARACTER(*), INTENT(IN) :: path
+      INTEGER :: last_slash, ierr
+      LOGICAL :: exists
+      CHARACTER(:), ALLOCATABLE :: dir_path
+
+      ! If the path provided is the directory (ends in /)
+      IF (path(LEN_TRIM(path):LEN_TRIM(path)) == '/') THEN
+         dir_path = path(1:LEN_TRIM(path)-1)
+      ELSE
+         ! Original logic for "path/to/file" strings
+         last_slash = SCAN(path, '/', BACK=.TRUE.)
+         IF (last_slash > 0) THEN
+            dir_path = path(1:last_slash-1)
+         ELSE
+            RETURN ! No directory part found
+         END IF
+      END IF
+         
+      INQUIRE(FILE=dir_path, EXIST=exists)
+      
+      IF (.NOT. exists) THEN
+         WRITE(*,*) 'Pre-test check: Creating missing directory: ', dir_path
+         CALL EXECUTE_COMMAND_LINE('mkdir -p ' // dir_path, EXITSTAT=ierr)
+         IF (ierr /= 0) THEN
+            WRITE(*,*) 'FATAL: Could not create output directory.'
+            STOP 1
+         END IF
+      END IF
+   END SUBROUTINE ENSURE_OUTPUT_DIR
 
 END PROGRAM TEST_RUNNER
