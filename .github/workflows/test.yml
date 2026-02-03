@@ -22,6 +22,7 @@ jobs:
               sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
           
           # Linux + LLVM Flang (experimental)
+          # This is currently pinned to Flang-20, consider bumping in the future.
           - os: ubuntu-latest
             compiler: flang-20
             install_cmd: |
