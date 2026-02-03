@@ -6,9 +6,10 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
   !N.B. variables not otherwise defined come from sps_vars.f90
    use fsps_context_types, ONLY: fsps_context_t
    use fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline, tiny_number
-   use sps_utils, only: write_isochrone, add_nebular, setup_tabular_sfh, &
+   use sps_utils, only: write_isochrone, setup_tabular_sfh, &
                                   csp_gen, sfhinfo, &
                                   smoothspec, igm_absorb, getindx, getmags
+   use fsps_gas, only: apply_nebular_emission
    use fsps_dust, only: apply_agn_dust_emission
    use fsps_interpolation, only: interpolate_linear
      IMPLICIT NONE
@@ -119,7 +120,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
              'emission and multi-metallicity SSPs in compsp'
         STOP
      endif
-   call add_nebular(ctx, pset, tspec_ssp(:,:,1), spec_ssp(:,:,1), emlin_ssp(:,:,1))
+   call apply_nebular_emission(ctx, pset, tspec_ssp(:,:,1), spec_ssp(:,:,1), emlin_ssp(:,:,1))
   else
      emlin_ssp = 0.
   endif

@@ -26,7 +26,10 @@ module fsps_gas
     private
 
     ! Public Interface
-    public :: add_nebular_emission
+    public :: apply_nebular_emission
+    public :: process_ionizing_radiation
+    public :: interpolate_zu_slice
+    public :: get_grid_indices_weights
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS
@@ -53,7 +56,7 @@ contains
     !> @param[in]    sspi        Input Stellar Spectrum (L_sol/Hz).
     !> @param[inout] sspo        Output Spectrum (Stellar + Nebular).
     !> @param[out]   nebemline   (Optional) Output array for individual line luminosities.
-    subroutine add_nebular_emission(ctx, pset, sspi, sspo, nebemline)
+    subroutine apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
 
         type(fsps_context_t), intent(inout)       :: ctx
         type(params), intent(in)                  :: pset
@@ -61,96 +64,144 @@ contains
         real(sp), dimension(:,:), intent(inout)   :: sspo
         real(sp), dimension(:,:), intent(inout), optional :: nebemline
 
-        ! Local variables
-        integer :: t, max_neb_time_idx
+        ! Loop variables
+        integer :: t, k, max_neb_time_idx
+        
+        ! Grid Interpolation Indices & Weights
         integer :: idx_z, idx_u, idx_a
         real(sp) :: w_z, w_u, w_a
+        
+        ! Physics variables
         real(sp) :: q_ionizing
-        real(sp), dimension(size(sspi, 1)) :: neb_continuum_flux
-        real(sp), dimension(nemline)       :: neb_line_lum_log
         logical :: use_xrb_grid
+        logical :: calc_lines, calc_cont
+
+        ! Temporary "Reduced" Grids
+        ! We collapse the 4D grid (Wave, Z, Age, U) -> 2D (Wave, Age)
+        ! These hold the spectrum/lines for the specific Z and U of this call,
+        ! for every Age in the original grid.
+        real(sp), allocatable, dimension(:,:) :: neb_cont_grid_reduced ! (n_wave, n_age_grid)
+        real(sp), allocatable, dimension(:,:) :: neb_line_grid_reduced ! (n_lines, n_age_grid)
+
+        ! Buffers for the current time step (interpolated from the reduced grids)
+        ! If this winds up being a performance bottleneck, we can pre-allocate
+        ! these as permanent arrays in the context.
+        real(sp), dimension(size(sspi, 1)) :: current_step_cont
+        real(sp), dimension(nemline)       :: current_step_lines_log
 
         ! 0. Initialization & Validation
         ! ------------------------------
-        ! Copy input to output as base
         sspo = sspi
         if (present(nebemline)) nebemline = 0.0_sp
 
-        ! Check logic flag for using specialized XRB grids (BPSS models only)
+        ! Determine what needs calculating
+        calc_cont = (ctx%add_neb_continuum_val == 1)
+        calc_lines = (ctx%nebemlineinspec_val == 1 .or. present(nebemline))
+        
+        ! Logic flag for XRB (BPSS models)
         use_xrb_grid = (ctx%state%isoc_type == 'bpss') .and. (ctx%add_xrb_emission_val == 1)
 
-        ! Ensure Gaussian smoothing kernels are computed if required
+        ! Ensure Gaussian smoothing kernels are ready
         if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
             call compute_line_gaussians(ctx, pset)
         end if
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
         ! --------------------------------------------------
-        ! These parameters (gas_logz, gas_logu) do not change with time loop `t`.
-        ! AD_NOTE: find_interval returns integer indices. Differentiability relies on 
-        ! linear weights `w_z` and `w_u` derived from continuous inputs.
-        
+        ! These are constant for the entire subroutine call.
         call get_grid_indices_weights(ctx%state%nebem_logz, pset%gas_logz, nebnz, idx_z, w_z)
         call get_grid_indices_weights(ctx%state%nebem_logu, pset%gas_logu, nebnip, idx_u, w_u)
 
-        ! 2. Determine Time Loop Bounds
-        ! -----------------------------
-        ! Only include nebular emission for ages <= max_age (typically 20 Myr in FSPS grids).
-        max_neb_time_idx = find_interval(ctx%state%time_full, ctx%state%nebem_age(nebnage))
 
+        ! 2. Dimensionality Reduction
+        ! ----------------------------------------------
+        ! Instead of doing 3D interpolation (Z, Age, U) inside the time loop,
+        ! we collapse Z and U first.
+        
+        if (calc_cont) then
+            allocate(neb_cont_grid_reduced(size(sspi, 1), nebnage))
+            do k = 1, nebnage
+                ! Interpolates Z and U planes for the specific Age slice 'k'
+                ! Implementation note: Helper function `interpolate_zu_slice` handles
+                ! the 2D interpolation for a fixed age index.
+                if (use_xrb_grid) then
+                    call interpolate_zu_slice(ctx%state%xnebem_cont, &
+                        neb_cont_grid_reduced(:, k), k, idx_z, idx_u, w_z, w_u)
+                else
+                    call interpolate_zu_slice(ctx%state%nebem_cont, &
+                        neb_cont_grid_reduced(:, k), k, idx_z, idx_u, w_z, w_u)
+                end if
+            end do
+        end if
+
+        if (calc_lines) then
+            allocate(neb_line_grid_reduced(nemline, nebnage))
+            do k = 1, nebnage
+                if (use_xrb_grid) then
+                    call interpolate_zu_slice(ctx%state%xnebem_line, &
+                        neb_line_grid_reduced(:, k), k, idx_z, idx_u, w_z, w_u)
+                else
+                    call interpolate_zu_slice(ctx%state%nebem_line, &
+                        neb_line_grid_reduced(:, k), k, idx_z, idx_u, w_z, w_u)
+                end if
+            end do
+        end if
 
         ! 3. Main Time Loop
         ! -----------------
+        ! Only calculate up to the max age supported by the nebular grid
+        max_neb_time_idx = find_interval(ctx%state%time_full, ctx%state%nebem_age(nebnage))
+
         do t = 1, max_neb_time_idx
             
-            ! A. Calculate Ionizing Photon Rate (Q)
-            ! -------------------------------------
-            ! Also attenuates the stellar spectrum in the EUV (<912A) in place.
+            ! A. Calculate Ionizing Photons
             call process_ionizing_radiation(ctx, pset, sspi(:,t), sspo(:,t), q_ionizing)
 
-            ! B. Interpolate Age Dimension
-            ! ----------------------------
+            ! Optimization: Skip expensive math if there is no ionizing radiation
+            if (q_ionizing <= SAFE_FLOOR) cycle
+
+            ! B. Interpolate Age (1D)
+            ! -----------------------
+            ! Now we simply interpolate our pre-reduced grids along the Age axis.
             call get_grid_indices_weights(ctx%state%nebem_age, ctx%state%time_full(t), &
                                           nebnage, idx_a, w_a)
 
-            ! C. Interpolate Nebular Continuum
-            ! --------------------------------
-            if (ctx%add_neb_continuum_val == 1) then
-                if (use_xrb_grid) then
-                    neb_continuum_flux = interpolate_nebular_grid_3d( &
-                        ctx%state%xnebem_cont, idx_z, idx_a, idx_u, w_z, w_a, w_u)
-                else
-                    neb_continuum_flux = interpolate_nebular_grid_3d( &
-                        ctx%state%nebem_cont, idx_z, idx_a, idx_u, w_z, w_a, w_u)
-                end if
+            ! C. Add Continuum
+            ! ----------------
+            if (calc_cont) then
+                ! 1D Linear Interpolation: (1-w)*grid(idx) + w*grid(idx+1)
+                current_step_cont = (1.0_sp - w_a) * neb_cont_grid_reduced(:, idx_a) + &
+                                    (         w_a) * neb_cont_grid_reduced(:, idx_a + 1)
                 
-                ! Add to spectrum (Grid is log10, Q scales linearly)
-                sspo(:,t) = sspo(:,t) + (10.0_sp**neb_continuum_flux) * q_ionizing
+                ! Add to spectrum
+                sspo(:,t) = sspo(:,t) + (10.0_sp**current_step_cont) * q_ionizing
             end if
 
-            ! D. Interpolate Emission Lines
-            ! -----------------------------
-            if (use_xrb_grid) then
-                neb_line_lum_log = interpolate_nebular_lines_3d( &
-                    ctx%state%xnebem_line, idx_z, idx_a, idx_u, w_z, w_a, w_u)
-            else
-                neb_line_lum_log = interpolate_nebular_lines_3d( &
-                    ctx%state%nebem_line, idx_z, idx_a, idx_u, w_z, w_a, w_u)
-            end if
-            
-            ! Store raw line luminosities if requested
-            if (present(nebemline)) then
-                nebemline(:,t) = (10.0_sp**neb_line_lum_log) * q_ionizing
-            end if
+            ! D. Add Lines
+            ! ------------
+            if (calc_lines) then
+                ! 1D Linear Interpolation
+                current_step_lines_log = (1.0_sp - w_a) * neb_line_grid_reduced(:, idx_a) + &
+                                         (         w_a) * neb_line_grid_reduced(:, idx_a + 1)
+                
+                ! Store raw luminosities if requested
+                if (present(nebemline)) then
+                    nebemline(:,t) = (10.0_sp**current_step_lines_log) * q_ionizing
+                end if
 
-            ! Add lines to spectrum using pre-computed Gaussian profiles
-            if (ctx%nebemlineinspec_val == 1) then
-                call add_lines_to_spectrum(ctx, sspo(:,t), neb_line_lum_log, q_ionizing)
+                ! Add to spectrum (Using MATMUL optimization)
+                if (ctx%nebemlineinspec_val == 1) then
+                    call add_lines_to_spectrum(ctx, sspo(:,t), current_step_lines_log, q_ionizing)
+                end if
             end if
 
         end do
 
-    end subroutine add_nebular_emission
+        ! Cleanup
+        if (allocated(neb_cont_grid_reduced)) deallocate(neb_cont_grid_reduced)
+        if (allocated(neb_line_grid_reduced)) deallocate(neb_line_grid_reduced)
+
+    end subroutine apply_nebular_emission
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPER ROUTINES
@@ -262,23 +313,24 @@ contains
     end subroutine compute_line_gaussians
 
     !> @brief
-    !> Adds emission lines to the spectrum using pre-computed Gaussians.
+    !> Adds emission lines to the spectrum using matrix multiplication.
+    !> This is significantly faster than looping over lines due to reduced memory I/O.
     subroutine add_lines_to_spectrum(ctx, spectrum, line_lum_log, q_val)
         type(fsps_context_t), intent(in)    :: ctx
         real(sp), dimension(:), intent(inout) :: spectrum
         real(sp), dimension(:), intent(in)    :: line_lum_log
         real(sp), intent(in)                  :: q_val
         
-        integer :: i
-        real(sp) :: line_flux_linear
+        real(sp), dimension(nemline) :: line_flux_linear
 
-        do i = 1, nemline
-            ! Convert log luminosity to linear flux scaling
-            line_flux_linear = (10.0_sp**line_lum_log(i)) * q_val
-            
-            ! Add profile to spectrum
-            spectrum = spectrum + line_flux_linear * ctx%state%gaussnebarr(:,i)
-        end do
+        ! Vectorize the log -> linear conversion
+        line_flux_linear = (10.0_sp**line_lum_log) * q_val
+        
+        ! Perform Matrix-Vector multiplication: 
+        ! [Lambda x Lines] * [Lines] = [Lambda]
+        ! This sums all Gaussian profiles weighted by their flux in one pass.
+        spectrum = spectrum + matmul(ctx%state%gaussnebarr, line_flux_linear)
+
     end subroutine add_lines_to_spectrum
 
     !> @brief
@@ -308,54 +360,47 @@ contains
     end subroutine get_grid_indices_weights
 
     !> @brief
-    !> Trilinear interpolation for Nebular Continuum grids.
+    !> Interpolates a 2D slice (Metallicity Z, Ionization U) from the 4D grid
+    !> for a fixed Age index.
     !>
     !> @details
-    !> Grid dimensions: (wavelengths, Z, Age, U)
-    !> Interpolates along Z, Age, and U.
-    pure function interpolate_nebular_grid_3d(grid, idx_z, idx_a, idx_u, w_z, w_a, w_u) result(res)
-        real(sp), dimension(:,:,:,:), intent(in) :: grid
-        integer, intent(in)  :: idx_z, idx_a, idx_u
-        real(sp), intent(in) :: w_z, w_a, w_u
-        real(sp), dimension(size(grid, 1)) :: res
-        
-        ! Tensor product interpolation (Trilinear)
-        ! This could be refactored into smaller linear steps, but fully expanded
-        ! is often efficient for the compiler vectorization.
-        
-        res = &
-          (1.0_sp - w_z) * (1.0_sp - w_a) * (1.0_sp - w_u) * grid(:, idx_z,   idx_a,   idx_u  ) + &
-          (1.0_sp - w_z) * (1.0_sp - w_a) * (         w_u) * grid(:, idx_z,   idx_a,   idx_u+1) + &
-          (1.0_sp - w_z) * (         w_a) * (1.0_sp - w_u) * grid(:, idx_z,   idx_a+1, idx_u  ) + &
-          (1.0_sp - w_z) * (         w_a) * (         w_u) * grid(:, idx_z,   idx_a+1, idx_u+1) + &
-          (         w_z) * (1.0_sp - w_a) * (1.0_sp - w_u) * grid(:, idx_z+1, idx_a,   idx_u  ) + &
-          (         w_z) * (1.0_sp - w_a) * (         w_u) * grid(:, idx_z+1, idx_a,   idx_u+1) + &
-          (         w_z) * (         w_a) * (1.0_sp - w_u) * grid(:, idx_z+1, idx_a+1, idx_u  ) + &
-          (         w_z) * (         w_a) * (         w_u) * grid(:, idx_z+1, idx_a+1, idx_u+1)
-
-    end function interpolate_nebular_grid_3d
-
-    !> @brief
-    !> Trilinear interpolation for Nebular Line grids.
+    !> This reduces the 4D grid (Wave, Z, Age, U) down to a 1D array (Wave)
+    !> for the specific Z, U, and Age parameters provided.
     !>
-    !> @details
-    !> Grid dimensions: (lines, Z, Age, U). Same logic as continuum.
-    pure function interpolate_nebular_lines_3d(grid, idx_z, idx_a, idx_u, w_z, w_a, w_u) result(res)
+    !> Logic:
+    !> Res = (1-wz)(1-wu)*V00 + (1-wz)(wu)*V01 + (wz)(1-wu)*V10 + (wz)(wu)*V11
+    !>
+    !> @param[in] grid     The 4D nebular grid (Wave/Line, Z, Age, U)
+    !> @param[in] idx_age  The fixed Age index to slice at
+    !> @param[in] idx_z    Lower index for Metallicity
+    !> @param[in] idx_u    Lower index for Ionization Parameter
+    !> @param[in] w_z      Interpolation weight for Z
+    !> @param[in] w_u      Interpolation weight for U
+    !> @return             1D array of interpolated values (wavelengths or lines)
+    pure subroutine interpolate_zu_slice(grid, res, idx_age, idx_z, idx_u, w_z, w_u)
         real(sp), dimension(:,:,:,:), intent(in) :: grid
-        integer, intent(in)  :: idx_z, idx_a, idx_u
-        real(sp), intent(in) :: w_z, w_a, w_u
-        real(sp), dimension(size(grid, 1)) :: res
+        real(sp), dimension(:), intent(out)    :: res
+        integer, intent(in)  :: idx_age, idx_z, idx_u
+        real(sp), intent(in) :: w_z, w_u
         
-        res = &
-          (1.0_sp - w_z) * (1.0_sp - w_a) * (1.0_sp - w_u) * grid(:, idx_z,   idx_a,   idx_u  ) + &
-          (1.0_sp - w_z) * (1.0_sp - w_a) * (         w_u) * grid(:, idx_z,   idx_a,   idx_u+1) + &
-          (1.0_sp - w_z) * (         w_a) * (1.0_sp - w_u) * grid(:, idx_z,   idx_a+1, idx_u  ) + &
-          (1.0_sp - w_z) * (         w_a) * (         w_u) * grid(:, idx_z,   idx_a+1, idx_u+1) + &
-          (         w_z) * (1.0_sp - w_a) * (1.0_sp - w_u) * grid(:, idx_z+1, idx_a,   idx_u  ) + &
-          (         w_z) * (1.0_sp - w_a) * (         w_u) * grid(:, idx_z+1, idx_a,   idx_u+1) + &
-          (         w_z) * (         w_a) * (1.0_sp - w_u) * grid(:, idx_z+1, idx_a+1, idx_u  ) + &
-          (         w_z) * (         w_a) * (         w_u) * grid(:, idx_z+1, idx_a+1, idx_u+1)
+        ! Local coefficients for bilinear interpolation
+        real(sp) :: c00, c01, c10, c11
 
-    end function interpolate_nebular_lines_3d
+        ! Pre-calculate coefficients
+        ! This avoids re-calculating (1-w_z) etc. for every wavelength point
+        c00 = (1.0_sp - w_z) * (1.0_sp - w_u)
+        c01 = (1.0_sp - w_z) * (         w_u)
+        c10 = (         w_z) * (1.0_sp - w_u)
+        c11 = (         w_z) * (         w_u)
+
+        ! Vectorized Array Operation
+        ! Fortran arrays are column-major. Since the first dimension (:) is 
+        ! contiguous, this operation is highly cache-efficient and vectorizable.
+        res = c00 * grid(:, idx_z,   idx_age, idx_u  ) + &
+              c01 * grid(:, idx_z,   idx_age, idx_u+1) + &
+              c10 * grid(:, idx_z+1, idx_age, idx_u  ) + &
+              c11 * grid(:, idx_z+1, idx_age, idx_u+1)
+
+    end subroutine interpolate_zu_slice
 
 end module fsps_gas

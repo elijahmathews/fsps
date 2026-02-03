@@ -54,18 +54,6 @@ MODULE SPS_UTILS
    END INTERFACE
 
   INTERFACE
-       SUBROUTINE ADD_NEBULAR(ctx, pset, sspi, sspo, nebemline)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP, PARAMS, nemline
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       TYPE(PARAMS), INTENT(in) :: pset
-       REAL(SP), INTENT(in), DIMENSION(:,:)    :: sspi
-       REAL(SP), INTENT(inout), DIMENSION(:,:) :: sspo
-       REAL(SP), INTENT(inout), DIMENSION(:,:), OPTIONAL :: nebemline
-     END SUBROUTINE ADD_NEBULAR
-  END INTERFACE
-
-  INTERFACE
        SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
           USE fsps_context_types, ONLY: fsps_context_t
           USE fsps_types, ONLY: SP, PARAMS

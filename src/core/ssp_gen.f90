@@ -18,7 +18,8 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
    USE fsps_types, ONLY: SP, PARAMS, nm, verbose, bhb_sbs_time, time_res_incr
   USE sps_utils, ONLY: mod_hb, add_bs, mod_gb, add_remnants, &
-     getspec, add_nebular, add_xrb, smoothspec
+     getspec, add_xrb, smoothspec
+  USE fsps_gas, only: apply_nebular_emission
   USE fsps_interpolation, ONLY: find_interval
    USE fsps_imf, ONLY: compute_imf_weights
   USE fsps_context_types, ONLY: fsps_context_t
@@ -269,7 +270,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !-------------------------------------------------------------!
 
   IF (add_neb_emission.EQ.2) THEN
-     CALL ADD_NEBULAR(ctx, pset, spec_ssp, tspec_ssp)
+   CALL apply_nebular_emission(ctx, pset, spec_ssp, tspec_ssp)
      spec_ssp = tspec_ssp
   ENDIF
 
