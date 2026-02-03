@@ -1,0 +1,173 @@
+project('fsps', ['fortran', 'c'],
+  version : '3.2.0',
+  default_options : [
+    'buildtype=release', 
+    'warning_level=0',
+    'default_library=shared'
+  ]
+)
+
+# ===================================
+# Compiler Configuration
+# ===================================
+
+fc = meson.get_compiler('fortran')
+
+# Note: -O3 is handled by 'buildtype=release'
+add_project_arguments('-cpp', '-ffree-line-length-132', language : 'fortran')
+
+# Installation paths
+prefix = get_option('prefix')
+libdir = get_option('libdir')
+includedir = get_option('includedir')
+datadir = get_option('datadir')
+
+# ===================================
+# Source Definitions
+# ===================================
+
+lib_sources = files(
+    # ABI Modules
+    'src/abi/fsps_c_driver.f90',
+
+    # Core FSPS Modules
+    'src/core/compsp.f90',
+    'src/core/csp_gen.f90',
+    'src/core/fsps_cache.f90',
+    'src/core/fsps_context_types.f90',
+    'src/core/fsps_context.f90',
+    'src/core/fsps_types.f90',
+    'src/core/sps_setup.f90',
+    'src/core/sps_utils.f90',
+    'src/core/ssp_gen.f90',
+
+    # Cosmology Modules
+    'src/cosmology/cosmo_lumdist.f90',
+    'src/cosmology/cosmo_pz_convol.f90',
+    'src/cosmology/cosmo_tuniv.f90',
+    'src/cosmology/vacair_conv.f90',
+
+    # IMF Module
+    'src/imf/fsps_imf.f90',
+
+    # IO Module
+    'src/io/write_isochrone.f90',
+
+    # Math Modules
+    'src/math/fsps_integration.f90',
+    'src/math/fsps_interpolation.f90',
+    'src/math/fsps_special_functions.f90',
+    'src/math/integrate_sfhw.f90',
+    'src/math/interp_zt.f90',
+
+    # Physics Modules
+    'src/physics/blue_stragglers.f90',
+    'src/physics/fsps_dust.f90',
+    'src/physics/gb_mod.f90',
+    'src/physics/hb_mod.f90',
+    'src/physics/igm_absorb.f90',
+    'src/physics/nebular_add.f90',
+    'src/physics/remnants_add.f90',
+    'src/physics/xrb_add.f90',
+
+    # SFH Modules
+    'src/sfh/sfh_info.f90',
+    'src/sfh/sfh_limit.f90',
+    'src/sfh/sfh_stats.f90',
+    'src/sfh/sfh_tabular.f90',
+    'src/sfh/sfh_weight.f90',
+
+    # Spectra Modules
+    'src/spectra/spec_get.f90',
+    'src/spectra/spec_indices.f90',
+    'src/spectra/spec_mags.f90',
+    'src/spectra/spec_sbf.f90',
+    'src/spectra/spec_smooth.f90',
+)
+
+# ===================================
+# Main Library Target
+# ===================================
+
+# This builds libfsps.so (and handles .mod generation automatically)
+libfsps = library('fsps',
+    lib_sources,
+    version : meson.project_version(),
+    soversion : '3',
+    install : true
+)
+
+# Declare a dependency object for executables/tests to use
+# This ensures they find the generated .mod files and link to the lib
+fsps_dep = declare_dependency(
+    link_with : libfsps,
+    include_directories : include_directories('include')
+)
+
+# ===================================
+# Program Executables
+# ===================================
+
+executable('autosps', 'src/programs/sps_program_autosps.f90', dependencies : fsps_dep, install : true)
+executable('lesssimple', 'src/programs/sps_program_lesssimple.f90', dependencies : fsps_dep, install : true)
+executable('simple', 'src/programs/sps_program_simple.f90', dependencies : fsps_dep, install : true)
+executable('spec_bin', 'src/programs/sps_program_spec_bin.f90', dependencies : fsps_dep, install : true)
+
+# ===================================
+# Tests
+# ===================================
+
+# 1. Test Utilities (Helper for other tests)
+test_utils_lib = static_library(
+    'test_utils', 
+    'tests/test_utils.f90', 
+    dependencies : fsps_dep
+)
+
+test_utils_dep = declare_dependency(link_with : test_utils_lib)
+
+# 2. Unit Tests
+unit_test_sources = files(
+    'tests/imf/test_fsps_imf.f90',
+    'tests/math/test_fsps_integration.f90',
+    'tests/math/test_fsps_interpolation.f90',
+    'tests/math/test_fsps_special_functions.f90',
+    'tests/physics/test_fsps_dust.f90',
+    'tests/test_fsps.f90' # Main driver
+)
+
+tests_units_exe = executable(
+    'tests_units', 
+    unit_test_sources, 
+    dependencies : [fsps_dep, test_utils_dep]
+)
+test('unit_tests', tests_units_exe)
+
+# 3. Other Test Drivers
+executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
+executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
+executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
+
+# 4. C Tests
+executable('test_c_driver', 'tests/test_c_driver.c', 
+    dependencies : fsps_dep,
+    include_directories : include_directories('include')
+)
+
+# ===================================
+# Installation (PkgConfig & Data)
+# ===================================
+
+# Install Headers
+install_headers('include/fsps.h')
+
+# Install Data (recursively copies the directory)
+install_subdir('data', install_dir : join_paths(datadir, 'fsps'))
+
+# Pkg-config generation
+pkg = import('pkgconfig')
+pkg.generate(libfsps,
+    name : 'fsps',
+    description : 'Flexible Stellar Population Synthesis',
+    url : 'https://github.com/cconroy20/fsps'
+)

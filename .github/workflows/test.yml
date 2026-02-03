@@ -17,30 +17,30 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Install GFortran
+    - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gfortran
+        sudo apt-get install -y gfortran meson ninja-build
+
+    - name: Configure FSPS (Meson)
+      run: meson setup build
 
     - name: Compile FSPS and Unit Tests
-      run: |
-        make clean
-        make tests_units
+      run: meson compile -C build
 
     - name: Run Unit Tests
-      run: |
-        ./tests_units
+      # Verbose output for CI logs
+      run: meson test -v -c build
 
   regression-tests:
     runs-on: ubuntu-latest
-    needs: unit-tests
     
     env:
       FSPS_DATA_HOME: ${{ github.workspace }}
       # Set global relative tolerance here
       FSPS_TEST_RTOL: 1.0E-5
-      # We force FFLAGS to include the matrix flags + standard flags + silence underflows
-      FFLAGS: "-cpp -O3 -fPIC -ffpe-summary=invalid,zero,overflow"
+      # Silence underflows
+      FFLAGS: "-ffpe-summary=invalid,zero,overflow"
 
     strategy:
       fail-fast: false
@@ -79,16 +79,17 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Install GFortran
+    - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gfortran
+        sudo apt-get install -y gfortran meson ninja-build
 
-    - name: Compile FSPS and Test Runner
-      run: |
-        make clean
-        make test
+    - name: Configure FSPS (Meson)
+      run: meson setup build
 
-    - name: Run Test
+    - name: Compile FSPS and Regression Test
+      run: meson compile -C build
+
+    - name: Run Regression Test
       run: |
-        ./test_runner tests/data/sps_ref_${{ matrix.ref_suffix }}.bin ${{ matrix.opts }}
+        ./build/test_runner tests/data/sps_ref_${{ matrix.ref_suffix }}.bin ${{ matrix.opts }}
