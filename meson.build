@@ -12,9 +12,15 @@ project('fsps', ['fortran', 'c'],
 # ===================================
 
 fc = meson.get_compiler('fortran')
+fc_id = fc.get_id()
 
-# Note: -O3 is handled by 'buildtype=release'
-add_project_arguments('-cpp', '-ffree-line-length-132', language : 'fortran')
+# Universal arguments (supported by both gfortran and flang)
+add_project_arguments('-cpp', language : 'fortran')
+
+# GFortran-specific arguments
+if fc_id == 'gcc'
+    add_project_arguments('-ffree-line-length-132', language : 'fortran')
+endif
 
 # Installation paths
 prefix = get_option('prefix')
