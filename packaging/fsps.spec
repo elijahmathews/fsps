@@ -59,22 +59,22 @@ FSPS_DATA_HOME=%{_builddir}/%{name}-%{version} \
 %make_build check
 
 %files
-%license LICENSE
+%license LICENSE.md
 %{_bindir}/simple
 %{_bindir}/lesssimple
 %{_bindir}/autosps
 %{_bindir}/spec_bin
 
 %files -n libfsps
-%license LICENSE
+%license LICENSE.md
 %{_libdir}/libfsps.so.*
 
 %files -n libfsps-data
-%license LICENSE
+%license LICENSE.md
 %{_datadir}/fsps/data
 
 %files -n libfsps-devel
-%license LICENSE
+%license LICENSE.md
 %{_includedir}/fsps.h
 %{_libdir}/libfsps.so
 %{_libdir}/pkgconfig/fsps.pc
