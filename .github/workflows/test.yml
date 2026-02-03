@@ -29,7 +29,7 @@ jobs:
 
           # MacOS + GFortran
           - os: macos-latest
-            compiler: gfortran
+            compiler: gfortran-homebrew
             install_cmd: brew install gcc meson ninja
 
     env:
@@ -42,6 +42,20 @@ jobs:
 
     - name: Install Dependencies
       run: ${{ matrix.install_cmd }}
+    
+    - name: Set Compiler Path (MacOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        # Ask Homebrew for the gcc package lives
+        GCC_PREFIX=$(brew --prefix gcc)
+        # Find the gfortran binary inside that prefix (e.g., bin/gfortran-14)
+        # We sort by version (-V) and take the last one to ensure we get the latest
+        GFORTRAN_BIN=$(ls $GCC_PREFIX/bin/gfortran-* | sort -V | tail -n1)
+        
+        echo "Found GFortran at: $GFORTRAN_BIN"
+        
+        # Export this path to $FC for all future steps
+        echo "FC=$GFORTRAN_BIN" >> $GITHUB_ENV
 
     - name: Verify Compiler Version
       run: $FC --version
