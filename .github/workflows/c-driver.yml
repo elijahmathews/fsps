@@ -2,9 +2,9 @@ name: C Driver Tests
 
 on:
   push:
-    branches: [ master, feature/c-driver-api ]
+    branches: [ master, develop ]
   pull_request:
-    branches: [ master, feature/c-driver-api ]
+    branches: [ master, develop ]
 
 jobs:
   c-driver:
