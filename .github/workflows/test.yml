@@ -8,19 +8,43 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    name: Unit Tests (${{ matrix.os }}, ${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux + GFortran (standard target configuration)
+          - os: ubuntu-latest
+            compiler: gfortran
+            install_cmd: |
+              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
+          
+          # Linux + LLVM Flang (experimental)
+          - os: ubuntu-latest
+            compiler: flang
+            install_cmd: |
+              sudo apt-get update && sudo apt-get install -y flang meson ninja-build
+
+          # MacOS + GFortran
+          - os: macos-latest
+            compiler: gfortran
+            install_cmd: brew install gcc meson ninja
 
     env:
       FSPS_DATA_HOME: ${{ github.workspace }}
+      FC: ${{ matrix.compiler }}
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
     - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gfortran meson ninja-build
+      run: ${{ matrix.install_cmd }}
+
+    - name: Verify Compiler Version
+      run: $FC --version
 
     - name: Configure FSPS (Meson)
       run: meson setup build
@@ -33,7 +57,9 @@ jobs:
       run: meson test -v -C build
 
   regression-tests:
+    name: Regression Test (${{ matrix.name }})
     runs-on: ubuntu-latest
+    needs: unit-tests
     
     env:
       FSPS_DATA_HOME: ${{ github.workspace }}
