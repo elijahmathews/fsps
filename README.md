@@ -2,6 +2,9 @@ FSPS: Flexible Stellar Population Synthesis
 =====
 ![Version Badge](https://img.shields.io/badge/version-v3.2-blue)
 
+> [!WARNING]
+> This fork of FSPS is currently under active development and should not be considered stable.
+
 References
 ---------
 When using this code please cite the papers found in [`CITATION.bib`](CITATION.bib).
