@@ -208,7 +208,7 @@ contains
         do iw = 1, n_wave
             expected = real(iw, sp) + 3.0_sp + w_z + w_u
             write(label, '(A,I0)') "Identity grid wave ", iw
-            call assert_float_equals(expected, res(iw), EPS, label, total_tests, total_failures)
+            call assert_float_equals(expected, res(iw), EPS, trim(label), total_tests, total_failures)
         end do
     end subroutine test_interpolate_identity
 
