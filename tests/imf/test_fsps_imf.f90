@@ -1,7 +1,5 @@
 module test_fsps_imf_mod
-    use fsps_types, only: sp, &
-                          chab_mc, chab_sigma2, chab_ind, &
-                          vd_sigma2, vd_ah, vd_ind, vd_al, vd_nc
+    use fsps_constants, only: SP
     use fsps_context_types, only: fsps_context_t
     use fsps_imf
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -82,22 +80,22 @@ contains
         allocate(ctx)
         ctx%imf_type_val = 1
         
-        ! Note: chab_mc, chab_sigma2, chab_ind are from fsps_types (constants)
+        ! Note: CHAB_MC, CHAB_SIGMA2, CHAB_IND are from fsps_types (constants)
 
         res = get_imf_value(ctx, m, mass_weighted=.false.)
 
         ! Case 1: Low Mass (Log Normal) at m=0.1
         log_m = log10(0.1_sp)
-        log_mc = log10(chab_mc)
-        term = (log_m - log_mc)**2 / (2.0_sp * chab_sigma2)
+        log_mc = log10(CHAB_MC)
+        term = (log_m - log_mc)**2 / (2.0_sp * CHAB_SIGMA2)
         ! Formula: exp(-term) / m
         expected = exp(-term) / 0.1_sp
         call assert_float_equals(expected, res(1), 1.0e-5_sp, "Chabrier Low Mass (<1)", total_tests, total_failures)
 
         ! Case 2: High Mass (Power Law) at m=2.0
         ! Formula: exp(-term_at_mc) * m^(-ind) / m  (Continuity matching)
-        term = log_mc**2 / (2.0_sp * chab_sigma2)
-        expected = exp(-term) * 2.0_sp**(-chab_ind) / 2.0_sp
+        term = log_mc**2 / (2.0_sp * CHAB_SIGMA2)
+        expected = exp(-term) * 2.0_sp**(-CHAB_IND) / 2.0_sp
         call assert_float_equals(expected, res(2), 1.0e-5_sp, "Chabrier High Mass (>1)", total_tests, total_failures)
 
         deallocate(ctx)

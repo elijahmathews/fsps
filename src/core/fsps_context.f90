@@ -1,5 +1,6 @@
 MODULE FSPS_CONTEXT
-            USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT
+  USE fsps_constants, ONLY: SP
+  USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
   USE sps_utils
   IMPLICIT NONE

@@ -1,5 +1,5 @@
 module test_fsps_interpolation_mod
-    use fsps_types, only: sp
+    use fsps_constants, only: SP
     use fsps_interpolation
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_int_equals, assert_float_equals, assert_is_nan
@@ -34,8 +34,8 @@ contains
     ! TEST SUITE: FIND_INTERVAL
     ! ------------------------------------------------------------------------
     subroutine test_find_interval()
-        real(sp), dimension(4) :: x_asc = [0.0_sp, 10.0_sp, 20.0_sp, 30.0_sp]
-        real(sp), dimension(4) :: x_desc = [30.0_sp, 20.0_sp, 10.0_sp, 0.0_sp]
+        real(SP), dimension(4) :: x_asc = [0.0_sp, 10.0_sp, 20.0_sp, 30.0_sp]
+        real(SP), dimension(4) :: x_desc = [30.0_sp, 20.0_sp, 10.0_sp, 0.0_sp]
         integer :: idx
 
         call print_group("find_interval")
@@ -70,12 +70,12 @@ contains
     ! TEST SUITE: LINEAR INTERPOLATION (SCALAR)
     ! ------------------------------------------------------------------------
     subroutine test_linear_scalar()
-        real(sp), dimension(3) :: x = [1.0_sp, 2.0_sp, 3.0_sp]
-        real(sp), dimension(3) :: y = [1.0_sp, 2.0_sp, 3.0_sp]
-        real(sp), dimension(2) :: x_short = [0.0_sp, 1.0_sp]
-        real(sp), dimension(2) :: y_short = [0.0_sp, 2.0_sp] ! Slope = 2
-        real(sp), dimension(3) :: y_flat = [5.0_sp, 5.0_sp, 5.0_sp]
-        real(sp) :: res
+        real(SP), dimension(3) :: x = [1.0_sp, 2.0_sp, 3.0_sp]
+        real(SP), dimension(3) :: y = [1.0_sp, 2.0_sp, 3.0_sp]
+        real(SP), dimension(2) :: x_short = [0.0_sp, 1.0_sp]
+        real(SP), dimension(2) :: y_short = [0.0_sp, 2.0_sp] ! Slope = 2
+        real(SP), dimension(3) :: y_flat = [5.0_sp, 5.0_sp, 5.0_sp]
+        real(SP) :: res
 
         call print_group("interpolate_linear (Scalar)")
 
@@ -98,11 +98,11 @@ contains
     ! TEST SUITE: LINEAR INTERPOLATION (ARRAY)
     ! ------------------------------------------------------------------------
     subroutine test_linear_array()
-        real(sp), dimension(3) :: x = [1.0_sp, 2.0_sp, 3.0_sp]
-        real(sp), dimension(3) :: y = [2.0_sp, 4.0_sp, 6.0_sp] ! y = 2x
-        real(sp), dimension(2) :: query = [1.5_sp, 2.5_sp]
-        real(sp), dimension(2) :: expected = [3.0_sp, 5.0_sp]
-        real(sp), dimension(2) :: res
+        real(SP), dimension(3) :: x = [1.0_sp, 2.0_sp, 3.0_sp]
+        real(SP), dimension(3) :: y = [2.0_sp, 4.0_sp, 6.0_sp] ! y = 2x
+        real(SP), dimension(2) :: query = [1.5_sp, 2.5_sp]
+        real(SP), dimension(2) :: expected = [3.0_sp, 5.0_sp]
+        real(SP), dimension(2) :: res
 
         call print_group("interpolate_linear (Array)")
 
@@ -118,12 +118,12 @@ contains
     ! TEST SUITE: ROBUSTNESS / ERRORS
     ! ------------------------------------------------------------------------
     subroutine test_robustness()
-        real(sp), dimension(1) :: x_bad = [1.0_sp]
-        real(sp), dimension(1) :: y_bad = [1.0_sp]
-        real(sp), dimension(2) :: x_ok = [1.0_sp, 2.0_sp]
-        real(sp), dimension(3) :: y_mismatch = [1.0_sp, 2.0_sp, 3.0_sp]
-        real(sp) :: res_scalar
-        real(sp), dimension(1) :: res_array
+        real(SP), dimension(1) :: x_bad = [1.0_sp]
+        real(SP), dimension(1) :: y_bad = [1.0_sp]
+        real(SP), dimension(2) :: x_ok = [1.0_sp, 2.0_sp]
+        real(SP), dimension(3) :: y_mismatch = [1.0_sp, 2.0_sp, 3.0_sp]
+        real(SP) :: res_scalar
+        real(SP), dimension(1) :: res_array
         
         call print_group("Robustness")
 

@@ -9,10 +9,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !is read.  Specifying only the metallicity of interest results
   !in a much faster setup.
 
-         USE fsps_types, ONLY: SP, verbose, time_res_incr, basel_str, nm, nlines, ntabmax, ndim_logt, ndim_logg, &
-            n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
-            ntau_dagb, nteff_dagb, nemline, nlam_nebcont, nebnz, nebnage, nebnip, &
-            nagndust, nagndust_spec, tiny_number, tiny30, clight, mypi, lsun
+   USE fsps_constants, ONLY: SP, VERBOSE, TIME_RES_INCR, BASEL_STR, NM, NLINES, NTABMAX, NDIM_LOGT, NDIM_LOGG, &
+            N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
+            NTAU_DAGB, NTEFF_DAGB, NEMLINE, NLAM_NEBCONT, NEBNZ, NEBNAGE, NEBNIP, &
+            NAGNDUST, NAGNDUST_SPEC, SAFE_FLOOR, C_LIGHT, PI, L_SOL
    USE fsps_cache, ONLY: fsps_setup_cache_t, fsps_cache_get_setup
   USE fsps_context_types, ONLY: fsps_context_t
    USE sps_utils, ONLY: get_tuniv, get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
@@ -46,7 +46,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   REAL(SP), DIMENSION(ntlam) :: tvega_lam=0.,tvega_spec=0.
   REAL(SP), DIMENSION(ntlam) :: tsun_lam=0.,tsun_spec=0.
   REAL(SP), DIMENSION(nlamwr) :: tlamwr=0.,tspecwr=0.
-  REAL(SP), DIMENSION(nlamwr,ndim_wr,5) :: twrc=0.,twrn=0.
+  REAL(SP), DIMENSION(nlamwr,NDIM_WR,5) :: twrc=0.,twrn=0.
   REAL(SP), DIMENSION(5) :: twrzmet=0.
   REAL(SP), DIMENSION(50000) :: readlamb=0.,readband=0.
   REAL(SP), DIMENSION(25) :: wglam=0.
@@ -54,24 +54,24 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   REAL(SP), DIMENSION(10000) :: lambda_dagb=0.,fluxin_dagb=0.
   REAL(SP), DIMENSION(14) :: lami=0.
   INTEGER,  DIMENSION(14) :: ind
-  REAL(SP), DIMENSION(nlam_nebcont) :: readlambneb=0.,readcontneb=0.
-  REAL(SP), DIMENSION(22,n_agb_o)   :: tagb_logt_o
+  REAL(SP), DIMENSION(NLAM_NEBCONT) :: readlambneb=0.,readcontneb=0.
+  REAL(SP), DIMENSION(22,N_AGB_O)   :: tagb_logt_o
   REAL(SP), DIMENSION(22)           :: tagb_logz_o
   REAL(SP), DIMENSION(nspec_pagb) :: pagb_lam=0.0
-  REAL(SP), DIMENSION(nspec_pagb,ndim_pagb,2) :: pagb_specinit=0.
+  REAL(SP), DIMENSION(nspec_pagb,NDIM_PAGB,2) :: pagb_specinit=0.
   REAL(SP), DIMENSION(nspec_agb)  :: agb_lam=0.0
   REAL(SP), DIMENSION(nspec_aringer)  :: aringer_lam=0.0
-  REAL(SP), DIMENSION(nspec_agb,n_agb_o) :: agb_specinit_o=0.
-  REAL(SP), DIMENSION(nspec_agb,n_agb_c) :: agb_specinit_c=0.
-  REAL(SP), DIMENSION(nspec_aringer,n_agb_car) :: aringer_specinit=0.
-  REAL(SP), DIMENSION(nagndust_spec)           :: agndust_lam=0.
-  REAL(SP), DIMENSION(nagndust_spec,nagndust)  :: agndust_specinit=0.
+  REAL(SP), DIMENSION(nspec_agb,N_AGB_O) :: agb_specinit_o=0.
+  REAL(SP), DIMENSION(nspec_agb,N_AGB_C) :: agb_specinit_c=0.
+  REAL(SP), DIMENSION(nspec_aringer,N_AGB_CAR) :: aringer_specinit=0.
+  REAL(SP), DIMENSION(NAGNDUST_SPEC)           :: agndust_lam=0.
+  REAL(SP), DIMENSION(NAGNDUST_SPEC,NAGNDUST)  :: agndust_specinit=0.
   REAL(KIND(1.0)), ALLOCATABLE :: speclibinit(:,:,:,:)
   REAL(SP), ALLOCATABLE :: wmbsi(:,:,:,:)
   REAL(SP), DIMENSION(nzwmb)     :: zwmb=0.
   REAL(SP), DIMENSION(nspec_wmb) :: wmb_lam=0.
-  REAL(SP), DIMENSION(nspec_wmb,ndim_wmb_logt,ndim_wmb_logg) :: wmb_specinit=0.
-  REAL(SP), DIMENSION(ntabmax)   :: lsflam=0.,lsfsig=0.
+  REAL(SP), DIMENSION(nspec_wmb,NDIM_WMB_LOGT,NDIM_WMB_LOGG) :: wmb_specinit=0.
+  REAL(SP), DIMENSION(NTABMAX)   :: lsflam=0.,lsfsig=0.
   REAL(SP), DIMENSION(30) :: g03lam=0., g03smc=0.
   REAL(SP), ALLOCATABLE :: tspec_xrb(:)
 
@@ -147,7 +147,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   CALL SPS_TAKEDOWN(ctx)
 
-  IF (verbose.EQ.1) THEN
+  IF (VERBOSE.EQ.1) THEN
      WRITE(*,*)
      WRITE(*,*) '    Setting up SPS...'
   ENDIF
@@ -238,7 +238,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ! Set other dimensions
   nbands = 159
   nindx = 30
-  ntfull = time_res_incr * nt
+  ntfull = TIME_RES_INCR * nt
   
   ! Set XRB dimensions
   nspec_xrb=15000
@@ -316,15 +316,15 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      ALLOCATE(cache%vega_spec(nspec),cache%sun_spec(nspec))
      ALLOCATE(cache%spec_lambda(nspec),cache%spec_nu(nspec))
      ALLOCATE(cache%spec_res(nspec))
-     ALLOCATE(cache%speclib(nspec,nz,ndim_logt,ndim_logg))
-     ALLOCATE(cache%wmb_spec(nspec,nz,ndim_wmb_logt,ndim_wmb_logg))
-     ALLOCATE(cache%agb_spec_o(nspec,n_agb_o))
-     ALLOCATE(cache%agb_logt_o(nz,n_agb_o))
-     ALLOCATE(cache%agb_spec_c(nspec,n_agb_c))
-     ALLOCATE(cache%agb_logt_c(n_agb_c))
-     ALLOCATE(cache%agb_spec_car(nspec,n_agb_car))
-     ALLOCATE(cache%pagb_spec(nspec,ndim_pagb,2))
-     ALLOCATE(cache%wrn_spec(nspec,ndim_wr,nz),cache%wrc_spec(nspec,ndim_wr,nz))
+     ALLOCATE(cache%speclib(nspec,nz,NDIM_LOGT,NDIM_LOGG))
+     ALLOCATE(cache%wmb_spec(nspec,nz,NDIM_WMB_LOGT,NDIM_WMB_LOGG))
+     ALLOCATE(cache%agb_spec_o(nspec,N_AGB_O))
+     ALLOCATE(cache%agb_logt_o(nz,N_AGB_O))
+     ALLOCATE(cache%agb_spec_c(nspec,N_AGB_C))
+     ALLOCATE(cache%agb_logt_c(N_AGB_C))
+     ALLOCATE(cache%agb_spec_car(nspec,N_AGB_CAR))
+     ALLOCATE(cache%pagb_spec(nspec,NDIM_PAGB,2))
+     ALLOCATE(cache%wrn_spec(nspec,NDIM_WR,nz),cache%wrc_spec(nspec,NDIM_WR,nz))
 
      ! Dust models
      ALLOCATE(cache%qpaharr(nqpah_dustem))
@@ -333,13 +333,13 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      ALLOCATE(cache%dustem_dustem(ndim_dustem,numin_dustem*2))
      ALLOCATE(cache%dustem2_dustem(nspec,nqpah_dustem,numin_dustem*2))
 
-     ALLOCATE(cache%flux_dagb(nspec,2,nteff_dagb,ntau_dagb))
-     ALLOCATE(cache%nebem_cont(nspec,nebnz,nebnage,nebnip),cache%xnebem_cont(nspec,nebnz,nebnage,nebnip))
+     ALLOCATE(cache%flux_dagb(nspec,2,NTEFF_DAGB,NTAU_DAGB))
+     ALLOCATE(cache%nebem_cont(nspec,NEBNZ,NEBNAGE,NEBNIP),cache%xnebem_cont(nspec,NEBNZ,NEBNAGE,NEBNIP))
      ALLOCATE(cache%neb_res_min(nspec))
-     ALLOCATE(cache%gaussnebarr(nspec,nemline))
-     ALLOCATE(cache%agndust_spec(nspec,nagndust))
-     ALLOCATE(cache%mact_isoc(nz,nt,nm),cache%logl_isoc(nz,nt,nm),cache%logt_isoc(nz,nt,nm),cache%logg_isoc(nz,nt,nm))
-     ALLOCATE(cache%ffco_isoc(nz,nt,nm),cache%phase_isoc(nz,nt,nm),cache%mini_isoc(nz,nt,nm),cache%lmdot_isoc(nz,nt,nm))
+     ALLOCATE(cache%gaussnebarr(nspec,NEMLINE))
+     ALLOCATE(cache%agndust_spec(nspec,NAGNDUST))
+     ALLOCATE(cache%mact_isoc(nz,nt,NM),cache%logl_isoc(nz,nt,NM),cache%logt_isoc(nz,nt,NM),cache%logg_isoc(nz,nt,NM))
+     ALLOCATE(cache%ffco_isoc(nz,nt,NM),cache%phase_isoc(nz,nt,NM),cache%mini_isoc(nz,nt,NM),cache%lmdot_isoc(nz,nt,NM))
      ALLOCATE(cache%nmass_isoc(nz,nt))
      ALLOCATE(cache%timestep_isoc(nz,nt))
      ALLOCATE(cache%zlegend(nz))
@@ -415,7 +415,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   
   ! Allocate local arrays
   ALLOCATE(tspec(nspec))
-  ALLOCATE(wmbsi(nspec,nzwmb,ndim_wmb_logt,ndim_wmb_logg))
+  ALLOCATE(wmbsi(nspec,nzwmb,NDIM_WMB_LOGT,NDIM_WMB_LOGG))
   ALLOCATE(tspec_xrb(nspec_xrb))
   ALLOCATE(zlegend_str(nz))
   ALLOCATE(zz_str_xrb(nz_xrb))
@@ -570,8 +570,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !--------------Confirm that variables are properly set-----------!
   !----------------------------------------------------------------!
 
-  IF (basel_str.NE.'pdva'.AND.basel_str.NE.'wlbc') THEN
-     WRITE(*,*) 'SPS_SETUP ERROR: basel_str var set to invalid type: ',basel_str
+  IF (BASEL_STR.NE.'pdva'.AND.BASEL_STR.NE.'wlbc') THEN
+     WRITE(*,*) 'SPS_SETUP ERROR: BASEL_STR var set to invalid type: ',BASEL_STR
      STOP
   ENDIF
 
@@ -639,8 +639,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   IF (isoc_type.EQ.'bpss') THEN
 
-     IF (time_res_incr.NE.1) THEN
-        WRITE(*,*) 'SPS_SETUP ERROR: cannot have time_res_incr>1 w/ BPASS models'
+     IF (TIME_RES_INCR.NE.1) THEN
+        WRITE(*,*) 'SPS_SETUP ERROR: cannot have TIME_RES_INCR>1 w/ BPASS models'
         STOP
      ENDIF
 
@@ -728,18 +728,18 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !NB: these are the same for all spectral libraries
    OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_logt.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
-  DO i=1,ndim_logt
+  DO i=1,NDIM_LOGT
      READ(91,*) speclib_logt(i)
   ENDDO
   CLOSE(91)
    OPEN(91,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_logg.dat',&
        STATUS='OLD',iostat=stat,ACTION='READ')
-  DO i=1,ndim_logg
+  DO i=1,NDIM_LOGG
      READ(91,*) speclib_logg(i)
   ENDDO
   CLOSE(91)
 
-  ALLOCATE(speclibinit(nspec,nzinit,ndim_logt,ndim_logg))
+  ALLOCATE(speclibinit(nspec,nzinit,NDIM_LOGT,NDIM_LOGG))
   speclibinit = 0.0
 
   !read in each metallicity
@@ -750,20 +750,20 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !read in the spectral library
      IF (spec_type.EQ.'basel') THEN
-      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'//basel_str//&
+      OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'//BASEL_STR//&
              '_z'//zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
      ELSE IF (spec_type.EQ.'miles') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
      ELSE IF (spec_type(1:3).EQ.'c3k') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//TRIM(spec_type)//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='OLD',iostat=stat,ACTION='READ',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
      ENDIF
      IF (stat.NE.0) THEN
       WRITE(*,*) 'SPS_SETUP ERROR: '//TRIM(spec_type)//&
@@ -790,8 +790,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
           (LOG10(zlegendinit(i1+1)/zsol_spec)-LOG10(zlegendinit(i1)/zsol_spec))
      dz = MIN(MAX(dz,0.0),1.0) !no extrapolation!
 
-   speclib(:,z,:,:) = REAL((1-dz)*LOG10(speclibinit(:,i1,:,:)+tiny_number) + &
-      dz*LOG10(speclibinit(:,i1+1,:,:)+tiny_number), KIND(speclib))
+   speclib(:,z,:,:) = REAL((1-dz)*LOG10(speclibinit(:,i1,:,:)+SAFE_FLOOR) + &
+      dz*LOG10(speclibinit(:,i1+1,:,:)+SAFE_FLOOR), KIND(speclib))
      speclib(:,z,:,:) = 10**speclib(:,z,:,:)
 
   ENDDO
@@ -808,7 +808,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
           'WMBASIC.teff cannot be opened'
      STOP
   ENDIF
-  DO i=1,ndim_wmb_logt
+  DO i=1,NDIM_WMB_LOGT
      READ(93,*) wmb_logt(i)
   ENDDO
   CLOSE(93)
@@ -840,10 +840,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      !interpolate to the main spectral grid
      !NB: should be smoothing the models first to the resolution of the
      !input spectral grid
-     DO i=1,ndim_wmb_logt
-        DO j=1,ndim_wmb_logg
+     DO i=1,NDIM_WMB_LOGT
+        DO j=1,NDIM_WMB_LOGG
           wmbsi(:,z,i,j) = MAX(interpolate_linear(wmb_lam,wmb_specinit(:,i,j),&
-                spec_lambda),tiny_number)
+                spec_lambda),SAFE_FLOOR)
         ENDDO
      ENDDO
 
@@ -863,8 +863,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
           (LOG10(zwmb(i1+1)/zsol_spec)-LOG10(zwmb(i1)/zsol_spec))
      dz = MIN(MAX(dz,0.0),1.0) !no extrapolation!
 
-   wmb_spec(:,z,:,:) = REAL((1-dz)*LOG10(wmbsi(:,i1,:,:)+tiny_number) + &
-      dz*LOG10(wmbsi(:,i1+1,:,:)+tiny_number), KIND(wmb_spec))
+   wmb_spec(:,z,:,:) = REAL((1-dz)*LOG10(wmbsi(:,i1,:,:)+SAFE_FLOOR) + &
+      dz*LOG10(wmbsi(:,i1+1,:,:)+SAFE_FLOOR), KIND(wmb_spec))
      wmb_spec(:,z,:,:) = 10**wmb_spec(:,z,:,:)
 
   ENDDO
@@ -882,7 +882,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !burn the header
   READ(93,*) char
   READ(93,*) dumr1, tagb_logz_o
-  DO i=1,n_agb_o
+  DO i=1,N_AGB_O
      READ(93,*) dumr1, tagb_logt_o(:,i)
   ENDDO
   CLOSE(93)
@@ -907,7 +907,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDIF
   !burn the header
   READ(94,*) char
-  DO i=1,n_agb_c
+  DO i=1,N_AGB_C
      READ(94,*) dumr1, agb_logt_c(i)
   ENDDO
   CLOSE(94)
@@ -926,9 +926,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDDO
   CLOSE(95)
   !interpolate to the main spectral grid
-  DO i=1,n_agb_o
+  DO i=1,N_AGB_O
    agb_spec_o(:,i) = MAX(interpolate_linear(agb_lam,agb_specinit_o(:,i),&
-          spec_lambda),tiny_number)
+          spec_lambda),SAFE_FLOOR)
   ENDDO
 
   !read in TP-AGB C-rich spectra
@@ -944,9 +944,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDDO
   CLOSE(96)
   !interpolate to the main spectral grid
-  DO i=1,n_agb_c
+  DO i=1,N_AGB_C
    agb_spec_c(:,i) = MAX(interpolate_linear(agb_lam,agb_specinit_c(:,i),&
-          spec_lambda),tiny_number)
+          spec_lambda),SAFE_FLOOR)
   ENDDO
 
   !---------Read in Aringer carbon star library---------!
@@ -960,7 +960,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      STOP
   ENDIF
   !burn the header
-  DO i=1,n_agb_car
+  DO i=1,N_AGB_CAR
      READ(94,*) agb_logt_car(i)
   ENDDO
   CLOSE(94)
@@ -980,9 +980,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDDO
   CLOSE(96)
   !interpolate to the main spectral grid
-  DO i=1,n_agb_car
+  DO i=1,N_AGB_CAR
    agb_spec_car(:,i) = MAX(interpolate_linear(aringer_lam,aringer_specinit(:,i),&
-          spec_lambda),tiny_number)
+          spec_lambda),SAFE_FLOOR)
   ENDDO
 
   !------------read in post-AGB spectra from Rauch 2003------------;
@@ -994,7 +994,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    WRITE(*,*) 'SPS_SETUP ERROR: data/spectra/Hot_spectra/ipagb.teff cannot be opened'
      STOP
   ENDIF
-  DO i=1,ndim_pagb
+  DO i=1,NDIM_PAGB
      READ(94,*) pagb_logt(i)
   ENDDO
   CLOSE(94)
@@ -1030,9 +1030,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   !interpolate to the main spectral array
   DO j=1,2
-     DO i=1,ndim_pagb
+     DO i=1,NDIM_PAGB
       pagb_spec(:,i,j) = MAX(interpolate_linear(pagb_lam,pagb_specinit(:,i,j),&
-             spec_lambda),tiny_number)
+             spec_lambda),SAFE_FLOOR)
      ENDDO
   ENDDO
 
@@ -1045,7 +1045,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WN.teff cannot be opened'
      STOP
   ENDIF
-  DO i=1,ndim_wr
+  DO i=1,NDIM_WR
      READ(94,*) wrn_logt(i)
   ENDDO
   CLOSE(94)
@@ -1057,7 +1057,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      WRITE(*,*) 'SPS_SETUP ERROR: Hot_spectra/CMFGEN_WC.teff cannot be opened'
      STOP
   ENDIF
-  DO i=1,ndim_wr
+  DO i=1,NDIM_WR
      READ(94,*) wrc_logt(i)
   ENDDO
   CLOSE(94)
@@ -1072,7 +1072,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDIF
   READ(97,*) tlamwr
   DO j=1,5
-     DO i=1,ndim_wr
+     DO i=1,NDIM_WR
         READ(97,*) d1,twrzmet(j)
         READ(97,*) twrn(:,i,j)
      ENDDO
@@ -1085,11 +1085,11 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    i1 = MIN(MAX(find_interval(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
      dz = (LOG10(zlegend(j)/zsol_spec)-twrzmet(i1))/(twrzmet(i1+1)-twrzmet(i1))
      dz = MIN(MAX(dz,0.0),1.)
-     DO i=1,ndim_wr
-        tspecwr = (1-dz)*LOG10(twrn(:,i,i1)+tiny_number) + &
-             dz*LOG10(twrn(:,i,i1+1)+tiny_number)
+     DO i=1,NDIM_WR
+        tspecwr = (1-dz)*LOG10(twrn(:,i,i1)+SAFE_FLOOR) + &
+             dz*LOG10(twrn(:,i,i1+1)+SAFE_FLOOR)
       wrn_spec(:,i,j) = 10**interpolate_linear(LOG10(tlamwr),tspecwr,&
-             LOG10(spec_lambda))-tiny_number
+             LOG10(spec_lambda))-SAFE_FLOOR
      ENDDO
   ENDDO
 
@@ -1103,7 +1103,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   ENDIF
   READ(97,*) tlamwr
   DO j=1,5
-     DO i=1,ndim_wr
+     DO i=1,NDIM_WR
         READ(97,*) d1,twrzmet(j)
         READ(97,*) twrc(:,i,j)
      ENDDO
@@ -1116,11 +1116,11 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    i1 = MIN(MAX(find_interval(twrzmet,LOG10(zlegend(j)/zsol_spec)),1),SIZE(twrzmet)-1)
      dz = (LOG10(zlegend(j)/zsol_spec)-twrzmet(i1))/(twrzmet(i1+1)-twrzmet(i1))
      dz = MIN(MAX(dz,0.0),1.)
-     DO i=1,ndim_wr
-        tspecwr = (1-dz)*LOG10(twrc(:,i,i1)+tiny_number) + &
-             dz*LOG10(twrc(:,i,i1+1)+tiny_number)
+     DO i=1,NDIM_WR
+        tspecwr = (1-dz)*LOG10(twrc(:,i,i1)+SAFE_FLOOR) + &
+             dz*LOG10(twrc(:,i,i1+1)+SAFE_FLOOR)
       wrc_spec(:,i,j) = 10**interpolate_linear(LOG10(tlamwr),tspecwr,&
-             LOG10(spec_lambda))-tiny_number
+             LOG10(spec_lambda))-SAFE_FLOOR
      ENDDO
   ENDDO
 
@@ -1160,7 +1160,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         STOP
      END IF
 
-     DO i=1,nlines
+     DO i=1,NLINES
 
         READ(97,*,IOSTAT=stat) char
         IF (stat.NE.0) GOTO 20
@@ -1171,8 +1171,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
            IF (m.EQ.1) n_isoc = n_isoc+1
            BACKSPACE(97)
-           IF (m.GT.nm) THEN
-              WRITE(*,*) 'SPS_SETUP ERROR: number of mass points GT nm'
+           IF (m.GT.NM) THEN
+              WRITE(*,*) 'SPS_SETUP ERROR: number of mass points GT NM'
               STOP
            ENDIF
            IF (isoc_type.EQ.'mist') THEN
@@ -1279,8 +1279,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
   lambda_dagb(1:nlam) = lambda_dagb(1:nlam)
 
-  DO i=1,nteff_dagb
-     DO j=1,ntau_dagb
+  DO i=1,NTEFF_DAGB
+     DO j=1,NTAU_DAGB
         READ(99,*,IOSTAT=stat) teff_dagb(1,i), tau1_dagb(1,j)
         READ(99,*,IOSTAT=stat) fluxin_dagb(1:nlam)
         IF (stat.NE.0) THEN
@@ -1308,8 +1308,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !read in the wavelength grid
   READ(99,*,IOSTAT=stat) lambda_dagb(1:nlam)
 
-  DO i=1,nteff_dagb
-     DO j=1,ntau_dagb
+  DO i=1,NTEFF_DAGB
+     DO j=1,NTAU_DAGB
         READ(99,*,IOSTAT=stat) teff_dagb(2,i), tau1_dagb(2,j)
         READ(99,*,IOSTAT=stat) fluxin_dagb(1:nlam)
         IF (stat.NE.0) THEN
@@ -1345,15 +1345,15 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !read in the optical depths
   READ(99,*) agndust_tau
 
-  DO i=1,nagndust_spec
+  DO i=1,NAGNDUST_SPEC
      READ(99,*) agndust_lam(i),agndust_specinit(i,:)
   ENDDO
 
    i1 = MAX(find_interval(spec_lambda,agndust_lam(1)), 1)
-   i2 = MAX(find_interval(spec_lambda,agndust_lam(nagndust_spec)), 1)
-  DO i=1,nagndust
+   i2 = MAX(find_interval(spec_lambda,agndust_lam(NAGNDUST_SPEC)), 1)
+  DO i=1,NAGNDUST
    agndust_spec(i1:i2,i) = 10**interpolate_linear(LOG10(agndust_lam),&
-          LOG10(agndust_specinit(:,i)+tiny30),LOG10(spec_lambda(i1:i2)))-tiny30
+          LOG10(agndust_specinit(:,i)+SAFE_FLOOR),LOG10(spec_lambda(i1:i2)))-SAFE_FLOOR
   ENDDO
 
 
@@ -1380,9 +1380,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      READ(99,*)
      !read the wavelength array
      READ(99,*) readlambneb
-     DO i=1,nebnz
-        DO j=1,nebnage
-           DO k=1,nebnip
+     DO i=1,NEBNZ
+        DO j=1,NEBNAGE
+           DO k=1,NEBNIP
               READ(99,*,iostat=stat) nebem_logz(i),nebem_age(j),nebem_logu(k)
               READ(99,*,iostat=stat) readcontneb
               !interpolate onto the main wavelength grid
@@ -1410,9 +1410,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      READ(99,*)
      !read the wavelength array
      READ(99,*) nebem_line_pos
-     DO i=1,nebnz
-        DO j=1,nebnage
-           DO k=1,nebnip
+     DO i=1,NEBNZ
+        DO j=1,NEBNAGE
+           DO k=1,NEBNIP
               READ(99,*,iostat=stat) nebem_logz(i),nebem_age(j),nebem_logu(k)
               READ(99,*,iostat=stat) nebem_line(:,i,j,k)
            ENDDO
@@ -1426,7 +1426,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !define the minimum resolution of the emission lines
      !based on the resolution of the spectral library
-     DO i=1,nemline
+     DO i=1,NEMLINE
       j = MIN(MAX(find_interval(spec_lambda,nebem_line_pos(i)),1),nspec-1)
         neb_res_min(i) = spec_lambda(j+1)-spec_lambda(j)
      ENDDO
@@ -1434,10 +1434,10 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      !set up a "master" array of normalized Gaussians
      !this makes the code much faster
      IF (setup_nebular_gaussians.EQ.1) THEN
-        DO i=1,nemline
+        DO i=1,NEMLINE
            IF (smooth_velocity.EQ.1) THEN
               !smoothing variable is km/s
-              dlam = nebem_line_pos(i)*ctx%nebular_smooth_init_val/clight*1E13
+              dlam = nebem_line_pos(i)*ctx%nebular_smooth_init_val/C_LIGHT*1E13
            ELSE
               !smoothing variable is A
               dlam = ctx%nebular_smooth_init_val
@@ -1445,9 +1445,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
            !broaden the line to at least the resolution element
            !of the spectrum (x2).
            dlam = MAX(dlam,neb_res_min(i)*2)
-           gaussnebarr(:,i) = 1/SQRT(2*mypi)/dlam*&
+           gaussnebarr(:,i) = 1/SQRT(2*PI)/dlam*&
                 EXP(-(spec_lambda-nebem_line_pos(i))**2/2/dlam**2)  / &
-                clight*nebem_line_pos(i)**2
+                C_LIGHT*nebem_line_pos(i)**2
         ENDDO
      ENDIF
 
@@ -1474,9 +1474,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
       READ(99,*)
       !read the wavelength array
       READ(99,*) readlambneb
-      DO i=1,nebnz
-         DO j=1,nebnage
-            DO k=1,nebnip
+      DO i=1,NEBNZ
+         DO j=1,NEBNAGE
+            DO k=1,NEBNIP
                READ(99,*,iostat=stat) nebem_logz(i),nebem_age(j),nebem_logu(k)
                READ(99,*,iostat=stat) readcontneb
                !interpolate onto the main wavelength grid
@@ -1504,9 +1504,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
       READ(99,*)
       !read the wavelength array
       READ(99,*) nebem_line_pos
-      DO i=1,nebnz
-         DO j=1,nebnage
-            DO k=1,nebnip
+      DO i=1,NEBNZ
+         DO j=1,NEBNAGE
+            DO k=1,NEBNIP
                READ(99,*,iostat=stat) nebem_logz(i),nebem_age(j),nebem_logu(k)
                READ(99,*,iostat=stat) xnebem_line(:,i,j,k)
             ENDDO
@@ -1553,13 +1553,13 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      DO i=1,nt_xrb
         READ(98,*) tspec_xrb
         !interpolate to the main wavelength array
-      spec_xrb(:,i,j) = MAX(interpolate_linear(lam_xrb,tspec_xrb,spec_lambda),tiny_number)
+      spec_xrb(:,i,j) = MAX(interpolate_linear(lam_xrb,tspec_xrb,spec_lambda),SAFE_FLOOR)
      ENDDO
      CLOSE(98)
   ENDDO
 
   !convert to Lsun/Hz/Msun
-  spec_xrb = spec_xrb * lsun
+  spec_xrb = spec_xrb * L_SOL
 
   !----------------------------------------------------------------!
   !-------------------Set up magnitude info------------------------!
@@ -1584,9 +1584,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !and convert to fnu
    jj = find_interval(spec_lambda,tvega_lam(ntlam))
    vega_spec(:jj) = 10**interpolate_linear(LOG10(tvega_lam),&
-          LOG10(tvega_spec+tiny_number),LOG10(spec_lambda(:jj)))
+          LOG10(tvega_spec+SAFE_FLOOR),LOG10(spec_lambda(:jj)))
   vega_spec = vega_spec*spec_lambda**2
-  vega_spec(jj+1:) = tiny_number
+  vega_spec(jj+1:) = SAFE_FLOOR
 
   !read in Solar spectrum; units are fnu, flux is appropriate for
   !deriving absolute magnitudes.  spectrum from STScI, extrapolated
@@ -1605,8 +1605,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !interpolate the Solar spectrum onto the wavelength grid
    jj = find_interval(spec_lambda,tsun_lam(ntlam))
    sun_spec(:jj) = 10**interpolate_linear(LOG10(tsun_lam),&
-          LOG10(tsun_spec+tiny_number),LOG10(spec_lambda(:jj)))
-  sun_spec(jj+1:) = tiny_number
+          LOG10(tsun_spec+SAFE_FLOOR),LOG10(spec_lambda(:jj)))
+  sun_spec(jj+1:) = SAFE_FLOOR
 
   !read in and set up band-pass filters
   IF (TRIM(alt_filter_file).EQ.'') THEN
@@ -1670,13 +1670,13 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
     dumr1 = integrate_trapezoid_array(spec_lambda,bands(:,i)/spec_lambda)
        IF (ieee_is_nan(dumr1)) dumr1 = 0.0
      !in this case the band is entirely outside the wavelength array
-     IF (dumr1.LE.tiny_number) dumr1=1.0
+     IF (dumr1.LE.SAFE_FLOOR) dumr1=1.0
      bands(:,i) = bands(:,i) / dumr1
      bands(:,i) = MAX(bands(:,i),0.0)  !force no negative values
 
      !compute absolute magnitude of the Sun
    magsun(i) = integrate_trapezoid_array(spec_lambda,sun_spec*bands(:,i)/spec_lambda)
-     IF (ieee_is_nan(magsun(i)) .OR. magsun(i).LT.2*tiny_number) THEN
+     IF (ieee_is_nan(magsun(i)) .OR. magsun(i).LT.2*SAFE_FLOOR) THEN
         magsun(i) = 99.0
      ELSE
         magsun(i) = -2.5*LOG10(magsun(i)) - 48.60
@@ -1684,7 +1684,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
 
      !compute mags of Vega
    magvega(i) = integrate_trapezoid_array(spec_lambda,vega_spec*bands(:,i)/spec_lambda)
-     IF (ieee_is_nan(magvega(i)) .OR. magvega(i).LE.tiny_number) THEN
+     IF (ieee_is_nan(magvega(i)) .OR. magvega(i).LE.SAFE_FLOOR) THEN
         magvega(i) = 99.0
      ELSE
         magvega(i) = -2.5 * LOG10(magvega(i)) - 48.60
@@ -1713,8 +1713,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         ENDIF
        d = integrate_trapezoid_array(spec_lambda,(spec_lambda/lami(j))**(-1.0)*bands(:,ind(j))/&
             spec_lambda)
-         IF (ieee_is_nan(d)) d = tiny_number
-         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
+         IF (ieee_is_nan(d)) d = SAFE_FLOOR
+         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,SAFE_FLOOR)
      ENDDO
 
      !normalize the MIPS photometry to a BB (beta=2)
@@ -1728,8 +1728,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         ENDIF
        d = integrate_trapezoid_array(spec_lambda,(spec_lambda/lami(j))**(-2.0)*bands(:,ind(j))/&
             spec_lambda)
-         IF (ieee_is_nan(d)) d = tiny_number
-         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,tiny_number)
+         IF (ieee_is_nan(d)) d = SAFE_FLOOR
+         bands(:,ind(j)) = bands(:,ind(j)) / MAX(d,SAFE_FLOOR)
      ENDDO
   ENDIF
 
@@ -1739,7 +1739,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   DO i=1,nbands
    filter_leff(i) = integrate_trapezoid_array(spec_lambda,spec_lambda*bands(:,i))
      d = integrate_trapezoid_array(spec_lambda,bands(:,i)/spec_lambda)
-     IF (ieee_is_nan(filter_leff(i)) .OR. ieee_is_nan(d) .OR. d.LE.tiny_number) THEN
+     IF (ieee_is_nan(filter_leff(i)) .OR. ieee_is_nan(d) .OR. d.LE.SAFE_FLOOR) THEN
         filter_leff(i) = 0.0
      ELSE
         filter_leff(i) = filter_leff(i) / d
@@ -1886,14 +1886,14 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
      IF (isoc_type.NE.'bpss') THEN
 
         DO i=1,ntfull
-           IF (MOD(i-1,time_res_incr).EQ.0) THEN
-              time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)
+           IF (MOD(i-1,TIME_RES_INCR).EQ.0) THEN
+              time_full(i) = timestep_isoc(zmin,(i-1)/TIME_RES_INCR+1)
            ELSE
-              IF ((i-1)/time_res_incr+2.LT.nt) THEN
-                 d1 = (timestep_isoc(zmin,(i-1)/time_res_incr+2)-&
-                      timestep_isoc(zmin,(i-1)/time_res_incr+1))/time_res_incr
+              IF ((i-1)/TIME_RES_INCR+2.LT.nt) THEN
+                 d1 = (timestep_isoc(zmin,(i-1)/TIME_RES_INCR+2)-&
+                      timestep_isoc(zmin,(i-1)/TIME_RES_INCR+1))/TIME_RES_INCR
               ENDIF
-              time_full(i) = timestep_isoc(zmin,(i-1)/time_res_incr+1)+d1
+              time_full(i) = timestep_isoc(zmin,(i-1)/TIME_RES_INCR+1)+d1
               time_full(i) = time_full(i-1)+d1
            ENDIF
         ENDDO
@@ -1914,7 +1914,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         STOP
      ENDIF
 
-     DO i=1,ntabmax
+     DO i=1,NTABMAX
         READ(99,*,iostat=stat) lsflam(i),lsfsig(i)
         IF (stat.NE.0) GOTO 910
         IF (i.EQ.1) lsfinfo%minlam=lsflam(i)
@@ -1947,14 +1947,14 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
    whlylim   = find_interval(spec_lambda,912.d0)
   !define the frequency array
   IF (cache_new) THEN
-     spec_nu   = clight / spec_lambda
+     spec_nu   = C_LIGHT / spec_lambda
   ENDIF
 
   !set flag indicating that sps_setup has been run, initializing
   !important common block vars/arrays
   check_sps_setup = 1
 
-  IF (verbose.EQ.1) THEN
+  IF (VERBOSE.EQ.1) THEN
      WRITE(*,*) '      ...done'
      WRITE(*,*)
   ENDIF

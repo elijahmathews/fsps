@@ -6,7 +6,7 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
   !3) single metallicity (zpos) for a grid of ages
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP
+   USE fsps_constants, ONLY: SP
    USE fsps_interpolation, ONLY: find_interval
    USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE

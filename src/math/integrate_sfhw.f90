@@ -32,7 +32,8 @@ function intsfwght(ctx, sspind, logt, sfh)
   !    The exact definite integral between the limits specified in `logt`.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP, tiny_number
+   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_types, only: SFHPARAMS
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
@@ -77,7 +78,8 @@ function sfwght_log(ctx, sspind, logt, sfh)
   !    The exact indefinite integral, evaluated at `logt`.  Scalar float.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP, tiny_number
+   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_types, only: SFHPARAMS
    use fsps_special_functions, only: exponential_integral
    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
@@ -109,24 +111,24 @@ function sfwght_log(ctx, sspind, logt, sfh)
      
   else if (sfh%type.eq.1) then
      ! SFR = exponential ~ exp(-T/tau)
-     if (sfh%tau.le.tiny_number) then
+     if (sfh%tau.le.SAFE_FLOOR) then
         sfwght_log = 0.0
         return
      endif
      tprime = 10**logt / sfh%tau
-     if (tprime.le.tiny_number) tprime = tiny_number
+     if (tprime.le.SAFE_FLOOR) tprime = SAFE_FLOOR
      ei = exponential_integral(tprime)
      if (.not. ieee_is_finite(ei)) ei = 0.0
    sfwght_log = (logage - logt) * exp(tprime) + loge * ei
 
   else if (sfh%type.eq.4) then
      ! SFR = delayed exponential ~ T/tau exp(-T/tau)
-     if (sfh%tau.le.tiny_number) then
+     if (sfh%tau.le.SAFE_FLOOR) then
         sfwght_log = 0.0
         return
      endif
      tprime = 10**logt / sfh%tau ! t/tau
-     if (tprime.le.tiny_number) tprime = tiny_number
+     if (tprime.le.SAFE_FLOOR) tprime = SAFE_FLOOR
      a = (10**logt - sfh%tage - sfh%tau) * (logt - logage)
      b = sfh%tau * loge
      c = (sfh%tage + sfh%tau) * loge
@@ -175,7 +177,8 @@ function sfwght_lin(ctx, sspind, t, sfh)
   !    The indefinite integral, evaluated at `t`
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP, tiny_number
+   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_types, only: SFHPARAMS
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind 
@@ -202,7 +205,7 @@ function sfwght_lin(ctx, sspind, t, sfh)
 
   else if (sfh%type.eq.1) then
      ! SFR = exponential ~ 1/tau * exp(-T/tau)
-     if (sfh%tau.le.tiny_number) then
+     if (sfh%tau.le.SAFE_FLOOR) then
         sfwght_lin = 0.0
         return
      endif
@@ -211,7 +214,7 @@ function sfwght_lin(ctx, sspind, t, sfh)
 
   else if (sfh%type.eq.4) then
      ! SFR = delayed exponential ~ T/tau**2 * exp(-T/tau)
-     if (sfh%tau.le.tiny_number) then
+     if (sfh%tau.le.SAFE_FLOOR) then
         sfwght_lin = 0.0
         return
      endif
@@ -246,7 +249,7 @@ FUNCTION EI(X)
 !
 !       ============================================
 !
-   use fsps_types, only: SP
+   use fsps_constants, only: SP
    implicit none
   REAL(SP) :: X, EI
 

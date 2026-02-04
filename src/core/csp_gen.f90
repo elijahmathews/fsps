@@ -34,7 +34,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! total_weights:
   !    The weights(masses) for each SSP in the composite
 
-   use fsps_types, only: SFHPARAMS, PARAMS, SP, nemline, tiny_number
+   use fsps_constants, only: SP, NEMLINE, SAFE_FLOOR
+   use fsps_types, only: SFHPARAMS, PARAMS
    use fsps_context_types, only: fsps_context_t
    use sps_utils, only: sfh_weight, sfhinfo
    use fsps_dust, only: apply_dust_attenuation_and_emission
@@ -52,13 +53,13 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
    real(SP), intent(out), dimension(:) :: spec_csp
 
    real(SP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
-   real(SP), DIMENSION(nemline), intent(out) :: emlin_csp
+   real(SP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
 
   !real(SP), intent(out), dimension(ntfull, nzin) :: total_weights
   !real(SP), intent(out), dimension(nspec) :: spec_young,spec_old
 
    real(SP), dimension(SIZE(spec_csp)) :: lw_age, temp_spec !,csp1, csp2
-  real(SP), dimension(nemline) :: ncsp1, ncsp2, nlw_age, temp_lin
+  real(SP), dimension(NEMLINE) :: ncsp1, ncsp2, nlw_age, temp_lin
    real(SP), dimension(SIZE(mass_ssp,1), SIZE(mass_ssp,2)) :: total_weights
    real(SP), dimension(SIZE(mass_ssp,1)) :: w1, w2
    integer :: i, j, k, imin, imax, i_tesc, ntfull, nspec
@@ -121,14 +122,14 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
    total_weights(:, 1) = sfh_weight(ctx, sfhpars, imin, imax)
      ! Could save some loops by having proper normalization analytically from sfh_weight
      m1 = sum(total_weights(1:imax, 1))
-     if (m1.lt.tiny_number) m1 = 1.0
+     if (m1.lt.SAFE_FLOOR) m1 = 1.0
      total_weights(:, 1) = total_weights(:, 1) / m1
   endif
 
 
   ! Add constant and burst weights for SFH=1,4
   if (((pset%sfh.eq.1).or.(pset%sfh.eq.4)).and.&
-       ((pset%const.gt.0).or.(pset%fburst.gt.tiny_number))) then
+       ((pset%const.gt.0).or.(pset%fburst.gt.SAFE_FLOOR))) then
      imin = 0
      ! Constant
      sfhpars%type = 0
@@ -147,7 +148,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
       imax = max(imax, min(max(find_interval(time_full, log10(sfhpars%tb)) + 2, 1), ntfull))
      endif
      ! Sum with proper relative normalization.  Beware divide by zero.
-     if (m1.lt.tiny_number) m1 = 1.0
+     if (m1.lt.SAFE_FLOOR) m1 = 1.0
      total_weights(:,1) = (1 - pset%const - fburst) * total_weights(:,1) + &
                           pset%const * (w1 / m1) + &
                           fburst * w2
@@ -175,8 +176,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      m2 = sum(w2(1:imax))
      ! Normalize and sum.  need to be careful of divide by zero here, if all
      ! linear or all delay-tau s.t. weights sum to zero for a component.
-     if (m1.lt.tiny_number) m1 = 1.0
-     if (m2.lt.tiny_number) m2 = 1.0
+     if (m1.lt.SAFE_FLOOR) m1 = 1.0
+     if (m2.lt.SAFE_FLOOR) m2 = 1.0
      ! need to get the fraction of the mass formed in the linear portion
    call sfhinfo(ctx, pset, tage, mfrac, sfr, frac_linear)
      total_weights(:, 1) = (w1 / m1) * (1 - frac_linear) + frac_linear * (w2 / m2)
@@ -225,7 +226,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
         ! total weight, after normalizing.
       w1 = sfh_weight(ctx, sfhpars, imin, imax)
         m1 = sum(w1)
-        if (m1.lt.tiny_number) m1 = 1.0
+        if (m1.lt.SAFE_FLOOR) m1 = 1.0
         ! This is where we'd assign to specific metallicities, if taking that
         ! into account.  This scheme assumes entire bin is at average of the
         ! two enclosing Z values.
@@ -268,10 +269,10 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
    i_tesc = find_interval(time_full, pset%dust_tesc)
   do i=max(imin, 1), imax
      do k=1,nzin
-        if (total_weights(i, k).gt.tiny_number) then
+        if (total_weights(i, k).gt.SAFE_FLOOR) then
            weight_ssp(i, k) = total_weights(i, k)  ! copy to common variable
-           temp_spec = max(total_weights(i, k) * spec_ssp(:, i, k), tiny_number)
-           temp_lin = max(total_weights(i, k) * emlin_ssp(:, i, k), tiny_number)
+           temp_spec = max(total_weights(i, k) * spec_ssp(:, i, k), SAFE_FLOOR)
+           temp_lin = max(total_weights(i, k) * emlin_ssp(:, i, k), SAFE_FLOOR)
            if (i.le.i_tesc) then
               spec_young = spec_young + temp_spec
               ncsp1 = ncsp1 + temp_lin
@@ -281,8 +282,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
            endif
            ! Now do numerator in case of light and mass weighted ages.
            if (compute_light_ages.eq.1) then
-              temp_spec = max(temp_spec * 10**(time_full(i)-9), tiny_number)
-              temp_lin = max(temp_lin * 10**(time_full(i)-9), tiny_number)
+              temp_spec = max(temp_spec * 10**(time_full(i)-9), SAFE_FLOOR)
+              temp_lin = max(temp_lin * 10**(time_full(i)-9), SAFE_FLOOR)
               nlw_age = nlw_age + temp_lin
               lw_age = lw_age + temp_spec
               lbol_age = lbol_age + 10**lbol_ssp(i, k) * total_weights(i, k) &
@@ -297,7 +298,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   lbol_csp = log10(sum(10**lbol_ssp * total_weights))
 
   ! Here we add young and old spectra with dust.
-  if (((pset%dust1.gt.tiny_number).or.(pset%dust2.gt.tiny_number).or.(dust_type.eq.3))&
+  if (((pset%dust1.gt.SAFE_FLOOR).or.(pset%dust2.gt.SAFE_FLOOR).or.(dust_type.eq.3))&
        .and.(compute_light_ages.eq.0)) then
    call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, ncsp1, ncsp2, &
                                             spec_csp, mdust_csp, emlin_csp)
@@ -346,7 +347,8 @@ subroutine convert_sfhparams(pset, tage, sfh)
   !       - `sf_slope` is the fractional change in the SFR in inverse years.  It is
   !          positive for SFR that increases with *lookback* time.
   !
-   use fsps_types, only: SFHPARAMS, PARAMS, SP, tiny_number
+  use fsps_constants, only: SP, SAFE_FLOOR
+  use fsps_types, only: SFHPARAMS, PARAMS
   implicit none
 
   type(PARAMS), intent(in) :: pset
@@ -383,7 +385,7 @@ subroutine convert_sfhparams(pset, tage, sfh)
   endif
   ! For simha get zero crossing time (in lookback time), avoiding divison by zero
   ! Note that only positive slopes have a chance to hit zero SFR.
-  if (sfh%sf_slope.gt.tiny_number) then
+  if (sfh%sf_slope.gt.SAFE_FLOOR) then
      sfh%t0 = sfh%tq - 1. / sfh%sf_slope
   else
      sfh%t0 = 0.

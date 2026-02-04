@@ -16,7 +16,8 @@
 
 SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
-   USE fsps_types, ONLY: SP, PARAMS, nm, verbose, bhb_sbs_time, time_res_incr
+   USE fsps_constants, ONLY: SP, NM, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR
+   USE fsps_types, ONLY: PARAMS
   USE sps_utils, ONLY: getspec, smoothspec
   USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
      modify_horizontal_branch, add_remnant_mass, add_xray_binaries
@@ -31,7 +32,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !weight given to the entire horizontal branch
   REAL(SP) :: hb_wght,dt,tco
   !array of IMF weights
-  REAL(SP), DIMENSION(nm) :: wght
+  REAL(SP), DIMENSION(NM) :: wght
   !SSP spectrum
   REAL(SP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
   REAL(SP), DIMENSION(SIZE(spec_ssp,1), SIZE(spec_ssp,2)) :: tspec_ssp
@@ -41,7 +42,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !temp arrays for the isochrone data
   REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
      ffco(:,:),phase(:,:),lmdot(:,:)
-  REAL(SP), DIMENSION(nm) :: temp_mini
+  REAL(SP), DIMENSION(NM) :: temp_mini
   !arrays holding the number of mass elements for each
   !isochrone and the age of each isochrone
   INTEGER, ALLOCATABLE :: nmass(:)
@@ -77,8 +78,8 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
        smooth_lsf => ctx%smooth_lsf_val, smooth_velocity => ctx%smooth_velocity_val, &
        sps_home => ctx%sps_home )
 
-   ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
-   ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+   ALLOCATE(mini(nt,NM),mact(nt,NM),logl(nt,NM),logt(nt,NM),logg(nt,NM))
+   ALLOCATE(ffco(nt,NM),phase(nt,NM),lmdot(nt,NM))
    ALLOCATE(nmass(nt),time(nt))
 
   IF (check_sps_setup.EQ.0) THEN
@@ -158,7 +159,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
      time  = timestep_isoc(pset%zmet,:)!age of each isochrone in log(yr)
 
      !write for control
-     IF (verbose.EQ.1) THEN
+     IF (VERBOSE.EQ.1) THEN
         WRITE(*,*)
         WRITE(*,'("   Log(Z/Zsol): ",F6.3)') LOG10(zlegend(pset%zmet)/0.019)
         WRITE(*,'("   Fraction of blue HB stars: ",F6.3)') pset%fbhb
@@ -189,7 +190,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
         hb_wght  = 0.
         wght     = 0.
 
-        IF (verbose.EQ.1) &
+        IF (VERBOSE.EQ.1) &
              WRITE(*,'("age=",F5.2)') time(i)
 
       ! Manually copy the row to a contiguous temp array
@@ -203,13 +204,13 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
             CALL modify_horizontal_branch(ctx, i, pset%fbhb, time(i), hb_wght, nmass, &
             mini, mact, logl, logt, logg, phase, wght)
         !add in blue stragglers
-         IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
+         IF (time(i).GE.BHB_SBS_TIME.AND.pset%sbss.GT.1E-3) &
             CALL apply_blue_stragglers(ctx, i, pset%sbss, hb_wght, nmass, &
             mini, mact, logl, logt, logg, phase, wght)
         !modify the TP-AGB stars and Post-AGB stars
          CALL modify_giant_branch(ctx, i, pset%zmet, time(i), nmass(i), pset%delt, pset%dell, &
             pset%pagb, pset%redgb, pset%agb, logl, logt, phase, wght)
-        ii = 1 + (i-1)*time_res_incr
+        ii = 1 + (i-1)*TIME_RES_INCR
 
         !compute IMF-weighted mass of the SSP
         mass_ssp(ii) = SUM(wght(1:nmass(i))*mact(i,1:nmass(i)))
@@ -252,13 +253,13 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !-now interpolate the SSPs to fill out the expanded time grid-!
   !-------------------------------------------------------------!
 
-  IF (time_res_incr.GT.1) THEN
+  IF (TIME_RES_INCR.GT.1) THEN
      DO j=1,ntfull
-        IF (MOD(j-1,time_res_incr).EQ.0) CYCLE
+        IF (MOD(j-1,TIME_RES_INCR).EQ.0) CYCLE
       klo = MAX(MIN(find_interval(time,time_full(j)),nt-1),1)
         dt  = (time_full(j)-time(klo))/(time(klo+1)-time(klo))
-        klo = 1+(klo-1)*time_res_incr
-        khi = klo+time_res_incr
+        klo = 1+(klo-1)*TIME_RES_INCR
+        khi = klo+TIME_RES_INCR
         spec_ssp(:,j) = 10**( (1-dt)*LOG10(spec_ssp(:,klo)) + &
              dt*LOG10(spec_ssp(:,khi)))
         lbol_ssp(j)   = (1-dt)*lbol_ssp(klo)   + dt*lbol_ssp(khi)

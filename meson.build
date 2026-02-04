@@ -40,6 +40,7 @@ lib_sources = files(
     'src/core/compsp.f90',
     'src/core/csp_gen.f90',
     'src/core/fsps_cache.f90',
+    'src/core/fsps_constants.f90',
     'src/core/fsps_context_types.f90',
     'src/core/fsps_context.f90',
     'src/core/fsps_types.f90',

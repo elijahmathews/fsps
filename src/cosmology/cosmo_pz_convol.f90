@@ -8,7 +8,7 @@ SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
   !The average metallicity is returned as zave
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP
+   USE fsps_constants, ONLY: SP
    USE fsps_interpolation, ONLY: interpolate_linear
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx

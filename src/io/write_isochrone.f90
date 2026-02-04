@@ -2,10 +2,11 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
   !routine to write all isochrones and CMDs at a given metallicity
   !note that the output age grid is the native spacing, not boosted
-  !by the parameter time_res_incr
+  !by the parameter TIME_RES_INCR
 
      USE fsps_context_types, ONLY: fsps_context_t
-     USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time, gsig4pi
+     USE fsps_constants, ONLY: SP, NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
+     USE fsps_types, ONLY: PARAMS
      USE sps_utils, ONLY : getmags,getspec
      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
           modify_horizontal_branch
@@ -18,7 +19,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   CHARACTER(100), INTENT(in)  :: outfile
   CHARACTER(60)  :: fmt
   REAL(SP) :: dz=0.0,loggi,hb_wght
-  REAL(SP), DIMENSION(nm)     :: wght
+  REAL(SP), DIMENSION(NM)     :: wght
   REAL(SP), ALLOCATABLE :: spec(:)
   REAL(SP), ALLOCATABLE :: mags(:)
   !temp arrays for the isochrone data
@@ -42,8 +43,8 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
   ALLOCATE(spec(nspec))
   ALLOCATE(mags(nbands))
-  ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
-  ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+  ALLOCATE(mini(nt,NM),mact(nt,NM),logl(nt,NM),logt(nt,NM),logg(nt,NM))
+  ALLOCATE(ffco(nt,NM),phase(nt,NM),lmdot(nt,NM))
   ALLOCATE(nmass(nt))
 
   hb_wght = 0.0
@@ -81,7 +82,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
           mini, mact, logl, logt, logg, phase, wght)
 
      !add in blue stragglers
-     IF (timestep_isoc(zz,tt).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
+     IF (timestep_isoc(zz,tt).GE.BHB_SBS_TIME.AND.pset%sbss.GT.1E-3) &
           CALL apply_blue_stragglers(ctx, tt, pset%sbss, hb_wght, nmass, &
           mini, mact, logl, logt, logg, phase, wght)
 
@@ -98,7 +99,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
      CALL GETMAGS(ctx, dz, spec, mags)
 
         IF (isoc_type.EQ.'bsti') THEN
-           loggi = LOG10( gsig4pi*mact_isoc_full(zz,tt,i)/&
+           loggi = LOG10( GRAVITY_L_M_T_COEFF*mact_isoc_full(zz,tt,i)/&
                 logl(tt,i) ) + 4*logt(tt,i)
         ELSE
            loggi = logg(tt,i)

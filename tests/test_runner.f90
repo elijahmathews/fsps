@@ -5,7 +5,8 @@ PROGRAM TEST_RUNNER
   ! parameters, and compares outputs with a relative tolerance.
 
   USE, INTRINSIC :: IEEE_ARITHMETIC
-      USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
+      USE fsps_constants, ONLY: SP, NEMLINE
+      USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
          USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
@@ -237,7 +238,7 @@ PROGRAM TEST_RUNNER
    ALLOCATE(ref_ocompsp(i)%mags(nbands_ctx))
    ALLOCATE(ref_ocompsp(i)%spec(nspec_ctx))
    ALLOCATE(ref_ocompsp(i)%indx(nindx_ctx))
-     ALLOCATE(ref_ocompsp(i)%emlines(nemline))
+     ALLOCATE(ref_ocompsp(i)%emlines(NEMLINE))
      
      READ(unit_in) ref_ocompsp(i)%age
      READ(unit_in) ref_ocompsp(i)%mass_csp
@@ -280,7 +281,7 @@ PROGRAM TEST_RUNNER
      IF (.NOT. ALLOCATED(new_ocompsp(i)%mags)) ALLOCATE(new_ocompsp(i)%mags(nbands_ctx))
      IF (.NOT. ALLOCATED(new_ocompsp(i)%spec)) ALLOCATE(new_ocompsp(i)%spec(nspec_ctx))
      IF (.NOT. ALLOCATED(new_ocompsp(i)%indx)) ALLOCATE(new_ocompsp(i)%indx(nindx_ctx))
-     IF (.NOT. ALLOCATED(new_ocompsp(i)%emlines)) ALLOCATE(new_ocompsp(i)%emlines(nemline))
+     IF (.NOT. ALLOCATED(new_ocompsp(i)%emlines)) ALLOCATE(new_ocompsp(i)%emlines(NEMLINE))
   END DO
 
    new_mass_ssp2(:,1) = new_mass_ssp
@@ -313,7 +314,7 @@ PROGRAM TEST_RUNNER
      ! Check Arrays for EVERY time step
    CALL CHECK_MAGS_1D("CSP Mags (flux)", ref_ocompsp(i)%mags, new_ocompsp(i)%mags, nbands_ctx)
    CALL CHECK_ARRAY_1D("CSP Indx", ref_ocompsp(i)%indx, new_ocompsp(i)%indx, nindx_ctx)
-     CALL CHECK_ARRAY_1D("CSP Emlines", ref_ocompsp(i)%emlines, new_ocompsp(i)%emlines, nemline)
+     CALL CHECK_ARRAY_1D("CSP Emlines", ref_ocompsp(i)%emlines, new_ocompsp(i)%emlines, NEMLINE)
      
      ! Check Spectrum
    CALL CHECK_ARRAY_1D("CSP Spec", ref_ocompsp(i)%spec, new_ocompsp(i)%spec, nspec_ctx)

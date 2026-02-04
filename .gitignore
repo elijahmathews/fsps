@@ -2,6 +2,7 @@
 nr
 data/spectra/CKC14/*
 OUTPUTS/
+tmp/
 CodeToDo.txt
 runsps.f90
 metalml.f90

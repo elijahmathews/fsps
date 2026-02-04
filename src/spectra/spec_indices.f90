@@ -2,7 +2,7 @@ FUNCTION INTIND(lam,func,lo,hi)
 
   !perform integral over spectrum for index computation
 
-   USE fsps_types, ONLY: SP
+   USE fsps_constants, ONLY: SP
    USE fsps_integration, ONLY: integrate_trapezoid_array
    USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE

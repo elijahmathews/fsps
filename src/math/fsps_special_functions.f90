@@ -5,7 +5,7 @@ module fsps_special_functions
     !> @details
     !> Currently contains the Exponential Integral Ei(x).
     
-    use fsps_types, only: sp
+    use fsps_constants, only: SP
     implicit none
 
     private
@@ -27,16 +27,16 @@ contains
     !>                Returns -Infinity at x=0.
     !>                Returns NaN for x < 0.
     pure function exponential_integral(x) result(res)
-        real(sp), intent(in) :: x
-        real(sp) :: res
+        real(SP), intent(in) :: x
+        real(SP) :: res
 
         integer :: k
         integer, parameter :: MAXIT = 1000
-        real(sp) :: r
+        real(SP) :: r
         
         ! Euler-Mascheroni constant
-        real(sp), parameter :: GAMMA = 0.5772156649015328_sp
-        real(sp), parameter :: EPS = 1.0e-20_sp
+        real(SP), parameter :: GAMMA = 0.5772156649015328_sp
+        real(SP), parameter :: EPS = 1.0e-20_sp
         
         if (x == 0.0_sp) then
             ! Return negative infinity
@@ -55,7 +55,7 @@ contains
             r = 1.0_sp
             
             do k = 1, MAXIT
-                r = r * k * x / (real(k, sp) + 1.0_sp)**2
+                r = r * k * x / (real(k, SP) + 1.0_sp)**2
                 res = res + r
                 
                 ! Convergence check
@@ -77,7 +77,7 @@ contains
             r = 1.0_sp
             
             do k = 1, 20
-                r = r * real(k, sp) / x
+                r = r * real(k, SP) / x
                 res = res + r
             end do
             
@@ -93,14 +93,14 @@ contains
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(val)
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-        real(sp) :: val
+        real(SP) :: val
         val = ieee_value(0.0_sp, ieee_quiet_nan)
     end function get_quiet_nan
 
     !> @brief Helper to generate Negative Infinity
     pure function get_neg_infinity() result(val)
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_negative_inf
-        real(sp) :: val
+        real(SP) :: val
         val = ieee_value(0.0_sp, ieee_negative_inf)
     end function get_neg_infinity
 

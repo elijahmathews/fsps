@@ -7,9 +7,7 @@ module fsps_imf
     !> parameterizations (Salpeter, Chabrier, Kroupa, etc.) and to compute
     !> the mass weights for SSP generation.
     
-    use fsps_types, only: sp, &
-                          chab_mc, chab_sigma2, chab_ind, &
-                          vd_sigma2, vd_ah, vd_ind, vd_al, vd_nc
+    use fsps_constants, only: SP
     use fsps_context_types, only: fsps_context_t
     use fsps_integration, only: integrate_romberg
     implicit none
@@ -18,6 +16,23 @@ module fsps_imf
 
     public :: compute_imf_weights
     public :: get_imf_value
+    public :: CHAB_MC, CHAB_SIGMA2, CHAB_IND
+
+    ! ------------------------------------------------------------------------
+    ! CONSTANTS
+    ! ------------------------------------------------------------------------
+
+    ! Chabrier 2003
+    real(SP), parameter :: CHAB_MC     = 0.08_sp
+    real(SP), parameter :: CHAB_SIGMA2 = 0.69_sp**2  ! Explicit squaring
+    real(SP), parameter :: CHAB_IND    = 1.3_sp
+
+    ! van Dokkum 2008
+    real(SP), parameter :: VD_SIGMA2 = 0.69_sp**2
+    real(SP), parameter :: VD_AH     = 0.0443_sp
+    real(SP), parameter :: VD_IND    = 1.3_sp
+    real(SP), parameter :: VD_AL     = 0.14_sp
+    real(SP), parameter :: VD_NC     = 25.0_sp
 
 contains
 
@@ -35,15 +50,15 @@ contains
     !> @param[in]    nmass  Number of mass points.
     subroutine compute_imf_weights(ctx, mini, weights, nmass)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: mini
-        real(sp), dimension(:), intent(out) :: weights
+        real(SP), dimension(:), intent(in) :: mini
+        real(SP), dimension(:), intent(out) :: weights
         integer, intent(in) :: nmass
 
-        real(sp) :: m1, m2, total_mass
+        real(SP) :: m1, m2, total_mass
         integer :: i
 
         ! Access limits from state
-        real(sp) :: lower_limit, upper_limit, lower_bound
+        real(SP) :: lower_limit, upper_limit, lower_bound
 
         lower_limit = ctx%state%imf_lower_limit
         upper_limit = ctx%state%imf_upper_limit
@@ -105,8 +120,8 @@ contains
     !> @brief Wrapper to integrate Number Density (dn/dM)
     pure function wrapper_imf_count(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_count
@@ -114,8 +129,8 @@ contains
     !> @brief Wrapper to integrate Mass Density (M * dn/dM)
     pure function wrapper_imf_mass(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass
@@ -145,9 +160,9 @@ contains
     !> @return    imf_val        The calculated IMF values.
     pure function get_imf_value(ctx, mass, mass_weighted) result(imf_val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in), contiguous :: mass
+        real(SP), dimension(:), intent(in), contiguous :: mass
         logical, intent(in) :: mass_weighted
-        real(sp), dimension(size(mass)) :: imf_val
+        real(SP), dimension(size(mass)) :: imf_val
         
         integer :: imf_type_base
 
@@ -191,33 +206,33 @@ contains
 
     pure subroutine imf_salpeter(ctx, m, val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         
         ! Power law: m^(-alpha)
         val = m**(-ctx%state%salp_ind)
     end subroutine imf_salpeter
 
     pure subroutine imf_chabrier(m, val)
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         integer :: i
-        real(sp) :: log_m, log_mc, term
+        real(SP) :: log_m, log_mc, term
 
-        log_mc = log10(chab_mc)
+        log_mc = log10(CHAB_MC)
 
         do i = 1, size(m)
             if (m(i) < 1.0_sp) then
                 ! Log-normal part
                 log_m = log10(m(i))
-                term = (log_m - log_mc)**2 / (2.0_sp * chab_sigma2)
+                term = (log_m - log_mc)**2 / (2.0_sp * CHAB_SIGMA2)
                 val(i) = exp(-term)
                 ! Convert from dn/dlnM to dn/dM (divide by M)
                 val(i) = val(i) / m(i)
             else
                 ! Power law part
-                term = log_mc**2 / (2.0_sp * chab_sigma2)
-                val(i) = exp(-term) * m(i)**(-chab_ind)
+                term = log_mc**2 / (2.0_sp * CHAB_SIGMA2)
+                val(i) = exp(-term) * m(i)**(-CHAB_IND)
                 val(i) = val(i) / m(i)
             end if
         end do
@@ -225,10 +240,10 @@ contains
 
     pure subroutine imf_kroupa(ctx, m, val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         integer :: i
-        real(sp), dimension(3) :: alpha
+        real(SP), dimension(3) :: alpha
 
         alpha = ctx%state%imf_alpha
 
@@ -247,24 +262,24 @@ contains
 
     pure subroutine imf_vandokkum(ctx, m, val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         integer :: i
-        real(sp) :: breakpoint, term, log_m, log_mc
+        real(SP) :: breakpoint, term, log_m, log_mc
 
-        breakpoint = vd_nc * ctx%state%imf_vdmc
+        breakpoint = VD_NC * ctx%state%imf_vdmc
         log_mc = log10(ctx%state%imf_vdmc)
 
         do i = 1, size(m)
             if (m(i) <= breakpoint) then
                 ! Lognormal-ish
                 log_m = log10(m(i))
-                term = (log_m - log_mc)**2 / (2.0_sp * vd_sigma2)
+                term = (log_m - log_mc)**2 / (2.0_sp * VD_SIGMA2)
                 
-                val(i) = vd_al * (0.5_sp * breakpoint)**(-vd_ind) * exp(-term)
+                val(i) = VD_AL * (0.5_sp * breakpoint)**(-VD_IND) * exp(-term)
             else
                 ! Power law
-                val(i) = vd_ah * m(i)**(-vd_ind)
+                val(i) = VD_AH * m(i)**(-VD_IND)
             end if
         end do
 
@@ -275,11 +290,11 @@ contains
 
     pure subroutine imf_dave(ctx, m, val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         integer :: i
-        real(sp), dimension(3) :: alpha
-        real(sp) :: mdave
+        real(SP), dimension(3) :: alpha
+        real(SP) :: mdave
 
         alpha = ctx%state%imf_alpha
         mdave = ctx%state%imf_mdave
@@ -297,10 +312,10 @@ contains
 
     pure subroutine imf_user_defined(ctx, m, val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: m
-        real(sp), dimension(:), intent(out) :: val
+        real(SP), dimension(:), intent(in) :: m
+        real(SP), dimension(:), intent(out) :: val
         integer :: i, n
-        real(sp) :: imfcu
+        real(SP) :: imfcu
         integer :: n_user
 
         ! Alias for cleaner syntax

@@ -8,9 +8,10 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   ! recomputed each time the IMF or isochrone parameters change.
 
       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_types, ONLY: SP, PARAMS, tiny_number, tiny30, verbose, clight, mypi, msun, newton, yr2sc, lsun, gsig4pi, &
-         cstar_aringer, n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ndim_wmb_logt, ndim_wmb_logg, &
-         ndim_logt, ndim_logg
+      USE fsps_constants, ONLY: SP, SAFE_FLOOR, VERBOSE, C_LIGHT, PI, M_SOL, G_NEWTON, YEAR_TO_SECOND, L_SOL, GRAVITY_L_M_T_COEFF, &
+         CSTAR_ARINGER, N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
+         NDIM_LOGT, NDIM_LOGG
+      USE fsps_types, ONLY: PARAMS
    USE fsps_dust, ONLY: apply_agb_dust_screen
    USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
@@ -44,15 +45,15 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
        add_agb_dust_model => ctx%add_agb_dust_model_val, &
        logt_wmb_hot => ctx%logt_wmb_hot_val )
 
-  spec  = tiny_number
-  ispec = tiny_number
+  spec  = SAFE_FLOOR
+  ispec = SAFE_FLOOR
   flag  = 0
   logt_cut = MAX(wmb_logt(1),logt_wmb_hot)
 
   !compute radius squared (cm^2) 
   !we need to re-compute logg becuase we modify the logt,logl of AGB stars
-  loggi = LOG10( gsig4pi*mact/lbol ) + 4*logt
-  r2    = mact*msun*newton/10**loggi
+  loggi = LOG10( GRAVITY_L_M_T_COEFF*mact/lbol ) + 4*logt
+  r2    = mact*M_SOL*G_NEWTON/10**loggi
 
   !post-AGB non-LTE model spectra from Rauch 2003
   !the H-Ni composition spectra are used here.
@@ -60,7 +61,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   IF (phase.EQ.6.0.AND.logt.GE.4.699) THEN
     
      flag = flag+1
-   jlo = MIN(MAX(find_interval(pagb_logt,logt),1),ndim_pagb-1)
+   jlo = MIN(MAX(find_interval(pagb_logt,logt),1),NDIM_PAGB-1)
      t   = (logt-pagb_logt(jlo)) / &
           (pagb_logt(jlo+1)-pagb_logt(jlo))
      t = MIN(MAX(t,0.0),1.0) !no extrapolation
@@ -77,7 +78,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
         !below is from Maeder (1990)
         !terminal velocity = 3000 km/s = 3E8 cm/s
         !kappa_es = 0.2*(1+X) cm2/g; assume X=0.73 (Solar)
-        rwr = SQRT(r2)+3*0.2*(1+0.73)*ABS(10**lmdot)/8./mypi/3E8/yr2sc*msun
+        rwr = SQRT(r2)+3*0.2*(1+0.73)*ABS(10**lmdot)/8./PI/3E8/YEAR_TO_SECOND*M_SOL
         twr = 10**logt*SQRT(SQRT(r2)/rwr)
         !this is from Smith et al. 2002
         twr = LOG10( 0.6*10**logt + 0.4*twr )
@@ -89,7 +90,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
         !WN spectra
         flag = flag+1
-      jlo  = MIN(MAX(find_interval(wrn_logt,twr),1),ndim_wr-1)
+      jlo  = MIN(MAX(find_interval(wrn_logt,twr),1),NDIM_WR-1)
         t    = (twr-wrn_logt(jlo))/(wrn_logt(jlo+1)-wrn_logt(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
         !the WR library is normalized to unity
@@ -100,7 +101,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      
         !WC spectra
         flag = flag+1
-      jlo  = MIN(MAX(find_interval(wrc_logt,twr),1),ndim_wr-1)
+      jlo  = MIN(MAX(find_interval(wrc_logt,twr),1),NDIM_WR-1)
         t    = (twr-wrc_logt(jlo))/(wrc_logt(jlo+1)-wrc_logt(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
         !the WR library is normalized to unity
@@ -113,14 +114,14 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   ELSE IF (phase.EQ.5.0.AND.logt.LT.3.6.AND.ffco.LE.1.0) THEN
      
      flag = flag+1
-   jlo  = MAX(MIN(find_interval(agb_logt_o(pset%zmet,:),logt),n_agb_o-1),1)
+   jlo  = MAX(MIN(find_interval(agb_logt_o(pset%zmet,:),logt),N_AGB_O-1),1)
      t    = (logt - agb_logt_o(pset%zmet,jlo)) / &
           (agb_logt_o(pset%zmet,jlo+1)-agb_logt_o(pset%zmet,jlo))
      t    = MIN(MAX(t,0.0),1.0) !no extrapolation
 
      !The spectra are Fdlambda, need to convert to Fdnu and 
      !interpolate in Teff.
-     spec = lbol*spec_lambda*spec_lambda/clight * &
+     spec = lbol*spec_lambda*spec_lambda/C_LIGHT * &
           ( (1-t)*agb_spec_o(:,jlo) + t*(agb_spec_o(:,jlo+1)) )
 
   !C-rich TP-AGB spectra
@@ -129,8 +130,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      flag = flag+1
 
      !use Aringer et al. (2009) synthetic spectra
-     IF (cstar_aringer.EQ.1) THEN 
-      jlo  = MAX(MIN(find_interval(agb_logt_car,logt),n_agb_car-1),1)
+     IF (CSTAR_ARINGER.EQ.1) THEN 
+      jlo  = MAX(MIN(find_interval(agb_logt_car,logt),N_AGB_CAR-1),1)
         t    = (logt - agb_logt_car(jlo)) / &
              (agb_logt_car(jlo+1)-agb_logt_car(jlo))
         t    = MIN(MAX(t,0.0),1.0) !no extrapolation
@@ -139,13 +140,13 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      !use LW02 empirical spectra
      ELSE
-      jlo  = MAX(MIN(find_interval(agb_logt_c,logt),n_agb_c-1),1)
+      jlo  = MAX(MIN(find_interval(agb_logt_c,logt),N_AGB_C-1),1)
         t    = (logt - agb_logt_c(jlo)) / &
              (agb_logt_c(jlo+1)-agb_logt_c(jlo))
         t    = MIN(MAX(t,0.0),1.0)
         !The spectra are Fdlambda, need to convert to Fdnu and 
         !interpolate in Teff.
-        spec = lbol*spec_lambda*spec_lambda/clight * &
+        spec = lbol*spec_lambda*spec_lambda/C_LIGHT * &
              ( (1-t)*agb_spec_c(:,jlo) + t*(agb_spec_c(:,jlo+1)) )
      ENDIF
 
@@ -154,8 +155,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      flag = flag+1
 
-   jlo = MIN(MAX(find_interval(wmb_logt,logt),1),ndim_wmb_logt-1)
-   klo = MIN(MAX(find_interval(wmb_logg,loggi),1),ndim_wmb_logg-1)
+   jlo = MIN(MAX(find_interval(wmb_logt,logt),1),NDIM_WMB_LOGT-1)
+   klo = MIN(MAX(find_interval(wmb_logg,loggi),1),NDIM_WMB_LOGG-1)
      t   = (logt-wmb_logt(jlo)) / (wmb_logt(jlo+1)-wmb_logt(jlo))
      t   = MIN(MAX(t,0.0),1.0) !no extrapolation (this means >50K -> 50K)
      u   = (loggi-wmb_logg(klo))  / (wmb_logg(klo+1)-wmb_logg(klo))
@@ -174,8 +175,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      flag = flag+1
 
      !find the subgrid containing point i 
-   jlo = MIN(MAX(find_interval(speclib_logt,logt),1),ndim_logt-1)
-   klo = MIN(MAX(find_interval(speclib_logg,loggi),1),ndim_logg-1)
+   jlo = MIN(MAX(find_interval(speclib_logt,logt),1),NDIM_LOGT-1)
+   klo = MIN(MAX(find_interval(speclib_logg,loggi),1),NDIM_LOGG-1)
      t   = (logt-speclib_logt(jlo))/(speclib_logt(jlo+1)-speclib_logt(jlo))
      t   = MIN(MAX(t,0.0),1.0) !no extrapolation
      u   = (loggi-speclib_logg(klo))/(speclib_logg(klo+1)-speclib_logg(klo))
@@ -187,25 +188,25 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
      test4 = speclib(whlam5000,pset%zmet,jlo+1,klo+1)
      
      !if all four components are zero, set the flag to zero
-     IF ((test1.LE.tiny30.AND.test2.LE.tiny30.AND.&
-          test3.LE.tiny30.AND.test4.LE.tiny30)) flag=0
+     IF ((test1.LE.SAFE_FLOOR.AND.test2.LE.SAFE_FLOOR.AND.&
+          test3.LE.SAFE_FLOOR.AND.test4.LE.SAFE_FLOOR)) flag=0
 
      !catch stars that fall off part of the grid
      !the flux at 5000A should never be zero unless a spec is missing
-     IF ((test1.LE.tiny30.OR.test2.LE.tiny30.OR.&
-          test3.LE.tiny30.OR.test4.LE.tiny30).AND.flag.EQ.1) THEN
+     IF ((test1.LE.SAFE_FLOOR.OR.test2.LE.SAFE_FLOOR.OR.&
+          test3.LE.SAFE_FLOOR.OR.test4.LE.SAFE_FLOOR).AND.flag.EQ.1) THEN
 
-        IF (verbose.EQ.99) & 
+        IF (VERBOSE.EQ.99) & 
              WRITE(*,'(" GETSPEC WARNING: Part of the '//&
              'point is off the grid: Z=",I2,'//&
              '" logT=",F5.2," logg=",F5.2," phase=",I2," lg IMF*L=",F5.2)') &
              pset%zmet,logt,loggi,INT(phase),LOG10(wght*lbol)
 
         !this is a very crude hack.  just pick one of the spectra
-        IF (test1.GT.tiny30) ispec = speclib(:,pset%zmet,jlo,klo)
-        IF (test2.GT.tiny30) ispec = speclib(:,pset%zmet,jlo+1,klo)
-        IF (test3.GT.tiny30) ispec = speclib(:,pset%zmet,jlo,klo+1)
-        IF (test4.GT.tiny30) ispec = speclib(:,pset%zmet,jlo+1,klo+1)
+        IF (test1.GT.SAFE_FLOOR) ispec = speclib(:,pset%zmet,jlo,klo)
+        IF (test2.GT.SAFE_FLOOR) ispec = speclib(:,pset%zmet,jlo+1,klo)
+        IF (test3.GT.SAFE_FLOOR) ispec = speclib(:,pset%zmet,jlo,klo+1)
+        IF (test4.GT.SAFE_FLOOR) ispec = speclib(:,pset%zmet,jlo+1,klo+1)
 
      ELSE
 
@@ -219,14 +220,14 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
      !at long last the extra factor of 4pi (below) has been found!
      !see p244-245 of Collins' "Fundamentals of Stellar Astrophysics"
-   spec = 4*mypi*4*mypi*r2/lsun * ispec
+   spec = 4*PI*4*PI*r2/L_SOL * ispec
 
    ENDIF
 
   !make sure the spectrum never has any zeros or negative numbers
-  spec = MAX(spec,tiny_number)
+  spec = MAX(spec,SAFE_FLOOR)
   
-  IF (verbose.EQ.1) THEN
+  IF (VERBOSE.EQ.1) THEN
      !IF (flag.EQ.0.AND.(spec_type.EQ.'basel'.OR.spec_type.EQ.'ckc14').AND.&
      !     phase.NE.6.AND.phase.NE.9) THEN
      IF (flag.EQ.0..AND.wght.GT.0.0) THEN
@@ -242,7 +243,7 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
   !add circumstellar dust around AGB stars
   IF ((phase.EQ.4.OR.phase.EQ.5) &
-       .AND.add_agb_dust_model.EQ.1.AND.pset%agb_dust.GT.tiny_number) THEN
+       .AND.add_agb_dust_model.EQ.1.AND.pset%agb_dust.GT.SAFE_FLOOR) THEN
       CALL apply_agb_dust_screen(ctx, pset%agb_dust, spec, mact, &
          logt,LOG10(lbol),logg,ffco,lmdot)
   ENDIF
@@ -250,8 +251,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
 
   !pure blackbody; no longer used but kept here for posterity
   !teffi = 10**logt
-  !spec = 15/mypi*lbol/clight*&
-  !     (hck/teffi)*(hck/teffi)*(hck/teffi)*(hck/teffi) / &
+  !spec = 15/PI*lbol/C_LIGHT*&
+  !     (PLANCK_RAD_CONST_2/teffi)*(hck/teffi)*(hck/teffi)*(hck/teffi) / &
   !     (spec_lambda*spec_lambda*spec_lambda)/ ( &
   !     EXP(hck/spec_lambda/teffi)-1 )
 

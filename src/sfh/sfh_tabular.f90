@@ -14,7 +14,8 @@
 subroutine setup_tabular_sfh(ctx, pset, nzin)
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: tiny_number, tiny30, PARAMS, ntabmax
+   use fsps_constants, only: SAFE_FLOOR, NTABMAX
+   use fsps_types, only: PARAMS
   implicit none
   type(fsps_context_t), intent(inout) :: ctx
   type(PARAMS), intent(in) :: pset
@@ -25,7 +26,7 @@ subroutine setup_tabular_sfh(ctx, pset, nzin)
 
    IF (pset%sfh.EQ.2) THEN
 
-     if (pset%sf_start.gt.tiny_number) then
+     if (pset%sf_start.gt.SAFE_FLOOR) then
         WRITE(*,*) 'COMPSP ERROR: Tabular sfh, but sf_start > 0'
         STOP
      endif
@@ -37,7 +38,7 @@ subroutine setup_tabular_sfh(ctx, pset, nzin)
       OPEN(3,FILE=TRIM(ctx%sps_home)//'/data/'//TRIM(pset%sfh_filename),&
              ACTION='READ',STATUS='OLD')
      ENDIF
-     DO n=1,ntabmax
+     DO n=1,NTABMAX
         IF (nzin.EQ.nz) THEN
            READ(3,*,IOSTAT=stat) sfh_tab(1,n),sfh_tab(2,n),sfh_tab(3,n)
         ELSE
@@ -47,7 +48,7 @@ subroutine setup_tabular_sfh(ctx, pset, nzin)
         IF (stat.NE.0) GOTO 29
      ENDDO
      WRITE(*,*) 'COMPSP ERROR: didnt finish reading in the sfh file,'
-     WRITE(*,*) '     increase ntabmax variable in sps_vars.f90 file'
+     WRITE(*,*) '     increase NTABMAX variable in sps_vars.f90 file'
      STOP
 29   CONTINUE
      CLOSE(3)
@@ -71,7 +72,7 @@ subroutine setup_tabular_sfh(ctx, pset, nzin)
 
   ! clip SFR to a minimum of 1e-30
   do n=1, ntabsfh
-     sfh_tab(2, n) = max(sfh_tab(2, n), tiny30)
+     sfh_tab(2, n) = max(sfh_tab(2, n), SAFE_FLOOR)
    enddo
 
    END ASSOCIATE

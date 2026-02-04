@@ -5,7 +5,7 @@ FUNCTION GET_TUNIV(ctx, z)
   !assumes om0,ol0,H0 set in sps_vars.f90
   
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP
+   USE fsps_constants, ONLY: SP
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i

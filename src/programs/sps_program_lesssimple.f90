@@ -1,7 +1,8 @@
 PROGRAM LESSSIMPLE
 
   !set up modules
-      USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT
+      USE fsps_constants, ONLY: SP
+      USE fsps_types, ONLY: PARAMS, COMPSPOUT
         USE sps_utils
         USE fsps_context, ONLY: fsps_context_create
         USE fsps_context_types, ONLY: fsps_context_t

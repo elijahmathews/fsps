@@ -5,7 +5,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
   !of the stellar luminosities over stellar mass
 
    USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time
+      USE fsps_constants, ONLY: SP, NM, BHB_SBS_TIME
+      USE fsps_types, ONLY: PARAMS
       USE sps_utils, ONLY : getmags,getspec
       USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
          modify_horizontal_branch
@@ -18,7 +19,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
   INTEGER       :: i,j
   CHARACTER(34) :: fmt
   REAL(SP)      :: zero=0.0,hb_wght
-     REAL(SP), DIMENSION(nm)     :: wght
+     REAL(SP), DIMENSION(NM)     :: wght
      REAL(SP), ALLOCATABLE :: tspec(:),tspec2(:),spec1(:),spec2(:)
      REAL(SP), ALLOCATABLE :: mags(:)
      REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),ffco(:,:),phase(:,:),lmdot(:,:)
@@ -40,8 +41,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
 
   ALLOCATE(tspec(nspec),tspec2(nspec),spec1(nspec),spec2(nspec))
   ALLOCATE(mags(nbands))
-  ALLOCATE(mini(nt,nm),mact(nt,nm),logl(nt,nm),logt(nt,nm),logg(nt,nm))
-  ALLOCATE(ffco(nt,nm),phase(nt,nm),lmdot(nt,nm))
+  ALLOCATE(mini(nt,NM),mact(nt,NM),logl(nt,NM),logt(nt,NM),logg(nt,NM))
+  ALLOCATE(ffco(nt,NM),phase(nt,NM),lmdot(nt,NM))
   ALLOCATE(nmass(nt),time(nt))
 
   fmt = '(F7.4,1x,3(F8.4,1x),000(F7.3,1x))'
@@ -81,7 +82,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
       mini, mact, logl, logt, logg, phase, wght)
 
      !add in blue stragglers
-   IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
+   IF (time(i).GE.BHB_SBS_TIME.AND.pset%sbss.GT.1E-3) &
       CALL apply_blue_stragglers(ctx, i, pset%sbss, hb_wght, nmass, &
       mini, mact, logl, logt, logg, phase, wght)
 

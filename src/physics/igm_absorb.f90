@@ -4,7 +4,7 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !this routine includes a fudge factor (accessed by pset%igm_factor)
   !that allows the user to scale the IGM optical depth
 
-   USE fsps_types, ONLY: SP
+  USE fsps_constants, ONLY: SP
   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 

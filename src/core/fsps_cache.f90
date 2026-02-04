@@ -1,7 +1,7 @@
 MODULE FSPS_CACHE
-   USE fsps_types, ONLY: SP, ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
-       n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
-       nemline, nebnz, nebnage, nebnip, nagndust, nm
+   USE fsps_constants, ONLY: SP, NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
+       N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
+       NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NM
   IMPLICIT NONE
 
   PRIVATE

@@ -28,7 +28,8 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
   !   in the linear portion.
   !
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: PARAMS, SP, tiny_number
+   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_types, only: PARAMS
    use fsps_interpolation, only: find_interval
   implicit none
 
@@ -69,7 +70,7 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
      Tmax = 10**(time_full(ntfull) - 9) - pset%sf_start
      Tprime = age - pset%sf_start
      ! Ttrunc only matters if nonzero and not before sf_start.
-     if ((pset%sf_trunc.lt.tiny_number).or.(pset%sf_trunc.lt.pset%sf_start)) then
+     if ((pset%sf_trunc.lt.SAFE_FLOOR).or.(pset%sf_trunc.lt.pset%sf_start)) then
         Ttrunc = Tmax
      else
         Ttrunc = pset%sf_trunc - pset%sf_start

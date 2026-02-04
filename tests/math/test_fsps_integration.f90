@@ -5,7 +5,7 @@
 ! forces GFortran to create stack trampolines. Module procs do not.
 ! ------------------------------------------------------------------------
 module integration_test_funcs
-    use fsps_types, only: sp
+    use fsps_constants, only: SP
     use fsps_context_types, only: fsps_context_t
     implicit none
 
@@ -13,30 +13,30 @@ contains
 
     ! f(x) = x^4
     pure function func_poly4(x) result(res)
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         res = x**4
     end function func_poly4
 
     ! f(x) = exp(x)
     pure function func_exp(x) result(res)
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         res = exp(x)
     end function func_exp
 
     ! f(x) = 1.0
     pure function func_const(x) result(res)
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         res = 1.0_sp
     end function func_const
 
     ! f(ctx, x) = x^2 (ignores ctx)
     pure function func_ctx_poly2(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         
         ! Explicitly ignore ctx to silence unused-dummy-argument warning
         associate (ignore => ctx)
@@ -47,8 +47,8 @@ contains
 
     ! f(x) = sin(1/x) (Pathological oscillation near 0)
     pure function func_pathological(x) result(res)
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         res = sin(1.0_sp / x)
     end function func_pathological
 
@@ -95,17 +95,17 @@ contains
     ! TEST SUITE: TRAPEZOIDAL ARRAY INTEGRATION
     ! ------------------------------------------------------------------------
     subroutine test_trapezoid_array()
-        real(sp), dimension(2) :: x_box = [0.0_sp, 10.0_sp]
-        real(sp), dimension(2) :: y_box = [5.0_sp, 5.0_sp]
+        real(SP), dimension(2) :: x_box = [0.0_sp, 10.0_sp]
+        real(SP), dimension(2) :: y_box = [5.0_sp, 5.0_sp]
         
-        real(sp), dimension(2) :: x_tri = [0.0_sp, 1.0_sp]
-        real(sp), dimension(2) :: y_tri = [0.0_sp, 2.0_sp]
+        real(SP), dimension(2) :: x_tri = [0.0_sp, 1.0_sp]
+        real(SP), dimension(2) :: y_tri = [0.0_sp, 2.0_sp]
         
-        real(sp), dimension(2) :: x_rev = [10.0_sp, 0.0_sp]
+        real(SP), dimension(2) :: x_rev = [10.0_sp, 0.0_sp]
         
-        real(sp), dimension(3) :: x_irr = [0.0_sp, 0.1_sp, 1.0_sp]
-        real(sp), dimension(3) :: y_irr ! y = x
-        real(sp) :: res
+        real(SP), dimension(3) :: x_irr = [0.0_sp, 0.1_sp, 1.0_sp]
+        real(SP), dimension(3) :: y_irr ! y = x
+        real(SP) :: res
 
         call print_group("integrate_trapezoid_array")
 
@@ -147,8 +147,8 @@ contains
     ! TEST SUITE: ROMBERG INTEGRATION (SIMPLE)
     ! ------------------------------------------------------------------------
     subroutine test_romberg_simple()
-        real(sp) :: res
-        real(sp), parameter :: pi = 3.14159265359_sp
+        real(SP) :: res
+        real(SP), parameter :: pi = 3.14159265359_sp
 
         call print_group("integrate_romberg (Simple Function)")
 
@@ -175,7 +175,7 @@ contains
     subroutine test_romberg_context()
         ! FIX 1: Use ALLOCATABLE to put large structure on heap, not stack
         type(fsps_context_t), allocatable :: dummy_ctx
-        real(sp) :: res
+        real(SP) :: res
 
         call print_group("integrate_romberg (Context)")
 
@@ -195,7 +195,7 @@ contains
     ! TEST SUITE: ROBUSTNESS / CONVERGENCE FAILURE
     ! ------------------------------------------------------------------------
     subroutine test_romberg_robustness()
-        real(sp) :: res
+        real(SP) :: res
         
         call print_group("integrate_romberg (Robustness)")
 

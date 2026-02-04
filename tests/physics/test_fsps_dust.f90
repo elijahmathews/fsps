@@ -1,6 +1,8 @@
 module test_fsps_dust_mod
-    use fsps_types, only: sp, params, nemline, clight, gsig4pi, nteff_dagb, &
-                          ntau_dagb, nagndust, msun, newton, rsun, yr2sc
+    use fsps_constants, only: SP, NEMLINE, C_LIGHT, GRAVITY_L_M_T_COEFF, NTEFF_DAGB, &
+                              NTAU_DAGB, NAGNDUST, M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, &
+                              SAFE_FLOOR, PI
+    use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_dust
     use fsps_integration, only: integrate_trapezoid_array
@@ -17,49 +19,47 @@ module test_fsps_dust_mod
     public :: run_fsps_dust_tests, total_failures, total_tests
 
     ! Local constants for expected-value calculations
-    real(sp), parameter :: SAFE_FLOOR = tiny(0.0_sp)
-    real(sp), parameter :: PI = acos(-1.0_sp)
-    real(sp), parameter :: V_BAND_ANGSTROMS = 5500.0_sp
-    real(sp), parameter :: UV_BUMP_CENTER = 2175.0_sp
-    real(sp), parameter :: KC13_BUMP_WIDTH = 350.0_sp
-    real(sp), parameter :: KC13_R_V_BASE = 4.05_sp
+    real(SP), parameter :: V_BAND_ANGSTROMS = 5500.0_sp
+    real(SP), parameter :: UV_BUMP_CENTER = 2175.0_sp
+    real(SP), parameter :: KC13_BUMP_WIDTH = 350.0_sp
+    real(SP), parameter :: KC13_R_V_BASE = 4.05_sp
 
-    real(sp), parameter :: CALZ_LAM_UV_MIN = 1200.0_sp
-    real(sp), parameter :: CALZ_LAM_BREAK  = 6300.0_sp
-    real(sp), parameter :: CALZ_LAM_IR_MAX = 22000.0_sp
-    real(sp), parameter :: CALZ_R_V   = 4.05_sp
-    real(sp), parameter :: CALZ_SCALE = 2.659_sp
-    real(sp), parameter :: CALZ_UV_COEFFS(0:3) = [-2.156_sp, 1.509_sp, -0.198_sp, 0.011_sp]
-    real(sp), parameter :: CALZ_OPT_COEFFS(0:1) = [-1.857_sp, 1.040_sp]
+    real(SP), parameter :: CALZ_LAM_UV_MIN = 1200.0_sp
+    real(SP), parameter :: CALZ_LAM_BREAK  = 6300.0_sp
+    real(SP), parameter :: CALZ_LAM_IR_MAX = 22000.0_sp
+    real(SP), parameter :: CALZ_R_V   = 4.05_sp
+    real(SP), parameter :: CALZ_SCALE = 2.659_sp
+    real(SP), parameter :: CALZ_UV_COEFFS(0:3) = [-2.156_sp, 1.509_sp, -0.198_sp, 0.011_sp]
+    real(SP), parameter :: CALZ_OPT_COEFFS(0:1) = [-1.857_sp, 1.040_sp]
 
-    real(sp), parameter :: EPS = 1.0e-6_sp
-    real(sp), parameter :: SMALL_DELTA = 1.0e-4_sp
-    real(sp), parameter :: LESS_SMALL_DELTA = 1.0e-2_sp
+    real(SP), parameter :: EPS = 1.0e-6_sp
+    real(SP), parameter :: SMALL_DELTA = 1.0e-4_sp
+    real(SP), parameter :: LESS_SMALL_DELTA = 1.0e-2_sp
 
     ! AGB / VW93 constants (copied from fsps_dust for test expectations)
-    real(sp), parameter :: AGB_DELTA_C_RICH = 0.0025_sp
-    real(sp), parameter :: AGB_DELTA_O_RICH = 0.01_sp
-    real(sp), parameter :: AGB_KAPPA_C_RICH = 3200.0_sp
-    real(sp), parameter :: AGB_KAPPA_O_RICH = 3000.0_sp
-    real(sp), parameter :: AGB_RIN_FACTOR_C = 1.92E12_sp
-    real(sp), parameter :: AGB_RIN_FACTOR_O = 4.74E12_sp
-    real(sp), parameter :: AGB_PER_INTERCEPT = -2.07_sp
-    real(sp), parameter :: AGB_PER_SLOPE_R   = 1.94_sp
-    real(sp), parameter :: AGB_PER_SLOPE_M   = -0.9_sp
-    real(sp), parameter :: AGB_VEXP_INTERCEPT = -13.5_sp
-    real(sp), parameter :: AGB_VEXP_SLOPE     = 0.056_sp
-    real(sp), parameter :: AGB_VEXP_MIN       = 3.0_sp
-    real(sp), parameter :: AGB_VEXP_MAX       = 15.0_sp
-    real(sp), parameter :: VW93_MDOT_LIMIT_ISO = 1.0e-4_sp
-    real(sp), parameter :: VW93_PER_THRESH     = 500.0_sp
-    real(sp), parameter :: VW93_MASS_THRESH    = 2.5_sp
-    real(sp), parameter :: VW93_BASE_INTERCEPT = -11.4_sp
-    real(sp), parameter :: VW93_BASE_SLOPE     = 0.0123_sp
-    real(sp), parameter :: VW93_HIGH_SLOPE     = 0.0125_sp
-    real(sp), parameter :: VW93_SUPERWIND_NORM = 1.93e3_sp
-    real(sp), parameter :: AGB_DTG_VEL_NORM    = 225.0_sp
-    real(sp), parameter :: AGB_DTG_LUM_NORM    = 1.0e4_sp
-    real(sp), parameter :: AGB_DTG_LUM_EXP     = -0.6_sp
+    real(SP), parameter :: AGB_DELTA_C_RICH = 0.0025_sp
+    real(SP), parameter :: AGB_DELTA_O_RICH = 0.01_sp
+    real(SP), parameter :: AGB_KAPPA_C_RICH = 3200.0_sp
+    real(SP), parameter :: AGB_KAPPA_O_RICH = 3000.0_sp
+    real(SP), parameter :: AGB_RIN_FACTOR_C = 1.92E12_sp
+    real(SP), parameter :: AGB_RIN_FACTOR_O = 4.74E12_sp
+    real(SP), parameter :: AGB_PER_INTERCEPT = -2.07_sp
+    real(SP), parameter :: AGB_PER_SLOPE_R   = 1.94_sp
+    real(SP), parameter :: AGB_PER_SLOPE_M   = -0.9_sp
+    real(SP), parameter :: AGB_VEXP_INTERCEPT = -13.5_sp
+    real(SP), parameter :: AGB_VEXP_SLOPE     = 0.056_sp
+    real(SP), parameter :: AGB_VEXP_MIN       = 3.0_sp
+    real(SP), parameter :: AGB_VEXP_MAX       = 15.0_sp
+    real(SP), parameter :: VW93_MDOT_LIMIT_ISO = 1.0e-4_sp
+    real(SP), parameter :: VW93_PER_THRESH     = 500.0_sp
+    real(SP), parameter :: VW93_MASS_THRESH    = 2.5_sp
+    real(SP), parameter :: VW93_BASE_INTERCEPT = -11.4_sp
+    real(SP), parameter :: VW93_BASE_SLOPE     = 0.0123_sp
+    real(SP), parameter :: VW93_HIGH_SLOPE     = 0.0125_sp
+    real(SP), parameter :: VW93_SUPERWIND_NORM = 1.93e3_sp
+    real(SP), parameter :: AGB_DTG_VEL_NORM    = 225.0_sp
+    real(SP), parameter :: AGB_DTG_LUM_NORM    = 1.0e4_sp
+    real(SP), parameter :: AGB_DTG_LUM_EXP     = -0.6_sp
 
 contains
 
@@ -94,12 +94,12 @@ contains
     subroutine test_power_law()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(2) :: w2
-        real(sp), dimension(3) :: w3
-        real(sp), dimension(1) :: w1
-        real(sp), dimension(2) :: res2
-        real(sp), dimension(3) :: res3
-        real(sp), dimension(1) :: res1
+        real(SP), dimension(2) :: w2
+        real(SP), dimension(3) :: w3
+        real(SP), dimension(1) :: w1
+        real(SP), dimension(2) :: res2
+        real(SP), dimension(3) :: res3
+        real(SP), dimension(1) :: res1
 
         call print_group("Power Law (Type 0)")
 
@@ -133,14 +133,14 @@ contains
     subroutine test_ccm89()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(5) :: w_regions
-        real(sp), dimension(5) :: res_regions
-        real(sp), dimension(2) :: w_break
-        real(sp), dimension(2) :: res_break
-        real(sp), dimension(2) :: w_fuv
-        real(sp), dimension(2) :: res_fuv
-        real(sp), dimension(1) :: w_bump
-        real(sp), dimension(1) :: res_uvb0, res_uvb1
+        real(SP), dimension(5) :: w_regions
+        real(SP), dimension(5) :: res_regions
+        real(SP), dimension(2) :: w_break
+        real(SP), dimension(2) :: res_break
+        real(SP), dimension(2) :: w_fuv
+        real(SP), dimension(2) :: res_fuv
+        real(SP), dimension(1) :: w_bump
+        real(SP), dimension(1) :: res_uvb0, res_uvb1
 
         call print_group("CCM89 Milky Way (Type 1)")
 
@@ -185,10 +185,10 @@ contains
     subroutine test_calzetti()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(2) :: w_break
-        real(sp), dimension(2) :: res_break
-        real(sp), dimension(1) :: w_v
-        real(sp), dimension(1) :: res_v
+        real(SP), dimension(2) :: w_break
+        real(SP), dimension(2) :: res_break
+        real(SP), dimension(1) :: w_v
+        real(SP), dimension(1) :: res_v
 
         call print_group("Calzetti (Type 2)")
 
@@ -217,8 +217,8 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: wavelengths
-        real(sp), dimension(nlam) :: res
+        real(SP), dimension(nlam) :: wavelengths
+        real(SP), dimension(nlam) :: res
 
         call print_group("Witt & Gordon + SMC Tables (Types 3 & 5)")
 
@@ -246,11 +246,11 @@ contains
     subroutine test_kriek_conroy()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(3) :: wavelengths
-        real(sp), dimension(3) :: res, expected
-        real(sp), dimension(1) :: w_bump
-        real(sp), dimension(1) :: res_bump, expected_no_bump
-        real(sp), dimension(3) :: res_uvb0, res_uvb5
+        real(SP), dimension(3) :: wavelengths
+        real(SP), dimension(3) :: res, expected
+        real(SP), dimension(1) :: w_bump
+        real(SP), dimension(1) :: res_bump, expected_no_bump
+        real(SP), dimension(3) :: res_uvb0, res_uvb5
 
         call print_group("Kriek & Conroy (Type 4)")
 
@@ -291,10 +291,10 @@ contains
     subroutine test_reddy()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(2) :: w_uv
-        real(sp), dimension(2) :: res_uv
-        real(sp), dimension(2) :: w_break
-        real(sp), dimension(2) :: res_break
+        real(SP), dimension(2) :: w_uv
+        real(SP), dimension(2) :: res_uv
+        real(SP), dimension(2) :: w_break
+        real(SP), dimension(2) :: res_break
 
         call print_group("Reddy et al. (Type 6)")
 
@@ -321,8 +321,8 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: wavelengths
-        real(sp), dimension(nlam) :: spectrum, expected
+        real(SP), dimension(nlam) :: wavelengths
+        real(SP), dimension(nlam) :: spectrum, expected
 
         call print_group("AGN Dust Emission")
 
@@ -389,10 +389,10 @@ contains
     ! ------------------------------------------------------------------------
     subroutine test_circumstellar_optical_depth()
         type(fsps_context_t), allocatable :: ctx
-        real(sp) :: tau_c, tau_o, tau_expected_c, tau_expected_o
-        real(sp) :: m_act, log_l, log_g, log_mdot_iso
-        real(sp) :: period_days, vexp_unclamped
-        real(sp) :: tau_clamped, tau_unclamped
+        real(SP) :: tau_c, tau_o, tau_expected_c, tau_expected_o
+        real(SP) :: m_act, log_l, log_g, log_mdot_iso
+        real(SP) :: period_days, vexp_unclamped
+        real(SP) :: tau_clamped, tau_unclamped
 
         call print_group("Circumstellar Optical Depth")
 
@@ -474,9 +474,9 @@ contains
     subroutine test_agb_dust_screen()
         type(fsps_context_t), allocatable :: ctx
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: spectrum, expected
-        real(sp) :: mass_act, log_t, log_l, log_g, log_mdot, c_o_ratio
-        real(sp) :: log_g_local, tau_1um
+        real(SP), dimension(nlam) :: spectrum, expected
+        real(SP) :: mass_act, log_t, log_l, log_g, log_mdot, c_o_ratio
+        real(SP) :: log_g_local, tau_1um
 
         call print_group("AGB Dust Screen")
 
@@ -500,7 +500,7 @@ contains
 
         call set_flux_dagb_pattern(ctx, nlam)
 
-        log_g_local = log10(gsig4pi * mass_act / (10.0_sp**log_l)) + 4.0_sp * log_t
+        log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_sp**log_l)) + 4.0_sp * log_t
         tau_1um = compute_circumstellar_optical_depth(ctx, 1, mass_act, log_l, log_g_local, log_mdot)
         expected = spectrum * calc_dusty_transfer(ctx, 1, log_t, tau_1um)
 
@@ -530,17 +530,17 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: spectrum, wavelengths
-        real(sp), dimension(nlam) :: spectrum_out
-        real(sp), dimension(nlam) :: freqs
-        real(sp) :: lbol_in, lbol_out
-        real(sp) :: norm_template
+        real(SP), dimension(nlam) :: spectrum, wavelengths
+        real(SP), dimension(nlam) :: spectrum_out
+        real(SP), dimension(nlam) :: freqs
+        real(SP) :: lbol_in, lbol_out
+        real(SP) :: norm_template
 
         call print_group("Energy Conservation")
 
         call setup_physics_context(ctx, nlam)
         wavelengths = ctx%state%spec_lambda
-        freqs = clight / wavelengths
+        freqs = C_LIGHT / wavelengths
 
         ! Test 4.1: AGN energy conservation (template normalized)
         spectrum = 1.0_sp
@@ -577,9 +577,9 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: spec_young, spec_old, spec_out
-        real(sp), dimension(nemline) :: neb_young, neb_old, neb_out
-        real(sp) :: dust_mass
+        real(SP), dimension(nlam) :: spec_young, spec_old, spec_out
+        real(SP), dimension(NEMLINE) :: neb_young, neb_old, neb_out
+        real(SP) :: dust_mass
 
         call print_group("Differential Attenuation")
 
@@ -659,13 +659,13 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        real(sp), dimension(nlam) :: spec_young, spec_old, spec_out
-        real(sp), dimension(nlam) :: freqs, dust_shape
-        real(sp), dimension(nemline) :: neb_young, neb_old, neb_out
-        real(sp) :: dust_mass, lbol_in, lbol_out
-        real(sp) :: lbol_atten, lbol_abs, emission_norm
-        real(sp) :: expected_mass
-        real(sp), dimension(nlam) :: spec_atten
+        real(SP), dimension(nlam) :: spec_young, spec_old, spec_out
+        real(SP), dimension(nlam) :: freqs, dust_shape
+        real(SP), dimension(NEMLINE) :: neb_young, neb_old, neb_out
+        real(SP) :: dust_mass, lbol_in, lbol_out
+        real(SP) :: lbol_atten, lbol_abs, emission_norm
+        real(SP) :: expected_mass
+        real(SP), dimension(nlam) :: spec_atten
 
         call print_group("Draine & Li Energy Balance")
 
@@ -692,7 +692,7 @@ contains
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
 
-        freqs = clight / ctx%state%spec_lambda
+        freqs = C_LIGHT / ctx%state%spec_lambda
         lbol_in = integrate_trapezoid_array(freqs, spec_young)
         lbol_out = integrate_trapezoid_array(freqs, spec_out)
         call assert_relative_error(lbol_in, lbol_out, 1.0e-6_sp, "Energy conservation", total_tests, total_failures)
@@ -714,9 +714,9 @@ contains
     ! TEST SUITE: Dust Self-Absorption
     ! ------------------------------------------------------------------------
     subroutine test_dust_self_absorption()
-        real(sp), dimension(2) :: nu
-        real(sp), dimension(2) :: shape, transmission, spec_final
-        real(sp) :: lbol
+        real(SP), dimension(2) :: nu
+        real(SP), dimension(2) :: shape, transmission, spec_final
+        real(SP) :: lbol
 
         call print_group("Dust Self-Absorption")
 
@@ -754,11 +754,11 @@ contains
     subroutine test_robustness()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
-        real(sp), dimension(:), allocatable :: w
-        real(sp), dimension(:), allocatable :: res
-        real(sp), dimension(:), allocatable :: spec_young, spec_old, spec_out
-        real(sp), dimension(:), allocatable :: neb_young, neb_old, neb_out
-        real(sp) :: dust_mass
+        real(SP), dimension(:), allocatable :: w
+        real(SP), dimension(:), allocatable :: res
+        real(SP), dimension(:), allocatable :: spec_young, spec_old, spec_out
+        real(SP), dimension(:), allocatable :: neb_young, neb_old, neb_out
+        real(SP) :: dust_mass
         integer :: n
         integer :: i
 
@@ -790,7 +790,7 @@ contains
 
         n = size(ctx%state%spec_lambda)
         allocate(spec_young(n), spec_old(n), spec_out(n))
-        allocate(neb_young(nemline), neb_old(nemline), neb_out(nemline))
+        allocate(neb_young(NEMLINE), neb_old(NEMLINE), neb_out(NEMLINE))
         spec_young = 100.0_sp
         spec_old = 0.0_sp
         neb_young = 0.0_sp
@@ -815,14 +815,14 @@ contains
 
         n = 10
         allocate(w(n), res(n))
-        w = [(real(i, sp), i=1, n)]
+        w = [(real(i, SP), i=1, n)]
         res = compute_attenuation_curve(w, 0, settings, ctx)
         call assert_int_equals(size(w), size(res), "Array shape (size=10)", total_tests, total_failures)
         deallocate(w, res)
 
         deallocate(ctx)
         allocate(w(n), res(n))
-        w = [(real(i, sp), i=1, n)]
+        w = [(real(i, SP), i=1, n)]
         res = compute_attenuation_curve(w, 0, settings, ctx)
         call assert_int_equals(size(w), size(res), "Array shape (size=1000)", total_tests, total_failures)
         deallocate(w, res)
@@ -845,14 +845,14 @@ contains
             do k = 1, 4
                 do j = 1, 3
                     do i = 1, nlam
-                        ctx%state%wgdust(i, j, k, l) = real(i + 100*j + 10000*k + 1000000*l, sp)
+                        ctx%state%wgdust(i, j, k, l) = real(i + 100*j + 10000*k + 1000000*l, SP)
                     end do
                 end do
             end do
         end do
 
         do i = 1, nlam
-            ctx%state%g03smcextn(i) = real(i, sp)
+            ctx%state%g03smcextn(i) = real(i, SP)
         end do
 
     end subroutine setup_mock_context
@@ -872,23 +872,23 @@ contains
         type(fsps_context_t), allocatable, intent(out) :: ctx
         integer, intent(in) :: nlam
         integer :: i, j, k
-        real(sp) :: teff_min, teff_max, tau_min, tau_max, dteff, dtau
+        real(SP) :: teff_min, teff_max, tau_min, tau_max, dteff, dtau
 
         allocate(ctx)
         allocate(ctx%state%spec_lambda(nlam))
         allocate(ctx%state%wgdust(nlam, 3, 4, 2))
         allocate(ctx%state%g03smcextn(nlam))
-        allocate(ctx%state%agndust_spec(nlam, nagndust))
+        allocate(ctx%state%agndust_spec(nlam, NAGNDUST))
         allocate(ctx%state%qpaharr(3))
         allocate(ctx%state%uminarr(3))
         allocate(ctx%state%dustem2_dustem(nlam, 3, 6))
-        allocate(ctx%state%flux_dagb(nlam, 2, nteff_dagb, ntau_dagb))
+        allocate(ctx%state%flux_dagb(nlam, 2, NTEFF_DAGB, NTAU_DAGB))
 
         ctx%state%nqpah_dustem = 3
         ctx%state%numin_dustem = 3
 
         do i = 1, nlam
-            ctx%state%spec_lambda(i) = 1000.0_sp * real(i, sp)
+            ctx%state%spec_lambda(i) = 1000.0_sp * real(i, SP)
         end do
 
         ctx%state%nebem_line_pos = 5500.0_sp
@@ -915,17 +915,17 @@ contains
 
         teff_min = 3.5_sp
         teff_max = 4.0_sp
-        dteff = (teff_max - teff_min) / real(nteff_dagb - 1, sp)
-        do i = 1, nteff_dagb
-            ctx%state%teff_dagb(1, i) = 10.0_sp**(teff_min + dteff * real(i - 1, sp))
+        dteff = (teff_max - teff_min) / real(NTEFF_DAGB - 1, SP)
+        do i = 1, NTEFF_DAGB
+            ctx%state%teff_dagb(1, i) = 10.0_sp**(teff_min + dteff * real(i - 1, SP))
             ctx%state%teff_dagb(2, i) = ctx%state%teff_dagb(1, i)
         end do
 
         tau_min = -2.0_sp
         tau_max = 1.0_sp
-        dtau = (tau_max - tau_min) / real(ntau_dagb - 1, sp)
-        do i = 1, ntau_dagb
-            ctx%state%tau1_dagb(1, i) = tau_min + dtau * real(i - 1, sp)
+        dtau = (tau_max - tau_min) / real(NTAU_DAGB - 1, SP)
+        do i = 1, NTAU_DAGB
+            ctx%state%tau1_dagb(1, i) = tau_min + dtau * real(i - 1, SP)
             ctx%state%tau1_dagb(2, i) = ctx%state%tau1_dagb(1, i)
         end do
 
@@ -951,7 +951,7 @@ contains
     subroutine set_flux_dagb_constant(ctx, nlam, value)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: nlam
-        real(sp), intent(in) :: value
+        real(SP), intent(in) :: value
 
         ctx%state%flux_dagb(1:nlam, :, :, :) = value
 
@@ -962,11 +962,11 @@ contains
         integer, intent(in) :: nlam
         integer :: i, j, k, l
 
-        do l = 1, ntau_dagb
-            do k = 1, nteff_dagb
+        do l = 1, NTAU_DAGB
+            do k = 1, NTEFF_DAGB
                 do j = 1, 2
                     do i = 1, nlam
-                        ctx%state%flux_dagb(i, j, k, l) = 0.1_sp * real(k, sp) + 0.01_sp * real(l, sp)
+                        ctx%state%flux_dagb(i, j, k, l) = 0.1_sp * real(k, SP) + 0.01_sp * real(l, SP)
                     end do
                 end do
             end do
@@ -975,22 +975,22 @@ contains
     end subroutine set_flux_dagb_pattern
 
     pure function calc_period_days(m_act, log_g) result(period_days)
-        real(sp), intent(in) :: m_act, log_g
-        real(sp) :: period_days
-        real(sp) :: radius_solar
+        real(SP), intent(in) :: m_act, log_g
+        real(SP) :: period_days
+        real(SP) :: radius_solar
 
-        radius_solar = sqrt(m_act * msun * newton / (10.0_sp**log_g)) / rsun
+        radius_solar = sqrt(m_act * M_SOL * G_NEWTON / (10.0_sp**log_g)) / R_SOL
         period_days = 10.0_sp**(AGB_PER_INTERCEPT + AGB_PER_SLOPE_R * log10(radius_solar) + &
                                AGB_PER_SLOPE_M * log10(m_act))
     end function calc_period_days
 
     pure function calc_tau_expected(c_rich_flag, m_act, log_l, log_g, mdot_sol_yr, clamp_velocity) result(tau)
         integer, intent(in) :: c_rich_flag
-        real(sp), intent(in) :: m_act, log_l, log_g, mdot_sol_yr
+        real(SP), intent(in) :: m_act, log_l, log_g, mdot_sol_yr
         logical, intent(in) :: clamp_velocity
-        real(sp) :: tau
-        real(sp) :: period_days, velocity_exp
-        real(sp) :: inner_radius_cm, dust_gas_ratio, kappa_eff
+        real(SP) :: tau
+        real(SP) :: period_days, velocity_exp
+        real(SP) :: inner_radius_cm, dust_gas_ratio, kappa_eff
 
         if (c_rich_flag == 1) then
             kappa_eff = AGB_KAPPA_C_RICH
@@ -1015,21 +1015,21 @@ contains
         dust_gas_ratio = dust_gas_ratio * (velocity_exp**2 / AGB_DTG_VEL_NORM) * &
                          ((10.0_sp**log_l / AGB_DTG_LUM_NORM)**AGB_DTG_LUM_EXP)
 
-        tau = kappa_eff * dust_gas_ratio * (mdot_sol_yr * msun / yr2sc) / &
+        tau = kappa_eff * dust_gas_ratio * (mdot_sol_yr * M_SOL / YEAR_TO_SECOND) / &
               inner_radius_cm / (4.0_sp * PI) / (velocity_exp * 1.0e5_sp)
 
     end function calc_tau_expected
 
     pure function calc_tau_expected_superwind(c_rich_flag, m_act, log_l, log_g) result(tau)
         integer, intent(in) :: c_rich_flag
-        real(sp), intent(in) :: m_act, log_l, log_g
-        real(sp) :: tau
-        real(sp) :: period_days, velocity_exp, mdot_sol_yr
+        real(SP), intent(in) :: m_act, log_l, log_g
+        real(SP) :: tau
+        real(SP) :: period_days, velocity_exp, mdot_sol_yr
 
         period_days = calc_period_days(m_act, log_g)
         velocity_exp = AGB_VEXP_INTERCEPT + AGB_VEXP_SLOPE * period_days
         velocity_exp = max(min(velocity_exp, AGB_VEXP_MAX), AGB_VEXP_MIN)
-        mdot_sol_yr = (10.0_sp**log_l) / velocity_exp * VW93_SUPERWIND_NORM * yr2sc / clight
+        mdot_sol_yr = (10.0_sp**log_l) / velocity_exp * VW93_SUPERWIND_NORM * YEAR_TO_SECOND / C_LIGHT
 
         tau = calc_tau_expected(c_rich_flag, m_act, log_l, log_g, mdot_sol_yr, .true.)
     end function calc_tau_expected_superwind
@@ -1037,10 +1037,10 @@ contains
     pure function calc_dusty_transfer(ctx, c_rich_flag, log_t, tau_1um) result(transfer)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in) :: c_rich_flag
-        real(sp), intent(in) :: log_t, tau_1um
-        real(sp), dimension(size(ctx%state%flux_dagb, 1)) :: transfer
+        real(SP), intent(in) :: log_t, tau_1um
+        real(SP), dimension(size(ctx%state%flux_dagb, 1)) :: transfer
         integer :: idx_teff, idx_tau, n_teff_grid, n_tau_grid
-        real(sp) :: w_teff, w_tau
+        real(SP) :: w_teff, w_tau
 
         n_teff_grid = size(ctx%state%teff_dagb, 2)
         n_tau_grid  = size(ctx%state%tau1_dagb, 2)
@@ -1071,9 +1071,9 @@ contains
     ! Helper: Calzetti curve (for expected values)
     ! ------------------------------------------------------------------------
     pure function calc_calzetti_curve(wavelengths) result(curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), dimension(size(wavelengths)) :: curve
-        real(sp), dimension(size(wavelengths)) :: wavenumbers, extinction_k
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), dimension(size(wavelengths)) :: curve
+        real(SP), dimension(size(wavelengths)) :: wavenumbers, extinction_k
 
         wavenumbers = 1.0e4_sp / wavelengths
         extinction_k = 0.0_sp
@@ -1100,9 +1100,9 @@ contains
     ! Helper: Drude bump profile (for expected values)
     ! ------------------------------------------------------------------------
     pure function calc_drude_profile(wavelengths, amplitude) result(profile)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), intent(in) :: amplitude
-        real(sp), dimension(size(wavelengths)) :: profile
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), intent(in) :: amplitude
+        real(SP), dimension(size(wavelengths)) :: profile
 
         profile = amplitude * (wavelengths * KC13_BUMP_WIDTH)**2 / &
                   ((wavelengths**2 - UV_BUMP_CENTER**2)**2 + (wavelengths * KC13_BUMP_WIDTH)**2)

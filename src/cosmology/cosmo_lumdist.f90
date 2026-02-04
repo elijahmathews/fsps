@@ -5,7 +5,7 @@ FUNCTION GET_LUMDIST(ctx, z)
   !assumes om0,ol0,H0 set in sps_vars.f90
   
   USE fsps_context_types, ONLY: fsps_context_t
-  USE fsps_types, ONLY: SP, clight
+  USE fsps_constants, ONLY: SP, C_LIGHT
   USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -21,7 +21,7 @@ FUNCTION GET_LUMDIST(ctx, z)
   get_lumdist = 0.0
 
   !Hubble distance in pc
-  dhub = clight/1E13/ctx%H0_val*1E6
+  dhub = C_LIGHT/1E13/ctx%H0_val*1E6
 
   DO i=1,ii
      zz(i) = REAL(i)/ii*z

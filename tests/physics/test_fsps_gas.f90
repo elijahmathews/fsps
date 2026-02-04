@@ -1,5 +1,6 @@
 module test_fsps_gas_mod
-    use fsps_types, only: sp, params, nemline, nebnage, nebnz, nebnip, clight, hplank, lsun
+    use fsps_constants, only: SP, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, H_PLANCK, L_SOL
+    use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_gas
     use fsps_integration, only: integrate_trapezoid_array
@@ -13,9 +14,9 @@ module test_fsps_gas_mod
 
     public :: run_fsps_gas_tests, total_failures, total_tests
 
-    real(sp), parameter :: EPS = 1.0e-6_sp
-    real(sp), parameter :: REL_EPS = 1.0e-6_sp
-    real(sp), parameter :: LYMAN_LIMIT = 912.0_sp
+    real(SP), parameter :: EPS = 1.0e-6_sp
+    real(SP), parameter :: REL_EPS = 1.0e-6_sp
+    real(SP), parameter :: LYMAN_LIMIT = 912.0_sp
 
 contains
 
@@ -50,8 +51,8 @@ contains
     ! ------------------------------------------------------------------------
     subroutine setup_gas_context(ctx, lambda, time_full)
         type(fsps_context_t), allocatable, intent(out) :: ctx
-        real(sp), dimension(:), intent(in) :: lambda
-        real(sp), dimension(:), intent(in) :: time_full
+        real(SP), dimension(:), intent(in) :: lambda
+        real(SP), dimension(:), intent(in) :: time_full
 
         integer :: i, n_wave, n_time
 
@@ -61,25 +62,25 @@ contains
 
         allocate(ctx%state%spec_lambda(n_wave))
         allocate(ctx%state%spec_nu(n_wave))
-        allocate(ctx%state%nebem_cont(n_wave, nebnz, nebnage, nebnip))
-        allocate(ctx%state%xnebem_cont(n_wave, nebnz, nebnage, nebnip))
-        allocate(ctx%state%neb_res_min(nemline))
-        allocate(ctx%state%gaussnebarr(n_wave, nemline))
+        allocate(ctx%state%nebem_cont(n_wave, NEBNZ, NEBNAGE, NEBNIP))
+        allocate(ctx%state%xnebem_cont(n_wave, NEBNZ, NEBNAGE, NEBNIP))
+        allocate(ctx%state%neb_res_min(NEMLINE))
+        allocate(ctx%state%gaussnebarr(n_wave, NEMLINE))
         allocate(ctx%state%time_full(n_time))
 
         ctx%state%spec_lambda = lambda
-        ctx%state%spec_nu = clight / lambda
+        ctx%state%spec_nu = C_LIGHT / lambda
         ctx%state%time_full = time_full
         ctx%state%whlylim = count(lambda < LYMAN_LIMIT)
 
-        do i = 1, nebnz
-            ctx%state%nebem_logz(i) = real(i - 1, sp)
+        do i = 1, NEBNZ
+            ctx%state%nebem_logz(i) = real(i - 1, SP)
         end do
-        do i = 1, nebnip
-            ctx%state%nebem_logu(i) = real(i - 1, sp)
+        do i = 1, NEBNIP
+            ctx%state%nebem_logu(i) = real(i - 1, SP)
         end do
-        do i = 1, nebnage
-            ctx%state%nebem_age(i) = real(i, sp)
+        do i = 1, NEBNAGE
+            ctx%state%nebem_age(i) = real(i, SP)
         end do
 
         ctx%state%nebem_cont = 0.0_sp
@@ -121,12 +122,12 @@ contains
     ! ------------------------------------------------------------------------
     pure function compute_expected_q(ctx, spec_in, frac_obrun) result(q_val)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: spec_in
-        real(sp), intent(in) :: frac_obrun
-        real(sp) :: q_val
+        real(SP), dimension(:), intent(in) :: spec_in
+        real(SP), intent(in) :: frac_obrun
+        real(SP) :: q_val
 
         integer :: whlylim
-        real(sp) :: integral_flux
+        real(SP) :: integral_flux
 
         whlylim = ctx%state%whlylim
 
@@ -137,7 +138,7 @@ contains
                 ctx%state%spec_nu(:whlylim), &
                 spec_in(:whlylim) / ctx%state%spec_nu(:whlylim) &
             )
-            q_val = (integral_flux / hplank * lsun) * (1.0_sp - frac_obrun)
+            q_val = (integral_flux / H_PLANCK * L_SOL) * (1.0_sp - frac_obrun)
         end if
     end function compute_expected_q
 
@@ -145,12 +146,12 @@ contains
     ! Helper: Compute FWHM for a line profile
     ! ------------------------------------------------------------------------
     pure subroutine compute_fwhm(lambda, profile, fwhm)
-        real(sp), dimension(:), intent(in) :: lambda
-        real(sp), dimension(:), intent(in) :: profile
-        real(sp), intent(out) :: fwhm
+        real(SP), dimension(:), intent(in) :: lambda
+        real(SP), dimension(:), intent(in) :: profile
+        real(SP), intent(out) :: fwhm
 
         integer :: i, idx_peak
-        real(sp) :: peak, half, left, right, frac
+        real(SP) :: peak, half, left, right, frac
 
         idx_peak = maxloc(profile, dim=1)
         peak = profile(idx_peak)
@@ -183,9 +184,9 @@ contains
     ! ------------------------------------------------------------------------
     subroutine test_interpolate_identity()
         integer, parameter :: n_wave = 5, n_z = 2, n_age = 2, n_u = 2
-        real(sp), dimension(n_wave, n_z, n_age, n_u) :: grid
-        real(sp), dimension(n_wave) :: res
-        real(sp) :: w_z, w_u, expected
+        real(SP), dimension(n_wave, n_z, n_age, n_u) :: grid
+        real(SP), dimension(n_wave) :: res
+        real(SP) :: w_z, w_u, expected
         integer :: iw, iz, ia, iu
         character(len=64) :: label
 
@@ -195,7 +196,7 @@ contains
             do iz = 1, n_z
                 do ia = 1, n_age
                     do iu = 1, n_u
-                        grid(iw, iz, ia, iu) = real(iw + iz + ia + iu, sp)
+                        grid(iw, iz, ia, iu) = real(iw + iz + ia + iu, SP)
                     end do
                 end do
             end do
@@ -206,7 +207,7 @@ contains
         call interpolate_zu_slice(grid, res, 1, 1, 1, w_z, w_u)
 
         do iw = 1, n_wave
-            expected = real(iw, sp) + 3.0_sp + w_z + w_u
+            expected = real(iw, SP) + 3.0_sp + w_z + w_u
             write(label, '(A,I0)') "Identity grid wave ", iw
             call assert_float_equals(expected, res(iw), EPS, trim(label), total_tests, total_failures)
         end do
@@ -214,8 +215,8 @@ contains
 
     subroutine test_interpolate_corners()
         integer, parameter :: n_wave = 4, n_z = 2, n_age = 2, n_u = 2
-        real(sp), dimension(n_wave, n_z, n_age, n_u) :: grid
-        real(sp), dimension(n_wave) :: res, expected
+        real(SP), dimension(n_wave, n_z, n_age, n_u) :: grid
+        real(SP), dimension(n_wave) :: res, expected
         integer :: iw, iz, ia, iu
 
         call print_group("Interpolate Z/U Slice: Corner Cases")
@@ -224,35 +225,35 @@ contains
             do iz = 1, n_z
                 do ia = 1, n_age
                     do iu = 1, n_u
-                        grid(iw, iz, ia, iu) = real(iw + iz + ia + iu, sp)
+                        grid(iw, iz, ia, iu) = real(iw + iz + ia + iu, SP)
                     end do
                 end do
             end do
         end do
 
         call interpolate_zu_slice(grid, res, 1, 1, 1, 0.0_sp, 0.0_sp)
-        expected = [(real(iw, sp) + 3.0_sp, iw=1,n_wave)]
+        expected = [(real(iw, SP) + 3.0_sp, iw=1,n_wave)]
         call assert_true(all(abs(res - expected) <= EPS), "Corner (wz=0, wu=0)", total_tests, total_failures)
 
         call interpolate_zu_slice(grid, res, 1, 1, 1, 1.0_sp, 0.0_sp)
-        expected = [(real(iw, sp) + 4.0_sp, iw=1,n_wave)]
+        expected = [(real(iw, SP) + 4.0_sp, iw=1,n_wave)]
         call assert_true(all(abs(res - expected) <= EPS), "Corner (wz=1, wu=0)", total_tests, total_failures)
 
         call interpolate_zu_slice(grid, res, 1, 1, 1, 0.0_sp, 1.0_sp)
-        expected = [(real(iw, sp) + 4.0_sp, iw=1,n_wave)]
+        expected = [(real(iw, SP) + 4.0_sp, iw=1,n_wave)]
         call assert_true(all(abs(res - expected) <= EPS), "Corner (wz=0, wu=1)", total_tests, total_failures)
 
         call interpolate_zu_slice(grid, res, 1, 1, 1, 1.0_sp, 1.0_sp)
-        expected = [(real(iw, sp) + 5.0_sp, iw=1,n_wave)]
+        expected = [(real(iw, SP) + 5.0_sp, iw=1,n_wave)]
         call assert_true(all(abs(res - expected) <= EPS), "Corner (wz=1, wu=1)", total_tests, total_failures)
     end subroutine test_interpolate_corners
 
     subroutine test_dimensionality_reduction()
         integer, parameter :: n_wave = 4, n_z = 2, n_age = 2, n_u = 2
-        real(sp), dimension(n_wave, n_z, n_age, n_u) :: grid
-        real(sp), dimension(n_wave) :: res_age1, res_age2
-        real(sp) :: w_z, w_u, w_a
-        real(sp) :: full_trilinear, reduced
+        real(SP), dimension(n_wave, n_z, n_age, n_u) :: grid
+        real(SP), dimension(n_wave) :: res_age1, res_age2
+        real(SP) :: w_z, w_u, w_a
+        real(SP) :: full_trilinear, reduced
         integer :: iw, iz, ia, iu
 
         call print_group("Dimensionality Reduction Consistency")
@@ -261,9 +262,9 @@ contains
             do iz = 1, n_z
                 do ia = 1, n_age
                     do iu = 1, n_u
-                        grid(iw, iz, ia, iu) = 10.0_sp + 7.0_sp * real(iw, sp) + &
-                                               2.0_sp * real(iz, sp) + 3.0_sp * real(ia, sp) + &
-                                               5.0_sp * real(iu, sp)
+                        grid(iw, iz, ia, iu) = 10.0_sp + 7.0_sp * real(iw, SP) + &
+                                               2.0_sp * real(iz, SP) + 3.0_sp * real(ia, SP) + &
+                                               5.0_sp * real(iu, SP)
                     end do
                 end do
             end do
@@ -297,9 +298,9 @@ contains
     subroutine test_dark_universe()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(5) :: lambda
-        real(sp), dimension(1) :: time_full
-        real(sp), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(SP), dimension(5) :: lambda
+        real(SP), dimension(1) :: time_full
+        real(SP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
         integer :: n_wave
 
         call print_group("Dark Universe (Zero Ionizing Flux)")
@@ -309,7 +310,7 @@ contains
         call setup_gas_context(ctx, lambda, time_full)
 
         n_wave = size(lambda)
-        allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(nemline,1))
+        allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(NEMLINE,1))
 
         sspi(:,1) = [0.0_sp, 0.0_sp, 0.0_sp, 1.0_sp, 1.0_sp]
 
@@ -334,10 +335,10 @@ contains
     subroutine test_ionizing_conservation()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(5) :: lambda
-        real(sp), dimension(1) :: time_full
-        real(sp), dimension(5) :: spec_in, spec_out
-        real(sp) :: q_val, expected_q
+        real(SP), dimension(5) :: lambda
+        real(SP), dimension(1) :: time_full
+        real(SP), dimension(5) :: spec_in, spec_out
+        real(SP) :: q_val, expected_q
         integer :: whlylim
 
         call print_group("Ionizing Photon Conservation (frac_obrun=0)")
@@ -363,10 +364,10 @@ contains
     subroutine test_leaky_bucket()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(5) :: lambda
-        real(sp), dimension(1) :: time_full
-        real(sp), dimension(5) :: spec_in, spec_out
-        real(sp) :: q_val, expected_q
+        real(SP), dimension(5) :: lambda
+        real(SP), dimension(1) :: time_full
+        real(SP), dimension(5) :: spec_in, spec_out
+        real(SP) :: q_val, expected_q
         integer :: whlylim
 
         call print_group("Leaky Bucket (frac_obrun=0.3)")
@@ -393,12 +394,12 @@ contains
     subroutine test_line_profile_gaussian()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), allocatable :: lambda(:)
-        real(sp), dimension(1) :: time_full
-        real(sp), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
-        real(sp), allocatable :: line_spec(:)
-        real(sp) :: q_val, expected_fwhm, fwhm
-        real(sp) :: sigma_angstroms
+        real(SP), allocatable :: lambda(:)
+        real(SP), dimension(1) :: time_full
+        real(SP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(SP), allocatable :: line_spec(:)
+        real(SP) :: q_val, expected_fwhm, fwhm
+        real(SP) :: sigma_angstroms
         integer :: n_line, n_wave, i
 
         call print_group("Line Profile Integrity (Gaussian Widths)")
@@ -408,13 +409,13 @@ contains
         allocate(lambda(n_wave))
         lambda(1:3) = [700.0_sp, 800.0_sp, 900.0_sp]
         do i = 1, n_line
-            lambda(3 + i) = 1450.0_sp + real(i - 1, sp)
+            lambda(3 + i) = 1450.0_sp + real(i - 1, SP)
         end do
 
         time_full = [1.0_sp]
         call setup_gas_context(ctx, lambda, time_full)
 
-        allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(nemline,1), line_spec(n_wave))
+        allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(NEMLINE,1), line_spec(n_wave))
 
         sspi(:,1) = 0.0_sp
         sspi(1:3,1) = 1.0_sp
@@ -436,7 +437,7 @@ contains
         line_spec = sspo(:,1) - sspi(:,1)
         q_val = nebemline(1,1)
 
-        sigma_angstroms = ctx%state%nebem_line_pos(1) * pset%sigma_smooth * (1.0e13_sp / clight)
+        sigma_angstroms = ctx%state%nebem_line_pos(1) * pset%sigma_smooth * (1.0e13_sp / C_LIGHT)
         expected_fwhm = 2.0_sp * sqrt(2.0_sp * log(2.0_sp)) * sigma_angstroms
         call compute_fwhm(lambda, line_spec, fwhm)
 
@@ -454,9 +455,9 @@ contains
     subroutine test_xrb_switch()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(4) :: lambda
-        real(sp), dimension(1) :: time_full
-        real(sp), allocatable :: sspi(:,:), sspo(:,:)
+        real(SP), dimension(4) :: lambda
+        real(SP), dimension(1) :: time_full
+        real(SP), allocatable :: sspi(:,:), sspo(:,:)
 
         call print_group("XRB Switch (BPSS grid)")
 
@@ -489,9 +490,9 @@ contains
     end subroutine test_xrb_switch
 
     subroutine test_grid_clamping()
-        real(sp), dimension(4) :: grid
+        real(SP), dimension(4) :: grid
         integer :: idx
-        real(sp) :: w
+        real(SP) :: w
 
         call print_group("Grid Bounds Clamping")
 
@@ -509,9 +510,9 @@ contains
     subroutine test_old_universe_clamp()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(4) :: lambda
-        real(sp), dimension(2) :: time_full
-        real(sp), allocatable :: sspi(:,:), sspo(:,:)
+        real(SP), dimension(4) :: lambda
+        real(SP), dimension(2) :: time_full
+        real(SP), allocatable :: sspi(:,:), sspo(:,:)
 
         call print_group("Old Universe (Age > Grid)")
 
@@ -543,9 +544,9 @@ contains
     subroutine test_toggle_switches()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), dimension(4) :: lambda
-        real(sp), dimension(1) :: time_full
-        real(sp), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(SP), dimension(4) :: lambda
+        real(SP), dimension(1) :: time_full
+        real(SP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
 
         call print_group("Toggle Switches (Continuum/Lines)")
 
@@ -553,7 +554,7 @@ contains
         time_full = [1.0_sp]
         call setup_gas_context(ctx, lambda, time_full)
 
-        allocate(sspi(4,1), sspo(4,1), nebemline(nemline,1))
+        allocate(sspi(4,1), sspo(4,1), nebemline(NEMLINE,1))
         sspi(:,1) = 0.0_sp
         sspi(1:3,1) = 1.0_sp
 
@@ -585,8 +586,8 @@ contains
     ! GROUP 4: Automatic Differentiation (AD) Safety
     ! ------------------------------------------------------------------------
     subroutine test_weight_continuity()
-        real(sp), dimension(3) :: grid
-        real(sp) :: v1, v2, w1, w2, res1, res2
+        real(SP), dimension(3) :: grid
+        real(SP) :: v1, v2, w1, w2, res1, res2
         integer :: idx1, idx2
 
         call print_group("Weight Continuity")

@@ -4,7 +4,8 @@ SUBROUTINE SFHSTAT(pos,model,ssfr6,ssfr7,ssfr8,ave_age)
   !required inputs are the parameter set and a single element output
   !structure from compsp
   
-     USE fsps_types, ONLY: PARAMS, COMPSPOUT, SP, tiny_number
+     USE fsps_constants, ONLY: SP, SAFE_FLOOR
+     USE fsps_types, ONLY: PARAMS, COMPSPOUT
   IMPLICIT NONE
 
   TYPE(PARAMS), INTENT(in)    :: pos
@@ -65,9 +66,9 @@ SUBROUTINE SFHSTAT(pos,model,ssfr6,ssfr7,ssfr8,ave_age)
 
 
   !convert from integral(SFR) to log(<SSFR>), in 1/Gyr
-  ssfr6 = LOG10(MAX(ssfr6/model%mass_csp/1E-3,tiny_number))
-  ssfr7 = LOG10(MAX(ssfr7/model%mass_csp/1E-2,tiny_number))
-  ssfr8 = LOG10(MAX(ssfr8/model%mass_csp/1E-1,tiny_number)) 
+  ssfr6 = LOG10(MAX(ssfr6/model%mass_csp/1E-3,SAFE_FLOOR))
+  ssfr7 = LOG10(MAX(ssfr7/model%mass_csp/1E-2,SAFE_FLOOR))
+  ssfr8 = LOG10(MAX(ssfr8/model%mass_csp/1E-1,SAFE_FLOOR)) 
 
 
 END SUBROUTINE SFHSTAT

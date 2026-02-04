@@ -3,7 +3,8 @@ PROGRAM GENERATE_TEST_DATA
   ! Generates reference data for FSPS regression testing.
   ! Uses allocatable arrays to support multiple compile-time configurations.
 
-   USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
+   USE fsps_constants, ONLY: SP, NEMLINE
+   USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_context, ONLY: fsps_context_create
@@ -181,7 +182,7 @@ PROGRAM GENERATE_TEST_DATA
      IF (.NOT. ALLOCATED(ocompsp(i)%mags)) ALLOCATE(ocompsp(i)%mags(nbands_ctx))
      IF (.NOT. ALLOCATED(ocompsp(i)%spec)) ALLOCATE(ocompsp(i)%spec(nspec_ctx))
      IF (.NOT. ALLOCATED(ocompsp(i)%indx)) ALLOCATE(ocompsp(i)%indx(nindx_ctx))
-     IF (.NOT. ALLOCATED(ocompsp(i)%emlines)) ALLOCATE(ocompsp(i)%emlines(nemline))
+     IF (.NOT. ALLOCATED(ocompsp(i)%emlines)) ALLOCATE(ocompsp(i)%emlines(NEMLINE))
   END DO
 
   ! Compute CSP

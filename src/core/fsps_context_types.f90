@@ -1,8 +1,9 @@
 MODULE FSPS_CONTEXT_TYPES
-  USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, TLSF, OBSDAT, &
-       ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
-       n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
-       nemline, nebnz, nebnage, nebnip, nagndust, ntabmax
+  USE fsps_constants, ONLY: SP, &
+       NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
+       N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
+       NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
+  USE fsps_types, ONLY: PARAMS, COMPSPOUT, TLSF, OBSDAT
   USE fsps_cache, ONLY: fsps_setup_cache_t
   IMPLICIT NONE
 
@@ -29,7 +30,7 @@ MODULE FSPS_CONTEXT_TYPES
      INTEGER, DIMENSION(6) :: mwdindex = 0
      REAL(SP), DIMENSION(500,3) :: cosmospl = 0.0
      INTEGER :: ntabsfh = 0
-     REAL(SP), DIMENSION(3,ntabmax) :: sfh_tab = 0.0
+     REAL(SP), DIMENSION(3,NTABMAX) :: sfh_tab = 0.0
      REAL(SP), DIMENSION(3) :: imf_alpha = 1.3
      REAL(SP) :: imf_vdmc = 0.08
      REAL(SP) :: imf_mdave = 0.5
@@ -54,24 +55,24 @@ MODULE FSPS_CONTEXT_TYPES
     REAL(SP), POINTER :: spec_lambda(:) => NULL()
     REAL(SP), POINTER :: spec_nu(:) => NULL()
     REAL(SP), POINTER :: spec_res(:) => NULL()
-     REAL(SP), DIMENSION(ndim_logt) :: speclib_logt = 0.0
-     REAL(SP), DIMENSION(ndim_logg) :: speclib_logg = 0.0
+     REAL(SP), DIMENSION(NDIM_LOGT) :: speclib_logt = 0.0
+     REAL(SP), DIMENSION(NDIM_LOGG) :: speclib_logg = 0.0
     REAL(KIND(1.0)), POINTER :: speclib(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(ndim_wmb_logt) :: wmb_logt = 0.0
-     REAL(SP), DIMENSION(ndim_wmb_logg) :: wmb_logg = 0.0
+     REAL(SP), DIMENSION(NDIM_WMB_LOGT) :: wmb_logt = 0.0
+     REAL(SP), DIMENSION(NDIM_WMB_LOGG) :: wmb_logg = 0.0
     REAL(KIND(1.0)), POINTER :: wmb_spec(:,:,:,:) => NULL()
     REAL(SP), POINTER :: agb_spec_o(:,:) => NULL()
     REAL(SP), POINTER :: agb_logt_o(:,:) => NULL()
     REAL(SP), POINTER :: agb_spec_c(:,:) => NULL()
     REAL(SP), POINTER :: agb_logt_c(:) => NULL()
-     REAL(SP), DIMENSION(n_agb_car) :: agb_logt_car = 0.0
+     REAL(SP), DIMENSION(N_AGB_CAR) :: agb_logt_car = 0.0
     REAL(SP), POINTER :: agb_spec_car(:,:) => NULL()
     REAL(SP), POINTER :: pagb_spec(:,:,:) => NULL()
-     REAL(SP), DIMENSION(ndim_pagb) :: pagb_logt = 0.0
+     REAL(SP), DIMENSION(NDIM_PAGB) :: pagb_logt = 0.0
     REAL(SP), POINTER :: wrn_spec(:,:,:) => NULL()
     REAL(SP), POINTER :: wrc_spec(:,:,:) => NULL()
-     REAL(SP), DIMENSION(ndim_wr) :: wrn_logt = 0.0
-     REAL(SP), DIMENSION(ndim_wr) :: wrc_logt = 0.0
+     REAL(SP), DIMENSION(NDIM_WR) :: wrn_logt = 0.0
+     REAL(SP), DIMENSION(NDIM_WR) :: wrc_logt = 0.0
      INTEGER :: ndim_dustem = 0
      INTEGER :: numin_dustem = 0
      INTEGER :: nqpah_dustem = 0
@@ -82,19 +83,19 @@ MODULE FSPS_CONTEXT_TYPES
     REAL(SP), POINTER :: dustem_dustem(:,:) => NULL()
     REAL(SP), POINTER :: dustem2_dustem(:,:,:) => NULL()
     REAL(SP), POINTER :: flux_dagb(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(2,ntau_dagb) :: tau1_dagb = 0.0
-     REAL(SP), DIMENSION(2,nteff_dagb) :: teff_dagb = 0.0
-     REAL(SP), DIMENSION(nemline) :: nebem_line_pos = 0.0
-     REAL(SP), DIMENSION(nemline,nebnz,nebnage,nebnip) :: nebem_line = 0.0
-     REAL(SP), DIMENSION(nemline,nebnz,nebnage,nebnip) :: xnebem_line = 0.0
+     REAL(SP), DIMENSION(2,NTAU_DAGB) :: tau1_dagb = 0.0
+     REAL(SP), DIMENSION(2,NTEFF_DAGB) :: teff_dagb = 0.0
+     REAL(SP), DIMENSION(NEMLINE) :: nebem_line_pos = 0.0
+     REAL(SP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: nebem_line = 0.0
+     REAL(SP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: xnebem_line = 0.0
     REAL(SP), POINTER :: nebem_cont(:,:,:,:) => NULL()
     REAL(SP), POINTER :: xnebem_cont(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(nebnz) :: nebem_logz = 0.0
-     REAL(SP), DIMENSION(nebnage) :: nebem_age = 0.0
-     REAL(SP), DIMENSION(nebnip) :: nebem_logu = 0.0
+     REAL(SP), DIMENSION(NEBNZ) :: nebem_logz = 0.0
+     REAL(SP), DIMENSION(NEBNAGE) :: nebem_age = 0.0
+     REAL(SP), DIMENSION(NEBNIP) :: nebem_logu = 0.0
     REAL(SP), POINTER :: neb_res_min(:) => NULL()
     REAL(SP), POINTER :: gaussnebarr(:,:) => NULL()
-     REAL(SP), DIMENSION(nagndust) :: agndust_tau = 0.0
+     REAL(SP), DIMENSION(NAGNDUST) :: agndust_tau = 0.0
     REAL(SP), POINTER :: agndust_spec(:,:) => NULL()
     REAL(SP), POINTER :: mact_isoc(:,:,:) => NULL()
     REAL(SP), POINTER :: logl_isoc(:,:,:) => NULL()

@@ -14,7 +14,10 @@ module fsps_dust
     !> 4. Model specialized dust environments, including circumstellar shells
     !>    around AGB stars and dusty tori surrounding AGN.
 
-    use fsps_types, only: sp, params, clight, nemline, gsig4pi
+    use fsps_constants, only: SP, C_LIGHT, NEMLINE, GRAVITY_L_M_T_COEFF, &
+                              M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, &
+                              SAFE_FLOOR, PI
+    use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: interpolate_linear, find_interval
@@ -36,171 +39,168 @@ module fsps_dust
     ! ------------------------------------------------------------------------
     ! CONSTANTS: General Dust Parameters
     ! ------------------------------------------------------------------------
-    ! TODO: Move SAFE_FLOOR and PI to fsps_types.f90
-    real(sp), parameter :: SAFE_FLOOR = tiny(0.0_sp)
-    real(sp), parameter :: PI = acos(-1.0_sp)
-    real(sp), parameter :: V_BAND_ANGSTROMS  = 5500.0_sp
-    real(sp), parameter :: UV_BUMP_CENTER    = 2175.0_sp
-    real(sp), parameter :: CALZETTI_BREAK    = 6300.0_sp
+    real(SP), parameter :: V_BAND_ANGSTROMS  = 5500.0_sp
+    real(SP), parameter :: UV_BUMP_CENTER    = 2175.0_sp
+    real(SP), parameter :: CALZETTI_BREAK    = 6300.0_sp
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS: Cardelli, Clayton, & Mathis (1989) Extinction Curve Parameters
     ! ------------------------------------------------------------------------
 
     ! Region Boundaries (in inverse microns, x = 1/lambda)
-    real(sp), parameter :: CCM_X_IR_MIN  = 0.3_sp
-    real(sp), parameter :: CCM_X_OPT_MIN = 1.1_sp
-    real(sp), parameter :: CCM_X_NUV_MIN = 3.3_sp
-    real(sp), parameter :: CCM_X_MUV_MIN = 5.9_sp
-    real(sp), parameter :: CCM_X_FUV_MIN = 8.0_sp
+    real(SP), parameter :: CCM_X_IR_MIN  = 0.3_sp
+    real(SP), parameter :: CCM_X_OPT_MIN = 1.1_sp
+    real(SP), parameter :: CCM_X_NUV_MIN = 3.3_sp
+    real(SP), parameter :: CCM_X_MUV_MIN = 5.9_sp
+    real(SP), parameter :: CCM_X_FUV_MIN = 8.0_sp
 
     ! FUV Cutoff (Clamp values for x > 12.0, i.e., lambda < 833 A)
-    real(sp), parameter :: CCM_X_CUTOFF = 12.0_sp
+    real(SP), parameter :: CCM_X_CUTOFF = 12.0_sp
     
     ! Infrared Parameters (0.3 <= x < 1.1)
-    real(sp), parameter :: CCM_IR_A_SCALE = 0.574_sp
-    real(sp), parameter :: CCM_IR_B_SCALE = -0.527_sp
-    real(sp), parameter :: CCM_IR_EXP     = 1.61_sp
+    real(SP), parameter :: CCM_IR_A_SCALE = 0.574_sp
+    real(SP), parameter :: CCM_IR_B_SCALE = -0.527_sp
+    real(SP), parameter :: CCM_IR_EXP     = 1.61_sp
 
     ! Optical Parameters (1.1 <= x < 3.3)
     ! Polynomial coefficients for y = x - 1.82 (Powers 0 through 7)
-    real(sp), parameter :: CCM_OPT_Y_SHIFT = 1.82_sp
-    real(sp), parameter :: CCM_OPT_A_COEFFS(0:7) = [ &
+    real(SP), parameter :: CCM_OPT_Y_SHIFT = 1.82_sp
+    real(SP), parameter :: CCM_OPT_A_COEFFS(0:7) = [ &
         1.0_sp,      0.17699_sp, -0.50447_sp, -0.02427_sp, &
         0.72085_sp,  0.01979_sp, -0.77530_sp,  0.32999_sp ]
-    real(sp), parameter :: CCM_OPT_B_COEFFS(0:7) = [ &
+    real(SP), parameter :: CCM_OPT_B_COEFFS(0:7) = [ &
         0.0_sp,      1.41338_sp,  2.28305_sp,  1.07233_sp, &
        -5.38434_sp, -0.62251_sp,  5.30260_sp, -2.09002_sp ]
 
     ! Near-UV Parameters (3.3 <= x < 5.9)
     ! Base Linear Terms: C1 + C2*x
-    real(sp), parameter :: CCM_NUV_A_BASE(2) = [ 1.752_sp, -0.316_sp] 
-    real(sp), parameter :: CCM_NUV_B_BASE(2) = [-3.09_sp,   1.825_sp]
+    real(SP), parameter :: CCM_NUV_A_BASE(2) = [ 1.752_sp, -0.316_sp] 
+    real(SP), parameter :: CCM_NUV_B_BASE(2) = [-3.09_sp,   1.825_sp]
     ! Drude Bump Terms: Scale / ((x-Pos)**2 + Width)
-    real(sp), parameter :: CCM_NUV_A_BUMP(3) = [-0.104_sp, 4.67_sp, 0.341_sp]
-    real(sp), parameter :: CCM_NUV_B_BUMP(3) = [ 1.206_sp, 4.62_sp, 0.263_sp]
+    real(SP), parameter :: CCM_NUV_A_BUMP(3) = [-0.104_sp, 4.67_sp, 0.341_sp]
+    real(SP), parameter :: CCM_NUV_B_BUMP(3) = [ 1.206_sp, 4.62_sp, 0.263_sp]
 
     ! Mid-UV Parameters (5.9 <= x < 8.0) - Additions to NUV
     ! F(x) = C2*(x-5.9)**2 + C3*(x-5.9)**3
-    real(sp), parameter :: CCM_MUV_A_POLY(2) = [-0.04473_sp, -0.009779_sp]
-    real(sp), parameter :: CCM_MUV_B_POLY(2) = [ 0.2130_sp,   0.1207_sp]
+    real(SP), parameter :: CCM_MUV_A_POLY(2) = [-0.04473_sp, -0.009779_sp]
+    real(SP), parameter :: CCM_MUV_B_POLY(2) = [ 0.2130_sp,   0.1207_sp]
 
     ! Far-UV Parameters (x >= 8.0)
     ! Polynomials in (x - 8.0)
-    real(sp), parameter :: CCM_FUV_A_COEFFS(0:3) = [-1.073_sp, -0.628_sp, 0.137_sp, -0.070_sp]
-    real(sp), parameter :: CCM_FUV_B_COEFFS(0:3) = [ 13.67_sp,  4.257_sp, -0.42_sp,  0.374_sp]
+    real(SP), parameter :: CCM_FUV_A_COEFFS(0:3) = [-1.073_sp, -0.628_sp, 0.137_sp, -0.070_sp]
+    real(SP), parameter :: CCM_FUV_B_COEFFS(0:3) = [ 13.67_sp,  4.257_sp, -0.42_sp,  0.374_sp]
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS: Calzetti et al. (2000) Attenuation Curve Parameters
     ! --------------------------------------------------------------------------
 
     ! Region Boundaries (Angstroms)
-    real(sp), parameter :: CALZ_LAM_UV_MIN = 1200.0_sp  ! 0.12 microns
-    real(sp), parameter :: CALZ_LAM_BREAK  = 6300.0_sp  ! 0.63 microns
-    real(sp), parameter :: CALZ_LAM_IR_MAX = 22000.0_sp ! 2.20 microns
+    real(SP), parameter :: CALZ_LAM_UV_MIN = 1200.0_sp  ! 0.12 microns
+    real(SP), parameter :: CALZ_LAM_BREAK  = 6300.0_sp  ! 0.63 microns
+    real(SP), parameter :: CALZ_LAM_IR_MAX = 22000.0_sp ! 2.20 microns
 
     ! General Parameters
-    real(sp), parameter :: CALZ_R_V   = 4.05_sp
-    real(sp), parameter :: CALZ_SCALE = 2.659_sp      ! Scaling factor k'
+    real(SP), parameter :: CALZ_R_V   = 4.05_sp
+    real(SP), parameter :: CALZ_SCALE = 2.659_sp      ! Scaling factor k'
 
     ! UV/Optical Polynomial Coefficients (0.12 <= lambda < 0.63 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
-    real(sp), parameter :: CALZ_UV_COEFFS(0:3) = [-2.156_sp, 1.509_sp, -0.198_sp, 0.011_sp]
+    real(SP), parameter :: CALZ_UV_COEFFS(0:3) = [-2.156_sp, 1.509_sp, -0.198_sp, 0.011_sp]
 
     ! Optical/NIR Linear Coefficients (0.63 <= lambda <= 2.2 um)
     ! Linear in (1/lambda_microns): c0 + c1*x
-    real(sp), parameter :: CALZ_OPT_COEFFS(0:1) = [-1.857_sp, 1.040_sp]
+    real(SP), parameter :: CALZ_OPT_COEFFS(0:1) = [-1.857_sp, 1.040_sp]
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS: Kriek & Conroy (2013) Attenuation Curve Parameters
     ! --------------------------------------------------------------------------
     
     ! Drude Profile Parameters
-    real(sp), parameter :: KC13_BUMP_WIDTH = 350.0_sp  ! Delta lambda (Angstroms)
+    real(SP), parameter :: KC13_BUMP_WIDTH = 350.0_sp  ! Delta lambda (Angstroms)
     
     ! Bump Amplitude Relationship: E_b = 0.85 - 1.9 * delta
-    real(sp), parameter :: KC13_AMPL_INTERCEPT = 0.85_sp
-    real(sp), parameter :: KC13_AMPL_SLOPE     = 1.9_sp
+    real(SP), parameter :: KC13_AMPL_INTERCEPT = 0.85_sp
+    real(SP), parameter :: KC13_AMPL_SLOPE     = 1.9_sp
 
     ! The base model is tied to Calzetti's specific R_V
-    real(sp), parameter :: KC13_R_V_BASE = 4.05_sp
+    real(SP), parameter :: KC13_R_V_BASE = 4.05_sp
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS: Reddy et al. (2015) Attenuation Curve Parameters
     ! --------------------------------------------------------------------------
 
     ! Region Boundaries (Angstroms)
-    real(sp), parameter :: REDDY_LAM_UV_MIN = 1500.0_sp
-    real(sp), parameter :: REDDY_LAM_BREAK  = 6000.0_sp
-    real(sp), parameter :: REDDY_LAM_IR_MAX = 28500.0_sp
+    real(SP), parameter :: REDDY_LAM_UV_MIN = 1500.0_sp
+    real(SP), parameter :: REDDY_LAM_BREAK  = 6000.0_sp
+    real(SP), parameter :: REDDY_LAM_IR_MAX = 28500.0_sp
 
     ! Region Boundary (Inverse Microns)
-    real(sp), parameter :: REDDY_X_UV_MAX   = 1.0e4_sp / REDDY_LAM_UV_MIN
+    real(SP), parameter :: REDDY_X_UV_MAX   = 1.0e4_sp / REDDY_LAM_UV_MIN
 
     ! General Parameters
-    real(sp), parameter :: REDDY_R_V        = 2.505_sp
-    real(sp), parameter :: REDDY_OFFSET     = 2.505_sp ! Base offset added to both curves
+    real(SP), parameter :: REDDY_R_V        = 2.505_sp
+    real(SP), parameter :: REDDY_OFFSET     = 2.505_sp ! Base offset added to both curves
 
     ! UV Polynomial Coefficients (0.15 <= lambda < 0.60 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
-    real(sp), parameter :: REDDY_UV_COEFFS(0:3) = [-5.726_sp, 4.004_sp, -0.525_sp, 0.029_sp]
+    real(SP), parameter :: REDDY_UV_COEFFS(0:3) = [-5.726_sp, 4.004_sp, -0.525_sp, 0.029_sp]
     
     ! Blueward Extrapolation Value (< 0.15 um)
-    real(sp), parameter :: REDDY_UV_EXTRAP_VAL = 10.36_sp
+    real(SP), parameter :: REDDY_UV_EXTRAP_VAL = 10.36_sp
 
     ! Optical/NIR Polynomial Coefficients (0.60 <= lambda < 2.85 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
-    real(sp), parameter :: REDDY_OPT_COEFFS(0:3) = [-2.672_sp, -0.010_sp, 1.532_sp, -0.412_sp]
+    real(SP), parameter :: REDDY_OPT_COEFFS(0:3) = [-2.672_sp, -0.010_sp, 1.532_sp, -0.412_sp]
     
     ! Continuity Correction for Optical Range
-    real(sp), parameter :: REDDY_OPT_CORRECTION = -0.036221981_sp
+    real(SP), parameter :: REDDY_OPT_CORRECTION = -0.036221981_sp
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS: AGB Circumstellar Dust Parameters
     ! --------------------------------------------------------------------------
     
     ! Dust-to-Gas Ratios (delta)
-    real(sp), parameter :: AGB_DELTA_C_RICH = 0.0025_sp
-    real(sp), parameter :: AGB_DELTA_O_RICH = 0.01_sp
+    real(SP), parameter :: AGB_DELTA_C_RICH = 0.0025_sp
+    real(SP), parameter :: AGB_DELTA_O_RICH = 0.01_sp
 
     ! Extinction Coefficients (kappa)
-    real(sp), parameter :: AGB_KAPPA_C_RICH = 3200.0_sp ! AmC + SiC
-    real(sp), parameter :: AGB_KAPPA_O_RICH = 3000.0_sp ! Silicates
+    real(SP), parameter :: AGB_KAPPA_C_RICH = 3200.0_sp ! AmC + SiC
+    real(SP), parameter :: AGB_KAPPA_O_RICH = 3000.0_sp ! Silicates
 
     ! Inner Radius Factors (cm * L^-0.5)
-    real(sp), parameter :: AGB_RIN_FACTOR_C = 1.92E12_sp ! Td = 1100 K
-    real(sp), parameter :: AGB_RIN_FACTOR_O = 4.74E12_sp ! Td = 700 K
+    real(SP), parameter :: AGB_RIN_FACTOR_C = 1.92E12_sp ! Td = 1100 K
+    real(SP), parameter :: AGB_RIN_FACTOR_O = 4.74E12_sp ! Td = 700 K
 
     ! Villaume et al. (2015) Period Relation Coefficients
     ! logP = A + B*logR + C*logM
-    real(sp), parameter :: AGB_PER_INTERCEPT = -2.07_sp
-    real(sp), parameter :: AGB_PER_SLOPE_R   = 1.94_sp
-    real(sp), parameter :: AGB_PER_SLOPE_M   = -0.9_sp
+    real(SP), parameter :: AGB_PER_INTERCEPT = -2.07_sp
+    real(SP), parameter :: AGB_PER_SLOPE_R   = 1.94_sp
+    real(SP), parameter :: AGB_PER_SLOPE_M   = -0.9_sp
 
     ! Expansion Velocity Parameters
-    real(sp), parameter :: AGB_VEXP_INTERCEPT = -13.5_sp
-    real(sp), parameter :: AGB_VEXP_SLOPE     = 0.056_sp
-    real(sp), parameter :: AGB_VEXP_MIN       = 3.0_sp  ! km/s
-    real(sp), parameter :: AGB_VEXP_MAX       = 15.0_sp ! km/s
+    real(SP), parameter :: AGB_VEXP_INTERCEPT = -13.5_sp
+    real(SP), parameter :: AGB_VEXP_SLOPE     = 0.056_sp
+    real(SP), parameter :: AGB_VEXP_MIN       = 3.0_sp  ! km/s
+    real(SP), parameter :: AGB_VEXP_MAX       = 15.0_sp ! km/s
 
     ! Vassiliadis & Wood (1993) Mass Loss Parameters
-    real(sp), parameter :: VW93_MDOT_LIMIT_ISO = 1.0e-4_sp
-    real(sp), parameter :: VW93_PER_THRESH     = 500.0_sp ! Days
-    real(sp), parameter :: VW93_MASS_THRESH    = 2.5_sp   ! Solar Masses
-    real(sp), parameter :: VW93_BASE_INTERCEPT = -11.4_sp
-    real(sp), parameter :: VW93_BASE_SLOPE     = 0.0123_sp
-    real(sp), parameter :: VW93_HIGH_SLOPE     = 0.0125_sp
-    real(sp), parameter :: VW93_SUPERWIND_NORM = 1.93e3_sp
+    real(SP), parameter :: VW93_MDOT_LIMIT_ISO = 1.0e-4_sp
+    real(SP), parameter :: VW93_PER_THRESH     = 500.0_sp ! Days
+    real(SP), parameter :: VW93_MASS_THRESH    = 2.5_sp   ! Solar Masses
+    real(SP), parameter :: VW93_BASE_INTERCEPT = -11.4_sp
+    real(SP), parameter :: VW93_BASE_SLOPE     = 0.0123_sp
+    real(SP), parameter :: VW93_HIGH_SLOPE     = 0.0125_sp
+    real(SP), parameter :: VW93_SUPERWIND_NORM = 1.93e3_sp
 
     ! Dust-to-Gas Ratio Scaling
-    real(sp), parameter :: AGB_DTG_VEL_NORM    = 225.0_sp
-    real(sp), parameter :: AGB_DTG_LUM_NORM    = 1.0e4_sp
-    real(sp), parameter :: AGB_DTG_LUM_EXP     = -0.6_sp
+    real(SP), parameter :: AGB_DTG_VEL_NORM    = 225.0_sp
+    real(SP), parameter :: AGB_DTG_LUM_NORM    = 1.0e4_sp
+    real(SP), parameter :: AGB_DTG_LUM_EXP     = -0.6_sp
 
     ! Smoothing Constants
-    real(sp), parameter :: AGB_SMOOTH_SIGMA      = 1.0e4_sp
-    real(sp), parameter :: AGB_SMOOTH_LAMBDA_MIN = 3.0e4_sp
-    real(sp), parameter :: AGB_SMOOTH_LAMBDA_MAX = 1.0e8_sp
+    real(SP), parameter :: AGB_SMOOTH_SIGMA      = 1.0e4_sp
+    real(SP), parameter :: AGB_SMOOTH_LAMBDA_MIN = 3.0e4_sp
+    real(SP), parameter :: AGB_SMOOTH_LAMBDA_MAX = 1.0e8_sp
 
 contains
 
@@ -230,23 +230,23 @@ contains
         
         type(fsps_context_t), intent(in)       :: ctx
         type(params), intent(in)               :: settings
-        real(sp), dimension(:), intent(in)     :: spec_young, spec_old
-        real(sp), dimension(:), intent(in)     :: neb_flux_young, neb_flux_old
-        real(sp), dimension(:), intent(out)    :: spec_total_out
-        real(sp), intent(out)                  :: dust_mass
-        real(sp), dimension(:), intent(out)    :: neb_flux_out
+        real(SP), dimension(:), intent(in)     :: spec_young, spec_old
+        real(SP), dimension(:), intent(in)     :: neb_flux_young, neb_flux_old
+        real(SP), dimension(:), intent(out)    :: spec_total_out
+        real(SP), intent(out)                  :: dust_mass
+        real(SP), dimension(:), intent(out)    :: neb_flux_out
 
         ! Local Variables
-        real(sp), dimension(size(spec_young)) :: attenuation_curve_diffuse
-        real(sp), dimension(size(spec_young)) :: transmission_diffuse
-        real(sp), dimension(size(spec_young)) :: transmission_birth_cloud
-        real(sp), dimension(size(spec_young)) :: spec_attenuated_sum
-        real(sp), dimension(size(spec_young)) :: frequencies
-        real(sp), dimension(size(neb_flux_young)) :: transmission_diffuse_neb
+        real(SP), dimension(size(spec_young)) :: attenuation_curve_diffuse
+        real(SP), dimension(size(spec_young)) :: transmission_diffuse
+        real(SP), dimension(size(spec_young)) :: transmission_birth_cloud
+        real(SP), dimension(size(spec_young)) :: spec_attenuated_sum
+        real(SP), dimension(size(spec_young)) :: frequencies
+        real(SP), dimension(size(neb_flux_young)) :: transmission_diffuse_neb
         
-        real(sp) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
-        real(sp), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
-        real(sp) :: emission_norm_factor
+        real(SP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
+        real(SP), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
+        real(SP) :: emission_norm_factor
 
         ! 0. Input Validation
         ! -------------------
@@ -316,7 +316,7 @@ contains
         if (ctx%add_dust_emission_val == 1 .and. &
             (settings%dust1 > SAFE_FLOOR .or. settings%dust2 > SAFE_FLOOR)) then
             
-            frequencies = clight / ctx%state%spec_lambda
+            frequencies = C_LIGHT / ctx%state%spec_lambda
 
             ! Calculate Bolometric Luminosities (L_bol)
             ! -----------------------------------------
@@ -388,11 +388,11 @@ contains
     !>
     !> @return attenuation_curve Vector of optical depths (dimension matching wavelengths).
     pure function compute_attenuation_curve(wavelengths, dust_type_id, settings, ctx) result(attenuation_curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
+        real(SP), dimension(:), intent(in) :: wavelengths
         integer, intent(in)                :: dust_type_id
         type(params), intent(in)           :: settings
         type(fsps_context_t), intent(in)   :: ctx
-        real(sp), dimension(size(wavelengths)) :: attenuation_curve
+        real(SP), dimension(size(wavelengths)) :: attenuation_curve
 
         ! Initialize to zero
         attenuation_curve = 0.0_sp
@@ -463,18 +463,18 @@ contains
                                      log_g, c_o_ratio, log_mdot)
         
         type(fsps_context_t), intent(inout)   :: ctx
-        real(sp), intent(in)                  :: weight
-        real(sp), dimension(:), intent(inout) :: spectrum
-        real(sp), intent(in)                  :: mass_act, log_t, log_l, log_g
-        real(sp), intent(in)                  :: c_o_ratio, log_mdot
+        real(SP), intent(in)                  :: weight
+        real(SP), dimension(:), intent(inout) :: spectrum
+        real(SP), intent(in)                  :: mass_act, log_t, log_l, log_g
+        real(SP), intent(in)                  :: c_o_ratio, log_mdot
         
         ! Local variables
         integer  :: c_rich_flag ! 0 = O-rich, 1 = C-rich
         integer  :: idx_teff, idx_tau
         integer  :: n_teff_grid, n_tau_grid
-        real(sp) :: tau_1um, log_g_local
-        real(sp) :: w_teff, w_tau ! Interpolation weights
-        real(sp), dimension(size(spectrum)) :: dusty_transfer_function
+        real(SP) :: tau_1um, log_g_local
+        real(SP) :: w_teff, w_tau ! Interpolation weights
+        real(SP), dimension(size(spectrum)) :: dusty_transfer_function
 
         ! 1. Determine Chemistry (C-rich vs O-rich)
         ! -----------------------------------------
@@ -488,7 +488,7 @@ contains
         ! -------------------------------------
         ! BaSTI does not always tabulate log(g), so we compute it physically.
         if (ctx%state%isoc_type == 'bsti') then
-            log_g_local = log10(gsig4pi * mass_act / (10.0_sp**log_l)) + 4.0_sp * log_t
+            log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_sp**log_l)) + 4.0_sp * log_t
         else
             log_g_local = log_g
         end if
@@ -563,15 +563,15 @@ contains
     subroutine apply_agn_dust_emission(ctx, settings, wavelengths, log_lbol_stellar, spectrum_inout)
         type(fsps_context_t), intent(in)       :: ctx
         type(params), intent(in)               :: settings
-        real(sp), dimension(:), intent(in)     :: wavelengths
-        real(sp), intent(in)                   :: log_lbol_stellar
-        real(sp), dimension(:), intent(inout)  :: spectrum_inout
+        real(SP), dimension(:), intent(in)     :: wavelengths
+        real(SP), intent(in)                   :: log_lbol_stellar
+        real(SP), dimension(:), intent(inout)  :: spectrum_inout
 
         ! Local variables
-        real(sp), dimension(size(wavelengths)) :: agn_template_interpolated
-        real(sp), dimension(size(wavelengths)) :: galaxy_attenuation_curve
-        real(sp) :: tau_agn_param, interpolation_weight
-        real(sp) :: luminosity_agn_bolometric
+        real(SP), dimension(size(wavelengths)) :: agn_template_interpolated
+        real(SP), dimension(size(wavelengths)) :: galaxy_attenuation_curve
+        real(SP) :: tau_agn_param, interpolation_weight
+        real(SP) :: luminosity_agn_bolometric
         integer  :: idx_tau_grid, n_agn_grid
 
         ! 0. Early exit if no AGN contribution is specified
@@ -638,11 +638,11 @@ contains
     subroutine interpolate_draine_li_dust_model(ctx, settings, emission_spectrum)
         type(fsps_context_t), intent(in)   :: ctx
         type(params), intent(in)           :: settings
-        real(sp), dimension(:), intent(out) :: emission_spectrum
+        real(SP), dimension(:), intent(out) :: emission_spectrum
         
         integer :: idx_q, idx_u
-        real(sp) :: w_q, w_u, gamma_frac
-        real(sp), dimension(size(emission_spectrum)) :: spec_u_min, spec_u_max
+        real(SP) :: w_q, w_u, gamma_frac
+        real(SP), dimension(size(emission_spectrum)) :: spec_u_min, spec_u_max
         integer :: n_qpah, n_umin
 
         ! Grid Dimensions
@@ -711,14 +711,14 @@ contains
         
         use fsps_integration, only: integrate_trapezoid_array
         
-        real(sp), dimension(:), intent(in)  :: nu
-        real(sp), dimension(:), intent(in)  :: shape_intrinsic
-        real(sp), dimension(:), intent(in)  :: transmission_ism ! e^-tau
-        real(sp), intent(in)                :: lum_absorbed_initial
-        real(sp), dimension(:), intent(out) :: spec_final
+        real(SP), dimension(:), intent(in)  :: nu
+        real(SP), dimension(:), intent(in)  :: shape_intrinsic
+        real(SP), dimension(:), intent(in)  :: transmission_ism ! e^-tau
+        real(SP), intent(in)                :: lum_absorbed_initial
+        real(SP), dimension(:), intent(out) :: spec_final
 
-        real(sp), dimension(size(nu)) :: profile_escaped
-        real(sp) :: lum_escaped_profile, normalization_factor
+        real(SP), dimension(size(nu)) :: profile_escaped
+        real(SP) :: lum_escaped_profile, normalization_factor
         
         ! 1. Calculate the shape of the dust emission that actually escapes the galaxy.
         !    This is the intrinsic dust emission curve attenuated by the dust itself.
@@ -742,17 +742,17 @@ contains
     !> Implementation of Cardelli, Clayton, & Mathis (1989) extinction curve.
     !> Includes the "hack" for smooth transitions used in the original FSPS.
     pure function get_ccm89_curve(wavelengths, r_v, uv_bump_strength) result(curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), intent(in) :: r_v, uv_bump_strength
-        real(sp), dimension(size(wavelengths)) :: curve
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), intent(in) :: r_v, uv_bump_strength
+        real(SP), dimension(size(wavelengths)) :: curve
 
         ! Array variables for the main calculation
-        real(sp), dimension(size(wavelengths)) :: wavenumbers, wavenumber_term, poly_a, poly_b
-        real(sp), dimension(size(wavelengths)) :: temp_curve, wavenumbers_clamped
+        real(SP), dimension(size(wavelengths)) :: wavenumbers, wavenumber_term, poly_a, poly_b
+        real(SP), dimension(size(wavelengths)) :: temp_curve, wavenumbers_clamped
 
         ! Scalar variables for calculating the Smoothing Hack (at x=3.3)
-        real(sp) :: y_anchor, a_scalar, b_scalar
-        real(sp) :: opt_val_at_break, nuv_val_at_break, continuity_correction
+        real(SP) :: y_anchor, a_scalar, b_scalar
+        real(SP) :: opt_val_at_break, nuv_val_at_break, continuity_correction
 
         ! 1. PRE-CALCULATION: The "Smoothing Hack" Constant
         ! -------------------------------------------------
@@ -876,9 +876,9 @@ contains
 
     !> Implementation of Calzetti et al. (2000) starburst attenuation curve.
     pure function get_calzetti_curve(wavelengths) result(curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), dimension(size(wavelengths)) :: curve
-        real(sp), dimension(size(wavelengths)) :: wavenumbers, extinction_k
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), dimension(size(wavelengths)) :: curve
+        real(SP), dimension(size(wavelengths)) :: wavenumbers, extinction_k
 
         ! Convert to inverse microns (x = 1/lambda_um)
         wavenumbers = get_wavenumber(wavelengths)
@@ -909,12 +909,12 @@ contains
 
     !> Implementation of Kriek & Conroy (2013): Calzetti + UV Bump + Tilt.
     pure function get_kriek_conroy_curve(wavelengths, tilt_index) result(curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), intent(in) :: tilt_index
-        real(sp), dimension(size(wavelengths)) :: curve
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), intent(in) :: tilt_index
+        real(SP), dimension(size(wavelengths)) :: curve
         
-        real(sp), dimension(size(wavelengths)) :: base_calzetti, drude_profile
-        real(sp) :: bump_amplitude ! E_b in paper
+        real(SP), dimension(size(wavelengths)) :: base_calzetti, drude_profile
+        real(SP) :: bump_amplitude ! E_b in paper
 
         ! 1. Base Calzetti (normalized to E(B-V), i.e., k_lambda scale)
         ! Note: Our helper `get_calzetti_curve` returns A_lambda/A_V.
@@ -945,9 +945,9 @@ contains
 
 !> Implementation of Reddy et al. (2015) MOSDEF curve.
     pure function get_reddy_curve(wavelengths) result(curve)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), dimension(size(wavelengths)) :: curve
-        real(sp), dimension(size(wavelengths)) :: wavenumbers, extinction_k, wavenumbers_clamped
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), dimension(size(wavelengths)) :: curve
+        real(SP), dimension(size(wavelengths)) :: wavenumbers, extinction_k, wavenumbers_clamped
         
         wavenumbers = get_wavenumber(wavelengths)
         extinction_k = 0.0_sp
@@ -980,8 +980,8 @@ contains
     !> Converts wavelength (Angstroms) to wavenumber (inverse microns).
     !> Used frequently for dust curve parameterizations (CCM89, Calzetti, etc.).
     pure function get_wavenumber(wavelengths) result(wavenumbers)
-        real(sp), dimension(:), intent(in) :: wavelengths
-        real(sp), dimension(size(wavelengths)) :: wavenumbers
+        real(SP), dimension(:), intent(in) :: wavelengths
+        real(SP), dimension(size(wavelengths)) :: wavenumbers
         
         ! x = 1 / lambda_microns = 10000 / lambda_angstroms
         wavenumbers = 1.0e4_sp / wavelengths
@@ -990,15 +990,13 @@ contains
     !> Computes the circumstellar optical depth (tau_1um) from physical parameters.
     !> See Villaume et al. (2015).
     pure function compute_circumstellar_optical_depth(ctx, c_rich_flag, m_act, log_l, log_g, log_mdot_iso) result(tau)
-        use fsps_types, only: msun, newton, rsun, yr2sc
-        
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: c_rich_flag
-        real(sp), intent(in) :: m_act, log_l, log_g, log_mdot_iso
-        real(sp) :: tau
+        real(SP), intent(in) :: m_act, log_l, log_g, log_mdot_iso
+        real(SP) :: tau
         
-        real(sp) :: radius_solar, period_days, velocity_exp, mdot_sol_yr
-        real(sp) :: inner_radius_cm, dust_gas_ratio, kappa_eff
+        real(SP) :: radius_solar, period_days, velocity_exp, mdot_sol_yr
+        real(SP) :: inner_radius_cm, dust_gas_ratio, kappa_eff
 
         ! 1. Determine Constants based on Chemistry
         ! -----------------------------------------
@@ -1011,7 +1009,7 @@ contains
         ! 2. Stellar Parameters
         ! ---------------------
         ! Radius (R_sun) = sqrt(GM / g) / R_sun_cm
-        radius_solar = sqrt(m_act * msun * newton / (10.0_sp**log_g)) / rsun
+        radius_solar = sqrt(m_act * M_SOL * G_NEWTON / (10.0_sp**log_g)) / R_SOL
 
         ! Fundamental Pulsation Period (Days) - Villaume et al. (2015) relation
         period_days = 10.0_sp**(AGB_PER_INTERCEPT + &
@@ -1038,7 +1036,7 @@ contains
                 end if
             else
                 ! Superwind phase
-                mdot_sol_yr = (10.0_sp**log_l) / velocity_exp * VW93_SUPERWIND_NORM * yr2sc / clight
+                mdot_sol_yr = (10.0_sp**log_l) / velocity_exp * VW93_SUPERWIND_NORM * YEAR_TO_SECOND / C_LIGHT
             end if
         end if
 
@@ -1066,7 +1064,7 @@ contains
         ! tau = kappa * delta * Mdot / (4 * pi * R_in * v_exp)
         ! Note: v_exp is converted from km/s to cm/s (1E5 factor)
         
-        tau = kappa_eff * dust_gas_ratio * (mdot_sol_yr * msun / yr2sc) / &
+        tau = kappa_eff * dust_gas_ratio * (mdot_sol_yr * M_SOL / YEAR_TO_SECOND) / &
               inner_radius_cm / (4.0_sp * PI) / (velocity_exp * 1.0e5_sp)
 
     end function compute_circumstellar_optical_depth

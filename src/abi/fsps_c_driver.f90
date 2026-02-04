@@ -1,6 +1,7 @@
 MODULE FSPS_C_DRIVER
     USE ISO_C_BINDING
-       USE fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline
+      USE fsps_constants, ONLY: SP, NEMLINE
+      USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
       USE fsps_interpolation, ONLY: find_interval
      USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
@@ -122,7 +123,7 @@ CONTAINS
             ALLOCATE(global_ocompsp(i)%mags(n_bands))
             ALLOCATE(global_ocompsp(i)%spec(n_spec))
             ALLOCATE(global_ocompsp(i)%indx(n_indx))
-            ALLOCATE(global_ocompsp(i)%emlines(nemline))
+            ALLOCATE(global_ocompsp(i)%emlines(NEMLINE))
          END DO
       END IF
 
@@ -541,7 +542,7 @@ CONTAINS
       INTEGER(C_INT), INTENT(OUT) :: status
 
       status = 0
-      n_line = nemline
+      n_line = NEMLINE
       IF (handle < 1 .OR. .NOT. ALLOCATED(ctx_pool) .OR. handle > SIZE(ctx_pool)) THEN
          status = 1
          n_line = 0
@@ -1262,7 +1263,7 @@ CONTAINS
      CALL C_F_POINTER(c_sfr, f_sfr, [n_time])
      CALL C_F_POINTER(c_mdust, f_mdust, [n_time])
      CALL C_F_POINTER(c_mformed, f_mformed, [n_time])
-     CALL C_F_POINTER(c_emlines, f_emlines, [nemline, n_time])
+     CALL C_F_POINTER(c_emlines, f_emlines, [NEMLINE, n_time])
 
      DO i = 1, n_time
         f_age(i) = global_ocompsp(i)%age
@@ -1395,12 +1396,12 @@ CONTAINS
 
    SUBROUTINE fsps_get_nm(n_mass) BIND(C, name="fsps_get_nm")
       INTEGER(C_INT), INTENT(OUT) :: n_mass
-      n_mass = nm
+      n_mass = NM
    END SUBROUTINE fsps_get_nm
 
    SUBROUTINE fsps_get_ntabmax(n_tabmax) BIND(C, name="fsps_get_ntabmax")
       INTEGER(C_INT), INTENT(OUT) :: n_tabmax
-      n_tabmax = ntabmax
+      n_tabmax = NTABMAX
    END SUBROUTINE fsps_get_ntabmax
 
    SUBROUTINE fsps_get_nz(n_z) BIND(C, name="fsps_get_nz")
@@ -1411,7 +1412,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_nemline(n_line) BIND(C, name="fsps_get_nemline")
       INTEGER(C_INT), INTENT(OUT) :: n_line
-      n_line = nemline
+      n_line = NEMLINE
    END SUBROUTINE fsps_get_nemline
 
    ! Isochrone metadata
@@ -1420,7 +1421,7 @@ CONTAINS
       INTEGER(C_INT), INTENT(OUT) :: n_age, n_mass
       CALL fsps_ensure_default_ctx()
       n_age = fsps_default_ctx%state%nt
-      n_mass = nm
+      n_mass = NM
    END SUBROUTINE fsps_get_isochrone_dimensions
 
    SUBROUTINE fsps_get_nmass_isochrone(z_idx, t_idx, n_mass) &
@@ -1473,7 +1474,7 @@ CONTAINS
    SUBROUTINE fsps_get_emlambda(c_emlambda) BIND(C, name="fsps_get_emlambda")
       TYPE(C_PTR), VALUE :: c_emlambda
       REAL(SP), POINTER :: f_emlambda(:)
-      CALL C_F_POINTER(c_emlambda, f_emlambda, [nemline])
+      CALL C_F_POINTER(c_emlambda, f_emlambda, [NEMLINE])
         CALL fsps_ensure_default_ctx()
         IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
            f_emlambda = vactoair(fsps_default_ctx%state%nebem_line_pos)

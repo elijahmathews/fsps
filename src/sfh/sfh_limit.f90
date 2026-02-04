@@ -14,7 +14,8 @@ function sfhlimit(ctx, tlim, sfh)
   !    An sfhparams structure containing the relevant special lookback times.
   !
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP
+   use fsps_constants, only: SP
+   use fsps_types, only: SFHPARAMS
   implicit none
 
    type(fsps_context_t), intent(in) :: ctx

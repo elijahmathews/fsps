@@ -5,7 +5,8 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
   !
   !N.B. variables not otherwise defined come from sps_vars.f90
    use fsps_context_types, ONLY: fsps_context_t
-   use fsps_types, ONLY: SP, PARAMS, COMPSPOUT, nemline, tiny_number
+   use fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR
+   use fsps_types, ONLY: PARAMS, COMPSPOUT
    use sps_utils, only: write_isochrone, setup_tabular_sfh, &
                                   csp_gen, sfhinfo, &
                                   smoothspec, igm_absorb, getindx, getmags
@@ -17,13 +18,14 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      INTERFACE
         SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
              lbol,sfr,mags,spec,mdust,mformed,indx,emlines)
-          USE fsps_types, ONLY: SP, COMPSPOUT, nemline
+          USE fsps_constants, ONLY: SP, NEMLINE
+          USE fsps_types, ONLY: COMPSPOUT
           INTEGER, INTENT(in) :: write_compsp
           REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
           REAL(SP), DIMENSION(:), INTENT(in)    :: spec
           REAL(SP), DIMENSION(:), INTENT(in)   :: mags
           REAL(SP), DIMENSION(:), INTENT(in)    :: indx
-          REAL(SP), DIMENSION(nemline), INTENT(in)  :: emlines
+          REAL(SP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
           TYPE(COMPSPOUT), INTENT(inout) :: cspo
         END SUBROUTINE SAVE_COMPSP
      END INTERFACE
@@ -39,7 +41,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
 
    REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
    REAL(SP), ALLOCATABLE :: emlin_ssp(:,:,:)
-  REAL(SP), DIMENSION(nemline) :: emlin_csp
+  REAL(SP), DIMENSION(NEMLINE) :: emlin_csp
   REAL(SP) :: lbol_csp, mass_csp, mdust_csp
   REAL(SP) :: age, mass_frac, tsfr, zred, frac_linear, maxtime
    REAL(SP), ALLOCATABLE :: spec_csp(:)
@@ -62,7 +64,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      redshift_colors => ctx%redshift_colors_val )
 
    ALLOCATE(spec_ssp(nspec, ntfull, nzin))
-   ALLOCATE(emlin_ssp(nemline, ntfull, nzin))
+   ALLOCATE(emlin_ssp(NEMLINE, ntfull, nzin))
    ALLOCATE(spec_csp(nspec))
    ALLOCATE(mags(nbands))
    ALLOCATE(indx(nindx))
@@ -82,7 +84,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    call setup_tabular_sfh(ctx, pset, nzin)
 
   ! Make sure various variables are set correctly
-  IF (pset%tage.GT.tiny_number) THEN
+  IF (pset%tage.GT.SAFE_FLOOR) THEN
      maxtime = pset%tage * 1e9
   else
      maxtime = 10**time_full(ntfull)
@@ -177,12 +179,12 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
                         pset%min_wave_smooth, pset%max_wave_smooth)
      endif
      ! Add IGM absorption
-     if (add_igm_absorption.EQ.1.AND.pset%zred.GT.tiny_number) then
+     if (add_igm_absorption.EQ.1.AND.pset%zred.GT.SAFE_FLOOR) then
         spec_csp = igm_absorb(spec_lambda,spec_csp, pset%zred,&
                               pset%igm_factor)
      endif
      !add AGN dust
-   IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.tiny_number) THEN
+   IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.SAFE_FLOOR) THEN
     call apply_agn_dust_emission(ctx, pset, spec_lambda, lbol_csp, spec_csp)
    ENDIF
      ! Compute spectral indices
@@ -227,7 +229,8 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
   !check that variables are properly set
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP, PARAMS, tiny_number, verbose
+   USE fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR, VERBOSE
+   USE fsps_types, ONLY: PARAMS
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER, INTENT(in) :: nzin, write_compsp
@@ -255,7 +258,7 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
   ENDIF
 
   !warn the user about an out-of-bounds burst component
-  IF (pset%tburst*1E9.GT.maxtime.AND.pset%fburst.GT.tiny_number.AND.&
+  IF (pset%tburst*1E9.GT.maxtime.AND.pset%fburst.GT.SAFE_FLOOR.AND.&
        (pset%sfh.EQ.1.OR.pset%sfh.EQ.4)) THEN
      WRITE(*,*) 'COMPSP WARNING: burst time > age of system....'//&
           ' the burst component will NOT be added.'
@@ -271,7 +274,7 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
      STOP
   ENDIF
 
-  IF ((pset%sf_trunc.LT.pset%sf_start).AND.(pset%sf_trunc.GT.tiny_number)) THEN
+  IF ((pset%sf_trunc.LT.pset%sf_start).AND.(pset%sf_trunc.GT.SAFE_FLOOR)) THEN
      WRITE(*,*) 'COMPSP WARNING: sf_trunc<sf_start....'//&
           ' sf_trunc will be ignored.'
   ENDIF
@@ -279,11 +282,11 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
   !set limits on the parameters tau and const
   IF (pset%sfh.EQ.1.OR.pset%sfh.EQ.4) THEN
      IF (pset%tau.LE.0.1.AND.pset%tau.GE.0.0) THEN
-        IF (verbose.EQ.1) THEN
+        IF (VERBOSE.EQ.1) THEN
            WRITE(*,*) 'COMPSP WARNING: tau <0.1, setting tau=0.1'
         ENDIF
      ELSE IF (pset%tau.GE.1E2) THEN
-        IF (verbose.EQ.1) THEN
+        IF (VERBOSE.EQ.1) THEN
            WRITE(*,*) 'COMPSP WARNING: tau >1E2, setting tau=1E2'
         ENDIF
      ENDIF
@@ -337,7 +340,7 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
      STOP
   ENDIF
 
-   if ((pset%dust1.gt.tiny_number).and.(ctx%compute_light_ages_val.eq.1)) then
+   if ((pset%dust1.gt.SAFE_FLOOR).and.(ctx%compute_light_ages_val.eq.1)) then
      WRITE(*,*) 'COMPSP WARNING: compute_light_ages does not take into'//&
           ' account age-dependent dust (dust1 > 0)'
   ENDIF
@@ -350,8 +353,9 @@ END SUBROUTINE COMPSP_WARNING
 
 SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
 
-   USE fsps_types, ONLY: SP, PARAMS, tiny_number, verbose
-  USE sps_utils, ONLY : vactoair
+   USE fsps_constants, ONLY: SP, SAFE_FLOOR, VERBOSE
+   USE fsps_types, ONLY: PARAMS
+   USE sps_utils, ONLY : vactoair
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -392,7 +396,7 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
   ENDIF
 
    IF (pset%sfh.EQ.0) THEN
-     IF (verbose.NE.0) WRITE(*,*) '  Processing SSP'
+     IF (VERBOSE.NE.0) WRITE(*,*) '  Processing SSP'
      IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) THEN
         WRITE(10,'("#   Processing SSP")')
         WRITE(10,'("#")') 
@@ -417,16 +421,16 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
      ENDIF
   ELSE
      IF (pset%sfh.EQ.2.OR.pset%sfh.EQ.3) THEN
-        IF (verbose.EQ.1) &
+        IF (VERBOSE.EQ.1) &
              WRITE(*,30) pset%dust1,pset%dust2
         IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) &
              WRITE(10,30) pset%dust1,pset%dust2
         IF (write_compsp.EQ.2.OR.write_compsp.EQ.3) &
              WRITE(20,30) pset%dust1,pset%dust2
      ELSE
-        IF (pset%tage.GT.tiny_number) writeage = pset%tage
-        IF (pset%tage.LE.tiny_number) writeage = 10**time_full(ntfull)/1E9
-        IF (verbose.EQ.1) &
+        IF (pset%tage.GT.SAFE_FLOOR) writeage = pset%tage
+        IF (pset%tage.LE.SAFE_FLOOR) writeage = 10**time_full(ntfull)/1E9
+        IF (VERBOSE.EQ.1) &
              WRITE(*,33) writeage,LOG10(pset%tau),pset%const,pset%fburst,&
              pset%tburst,pset%sf_start,pset%dust1,pset%dust2
         IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) &
@@ -530,14 +534,15 @@ SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
 
   !routine to print and save outputs
 
-   USE fsps_types, ONLY: SP, COMPSPOUT, nemline, tiny_number
+   USE fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR
+   USE fsps_types, ONLY: COMPSPOUT
   IMPLICIT NONE
   INTEGER, INTENT(in) :: write_compsp
   REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
   REAL(SP), DIMENSION(:), INTENT(in)    :: spec
   REAL(SP), DIMENSION(:), INTENT(in)   :: mags
   REAL(SP), DIMENSION(:), INTENT(in)    :: indx
-  REAL(SP), DIMENSION(nemline), INTENT(in)  :: emlines
+  REAL(SP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
   TYPE(COMPSPOUT), INTENT(inout) :: cspo
   CHARACTER(34) :: fmt
   INTEGER :: nbands
@@ -554,7 +559,7 @@ SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
   cspo%lbol_csp = lbol
   cspo%sfr      = sfr
   cspo%mags     = mags
-  cspo%spec     = MAX(spec,tiny_number)
+  cspo%spec     = MAX(spec,SAFE_FLOOR)
   cspo%mdust    = mdust
   cspo%mformed  = mformed
   cspo%indx     = indx
@@ -562,14 +567,14 @@ SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
 
   !write to mags file
   IF (write_compsp.EQ.1.OR.write_compsp.EQ.3) &
-       WRITE(10,fmt) time,LOG10(mass+tiny_number),&
-       lbol,LOG10(sfr+tiny_number),mags
+       WRITE(10,fmt) time,LOG10(mass+SAFE_FLOOR),&
+       lbol,LOG10(sfr+SAFE_FLOOR),mags
  
   !write to spectra file
   IF (write_compsp.EQ.2.OR.write_compsp.EQ.3) THEN
      WRITE(20,'(4(F8.4,1x))') time,&
-          LOG10(mass+tiny_number),lbol,LOG10(sfr+tiny_number)
-     WRITE(20,'(50000(E14.6))') MAX(spec,tiny_number)
+          LOG10(mass+SAFE_FLOOR),lbol,LOG10(sfr+SAFE_FLOOR)
+     WRITE(20,'(50000(E14.6))') MAX(spec,SAFE_FLOOR)
   ENDIF
 
   !write to indx file

@@ -11,8 +11,8 @@ module fsps_stellar_modifications
     !> - Stellar Remnants (WD, NS, BH) mass addition (formerly remnants_add.f90)
     !> - X-ray Binary (XRB) spectral contribution (formerly xrb_add.f90)
 
-    use fsps_types, only: sp, params, nm, gsig4pi, &
-                          bhb_sbs_time ! imported from types, used in HB/BS logic
+    use fsps_constants, only: SP, NM, GRAVITY_L_M_T_COEFF, BHB_SBS_TIME
+    use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_imf, only: get_imf_value
     use fsps_integration, only: integrate_romberg
@@ -37,27 +37,27 @@ module fsps_stellar_modifications
     
     ! Blue Straggler Constants
     integer, parameter :: N_BS_STARS = 20          !> Number of BS stars to add per isochrone
-    real(sp), parameter :: BS_LUM_OFFSET = 0.2_sp  !> Luminosity offset (dex) for BS
-    real(sp), parameter :: BS_LUM_EXTENT = 0.75_sp !> Extent (dex) of BS sequence
-    real(sp), parameter :: ZAMS_LUM_LIMIT = 3.5_sp
-    real(sp), parameter :: MSTO_TOLERANCE = 0.2_sp
-    real(sp), parameter :: BS_PHASE_ID    = 7.0_sp
+    real(SP), parameter :: BS_LUM_OFFSET = 0.2_sp  !> Luminosity offset (dex) for BS
+    real(SP), parameter :: BS_LUM_EXTENT = 0.75_sp !> Extent (dex) of BS sequence
+    real(SP), parameter :: ZAMS_LUM_LIMIT = 3.5_sp
+    real(SP), parameter :: MSTO_TOLERANCE = 0.2_sp
+    real(SP), parameter :: BS_PHASE_ID    = 7.0_sp
 
     ! Giant Branch Constants
-    real(sp), parameter :: AGE_PADOVA_LOW = 8.0_sp
-    real(sp), parameter :: AGE_PADOVA_HIGH = 9.1_sp
+    real(SP), parameter :: AGE_PADOVA_LOW = 8.0_sp
+    real(SP), parameter :: AGE_PADOVA_HIGH = 9.1_sp
     
     ! Horizontal Branch Constants
     integer, parameter :: N_HB_SUBSTEPS = 10       !> Number of blue HB stars to add per HB star
-    real(sp), parameter :: HB_BLUE_TEMP_MAX = 4.2_sp !> Max logT for distributed HB
-    real(sp), parameter :: GRAD_THRESH_HB = -5.0e2_sp
-    real(sp), parameter :: LUM_THRESH_MIN = 2.5_sp
-    real(sp), parameter :: LUM_WIDTH_TOL = 0.1_sp
+    real(SP), parameter :: HB_BLUE_TEMP_MAX = 4.2_sp !> Max logT for distributed HB
+    real(SP), parameter :: GRAD_THRESH_HB = -5.0e2_sp
+    real(SP), parameter :: LUM_THRESH_MIN = 2.5_sp
+    real(SP), parameter :: LUM_WIDTH_TOL = 0.1_sp
 
     ! Remnant Constants (Renzini & Ciotti 1993)
-    real(sp), parameter :: MASS_NS_REMNANT = 1.4_sp
-    real(sp), parameter :: WD_SLOPE = 0.077_sp
-    real(sp), parameter :: WD_INTERCEPT = 0.48_sp
+    real(SP), parameter :: MASS_NS_REMNANT = 1.4_sp
+    real(SP), parameter :: WD_SLOPE = 0.077_sp
+    real(SP), parameter :: WD_INTERCEPT = 0.48_sp
 
 contains
 
@@ -94,22 +94,22 @@ contains
                                      phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx
-        real(sp), intent(in) :: s_bs
-        real(sp), intent(in) :: hb_weight
+        real(SP), intent(in) :: s_bs
+        real(SP), intent(in) :: hb_weight
         integer, dimension(:), intent(inout) :: n_mass
         
-        real(sp), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
-        real(sp), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
-        real(sp), dimension(:), intent(inout), contiguous :: weights
+        real(SP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
+        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
+        real(SP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
-        real(sp), dimension(:), allocatable :: zams_t_cache, zams_l_cache
+        real(SP), dimension(:), allocatable :: zams_t_cache, zams_l_cache
         integer :: idx_zams_limit, idx_msto
         integer :: i, k, n_curr
-        real(sp) :: bs_total_weight
-        real(sp) :: lum_expected_on_zams, diff_from_zams
-        real(sp) :: new_logl, new_logt, new_mass
-        real(sp) :: inv_nbs
+        real(SP) :: bs_total_weight
+        real(SP) :: lum_expected_on_zams, diff_from_zams
+        real(SP) :: new_logl, new_logt, new_mass
+        real(SP) :: inv_nbs
 
         ! 1. Safety Check (Legacy: IF (ctx%zin < -999999))
         if (ctx%zin < -9.0e5_sp) return
@@ -173,7 +173,7 @@ contains
 
         ! 4. Add Blue Straggler Stars
         !    We add N_BS_STARS starting from the MSTO luminosity
-        if (n_curr + N_BS_STARS > nm) then
+        if (n_curr + N_BS_STARS > NM) then
             write(*,*) '[FSPS-STELLAR] Error: Arrays full in apply_blue_stragglers.'
             stop
         end if
@@ -181,7 +181,7 @@ contains
         ! We step back one index to capture the point just *before* divergence
         idx_msto = idx_msto - 1
 
-        inv_nbs = 1.0_sp / real(N_BS_STARS, sp)
+        inv_nbs = 1.0_sp / real(N_BS_STARS, SP)
 
         do k = 1, N_BS_STARS
             
@@ -191,7 +191,7 @@ contains
             ! Range: [L_TO + Offset, L_TO + Offset + Extent]
             ! Legacy: logl(t,i-1) + 0.2 + k*0.75/nbs
             new_logl = log_l(time_idx, idx_msto) + BS_LUM_OFFSET + &
-                       (BS_LUM_EXTENT * real(k,sp) * inv_nbs)
+                       (BS_LUM_EXTENT * real(k,SP) * inv_nbs)
 
             log_l(time_idx, i) = new_logl
 
@@ -218,7 +218,7 @@ contains
             log_t(time_idx, i) = new_logt
 
             ! Calculate Gravity
-            log_g(time_idx, i) = log10(gsig4pi * mass_act(time_idx, i)) - &
+            log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
                                  log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
 
             ! Set Phase and Weight
@@ -271,21 +271,21 @@ contains
                                    log_l, log_t, phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx, metal_idx, n_stars
-        real(sp), intent(in) :: age_now
-        real(sp), intent(in) :: shift_logt, shift_logl
-        real(sp), intent(in) :: scale_pagb, scale_redgb, scale_agb
+        real(SP), intent(in) :: age_now
+        real(SP), intent(in) :: shift_logt, shift_logl
+        real(SP), intent(in) :: scale_pagb, scale_redgb, scale_agb
         
-        real(sp), dimension(:,:), intent(inout), contiguous :: log_l, log_t
-        real(sp), dimension(:,:), intent(in), contiguous :: phase
-        real(sp), dimension(:), intent(inout), contiguous :: weights
+        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t
+        real(SP), dimension(:,:), intent(in), contiguous :: phase
+        real(SP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
         integer :: i
-        real(sp) :: current_phase
-        real(sp) :: z_ratio_log
-        real(sp) :: villaume_factor
-        real(sp) :: combined_agb_scale
-        real(sp) :: cg_shift_l, cg_shift_t_low_z, cg_shift_t_high_age
+        real(SP) :: current_phase
+        real(SP) :: z_ratio_log
+        real(SP) :: villaume_factor
+        real(SP) :: combined_agb_scale
+        real(SP) :: cg_shift_l, cg_shift_t_low_z, cg_shift_t_high_age
         logical :: apply_cg_norm
         
         logical :: is_padova
@@ -424,23 +424,23 @@ contains
                                         log_g, phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx
-        real(sp), intent(in) :: f_bhb, hb_time
-        real(sp), intent(out) :: hb_total_weight
+        real(SP), intent(in) :: f_bhb, hb_time
+        real(SP), intent(out) :: hb_total_weight
         integer, dimension(:), intent(inout) :: n_mass
         
-        real(sp), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
-        real(sp), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
-        real(sp), dimension(:), intent(inout), contiguous :: weights
+        real(SP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
+        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
+        real(SP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
         integer :: i, j, k, n_curr
         integer :: n_blue_added
-        real(sp) :: grad_l, hb_lum_marker
+        real(SP) :: grad_l, hb_lum_marker
         logical :: is_in_hb_region
-        real(sp) :: inv_nbs
+        real(SP) :: inv_nbs
         
         ! MIST specific vars
-        real(sp) :: min_teff_hb
+        real(SP) :: min_teff_hb
         integer :: total_hb_stars
         integer :: mist_counter
 
@@ -489,10 +489,10 @@ contains
                     hb_total_weight = hb_total_weight + weights(j)
 
                     ! Apply modification if requested and age is appropriate
-                    if (f_bhb > 1.0e-3_sp .and. hb_time >= bhb_sbs_time) then
+                    if (f_bhb > 1.0e-3_sp .and. hb_time >= BHB_SBS_TIME) then
                         
                         ! Ensure we have space in arrays
-                        if (n_mass(time_idx) + N_HB_SUBSTEPS > nm) then
+                        if (n_mass(time_idx) + N_HB_SUBSTEPS > NM) then
                             write(*,*) '[FSPS-STELLAR] Error: Arrays full in modify_horizontal_branch (Padova).'
                             stop
                         end if
@@ -500,7 +500,7 @@ contains
                         ! Add N_HB_SUBSTEPS (10) new stars
                         ! They inherit properties from the current HB star j
                         n_blue_added = N_HB_SUBSTEPS
-                        inv_nbs = 1.0_sp / real(n_blue_added, sp)
+                        inv_nbs = 1.0_sp / real(n_blue_added, SP)
                         
                         do k = 1, n_blue_added
                             i = n_mass(time_idx) + k
@@ -513,10 +513,10 @@ contains
                             ! Distribute Temperature uniformly to high T
                             ! Legacy: logt(t,j)+(4.2-logt(t,j))*i/REAL(nhb)
                             log_t(time_idx, i) = log_t(time_idx, j) + &
-                                (HB_BLUE_TEMP_MAX - log_t(time_idx, j)) * real(k, sp)*inv_nbs
+                                (HB_BLUE_TEMP_MAX - log_t(time_idx, j)) * real(k, SP)*inv_nbs
 
                             ! Recompute Gravity
-                            log_g(time_idx, i) = log10(gsig4pi * mass_act(time_idx, i)) - &
+                            log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
                                                  log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
 
                             ! Distribute Weight
@@ -560,7 +560,7 @@ contains
 
             ! 2. Modification Loop
             mist_counter = 1
-            inv_nbs = 1.0_sp / real(total_hb_stars, sp)
+            inv_nbs = 1.0_sp / real(total_hb_stars, SP)
             
             do j = 1, n_curr
                 
@@ -569,9 +569,9 @@ contains
                     
                     hb_total_weight = hb_total_weight + weights(j)
 
-                    if (f_bhb > 1.0e-4_sp .and. hb_time >= bhb_sbs_time) then
+                    if (f_bhb > 1.0e-4_sp .and. hb_time >= BHB_SBS_TIME) then
                         
-                         if (n_mass(time_idx) + 1 > nm) then
+                         if (n_mass(time_idx) + 1 > NM) then
                             write(*,*) '[FSPS-STELLAR] Error: Arrays full in modify_horizontal_branch (MIST).'
                             stop
                         end if
@@ -592,12 +592,12 @@ contains
                         ! Set new star to Distributed Temperature
                         ! Legacy: logt + (4.5 - logt) * counter / total_hb
                         log_t(time_idx, i) = log_t(time_idx, j) + &
-                            (4.5_sp - log_t(time_idx, j)) * real(mist_counter,sp) * inv_nbs
+                            (4.5_sp - log_t(time_idx, j)) * real(mist_counter,SP) * inv_nbs
                         
                         mist_counter = mist_counter + 1
 
                         ! Recompute Gravity for new star
-                        log_g(time_idx, i) = log10(gsig4pi * mass_act(time_idx, i)) - &
+                        log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
                                              log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
 
                         ! Swap Weights
@@ -632,14 +632,14 @@ contains
     !> @param[in]    max_living_mass Maximum mass of stars still alive (M_max).
     subroutine add_remnant_mass(ctx, current_mass, max_living_mass)
         type(fsps_context_t), intent(inout) :: ctx
-        real(sp), intent(inout) :: current_mass
-        real(sp), intent(in) :: max_living_mass
+        real(SP), intent(inout) :: current_mass
+        real(SP), intent(in) :: max_living_mass
 
-        real(sp) :: imf_norm
-        real(sp) :: integration_min, integration_max
-        real(sp) :: term_bh, term_ns, term_wd_const, term_wd_linear
+        real(SP) :: imf_norm
+        real(SP) :: integration_min, integration_max
+        real(SP) :: term_bh, term_ns, term_wd_const, term_wd_linear
         
-        real(sp) :: limit_low, limit_high, limit_bh, limit_ns
+        real(SP) :: limit_low, limit_high, limit_bh, limit_ns
 
         ! Pull constants from context for cleaner reading
         limit_low  = ctx%state%imf_lower_limit
@@ -739,19 +739,19 @@ contains
     subroutine add_xray_binaries(ctx, pset, spec_in, spec_out)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in) :: pset
-        real(sp), dimension(:,:), intent(in), contiguous :: spec_in
-        real(sp), dimension(:,:), intent(inout), contiguous :: spec_out
+        real(SP), dimension(:,:), intent(in), contiguous :: spec_in
+        real(SP), dimension(:,:), intent(inout), contiguous :: spec_out
 
         ! Local variables
         integer :: t_idx
         integer :: idx_z, idx_age
-        real(sp) :: val_z_log
-        real(sp) :: weight_z, weight_age
-        real(sp) :: w00, w10, w01, w11
+        real(SP) :: val_z_log
+        real(SP) :: weight_z, weight_age
+        real(SP) :: w00, w10, w01, w11
         
         ! Pointers/Aliases for readability
-        real(sp), dimension(:), pointer :: grid_z, grid_age, grid_time
-        real(sp), dimension(:,:,:), pointer :: grid_spec
+        real(SP), dimension(:), pointer :: grid_z, grid_age, grid_time
+        real(SP), dimension(:,:,:), pointer :: grid_spec
         integer :: n_z_grid, n_age_grid, n_time_steps
 
         ! Setup pointers to context data
@@ -828,8 +828,8 @@ contains
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_number(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_number
@@ -838,8 +838,8 @@ contains
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_mass(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass

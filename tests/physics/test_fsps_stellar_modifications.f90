@@ -1,5 +1,6 @@
 module test_fsps_stellar_modifications_mod
-    use fsps_types, only: sp, nm, bhb_sbs_time, params
+    use fsps_constants, only: SP, NM, BHB_SBS_TIME
+    use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_stellar_modifications
     use fsps_integration, only: integrate_romberg
@@ -11,8 +12,8 @@ module test_fsps_stellar_modifications_mod
     integer :: total_failures = 0
     integer :: total_tests = 0
 
-    real(sp), parameter :: EPS = 1.0e-6_sp
-    real(sp), parameter :: REL_EPS = 1.0e-6_sp
+    real(SP), parameter :: EPS = 1.0e-6_sp
+    real(SP), parameter :: REL_EPS = 1.0e-6_sp
 
     public :: run_fsps_stellar_modifications_tests, total_failures, total_tests
 
@@ -51,22 +52,22 @@ contains
         integer, parameter :: n_time = 2
         integer, parameter :: n_curr = 60
         integer, dimension(n_time) :: n_mass
-        real(sp), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
+        real(SP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
         integer :: i
-        real(sp) :: expected_logl
+        real(SP) :: expected_logl
 
         call print_group("BS: Perfect Line ZAMS MSTO")
 
         allocate(ctx)
 
-        allocate(mass_ini(n_time, nm))
-        allocate(mass_act(n_time, nm))
-        allocate(log_l(n_time, nm))
-        allocate(log_t(n_time, nm))
-        allocate(log_g(n_time, nm))
-        allocate(phase(n_time, nm))
-        allocate(weights(nm))
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
 
         mass_ini = 0.0_sp
         mass_act = 0.0_sp
@@ -76,8 +77,8 @@ contains
         phase = 0.0_sp
         weights = 0.0_sp
 
-        do i = 1, nm
-            log_t(1, i) = 0.05_sp * real(i, sp)
+        do i = 1, NM
+            log_t(1, i) = 0.05_sp * real(i, SP)
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 1.0_sp
             mass_act(1, i) = mass_ini(1, i)
@@ -122,22 +123,22 @@ contains
         integer, parameter :: n_time = 2
         integer, parameter :: n_curr = 40
         integer, dimension(n_time) :: n_mass
-        real(sp), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
+        real(SP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
         integer :: i
-        real(sp) :: logl_t1, logl_t2
+        real(SP) :: logl_t1, logl_t2
 
         call print_group("BS: ZAMS Cache Safety")
 
         allocate(ctx)
 
-        allocate(mass_ini(n_time, nm))
-        allocate(mass_act(n_time, nm))
-        allocate(log_l(n_time, nm))
-        allocate(log_t(n_time, nm))
-        allocate(log_g(n_time, nm))
-        allocate(phase(n_time, nm))
-        allocate(weights(nm))
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
 
         mass_ini = 0.0_sp
         mass_act = 0.0_sp
@@ -147,8 +148,8 @@ contains
         phase = 0.0_sp
         weights = 0.0_sp
 
-        do i = 1, nm
-            log_t(1, i) = 0.04_sp * real(i, sp)
+        do i = 1, NM
+            log_t(1, i) = 0.04_sp * real(i, SP)
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 0.5_sp
             mass_act(1, i) = mass_ini(1, i)
@@ -178,8 +179,8 @@ contains
         phase = 0.0_sp
         weights = 0.0_sp
 
-        do i = 1, nm
-            log_t(1, i) = 0.04_sp * real(i, sp)
+        do i = 1, NM
+            log_t(1, i) = 0.04_sp * real(i, SP)
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 0.5_sp
             mass_act(1, i) = mass_ini(1, i)
@@ -207,24 +208,24 @@ contains
         integer, parameter :: n_time = 2
         integer, parameter :: n_curr = 55
         integer, dimension(n_time) :: n_mass
-        real(sp), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
+        real(SP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
         integer :: i, k
-        real(sp) :: expected_logl, expected_mass
-        real(sp) :: inv_nbs
+        real(SP) :: expected_logl, expected_mass
+        real(SP) :: inv_nbs
         character(len=64) :: msg
 
         call print_group("BS: Luminosity/Mass Distribution")
 
         allocate(ctx)
 
-        allocate(mass_ini(n_time, nm))
-        allocate(mass_act(n_time, nm))
-        allocate(log_l(n_time, nm))
-        allocate(log_t(n_time, nm))
-        allocate(log_g(n_time, nm))
-        allocate(phase(n_time, nm))
-        allocate(weights(nm))
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
 
         mass_ini = 0.0_sp
         mass_act = 0.0_sp
@@ -234,8 +235,8 @@ contains
         phase = 0.0_sp
         weights = 0.0_sp
 
-        do i = 1, nm
-            log_t(1, i) = 0.05_sp * real(i, sp)
+        do i = 1, NM
+            log_t(1, i) = 0.05_sp * real(i, SP)
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 1.0_sp
             mass_act(1, i) = mass_ini(1, i)
@@ -262,7 +263,7 @@ contains
 
         do k = 1, 20
             i = n_curr + k
-            expected_logl = log_l(2, 50) + 0.2_sp + (0.75_sp * real(k, sp) * inv_nbs)
+            expected_logl = log_l(2, 50) + 0.2_sp + (0.75_sp * real(k, SP) * inv_nbs)
             expected_mass = expected_logl + 1.0_sp
             write(msg, '("BS logL distribution (iter ", I0, ")")') k
             call assert_float_equals(expected_logl, log_l(2, i), EPS, trim(msg), total_tests, total_failures)
@@ -281,8 +282,8 @@ contains
         type(fsps_context_t), allocatable :: ctx
         integer, parameter :: n_time = 1
         integer, parameter :: n_stars = 5
-        real(sp), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
+        real(SP), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
         call print_group("GB: Phase Selectivity Mask")
 
         allocate(ctx)
@@ -318,9 +319,9 @@ contains
         type(fsps_context_t), allocatable :: ctx
         integer, parameter :: n_time = 1
         integer, parameter :: n_stars = 1
-        real(sp), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
-        real(sp) :: expected_factor
+        real(SP), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
+        real(SP) :: expected_factor
 
         call print_group("GB: Villaume Factor Pre-calculation")
 
@@ -354,10 +355,10 @@ contains
         type(fsps_context_t), allocatable :: ctx
         integer, parameter :: n_time = 1
         integer, parameter :: n_stars = 1
-        real(sp), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
-        real(sp), allocatable, target :: zlegend(:)
-        real(sp) :: expected_logl, expected_logt
+        real(SP), allocatable :: log_l(:,:), log_t(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
+        real(SP), allocatable, target :: zlegend(:)
+        real(SP) :: expected_logl, expected_logt
 
         call print_group("GB: Conroy & Gunn Low-Z Shifts")
 
@@ -402,21 +403,21 @@ contains
         integer, parameter :: n_time = 1
         integer, parameter :: n_curr = 3
         integer, dimension(n_time) :: n_mass
-        real(sp), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
-        real(sp) :: hb_total_weight
+        real(SP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
+        real(SP) :: hb_total_weight
 
         call print_group("HB: Padova Cliff Gradient Detection")
 
         allocate(ctx)
 
-        allocate(mass_ini(n_time, nm))
-        allocate(mass_act(n_time, nm))
-        allocate(log_l(n_time, nm))
-        allocate(log_t(n_time, nm))
-        allocate(log_g(n_time, nm))
-        allocate(phase(n_time, nm))
-        allocate(weights(nm))
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
 
         mass_ini = 0.0_sp
         mass_act = 0.0_sp
@@ -455,26 +456,26 @@ contains
         integer, parameter :: n_time = 1
         integer, parameter :: n_curr = 5
         integer, dimension(n_time) :: n_mass
-        real(sp), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
-        real(sp), allocatable :: weights(:)
-        real(sp) :: hb_total_weight
-        real(sp), dimension(n_curr) :: weights_init
+        real(SP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(SP), allocatable :: weights(:)
+        real(SP) :: hb_total_weight
+        real(SP), dimension(n_curr) :: weights_init
         integer :: i, j
-        real(sp) :: min_teff, expected_logt
-        real(sp) :: inv_nhb
+        real(SP) :: min_teff, expected_logt
+        real(SP) :: inv_nhb
         character(len=64) :: msg
 
         call print_group("HB: MIST Phase Redistribution")
 
         allocate(ctx)
 
-        allocate(mass_ini(n_time, nm))
-        allocate(mass_act(n_time, nm))
-        allocate(log_l(n_time, nm))
-        allocate(log_t(n_time, nm))
-        allocate(log_g(n_time, nm))
-        allocate(phase(n_time, nm))
-        allocate(weights(nm))
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
 
         mass_ini = 0.0_sp
         mass_act = 0.0_sp
@@ -485,7 +486,7 @@ contains
         weights = 0.0_sp
 
         do i = 1, n_curr
-            mass_ini(1, i) = 1.0_sp + 0.1_sp * real(i - 1, sp)
+            mass_ini(1, i) = 1.0_sp + 0.1_sp * real(i - 1, SP)
             mass_act(1, i) = mass_ini(1, i)
             log_l(1, i) = 1.0_sp
             phase(1, i) = 3.0_sp
@@ -498,7 +499,7 @@ contains
         n_mass(1) = n_curr
         ctx%state%isoc_type = 'mist'
 
-        call modify_horizontal_branch(ctx, 1, 0.4_sp, bhb_sbs_time + 0.1_sp, hb_total_weight, n_mass, mass_ini, mass_act, &
+        call modify_horizontal_branch(ctx, 1, 0.4_sp, BHB_SBS_TIME + 0.1_sp, hb_total_weight, n_mass, mass_ini, mass_act, &
                                       log_l, log_t, log_g, phase, weights)
 
         call assert_int_equals(n_curr + n_curr, n_mass(1), "MIST HB star count doubled", total_tests, total_failures)
@@ -507,9 +508,9 @@ contains
         call assert_true(all(abs(log_t(1, 1:n_curr) - min_teff) <= EPS), &
                          "Red clump forced to min Teff", total_tests, total_failures)
 
-        inv_nhb = 1.0_sp / real(n_curr, sp)
+        inv_nhb = 1.0_sp / real(n_curr, SP)
         do j = 1, n_curr
-            expected_logt = min_teff + (4.5_sp - min_teff) * real(j, sp) * inv_nhb
+            expected_logt = min_teff + (4.5_sp - min_teff) * real(j, SP) * inv_nhb
             write(msg, '("Blue HB Teff distribution (iter ", I0, ")")') j
             call assert_float_equals(expected_logt, log_t(1, n_curr + j), EPS, trim(msg), total_tests, total_failures)
             write(msg, '("Blue HB weight (iter ", I0, ")")') j
@@ -527,8 +528,8 @@ contains
     ! --------------------------------------------------------------------
     subroutine test_remnant_ghost_mass()
         type(fsps_context_t), allocatable :: ctx
-        real(sp) :: current_mass
-        real(sp) :: expected_mass
+        real(SP) :: current_mass
+        real(SP) :: expected_mass
 
         call print_group("Remnants: Ghost Mass Fix")
 
@@ -549,8 +550,8 @@ contains
 
     subroutine test_remnant_hierarchy()
         type(fsps_context_t), allocatable :: ctx
-        real(sp) :: current_mass
-        real(sp) :: expected_mass
+        real(SP) :: current_mass
+        real(SP) :: expected_mass
 
         call print_group("Remnants: Hierarchy of BH/NS/WD")
 
@@ -582,13 +583,13 @@ contains
     subroutine test_xrb_bilinear_identity()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), allocatable :: spec_in(:,:), spec_out(:,:)
+        real(SP), allocatable :: spec_in(:,:), spec_out(:,:)
         integer, parameter :: n_wave = 3
         integer, parameter :: n_time = 1
         integer, parameter :: n_age = 2
         integer, parameter :: n_z = 2
-        real(sp), allocatable, target :: grid_spec(:,:,:)
-        real(sp), allocatable, target :: ages(:), zgrid(:), time_full(:), zlegend(:)
+        real(SP), allocatable, target :: grid_spec(:,:,:)
+        real(SP), allocatable, target :: ages(:), zgrid(:), time_full(:), zlegend(:)
 
         call print_group("XRB: Bilinear Identity")
 
@@ -641,13 +642,13 @@ contains
     subroutine test_xrb_zero_fraction()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(sp), allocatable :: spec_in(:,:), spec_out(:,:)
+        real(SP), allocatable :: spec_in(:,:), spec_out(:,:)
         integer, parameter :: n_wave = 2
         integer, parameter :: n_time = 1
         integer, parameter :: n_age = 2
         integer, parameter :: n_z = 2
-        real(sp), allocatable, target :: grid_spec(:,:,:)
-        real(sp), allocatable, target :: ages(:), zgrid(:), time_full(:), zlegend(:)
+        real(SP), allocatable, target :: grid_spec(:,:,:)
+        real(SP), allocatable, target :: ages(:), zgrid(:), time_full(:), zlegend(:)
 
         call print_group("XRB: Zero Fraction Shortcut")
 
@@ -696,7 +697,7 @@ contains
     ! --------------------------------------------------------------------
     subroutine setup_imf_context(ctx, lower_limit, upper_limit, mlim_bh, mlim_ns)
         type(fsps_context_t), intent(inout) :: ctx
-        real(sp), intent(in) :: lower_limit, upper_limit, mlim_bh, mlim_ns
+        real(SP), intent(in) :: lower_limit, upper_limit, mlim_bh, mlim_ns
 
         ctx%imf_type_val = 0
         ctx%state%salp_ind = 2.35_sp
@@ -708,13 +709,13 @@ contains
 
     pure function compute_expected_remnant_mass(ctx, max_living_mass) result(rem_mass)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), intent(in) :: max_living_mass
-        real(sp) :: rem_mass
+        real(SP), intent(in) :: max_living_mass
+        real(SP) :: rem_mass
 
-        real(sp) :: imf_norm
-        real(sp) :: integration_min, integration_max
-        real(sp) :: term_bh, term_ns, term_wd_const, term_wd_linear
-        real(sp) :: limit_low, limit_high, limit_bh, limit_ns
+        real(SP) :: imf_norm
+        real(SP) :: integration_min, integration_max
+        real(SP) :: term_bh, term_ns, term_wd_const, term_wd_linear
+        real(SP) :: limit_low, limit_high, limit_bh, limit_ns
 
         limit_low = ctx%state%imf_lower_limit
         limit_high = ctx%state%imf_upper_limit
@@ -758,16 +759,16 @@ contains
 
     pure function wrapper_imf_number(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
 
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_number
 
     pure function wrapper_imf_mass(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(sp), dimension(:), intent(in) :: x
-        real(sp), dimension(size(x)) :: res
+        real(SP), dimension(:), intent(in) :: x
+        real(SP), dimension(size(x)) :: res
 
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass

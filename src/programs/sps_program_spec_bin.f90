@@ -3,7 +3,7 @@ PROGRAM SPEC_BIN
   !routine to convert ascii spectral files to binary
   !must be run twice for each value of isoc_type var
 
-   USE fsps_types, ONLY: SP, basel_str, ndim_logt, ndim_logg
+   USE fsps_constants, ONLY: SP, BASEL_STR, NDIM_LOGT, NDIM_LOGG
    USE sps_utils, ONLY: fsps_resolve_paths
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
@@ -53,7 +53,7 @@ PROGRAM SPEC_BIN
 
   ! Allocate arrays
   ALLOCATE(zlegendinit(nzinit))
-  ALLOCATE(speclib(nspec,nzinit,ndim_logt,ndim_logg))
+  ALLOCATE(speclib(nspec,nzinit,NDIM_LOGT,NDIM_LOGG))
   
   IF (spec_type.EQ.'basel') THEN
    OPEN(90,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/zlegend.dat',&
@@ -79,12 +79,12 @@ PROGRAM SPEC_BIN
 
      IF (spec_type.EQ.'basel') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'&
-             //basel_str//'_z'//zstype//'.spectra',FORM='FORMATTED',&
+             //BASEL_STR//'_z'//zstype//'.spectra',FORM='FORMATTED',&
              STATUS='OLD',ACTION='READ')
       OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/BaSeL3.1/basel_'&
-             //basel_str//'_z'//zstype//'.spectra.bin',&
+             //BASEL_STR//'_z'//zstype//'.spectra.bin',&
              FORM='UNFORMATTED',STATUS='REPLACE',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
 
      ELSE IF (spec_type.EQ.'miles') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
@@ -93,7 +93,7 @@ PROGRAM SPEC_BIN
       OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/MILES/imiles_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
 
      ELSE IF (spec_type(1:5).EQ.'ckc14') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/CKC14/'//spec_type//'_z'&
@@ -102,7 +102,7 @@ PROGRAM SPEC_BIN
       OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/CKC14/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
              
      ELSE IF (spec_type(1:3).EQ.'c3k') THEN
       OPEN(92,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
@@ -111,12 +111,12 @@ PROGRAM SPEC_BIN
       OPEN(93,FILE=TRIM(SPS_HOME)//'/data/spectra/C3K/'//spec_type//'_z'&
              //zstype//'.spectra.bin',FORM='UNFORMATTED',&
              STATUS='REPLACE',access='direct',&
-             recl=nspec*ndim_logg*ndim_logt*4)
+             recl=nspec*NDIM_LOGG*NDIM_LOGT*4)
   
     ENDIF
 
-     DO i=1,ndim_logg
-        DO j=1,ndim_logt
+     DO i=1,NDIM_LOGG
+        DO j=1,NDIM_LOGT
            READ(92,*) dumi1,d2,d3,dumr1
            READ(92,*) speclib(:,z,j,i)
         ENDDO

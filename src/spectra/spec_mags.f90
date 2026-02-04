@@ -7,7 +7,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !This routine also redshifts the spectrum, if necessary.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP, tiny_number, mag2cgs
+   USE fsps_constants, ONLY: SP, SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
    USE fsps_interpolation, ONLY: interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -57,7 +57,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   ENDIF
 
   !redshift the spectrum
-  IF (ABS(zred).GT.tiny_number) THEN
+  IF (ABS(zred).GT.SAFE_FLOOR) THEN
      !write(*,*) "getmags: interpolating"
    DO i=1,n_spec
     tspec(i) = interpolate_linear(spec_lambda*(1+zred),spec, spec_lambda(i))
@@ -67,7 +67,7 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
 
      !compute additional terms for cosmological mags
    dm    = interpolate_linear(cosmospl(:,1),cosmospl(:,3),zred)
-     IF (ieee_is_nan(dm) .OR. dm.LE.tiny_number) THEN
+     IF (ieee_is_nan(dm) .OR. dm.LE.SAFE_FLOOR) THEN
         const = 0.0
      ELSE
         dm    = 5*LOG10(dm/10.)
@@ -84,12 +84,12 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
    DO i=1,n_bands
      IF (magflag(i).EQ.0) CYCLE
     mags(i) = integrate_trapezoid_array(spec_lambda,tspec*bands(:,i)/spec_lambda)
-       IF (ieee_is_nan(mags(i)) .OR. mags(i).LE.tiny_number) THEN
+       IF (ieee_is_nan(mags(i)) .OR. mags(i).LE.SAFE_FLOOR) THEN
         mags(i) = 99.0
      ELSE
         IF (compute_light_ages.EQ.0) THEN
-           !the mag2cgs var converts from Lsun/Hz to cgs at 10pc
-           mags(i) = -2.5*LOG10(mags(i)) - 48.60 - 2.5*mag2cgs + const
+           !the ABS_MAG_ZEROPOINT_LOG var converts from Lsun/Hz to cgs at 10pc
+           mags(i) = -2.5*LOG10(mags(i)) - 48.60 - 2.5*ABS_MAG_ZEROPOINT_LOG + const
         ENDIF
      ENDIF
   ENDDO

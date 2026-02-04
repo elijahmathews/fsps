@@ -24,7 +24,8 @@ function sfh_weight(ctx, sfh, imin, imax)
   !   produce the SFH.
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SFHPARAMS, SP
+   use fsps_constants, only: SP
+   use fsps_types, only: SFHPARAMS
    use fsps_interpolation, only: find_interval
   implicit none
 

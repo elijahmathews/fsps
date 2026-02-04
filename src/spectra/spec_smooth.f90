@@ -8,7 +8,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
   !smoothed by a wavelength dependent velocity dispersion.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP, tiny_number, clight, mypi
+   USE fsps_constants, ONLY: SP, SAFE_FLOOR, C_LIGHT, PI
    USE fsps_interpolation, ONLY: find_interval, interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -31,10 +31,10 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
      smooth_velocity => ctx%smooth_velocity_val, &
      smoothspec_fast => ctx%smoothspec_fast_val )
 
-  IF (sigma.LE.tiny_number) RETURN
+  IF (sigma.LE.SAFE_FLOOR) RETURN
 
    n = SIZE(lambda)
-   ckms = clight/1E13
+   ckms = C_LIGHT/1E13
 
    tspec = spec
 
@@ -57,7 +57,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
            
            IF (PRESENT(ires)) THEN
               sigmal = ires(i)
-              IF (sigmal.LE.tiny_number) THEN
+              IF (sigmal.LE.SAFE_FLOOR) THEN
                  spec(i)=tspec(i)
                  CYCLE
               ENDIF
@@ -78,7 +78,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
               spec(i) = tspec(i)
            ELSE
               vel(il:ih)  = (lambda(i)/lambda(il:ih)-1)*ckms
-              func(il:ih) =  1/SQRT(2*mypi)/sigmal * &
+              func(il:ih) =  1/SQRT(2*PI)/sigmal * &
                    EXP(-vel(il:ih)**2/2./sigmal**2)
               !normalize the weights to integrate to unity
               psig = integrate_trapezoid_array(vel(il:ih),func(il:ih))
@@ -97,7 +97,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
      !min/max wavelength parameters through the density of the lnlam grid
      ELSE
         
-        IF (MINVAL(lambda).LE.tiny_number) THEN
+        IF (MINVAL(lambda).LE.SAFE_FLOOR) THEN
            spec = tspec
            RETURN
         ENDIF
@@ -119,7 +119,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
       grange = FLOOR(m*psig)  ! range for kernel (-range:range)
         
         DO i=1,2*grange+1
-           psf(i) = 1.d0/SQRT(2.*mypi)/psig*EXP(-((i-grange-1)/psig)**2/2.)
+           psf(i) = 1.d0/SQRT(2.*PI)/psig*EXP(-((i-grange-1)/psig)**2/2.)
         ENDDO
         psf(1:2*grange+1) = psf(1:2*grange+1) / SUM(psf(1:2*grange+1))
         
@@ -170,7 +170,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
         IF (il.EQ.ih) THEN
            spec(i) = tspec(i)
         ELSE
-           func(il:ih) =  1/SQRT(2*mypi)/sigma * &
+           func(il:ih) =  1/SQRT(2*PI)/sigma * &
                 EXP(-(lambda(il:ih)-lambda(i))**2/2./sigma**2)
            !normalize the weights to integrate to unity
            psig = integrate_trapezoid_array(lambda(il:ih),func(il:ih))
@@ -182,7 +182,7 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
            spec(i) = integrate_trapezoid_array(lambda(il:ih),func(il:ih)*tspec(il:ih))
         ENDIF
 
-        !gauss = 1/SQRT(2*mypi)/sigma*EXP(-(lambda-lambda(i))**2/2/sigma**2)
+        !gauss = 1/SQRT(2*PI)/sigma*EXP(-(lambda-lambda(i))**2/2/sigma**2)
       !DO j=1,n
         !   spec(i) = spec(i) + gauss(j)*tspec(j)
         !ENDDO

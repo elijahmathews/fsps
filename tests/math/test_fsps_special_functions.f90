@@ -1,5 +1,5 @@
 module test_fsps_special_functions_mod
-    use fsps_types, only: sp
+    use fsps_constants, only: SP
     use fsps_special_functions
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_is_nan, assert_is_neg_inf, assert_float_equals, &
@@ -37,7 +37,7 @@ contains
     ! TEST SUITE: POWER SERIES DOMAIN (0 < x <= 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_small_x()
-        real(sp) :: x, expected, res
+        real(SP) :: x, expected, res
         
         call print_group("Exponential Integral (Small x, Power Series)")
 
@@ -70,7 +70,7 @@ contains
     ! TEST SUITE: ASYMPTOTIC DOMAIN (x > 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_large_x()
-        real(sp) :: x, expected, res
+        real(SP) :: x, expected, res
         
         call print_group("Exponential Integral (Large x, Asymptotic)")
 
@@ -97,7 +97,7 @@ contains
     ! TEST SUITE: EDGE CASES & ERRORS
     ! ------------------------------------------------------------------------
     subroutine test_ei_edge_cases()
-        real(sp) :: res
+        real(SP) :: res
         
         call print_group("Robustness (0 and Negative)")
 
@@ -117,7 +117,7 @@ contains
     ! TEST SUITE: BEHAVIOR AROUND TRANSITION (x == 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_transition()
-        real(sp) :: x, expected, res
+        real(SP) :: x, expected, res
         
         call print_group("Transition Behavior (x ≈ 40)")
 
