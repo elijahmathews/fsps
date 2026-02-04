@@ -1,7 +1,7 @@
  PROGRAM SIMPLE
 
   !set up modules
-  USE fsps_constants, ONLY: SP
+  USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE sps_utils
   USE fsps_context, ONLY: fsps_context_create
@@ -13,15 +13,15 @@
 
   TYPE(fsps_context_t) :: ctx
   !define variable for SSP spectrum
-  REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
+  REAL(WP), ALLOCATABLE :: spec_ssp(:,:,:)
   !define variables for Mass and Lbol info
-  REAL(SP), ALLOCATABLE :: mass_ssp(:,:), lbol_ssp(:,:)
+  REAL(WP), ALLOCATABLE :: mass_ssp(:,:), lbol_ssp(:,:)
   CHARACTER(100) :: file1=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
   TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
-  REAL(SP) :: ssfr6,ssfr7,ssfr8,ave_age
+  REAL(WP) :: ssfr6,ssfr7,ssfr8,ave_age
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

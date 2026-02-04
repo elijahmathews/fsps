@@ -32,15 +32,16 @@ function intsfwght(ctx, sspind, logt, sfh)
   !    The exact definite integral between the limits specified in `logt`.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_precision, only: WP
+   use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: SFHPARAMS
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
-  real(SP), intent(in), dimension(2) :: logt
+   real(WP), intent(in), dimension(2) :: logt
   type(SFHPARAMS), intent(in) :: sfh
 
-  real(SP) :: intsfwght, sfwght_log, sfwght_lin
+   real(WP) :: intsfwght, sfwght_log, sfwght_lin
 
   if (ctx%interpolation_type_val.eq.0) then
      intsfwght =  sfwght_log(ctx, sspind, logt(2), sfh) - sfwght_log(ctx, sspind, logt(1), sfh)
@@ -78,23 +79,24 @@ function sfwght_log(ctx, sspind, logt, sfh)
   !    The exact indefinite integral, evaluated at `logt`.  Scalar float.
   
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_precision, only: WP
+   use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: SFHPARAMS
    use fsps_special_functions, only: exponential_integral
    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind
-  real(SP), intent(in) :: logt
+   real(WP), intent(in) :: logt
   type(SFHPARAMS), intent(in) :: sfh
 
-  real(SP) :: sfwght_log
+   real(WP) :: sfwght_log
 
-   real(SP) :: loge
-   real(SP) :: logage, tprime, ei ! intermediate time variables
-  real(SP) :: a, b, c ! dummy variables used to break up long expressions
+   real(WP) :: loge
+   real(WP) :: logage, tprime, ei ! intermediate time variables
+  real(WP) :: a, b, c ! dummy variables used to break up long expressions
 
-  REAL(SP), PARAMETER :: e=2.7182818284590452353602874713526624977572_sp
+   REAL(WP), PARAMETER :: e=2.7182818284590452353602874713526624977572_wp
   loge = log10(e)
 
   ASSOCIATE(time_full => ctx%state%time_full, tiny_logt => ctx%tiny_logt_val)
@@ -177,18 +179,19 @@ function sfwght_lin(ctx, sspind, t, sfh)
   !    The indefinite integral, evaluated at `t`
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_precision, only: WP
+   use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: SFHPARAMS
   implicit none
    type(fsps_context_t), intent(in) :: ctx
   integer, intent(in) :: sspind 
-  real(SP), intent(in) :: t
+   real(WP), intent(in) :: t
   type(SFHPARAMS), intent(in) :: sfh
 
-  real(SP) :: sfwght_lin
+   real(WP) :: sfwght_lin
   
-  real(SP) :: age, tprime
-  real(SP) :: a
+   real(WP) :: age, tprime
+   real(WP) :: a
 
   ASSOCIATE(time_full => ctx%state%time_full, tiny_logt => ctx%tiny_logt_val)
   ! Convert from log(age_ssp) to age_ssp,
@@ -249,13 +252,13 @@ FUNCTION EI(X)
 !
 !       ============================================
 !
-   use fsps_constants, only: SP
+   use fsps_precision, only: WP
    implicit none
-  REAL(SP) :: X, EI
+   REAL(WP) :: X, EI
 
   INTEGER :: K, MAXIT=1000
-  REAL(SP), PARAMETER :: GA=0.5772156649015328D0, eps=1.0D-20
-  REAL(SP) :: R
+   REAL(WP), PARAMETER :: GA=0.5772156649015328D0, eps=1.0D-20
+   REAL(WP) :: R
   
   IF (X.EQ.0.0) THEN
      EI=-1.0D+300

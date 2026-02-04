@@ -24,7 +24,7 @@ function sfh_weight(ctx, sfh, imin, imax)
   !   produce the SFH.
 
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP
+   use fsps_precision, only: WP
    use fsps_types, only: SFHPARAMS
    use fsps_interpolation, only: find_interval
   implicit none
@@ -32,33 +32,35 @@ function sfh_weight(ctx, sfh, imin, imax)
    interface
        function delta_time(ctx, logt1, logt2)
           use fsps_context_types, only: fsps_context_t
-          use fsps_types, only: SP
+          use fsps_precision, only: WP
           type(fsps_context_t), intent(in) :: ctx
-          real(SP), intent(in) :: logt1, logt2
-          real(SP) :: delta_time
+          real(WP), intent(in) :: logt1, logt2
+          real(WP) :: delta_time
        end function delta_time
    end interface
 
    interface
        function intsfwght(ctx, sspind, logt, sfh)
           use fsps_context_types, only: fsps_context_t
-          use fsps_types, only: SFHPARAMS, SP
+          use fsps_types, only: SFHPARAMS
+          use fsps_precision, only: WP
           type(fsps_context_t), intent(in) :: ctx
           integer, intent(in) :: sspind
-          real(SP), dimension(2), intent(in) :: logt
+          real(WP), dimension(2), intent(in) :: logt
           type(SFHPARAMS), intent(in) :: sfh
-          real(SP) :: intsfwght
+          real(WP) :: intsfwght
        end function intsfwght
     end interface
 
    interface
        function sfhlimit(ctx, tlim, sfh)
           use fsps_context_types, only: fsps_context_t
-          use fsps_types, only: SFHPARAMS, SP
+          use fsps_types, only: SFHPARAMS
+          use fsps_precision, only: WP
           type(fsps_context_t), intent(in) :: ctx
-          real(SP), intent(in) :: tlim
+          real(WP), intent(in) :: tlim
           type(SFHPARAMS), intent(in) :: sfh
-          real(SP) :: sfhlimit
+          real(WP) :: sfhlimit
        end function sfhlimit
     end interface
 
@@ -66,12 +68,12 @@ function sfh_weight(ctx, sfh, imin, imax)
   type(SFHPARAMS), intent(in) :: sfh
   integer, intent(in) :: imin, imax
 
-   real(SP), dimension(ctx%state%ntfull) ::sfh_weight
+   real(WP), dimension(ctx%state%ntfull) ::sfh_weight
 
   integer :: i, istart
-  real(SP), dimension(2) :: tlim
-   real(SP) :: dt, log_tb
-   real(SP), dimension(ctx%state%ntfull) :: tmp_wght !left=0., right=0.
+   real(WP), dimension(2) :: tlim
+    real(WP) :: dt, log_tb
+    real(WP), dimension(ctx%state%ntfull) :: tmp_wght !left=0., right=0.
 
 
   ! Check if this is an SSP.  If so, do simple weights and return.
@@ -162,12 +164,12 @@ function delta_time(ctx, logt1, logt2)
   ! Returns (logt2 - logt1), or (10**logt2 - 10**logt1)
 
   use fsps_context_types, only: fsps_context_t
-   use fsps_types, only: SP
+   use fsps_precision, only: WP
   implicit none
 
   type(fsps_context_t), intent(in) :: ctx
-  real(SP), intent(in) :: logt1, logt2
-  real(SP) :: delta_time
+   real(WP), intent(in) :: logt1, logt2
+   real(WP) :: delta_time
 
   if (ctx%interpolation_type_val.eq.0) then
      delta_time = logt2 - logt1

@@ -4,14 +4,15 @@ SUBROUTINE SFHSTAT(pos,model,ssfr6,ssfr7,ssfr8,ave_age)
   !required inputs are the parameter set and a single element output
   !structure from compsp
   
-     USE fsps_constants, ONLY: SP, SAFE_FLOOR
+     USE fsps_precision, ONLY: WP
+     USE fsps_constants, ONLY: SAFE_FLOOR
      USE fsps_types, ONLY: PARAMS, COMPSPOUT
   IMPLICIT NONE
 
   TYPE(PARAMS), INTENT(in)    :: pos
   TYPE(COMPSPOUT), INTENT(in) :: model
-  REAL(SP), INTENT(inout)     :: ssfr6,ssfr7,ssfr8,ave_age
-  REAL(SP) :: dt
+     REAL(WP), INTENT(inout)     :: ssfr6,ssfr7,ssfr8,ave_age
+     REAL(WP) :: dt
   
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

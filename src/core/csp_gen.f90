@@ -34,7 +34,8 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   ! total_weights:
   !    The weights(masses) for each SSP in the composite
 
-   use fsps_constants, only: SP, NEMLINE, SAFE_FLOOR
+   use fsps_precision, only: WP
+   use fsps_constants, only: NEMLINE, SAFE_FLOOR
    use fsps_types, only: SFHPARAMS, PARAMS
    use fsps_context_types, only: fsps_context_t
    use sps_utils, only: sfh_weight, sfhinfo
@@ -43,30 +44,30 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
   implicit none
    type(fsps_context_t), intent(inout) :: ctx
 
-   real(SP), intent(in), dimension(:,:) :: mass_ssp, lbol_ssp
-   real(SP), intent(in), dimension(:,:,:) :: spec_ssp
+   real(WP), intent(in), dimension(:,:) :: mass_ssp, lbol_ssp
+   real(WP), intent(in), dimension(:,:,:) :: spec_ssp
   type(PARAMS), intent(in) :: pset
-  real(SP), intent(in) :: tage
+  real(WP), intent(in) :: tage
   integer, intent(in) :: nzin
 
-  real(SP), intent(out) :: mass_csp, lbol_csp, mdust_csp
-   real(SP), intent(out), dimension(:) :: spec_csp
+  real(WP), intent(out) :: mass_csp, lbol_csp, mdust_csp
+   real(WP), intent(out), dimension(:) :: spec_csp
 
-   real(SP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
-   real(SP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
+   real(WP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
+   real(WP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
 
-  !real(SP), intent(out), dimension(ntfull, nzin) :: total_weights
-  !real(SP), intent(out), dimension(nspec) :: spec_young,spec_old
+  !real(WP), intent(out), dimension(ntfull, nzin) :: total_weights
+  !real(WP), intent(out), dimension(nspec) :: spec_young,spec_old
 
-   real(SP), dimension(SIZE(spec_csp)) :: lw_age, temp_spec !,csp1, csp2
-  real(SP), dimension(NEMLINE) :: ncsp1, ncsp2, nlw_age, temp_lin
-   real(SP), dimension(SIZE(mass_ssp,1), SIZE(mass_ssp,2)) :: total_weights
-   real(SP), dimension(SIZE(mass_ssp,1)) :: w1, w2
+   real(WP), dimension(SIZE(spec_csp)) :: lw_age, temp_spec !,csp1, csp2
+  real(WP), dimension(NEMLINE) :: ncsp1, ncsp2, nlw_age, temp_lin
+   real(WP), dimension(SIZE(mass_ssp,1), SIZE(mass_ssp,2)) :: total_weights
+   real(WP), dimension(SIZE(mass_ssp,1)) :: w1, w2
    integer :: i, j, k, imin, imax, i_tesc, ntfull, nspec
   type(SFHPARAMS) :: sfhpars
-  real(SP) :: m1, m2, frac_linear, mfrac, sfr, fburst
-  real(SP) :: t1, t2, dt, zbin, dz  ! for tabular calculations
-  real(SP) :: lbol_age, mass_age ! for mass and lbol weighted ages
+  real(WP) :: m1, m2, frac_linear, mfrac, sfr, fburst
+  real(WP) :: t1, t2, dt, zbin, dz  ! for tabular calculations
+  real(WP) :: lbol_age, mass_age ! for mass and lbol weighted ages
 
   ! ------- Setup ----------
    ntfull = SIZE(mass_ssp,1)
@@ -347,16 +348,17 @@ subroutine convert_sfhparams(pset, tage, sfh)
   !       - `sf_slope` is the fractional change in the SFR in inverse years.  It is
   !          positive for SFR that increases with *lookback* time.
   !
-  use fsps_constants, only: SP, SAFE_FLOOR
+  use fsps_precision, only: WP
+  use fsps_constants, only: SAFE_FLOOR
   use fsps_types, only: SFHPARAMS, PARAMS
   implicit none
 
   type(PARAMS), intent(in) :: pset
-  real(SP), intent(in) :: tage
+  real(WP), intent(in) :: tage
 
   type(SFHPARAMS), intent(inout) :: sfh
 
-  real(SP) :: start
+  real(WP) :: start
 
   ! Define a starting time iff SFH=1,4,5
   if ((pset%sfh.eq.1).or.(pset%sfh.eq.4).or.(pset%sfh.eq.5)) then

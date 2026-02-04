@@ -4,8 +4,9 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
   !
   !
   !N.B. variables not otherwise defined come from sps_vars.f90
+   use fsps_precision, only: WP
    use fsps_context_types, ONLY: fsps_context_t
-   use fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR
+   use fsps_constants, ONLY: NEMLINE, SAFE_FLOOR
    use fsps_types, ONLY: PARAMS, COMPSPOUT
    use sps_utils, only: write_isochrone, setup_tabular_sfh, &
                                   csp_gen, sfhinfo, &
@@ -18,14 +19,15 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      INTERFACE
         SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
              lbol,sfr,mags,spec,mdust,mformed,indx,emlines)
-          USE fsps_constants, ONLY: SP, NEMLINE
+          use fsps_precision, only: WP
+          USE fsps_constants, ONLY: NEMLINE
           USE fsps_types, ONLY: COMPSPOUT
           INTEGER, INTENT(in) :: write_compsp
-          REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
-          REAL(SP), DIMENSION(:), INTENT(in)    :: spec
-          REAL(SP), DIMENSION(:), INTENT(in)   :: mags
-          REAL(SP), DIMENSION(:), INTENT(in)    :: indx
-          REAL(SP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
+          REAL(WP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
+          REAL(WP), DIMENSION(:), INTENT(in)    :: spec
+          REAL(WP), DIMENSION(:), INTENT(in)   :: mags
+          REAL(WP), DIMENSION(:), INTENT(in)    :: indx
+          REAL(WP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
           TYPE(COMPSPOUT), INTENT(inout) :: cspo
         END SUBROUTINE SAVE_COMPSP
      END INTERFACE
@@ -33,20 +35,20 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
 
   INTEGER, INTENT(in) :: write_compsp,nzin
   CHARACTER(100), INTENT(in) :: outfile
-  REAL(SP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
-  REAL(SP), INTENT(in), DIMENSION(:,:,:) :: tspec_ssp
+  REAL(WP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
+  REAL(WP), INTENT(in), DIMENSION(:,:,:) :: tspec_ssp
   TYPE(PARAMS), intent(in) :: pset
 
   TYPE(COMPSPOUT), INTENT(inout), DIMENSION(:) :: ocompsp
 
-   REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
-   REAL(SP), ALLOCATABLE :: emlin_ssp(:,:,:)
-  REAL(SP), DIMENSION(NEMLINE) :: emlin_csp
-  REAL(SP) :: lbol_csp, mass_csp, mdust_csp
-  REAL(SP) :: age, mass_frac, tsfr, zred, frac_linear, maxtime
-   REAL(SP), ALLOCATABLE :: spec_csp(:)
-   REAL(SP), ALLOCATABLE :: mags(:)
-   REAL(SP), ALLOCATABLE :: indx(:)
+   REAL(WP), ALLOCATABLE :: spec_ssp(:,:,:)
+   REAL(WP), ALLOCATABLE :: emlin_ssp(:,:,:)
+  REAL(WP), DIMENSION(NEMLINE) :: emlin_csp
+  REAL(WP) :: lbol_csp, mass_csp, mdust_csp
+  REAL(WP) :: age, mass_frac, tsfr, zred, frac_linear, maxtime
+   REAL(WP), ALLOCATABLE :: spec_csp(:)
+   REAL(WP), ALLOCATABLE :: mags(:)
+   REAL(WP), ALLOCATABLE :: indx(:)
    INTEGER :: i, nage
 
   ! ------ Various checks and setup ------
@@ -228,13 +230,14 @@ SUBROUTINE COMPSP_WARNING(ctx, maxtime,pset,nzin,write_compsp)
 
   !check that variables are properly set
 
+   USE fsps_precision, ONLY: WP
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR, VERBOSE
+   USE fsps_constants, ONLY: NEMLINE, SAFE_FLOOR, VERBOSE
    USE fsps_types, ONLY: PARAMS
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER, INTENT(in) :: nzin, write_compsp
-  REAL(SP), INTENT(in) :: maxtime
+  REAL(WP), INTENT(in) :: maxtime
   TYPE(PARAMS), INTENT(in) :: pset
 
   !-----------------------------------------------------!
@@ -353,14 +356,15 @@ END SUBROUTINE COMPSP_WARNING
 
 SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
 
-   USE fsps_constants, ONLY: SP, SAFE_FLOOR, VERBOSE
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: SAFE_FLOOR, VERBOSE
    USE fsps_types, ONLY: PARAMS
    USE sps_utils, ONLY : vactoair
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
    INTEGER, INTENT(in) :: imin,imax,write_compsp
-  REAL(SP) :: writeage
+  REAL(WP) :: writeage
   TYPE(PARAMS), INTENT(in) :: pset
   CHARACTER(100), INTENT(in) :: outfile
 
@@ -534,15 +538,16 @@ SUBROUTINE SAVE_COMPSP(write_compsp,cspo,time,mass,&
 
   !routine to print and save outputs
 
-   USE fsps_constants, ONLY: SP, NEMLINE, SAFE_FLOOR
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: NEMLINE, SAFE_FLOOR
    USE fsps_types, ONLY: COMPSPOUT
   IMPLICIT NONE
   INTEGER, INTENT(in) :: write_compsp
-  REAL(SP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
-  REAL(SP), DIMENSION(:), INTENT(in)    :: spec
-  REAL(SP), DIMENSION(:), INTENT(in)   :: mags
-  REAL(SP), DIMENSION(:), INTENT(in)    :: indx
-  REAL(SP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
+  REAL(WP), INTENT(in)    :: time,mass,lbol,sfr,mdust,mformed
+  REAL(WP), DIMENSION(:), INTENT(in)    :: spec
+  REAL(WP), DIMENSION(:), INTENT(in)   :: mags
+  REAL(WP), DIMENSION(:), INTENT(in)    :: indx
+  REAL(WP), DIMENSION(NEMLINE), INTENT(in)  :: emlines
   TYPE(COMPSPOUT), INTENT(inout) :: cspo
   CHARACTER(34) :: fmt
   INTEGER :: nbands

@@ -15,7 +15,8 @@ module fsps_gas
     !> (`find_interval`), which create discontinuities. Special care is required
     !> for Automatic Differentiation (AD).
 
-    use fsps_constants, only: SP, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, &
+    use fsps_precision, only: WP
+    use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, &
                               H_PLANCK, L_SOL, SAFE_FLOOR, PI
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
@@ -35,8 +36,8 @@ module fsps_gas
     ! ------------------------------------------------------------------------
     ! CONSTANTS
     ! ------------------------------------------------------------------------
-    real(SP), parameter :: SQRT_2_PI  = sqrt(2.0_sp * PI)
-    real(SP), parameter :: KM_S_TO_ANGSTROM_FACTOR = 1.0e13_sp / C_LIGHT
+    real(WP), parameter :: SQRT_2_PI  = sqrt(2.0_wp * PI)
+    real(WP), parameter :: KM_S_TO_ANGSTROM_FACTOR = 1.0e13_wp / C_LIGHT
 
 contains
 
@@ -59,19 +60,19 @@ contains
 
         type(fsps_context_t), intent(inout)       :: ctx
         type(params), intent(in)                  :: pset
-        real(SP), dimension(:,:), intent(in)      :: sspi
-        real(SP), dimension(:,:), intent(inout)   :: sspo
-        real(SP), dimension(:,:), intent(inout), optional :: nebemline
+        real(WP), dimension(:,:), intent(in)      :: sspi
+        real(WP), dimension(:,:), intent(inout)   :: sspo
+        real(WP), dimension(:,:), intent(inout), optional :: nebemline
 
         ! Loop variables
         integer :: t, k, max_neb_time_idx
         
         ! Grid Interpolation Indices & Weights
         integer :: idx_z, idx_u, idx_a
-        real(SP) :: w_z, w_u, w_a
+        real(WP) :: w_z, w_u, w_a
         
         ! Physics variables
-        real(SP) :: q_ionizing
+        real(WP) :: q_ionizing
         logical :: use_xrb_grid
         logical :: calc_lines, calc_cont
 
@@ -79,19 +80,19 @@ contains
         ! We collapse the 4D grid (Wave, Z, Age, U) -> 2D (Wave, Age)
         ! These hold the spectrum/lines for the specific Z and U of this call,
         ! for every Age in the original grid.
-        real(SP), allocatable, dimension(:,:) :: neb_cont_grid_reduced ! (n_wave, n_age_grid)
-        real(SP), allocatable, dimension(:,:) :: neb_line_grid_reduced ! (n_lines, n_age_grid)
+        real(WP), allocatable, dimension(:,:) :: neb_cont_grid_reduced ! (n_wave, n_age_grid)
+        real(WP), allocatable, dimension(:,:) :: neb_line_grid_reduced ! (n_lines, n_age_grid)
 
         ! Buffers for the current time step (interpolated from the reduced grids)
         ! If this winds up being a performance bottleneck, we can pre-allocate
         ! these as permanent arrays in the context.
-        real(SP), dimension(size(sspi, 1)) :: current_step_cont
-        real(SP), dimension(NEMLINE)       :: current_step_lines_log
+        real(WP), dimension(size(sspi, 1)) :: current_step_cont
+        real(WP), dimension(NEMLINE)       :: current_step_lines_log
 
         ! 0. Initialization & Validation
         ! ------------------------------
         sspo = sspi
-        if (present(nebemline)) nebemline = 0.0_sp
+        if (present(nebemline)) nebemline = 0.0_wp
 
         ! Determine what needs calculating
         calc_cont = (ctx%add_neb_continuum_val == 1)
@@ -169,23 +170,23 @@ contains
             ! ----------------
             if (calc_cont) then
                 ! 1D Linear Interpolation: (1-w)*grid(idx) + w*grid(idx+1)
-                current_step_cont = (1.0_sp - w_a) * neb_cont_grid_reduced(:, idx_a) + &
+                current_step_cont = (1.0_wp - w_a) * neb_cont_grid_reduced(:, idx_a) + &
                                     (         w_a) * neb_cont_grid_reduced(:, idx_a + 1)
                 
                 ! Add to spectrum
-                sspo(:,t) = sspo(:,t) + (10.0_sp**current_step_cont) * q_ionizing
+                sspo(:,t) = sspo(:,t) + (10.0_wp**current_step_cont) * q_ionizing
             end if
 
             ! D. Add Lines
             ! ------------
             if (calc_lines) then
                 ! 1D Linear Interpolation
-                current_step_lines_log = (1.0_sp - w_a) * neb_line_grid_reduced(:, idx_a) + &
+                current_step_lines_log = (1.0_wp - w_a) * neb_line_grid_reduced(:, idx_a) + &
                                          (         w_a) * neb_line_grid_reduced(:, idx_a + 1)
                 
                 ! Store raw luminosities if requested
                 if (present(nebemline)) then
-                    nebemline(:,t) = (10.0_sp**current_step_lines_log) * q_ionizing
+                    nebemline(:,t) = (10.0_wp**current_step_lines_log) * q_ionizing
                 end if
 
                 ! Add to spectrum (Using MATMUL optimization)
@@ -224,12 +225,12 @@ contains
     subroutine process_ionizing_radiation(ctx, pset, spec_in, spec_out, q_val)
         type(fsps_context_t), intent(in)    :: ctx
         type(params), intent(in)            :: pset
-        real(SP), dimension(:), intent(in)  :: spec_in
-        real(SP), dimension(:), intent(inout) :: spec_out
-        real(SP), intent(out)               :: q_val
+        real(WP), dimension(:), intent(in)  :: spec_in
+        real(WP), dimension(:), intent(inout) :: spec_out
+        real(WP), intent(out)               :: q_val
         
         integer :: whlylim
-        real(SP) :: integral_flux
+        real(WP) :: integral_flux
         
         whlylim = ctx%state%whlylim
 
@@ -239,14 +240,14 @@ contains
         ! These photons escape the HII region without processing.
         ! Conversely, (1 - frac_obrun) are absorbed.
         if (whlylim > 0) then
-            spec_out(1:whlylim) = spec_in(1:whlylim) * max(0.0_sp, min(pset%frac_obrun, 1.0_sp))
+            spec_out(1:whlylim) = spec_in(1:whlylim) * max(0.0_wp, min(pset%frac_obrun, 1.0_wp))
         end if
 
         ! 2. Calculate Total Ionizing Photons (Q)
         ! ---------------------------------------
         ! Q = Integral(L_nu / h*nu) d_nu
         if (whlylim < 2) then
-            q_val = 0.0_sp
+            q_val = 0.0_wp
         else
             ! Note: spec_nu is frequency. spec_in is L_sol/Hz.
             ! Result is photons/sec scaled by L_SOL/H_PLANCK.
@@ -256,9 +257,9 @@ contains
             )
             
             if (ieee_is_nan(integral_flux)) then
-                q_val = 0.0_sp
+                q_val = 0.0_wp
             else
-                q_val = (integral_flux / H_PLANCK * L_SOL) * (1.0_sp - pset%frac_obrun)
+                q_val = (integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun)
             end if
         end if
 
@@ -278,8 +279,8 @@ contains
         type(params), intent(in)            :: pset
         
         integer :: i
-        real(SP) :: sigma_angstroms, norm_factor
-        real(SP), dimension(size(ctx%state%spec_lambda)) :: lambda_grid
+        real(WP) :: sigma_angstroms, norm_factor
+        real(WP), dimension(size(ctx%state%spec_lambda)) :: lambda_grid
 
         lambda_grid = ctx%state%spec_lambda
 
@@ -295,7 +296,7 @@ contains
 
             ! Enforce minimum resolution (Nyquist sampling or instrumental limit)
             ! The factor of 2 ensures we don't alias on the grid.
-            sigma_angstroms = max(sigma_angstroms, ctx%state%neb_res_min(i) * 2.0_sp)
+            sigma_angstroms = max(sigma_angstroms, ctx%state%neb_res_min(i) * 2.0_wp)
 
             ! Compute Gaussian
             ! Profile = (1 / (sqrt(2pi)*sigma)) * exp( -0.5 * ((lam - lam_0)/sigma)^2 )
@@ -303,11 +304,11 @@ contains
             ! Original: ... / C_LIGHT * nebem_line_pos(i)**2
             ! This converts from L_lambda to L_nu? 
             ! Yes: L_nu = L_lambda * lambda^2 / c. 
-            norm_factor = (1.0_sp / (SQRT_2_PI * sigma_angstroms)) * &
+            norm_factor = (1.0_wp / (SQRT_2_PI * sigma_angstroms)) * &
                           (ctx%state%nebem_line_pos(i)**2 / C_LIGHT)
 
             ctx%state%gaussnebarr(:,i) = norm_factor * &
-                exp( -0.5_sp * ((lambda_grid - ctx%state%nebem_line_pos(i)) / sigma_angstroms)**2 )
+                exp( -0.5_wp * ((lambda_grid - ctx%state%nebem_line_pos(i)) / sigma_angstroms)**2 )
         end do
     end subroutine compute_line_gaussians
 
@@ -316,14 +317,14 @@ contains
     !> This is significantly faster than looping over lines due to reduced memory I/O.
     subroutine add_lines_to_spectrum(ctx, spectrum, line_lum_log, q_val)
         type(fsps_context_t), intent(in)    :: ctx
-        real(SP), dimension(:), intent(inout) :: spectrum
-        real(SP), dimension(:), intent(in)    :: line_lum_log
-        real(SP), intent(in)                  :: q_val
+        real(WP), dimension(:), intent(inout) :: spectrum
+        real(WP), dimension(:), intent(in)    :: line_lum_log
+        real(WP), intent(in)                  :: q_val
         
-        real(SP), dimension(NEMLINE) :: line_flux_linear
+        real(WP), dimension(NEMLINE) :: line_flux_linear
 
         ! Vectorize the log -> linear conversion
-        line_flux_linear = (10.0_sp**line_lum_log) * q_val
+        line_flux_linear = (10.0_wp**line_lum_log) * q_val
         
         ! Perform Matrix-Vector multiplication: 
         ! [Lambda x Lines] * [Lines] = [Lambda]
@@ -339,11 +340,11 @@ contains
     !> AD_NOTE: `find_interval` introduces a discontinuity in the derivative 
     !> of the index w.r.t the input value. The weight `w` is differentiable.
     subroutine get_grid_indices_weights(grid, val, n_grid, idx, weight)
-        real(SP), dimension(:), intent(in) :: grid
-        real(SP), intent(in)               :: val
+        real(WP), dimension(:), intent(in) :: grid
+        real(WP), intent(in)               :: val
         integer, intent(in)                :: n_grid
         integer, intent(out)               :: idx
-        real(SP), intent(out)              :: weight
+        real(WP), intent(out)              :: weight
         
         ! Find index in sorted array
         idx = find_interval(grid, val)
@@ -355,7 +356,7 @@ contains
         weight = (val - grid(idx)) / (grid(idx+1) - grid(idx))
         
         ! Clamp weight to avoid extrapolation
-        weight = max(0.0_sp, min(weight, 1.0_sp))
+        weight = max(0.0_wp, min(weight, 1.0_wp))
     end subroutine get_grid_indices_weights
 
     !> @brief
@@ -377,19 +378,19 @@ contains
     !> @param[in] w_u      Interpolation weight for U
     !> @return             1D array of interpolated values (wavelengths or lines)
     pure subroutine interpolate_zu_slice(grid, res, idx_age, idx_z, idx_u, w_z, w_u)
-        real(SP), dimension(:,:,:,:), intent(in) :: grid
-        real(SP), dimension(:), intent(out)    :: res
+        real(WP), dimension(:,:,:,:), intent(in) :: grid
+        real(WP), dimension(:), intent(out)    :: res
         integer, intent(in)  :: idx_age, idx_z, idx_u
-        real(SP), intent(in) :: w_z, w_u
+        real(WP), intent(in) :: w_z, w_u
         
         ! Local coefficients for bilinear interpolation
-        real(SP) :: c00, c01, c10, c11
+        real(WP) :: c00, c01, c10, c11
 
         ! Pre-calculate coefficients
         ! This avoids re-calculating (1-w_z) etc. for every wavelength point
-        c00 = (1.0_sp - w_z) * (1.0_sp - w_u)
-        c01 = (1.0_sp - w_z) * (         w_u)
-        c10 = (         w_z) * (1.0_sp - w_u)
+        c00 = (1.0_wp - w_z) * (1.0_wp - w_u)
+        c01 = (1.0_wp - w_z) * (         w_u)
+        c10 = (         w_z) * (1.0_wp - w_u)
         c11 = (         w_z) * (         w_u)
 
         ! Vectorized Array Operation

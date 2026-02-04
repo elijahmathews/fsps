@@ -1,5 +1,6 @@
 MODULE FSPS_CONTEXT_TYPES
-  USE fsps_constants, ONLY: SP, &
+  USE fsps_precision, ONLY: WP
+  USE fsps_constants, ONLY: &
        NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
        N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
        NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
@@ -7,9 +8,9 @@ MODULE FSPS_CONTEXT_TYPES
   USE fsps_cache, ONLY: fsps_setup_cache_t
   IMPLICIT NONE
 
-  TYPE :: fsps_context_state_t
-     REAL(SP) :: zsol = 0.0
-     REAL(SP) :: zsol_spec = 0.0
+    TYPE :: fsps_context_state_t
+      REAL(WP) :: zsol = 0.0
+      REAL(WP) :: zsol_spec = 0.0
     CHARACTER(LEN=64) :: isoc_type = ''
     CHARACTER(LEN=64) :: spec_type = ''
      INTEGER :: nt = 0
@@ -23,105 +24,105 @@ MODULE FSPS_CONTEXT_TYPES
      INTEGER :: nt_xrb = 0
      INTEGER :: nz_xrb = 0
      INTEGER :: check_sps_setup = 0
-     REAL(SP) :: tuniv = 0.0
+    REAL(WP) :: tuniv = 0.0
      INTEGER :: whlam5000 = 0
      INTEGER :: whlylim = 0
-     REAL(SP) :: zpow2 = 1.0
+    REAL(WP) :: zpow2 = 1.0
      INTEGER, DIMENSION(6) :: mwdindex = 0
-     REAL(SP), DIMENSION(500,3) :: cosmospl = 0.0
+    REAL(WP), DIMENSION(500,3) :: cosmospl = 0.0
      INTEGER :: ntabsfh = 0
-     REAL(SP), DIMENSION(3,NTABMAX) :: sfh_tab = 0.0
-     REAL(SP), DIMENSION(3) :: imf_alpha = 1.3
-     REAL(SP) :: imf_vdmc = 0.08
-     REAL(SP) :: imf_mdave = 0.5
+    REAL(WP), DIMENSION(3,NTABMAX) :: sfh_tab = 0.0
+    REAL(WP), DIMENSION(3) :: imf_alpha = 1.3
+    REAL(WP) :: imf_vdmc = 0.08
+    REAL(WP) :: imf_mdave = 0.5
      INTEGER :: n_user_imf = 0
-     REAL(SP), DIMENSION(3,100) :: imf_user_alpha = 0.0
-     REAL(SP) :: salp_ind = 2.35
-     REAL(SP) :: imf_lower_limit = 0.08
-     REAL(SP) :: imf_upper_limit = 120.0
-     REAL(SP) :: imf_lower_bound = 0.0
-     REAL(SP) :: mlim_bh = 40.0
-     REAL(SP) :: mlim_ns = 8.5
+    REAL(WP), DIMENSION(3,100) :: imf_user_alpha = 0.0
+    REAL(WP) :: salp_ind = 2.35
+    REAL(WP) :: imf_lower_limit = 0.08
+    REAL(WP) :: imf_upper_limit = 120.0
+    REAL(WP) :: imf_lower_bound = 0.0
+    REAL(WP) :: mlim_bh = 40.0
+    REAL(WP) :: mlim_ns = 8.5
      CHARACTER(30) :: alt_filter_file = ''
-    REAL(SP), POINTER :: indexdefined(:,:) => NULL()
-    REAL(SP), POINTER :: wgdust(:,:,:,:) => NULL()
-    REAL(SP), POINTER :: g03smcextn(:) => NULL()
-    REAL(SP), POINTER :: bands(:,:) => NULL()
-    REAL(SP), POINTER :: magsun(:) => NULL()
-    REAL(SP), POINTER :: magvega(:) => NULL()
-    REAL(SP), POINTER :: filter_leff(:) => NULL()
-    REAL(SP), POINTER :: vega_spec(:) => NULL()
-    REAL(SP), POINTER :: sun_spec(:) => NULL()
-    REAL(SP), POINTER :: spec_lambda(:) => NULL()
-    REAL(SP), POINTER :: spec_nu(:) => NULL()
-    REAL(SP), POINTER :: spec_res(:) => NULL()
-     REAL(SP), DIMENSION(NDIM_LOGT) :: speclib_logt = 0.0
-     REAL(SP), DIMENSION(NDIM_LOGG) :: speclib_logg = 0.0
+    REAL(WP), POINTER :: indexdefined(:,:) => NULL()
+    REAL(WP), POINTER :: wgdust(:,:,:,:) => NULL()
+    REAL(WP), POINTER :: g03smcextn(:) => NULL()
+    REAL(WP), POINTER :: bands(:,:) => NULL()
+    REAL(WP), POINTER :: magsun(:) => NULL()
+    REAL(WP), POINTER :: magvega(:) => NULL()
+    REAL(WP), POINTER :: filter_leff(:) => NULL()
+    REAL(WP), POINTER :: vega_spec(:) => NULL()
+    REAL(WP), POINTER :: sun_spec(:) => NULL()
+    REAL(WP), POINTER :: spec_lambda(:) => NULL()
+    REAL(WP), POINTER :: spec_nu(:) => NULL()
+    REAL(WP), POINTER :: spec_res(:) => NULL()
+     REAL(WP), DIMENSION(NDIM_LOGT) :: speclib_logt = 0.0
+     REAL(WP), DIMENSION(NDIM_LOGG) :: speclib_logg = 0.0
     REAL(KIND(1.0)), POINTER :: speclib(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(NDIM_WMB_LOGT) :: wmb_logt = 0.0
-     REAL(SP), DIMENSION(NDIM_WMB_LOGG) :: wmb_logg = 0.0
+    REAL(WP), DIMENSION(NDIM_WMB_LOGT) :: wmb_logt = 0.0
+    REAL(WP), DIMENSION(NDIM_WMB_LOGG) :: wmb_logg = 0.0
     REAL(KIND(1.0)), POINTER :: wmb_spec(:,:,:,:) => NULL()
-    REAL(SP), POINTER :: agb_spec_o(:,:) => NULL()
-    REAL(SP), POINTER :: agb_logt_o(:,:) => NULL()
-    REAL(SP), POINTER :: agb_spec_c(:,:) => NULL()
-    REAL(SP), POINTER :: agb_logt_c(:) => NULL()
-     REAL(SP), DIMENSION(N_AGB_CAR) :: agb_logt_car = 0.0
-    REAL(SP), POINTER :: agb_spec_car(:,:) => NULL()
-    REAL(SP), POINTER :: pagb_spec(:,:,:) => NULL()
-     REAL(SP), DIMENSION(NDIM_PAGB) :: pagb_logt = 0.0
-    REAL(SP), POINTER :: wrn_spec(:,:,:) => NULL()
-    REAL(SP), POINTER :: wrc_spec(:,:,:) => NULL()
-     REAL(SP), DIMENSION(NDIM_WR) :: wrn_logt = 0.0
-     REAL(SP), DIMENSION(NDIM_WR) :: wrc_logt = 0.0
+    REAL(WP), POINTER :: agb_spec_o(:,:) => NULL()
+    REAL(WP), POINTER :: agb_logt_o(:,:) => NULL()
+    REAL(WP), POINTER :: agb_spec_c(:,:) => NULL()
+    REAL(WP), POINTER :: agb_logt_c(:) => NULL()
+     REAL(WP), DIMENSION(N_AGB_CAR) :: agb_logt_car = 0.0
+    REAL(WP), POINTER :: agb_spec_car(:,:) => NULL()
+    REAL(WP), POINTER :: pagb_spec(:,:,:) => NULL()
+     REAL(WP), DIMENSION(NDIM_PAGB) :: pagb_logt = 0.0
+    REAL(WP), POINTER :: wrn_spec(:,:,:) => NULL()
+    REAL(WP), POINTER :: wrc_spec(:,:,:) => NULL()
+     REAL(WP), DIMENSION(NDIM_WR) :: wrn_logt = 0.0
+     REAL(WP), DIMENSION(NDIM_WR) :: wrc_logt = 0.0
      INTEGER :: ndim_dustem = 0
      INTEGER :: numin_dustem = 0
      INTEGER :: nqpah_dustem = 0
      CHARACTER(6) :: str_dustem = 'DL07'
-    REAL(SP), POINTER :: qpaharr(:) => NULL()
-    REAL(SP), POINTER :: uminarr(:) => NULL()
-    REAL(SP), POINTER :: lambda_dustem(:) => NULL()
-    REAL(SP), POINTER :: dustem_dustem(:,:) => NULL()
-    REAL(SP), POINTER :: dustem2_dustem(:,:,:) => NULL()
-    REAL(SP), POINTER :: flux_dagb(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(2,NTAU_DAGB) :: tau1_dagb = 0.0
-     REAL(SP), DIMENSION(2,NTEFF_DAGB) :: teff_dagb = 0.0
-     REAL(SP), DIMENSION(NEMLINE) :: nebem_line_pos = 0.0
-     REAL(SP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: nebem_line = 0.0
-     REAL(SP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: xnebem_line = 0.0
-    REAL(SP), POINTER :: nebem_cont(:,:,:,:) => NULL()
-    REAL(SP), POINTER :: xnebem_cont(:,:,:,:) => NULL()
-     REAL(SP), DIMENSION(NEBNZ) :: nebem_logz = 0.0
-     REAL(SP), DIMENSION(NEBNAGE) :: nebem_age = 0.0
-     REAL(SP), DIMENSION(NEBNIP) :: nebem_logu = 0.0
-    REAL(SP), POINTER :: neb_res_min(:) => NULL()
-    REAL(SP), POINTER :: gaussnebarr(:,:) => NULL()
-     REAL(SP), DIMENSION(NAGNDUST) :: agndust_tau = 0.0
-    REAL(SP), POINTER :: agndust_spec(:,:) => NULL()
-    REAL(SP), POINTER :: mact_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: logl_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: logt_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: logg_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: ffco_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: phase_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: mini_isoc(:,:,:) => NULL()
-    REAL(SP), POINTER :: lmdot_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: qpaharr(:) => NULL()
+    REAL(WP), POINTER :: uminarr(:) => NULL()
+    REAL(WP), POINTER :: lambda_dustem(:) => NULL()
+    REAL(WP), POINTER :: dustem_dustem(:,:) => NULL()
+    REAL(WP), POINTER :: dustem2_dustem(:,:,:) => NULL()
+    REAL(WP), POINTER :: flux_dagb(:,:,:,:) => NULL()
+     REAL(WP), DIMENSION(2,NTAU_DAGB) :: tau1_dagb = 0.0
+     REAL(WP), DIMENSION(2,NTEFF_DAGB) :: teff_dagb = 0.0
+     REAL(WP), DIMENSION(NEMLINE) :: nebem_line_pos = 0.0
+     REAL(WP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: nebem_line = 0.0
+     REAL(WP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: xnebem_line = 0.0
+    REAL(WP), POINTER :: nebem_cont(:,:,:,:) => NULL()
+    REAL(WP), POINTER :: xnebem_cont(:,:,:,:) => NULL()
+     REAL(WP), DIMENSION(NEBNZ) :: nebem_logz = 0.0
+     REAL(WP), DIMENSION(NEBNAGE) :: nebem_age = 0.0
+     REAL(WP), DIMENSION(NEBNIP) :: nebem_logu = 0.0
+    REAL(WP), POINTER :: neb_res_min(:) => NULL()
+    REAL(WP), POINTER :: gaussnebarr(:,:) => NULL()
+     REAL(WP), DIMENSION(NAGNDUST) :: agndust_tau = 0.0
+    REAL(WP), POINTER :: agndust_spec(:,:) => NULL()
+    REAL(WP), POINTER :: mact_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: logl_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: logt_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: logg_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: ffco_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: phase_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: mini_isoc(:,:,:) => NULL()
+    REAL(WP), POINTER :: lmdot_isoc(:,:,:) => NULL()
     INTEGER, POINTER :: nmass_isoc(:,:) => NULL()
-    REAL(SP), POINTER :: timestep_isoc(:,:) => NULL()
-    REAL(SP), POINTER :: zlegend(:) => NULL()
-    REAL(SP), POINTER :: zlegendinit(:) => NULL()
-     REAL(SP), ALLOCATABLE :: spec_ssp_zz(:,:,:)
-     REAL(SP), ALLOCATABLE :: mass_ssp_zz(:,:)
-     REAL(SP), ALLOCATABLE :: lbol_ssp_zz(:,:)
-    REAL(SP), POINTER :: time_full(:) => NULL()
-     REAL(SP), ALLOCATABLE :: weight_ssp(:,:)
-     REAL(SP), ALLOCATABLE :: spec_young(:)
-     REAL(SP), ALLOCATABLE :: spec_old(:)
-    REAL(SP), POINTER :: bpass_spec_ssp(:,:,:) => NULL()
-    REAL(SP), POINTER :: bpass_mass_ssp(:,:) => NULL()
-    REAL(SP), POINTER :: lam_xrb(:) => NULL()
-    REAL(SP), POINTER :: spec_xrb(:,:,:) => NULL()
-    REAL(SP), POINTER :: ages_xrb(:) => NULL()
-    REAL(SP), POINTER :: zmet_xrb(:) => NULL()
+    REAL(WP), POINTER :: timestep_isoc(:,:) => NULL()
+    REAL(WP), POINTER :: zlegend(:) => NULL()
+    REAL(WP), POINTER :: zlegendinit(:) => NULL()
+     REAL(WP), ALLOCATABLE :: spec_ssp_zz(:,:,:)
+     REAL(WP), ALLOCATABLE :: mass_ssp_zz(:,:)
+     REAL(WP), ALLOCATABLE :: lbol_ssp_zz(:,:)
+    REAL(WP), POINTER :: time_full(:) => NULL()
+     REAL(WP), ALLOCATABLE :: weight_ssp(:,:)
+     REAL(WP), ALLOCATABLE :: spec_young(:)
+     REAL(WP), ALLOCATABLE :: spec_old(:)
+    REAL(WP), POINTER :: bpass_spec_ssp(:,:,:) => NULL()
+    REAL(WP), POINTER :: bpass_mass_ssp(:,:) => NULL()
+    REAL(WP), POINTER :: lam_xrb(:) => NULL()
+    REAL(WP), POINTER :: spec_xrb(:,:,:) => NULL()
+    REAL(WP), POINTER :: ages_xrb(:) => NULL()
+    REAL(WP), POINTER :: zmet_xrb(:) => NULL()
      TYPE(TLSF) :: lsfinfo
      TYPE(OBSDAT) :: powell_data
      TYPE(OBSDAT) :: sedfit_data
@@ -138,14 +139,14 @@ MODULE FSPS_CONTEXT_TYPES
      CHARACTER(LEN=250) :: output_home = ''
       TYPE(fsps_setup_cache_t), POINTER :: setup_cache => NULL()
      TYPE(fsps_context_state_t) :: state
-     REAL(SP) :: om0_val = 0.0
-     REAL(SP) :: ol0_val = 0.0
-     REAL(SP) :: H0_val = 0.0
-     REAL(SP) :: tiny_logt_val = 0.0
-     REAL(SP) :: imf_upper_limit_val = 0.0
-     REAL(SP) :: imf_lower_limit_val = 0.0
-     REAL(SP) :: logt_wmb_hot_val = 0.0
-     REAL(SP) :: nebular_smooth_init_val = 0.0
+    REAL(WP) :: om0_val = 0.0
+    REAL(WP) :: ol0_val = 0.0
+    REAL(WP) :: H0_val = 0.0
+    REAL(WP) :: tiny_logt_val = 0.0
+    REAL(WP) :: imf_upper_limit_val = 0.0
+    REAL(WP) :: imf_lower_limit_val = 0.0
+    REAL(WP) :: logt_wmb_hot_val = 0.0
+    REAL(WP) :: nebular_smooth_init_val = 0.0
      INTEGER :: imf_type_val = 0
      INTEGER :: tpagb_norm_type_val = 0
      INTEGER :: pzcon_val = 0

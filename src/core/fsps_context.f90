@@ -1,5 +1,5 @@
 MODULE FSPS_CONTEXT
-  USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
   USE sps_utils
@@ -257,7 +257,7 @@ CONTAINS
   SUBROUTINE fsps_context_set_param_float(ctx, key, value, status)
     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
     CHARACTER(LEN=*), INTENT(IN) :: key
-    REAL(SP), INTENT(IN) :: value
+   REAL(WP), INTENT(IN) :: value
     INTEGER, INTENT(OUT) :: status
 
     status = 0
@@ -412,8 +412,8 @@ CONTAINS
 
    SUBROUTINE fsps_context_compute_ssp(ctx, mass_ssp, lbol_ssp, spec_ssp)
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(SP), DIMENSION(:), INTENT(out) :: mass_ssp, lbol_ssp
-      REAL(SP), DIMENSION(:,:), INTENT(out) :: spec_ssp
+      REAL(WP), DIMENSION(:), INTENT(out) :: mass_ssp, lbol_ssp
+      REAL(WP), DIMENSION(:,:), INTENT(out) :: spec_ssp
 
         CALL fsps_context_ensure_setup(ctx)
       CALL fsps_context_prepare_pset(ctx)
@@ -424,8 +424,8 @@ CONTAINS
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
       INTEGER, INTENT(IN) :: write_compsp, nzin
       CHARACTER(LEN=*), INTENT(IN) :: outfile
-      REAL(SP), DIMENSION(:,:), INTENT(IN) :: mass_ssp, lbol_ssp
-      REAL(SP), DIMENSION(:,:,:), INTENT(IN) :: spec_ssp
+      REAL(WP), DIMENSION(:,:), INTENT(IN) :: mass_ssp, lbol_ssp
+      REAL(WP), DIMENSION(:,:,:), INTENT(IN) :: spec_ssp
       TYPE(COMPSPOUT), DIMENSION(:), INTENT(INOUT) :: ocompsp
 
         CALL fsps_context_ensure_setup(ctx)

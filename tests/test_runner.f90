@@ -5,7 +5,8 @@ PROGRAM TEST_RUNNER
   ! parameters, and compares outputs with a relative tolerance.
 
   USE, INTRINSIC :: IEEE_ARITHMETIC
-      USE fsps_constants, ONLY: SP, NEMLINE
+      USE fsps_precision, ONLY: WP
+      USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
@@ -17,21 +18,21 @@ PROGRAM TEST_RUNNER
   INTEGER, PARAMETER :: EXIT_FAILURE = 1
   
   ! Default tolerance (can be overridden by env var FSPS_TEST_RTOL)
-  REAL(SP), PARAMETER :: DEFAULT_RTOL = 1.0E-5
+  REAL(WP), PARAMETER :: DEFAULT_RTOL = 1.0E-5
 
   ! Test arrays (allocatable)
   ! Reference data (read from disk)
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: ref_spec_ssp
-  REAL(SP), ALLOCATABLE, DIMENSION(:)   :: ref_mass_ssp, ref_lbol_ssp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: ref_spec_ssp
+  REAL(WP), ALLOCATABLE, DIMENSION(:)   :: ref_mass_ssp, ref_lbol_ssp
   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ref_ocompsp
 
   ! New data (computed on the fly)
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_ctx
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_cmp
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:,:) :: new_spec_ssp3
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: new_mass_ssp2, new_lbol_ssp2
-  REAL(SP), ALLOCATABLE, DIMENSION(:)   :: new_mass_ssp, new_lbol_ssp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_ctx
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_cmp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:,:) :: new_spec_ssp3
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_mass_ssp2, new_lbol_ssp2
+  REAL(WP), ALLOCATABLE, DIMENSION(:)   :: new_mass_ssp, new_lbol_ssp
   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: new_ocompsp
 
   ! Control variables
@@ -48,7 +49,7 @@ PROGRAM TEST_RUNNER
    INTEGER :: nspec_ctx, ntfull_ctx, nbands_ctx, nt_ctx, nindx_ctx
 
   ! Comparison stats
-   REAL(SP) :: rtol
+   REAL(WP) :: rtol
    LOGICAL :: test_passed
    INTEGER :: nfail
    LOGICAL :: verbose_output
@@ -340,8 +341,8 @@ CONTAINS
   SUBROUTINE CHECK_ARRAY_2D(label, ref, new, d1, d2)
     CHARACTER(*), INTENT(IN) :: label
     INTEGER, INTENT(IN) :: d1, d2
-    REAL(SP), DIMENSION(d1,d2), INTENT(IN) :: ref, new
-   REAL(SP) :: delta, threshold, max_delta, max_rel, ref_val
+    REAL(WP), DIMENSION(d1,d2), INTENT(IN) :: ref, new
+   REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
    INTEGER :: j, k, mj, mk
 
    max_delta = 0.0
@@ -359,7 +360,7 @@ CONTAINS
 
           ref_val = ref(j,k)
           delta = ABS(ref_val - new(j,k))
-          if (ABS(ref_val) > 0.0_SP) then
+          if (ABS(ref_val) > 0.0_wp) then
              max_rel = MAX(max_rel, delta / ABS(ref_val))
           end if
           IF (delta > max_delta) THEN
@@ -390,8 +391,8 @@ CONTAINS
   SUBROUTINE CHECK_ARRAY_1D(label, ref, new, d1)
     CHARACTER(*), INTENT(IN) :: label
     INTEGER, INTENT(IN) :: d1
-    REAL(SP), DIMENSION(d1), INTENT(IN) :: ref, new
-   REAL(SP) :: delta, threshold, max_delta, max_rel, ref_val
+    REAL(WP), DIMENSION(d1), INTENT(IN) :: ref, new
+   REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
    INTEGER :: j, mj
 
    max_delta = 0.0
@@ -407,7 +408,7 @@ CONTAINS
        
        ref_val = ref(j)
        delta = ABS(ref_val - new(j))
-       if (ABS(ref_val) > 0.0_SP) then
+       if (ABS(ref_val) > 0.0_wp) then
           max_rel = MAX(max_rel, delta / ABS(ref_val))
        end if
        IF (delta > max_delta) THEN
@@ -435,13 +436,13 @@ CONTAINS
   SUBROUTINE CHECK_MAGS_1D(label, ref_mag, new_mag, d1)
     CHARACTER(*), INTENT(IN) :: label
     INTEGER, INTENT(IN) :: d1
-    REAL(SP), DIMENSION(d1), INTENT(IN) :: ref_mag, new_mag
-    REAL(SP) :: delta, threshold, max_delta, max_rel, ref_val
-    REAL(SP) :: flux_ref, flux_new, exp_ref, exp_new
+    REAL(WP), DIMENSION(d1), INTENT(IN) :: ref_mag, new_mag
+    REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
+    REAL(WP) :: flux_ref, flux_new, exp_ref, exp_new
     INTEGER :: j, mj
 
-    max_delta = 0.0_SP
-    max_rel = 0.0_SP
+    max_delta = 0.0_wp
+    max_rel = 0.0_wp
     mj = 1
 
     DO j = 1, d1
@@ -452,33 +453,33 @@ CONTAINS
        END IF
 
        ! Convert magnitudes to linear flux units (relative scale)
-       exp_ref = -0.4_SP * ref_mag(j) * LOG(10.0_SP)
-       exp_new = -0.4_SP * new_mag(j) * LOG(10.0_SP)
-       IF (exp_ref < -700.0_SP) THEN
-          flux_ref = 0.0_SP
-       ELSE IF (exp_ref > 700.0_SP) THEN
-          flux_ref = HUGE(1.0_SP)
+       exp_ref = -0.4_wp * ref_mag(j) * LOG(10.0_wp)
+       exp_new = -0.4_wp * new_mag(j) * LOG(10.0_wp)
+       IF (exp_ref < -700.0_wp) THEN
+          flux_ref = 0.0_wp
+       ELSE IF (exp_ref > 700.0_wp) THEN
+          flux_ref = HUGE(1.0_wp)
        ELSE
           flux_ref = EXP(exp_ref)
        END IF
-       IF (exp_new < -700.0_SP) THEN
-          flux_new = 0.0_SP
-       ELSE IF (exp_new > 700.0_SP) THEN
-          flux_new = HUGE(1.0_SP)
+       IF (exp_new < -700.0_wp) THEN
+          flux_new = 0.0_wp
+       ELSE IF (exp_new > 700.0_wp) THEN
+          flux_new = HUGE(1.0_wp)
        ELSE
           flux_new = EXP(exp_new)
        END IF
 
        ref_val = flux_ref
        delta = ABS(flux_ref - flux_new)
-       IF (ABS(ref_val) > 0.0_SP) THEN
+       IF (ABS(ref_val) > 0.0_wp) THEN
           max_rel = MAX(max_rel, delta / ABS(ref_val))
        END IF
        IF (delta > max_delta) THEN
           max_delta = delta
           mj = j
        END IF
-       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_SP)
+       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp)
        IF (delta > threshold) THEN
           test_passed = .FALSE.
           nfail = nfail + 1
@@ -500,8 +501,8 @@ CONTAINS
   SUBROUTINE CHECK_VAL(label, idx, r, n)
     CHARACTER(*), INTENT(IN) :: label
     INTEGER, INTENT(IN) :: idx
-    REAL(SP), INTENT(IN) :: r, n
-    REAL(SP) :: delta, threshold
+    REAL(WP), INTENT(IN) :: r, n
+    REAL(WP) :: delta, threshold
 
     IF (IEEE_IS_NAN(r) .OR. IEEE_IS_NAN(n)) THEN
        WRITE(*,*) 'FAIL: ', label, ' contains NaN at step ', idx
@@ -545,7 +546,7 @@ CONTAINS
    SUBROUTINE DUMP_SSP_SUMMARY(label, ctx, mass_ssp, lbol_ssp)
       CHARACTER(*), INTENT(IN) :: label
       TYPE(fsps_context_t), INTENT(IN) :: ctx
-      REAL(SP), DIMENSION(:), INTENT(IN) :: mass_ssp, lbol_ssp
+      REAL(WP), DIMENSION(:), INTENT(IN) :: mass_ssp, lbol_ssp
       INTEGER :: n
       n = SIZE(mass_ssp)
       WRITE(*,*) '--- SSP SUMMARY:', TRIM(label)

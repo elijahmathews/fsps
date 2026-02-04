@@ -17,10 +17,10 @@ MODULE SPS_UTILS
      SUBROUTINE ADD_AGB_DUST(ctx, weight, tspec, mact, logt, logl, logg, &
           zz,tco,lmdot)
        USE fsps_context_types, ONLY: fsps_context_t
-       USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
        TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), DIMENSION(:), INTENT(inout) :: tspec
-       REAL(SP), INTENT(in)  :: weight,mact,logt,logl,logg,zz,tco,lmdot
+      REAL(WP), DIMENSION(:), INTENT(inout) :: tspec
+      REAL(WP), INTENT(in)  :: weight,mact,logt,logl,logg,zz,tco,lmdot
      END SUBROUTINE ADD_AGB_DUST
   END INTERFACE
 
@@ -28,15 +28,16 @@ MODULE SPS_UTILS
    INTERFACE
        SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdust)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP, NEMLINE
+          USE fsps_precision, ONLY: WP
+          USE fsps_constants, ONLY: NEMLINE
            USE fsps_types, ONLY: PARAMS
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-          REAL(SP), INTENT(out) :: mdust
-           REAL(SP), DIMENSION(:), INTENT(in) :: csp1,csp2
+          REAL(WP), INTENT(out) :: mdust
+           REAL(WP), DIMENSION(:), INTENT(in) :: csp1,csp2
           TYPE(PARAMS), INTENT(in) :: pset
-           REAL(SP), DIMENSION(:), INTENT(out) :: specdust
-          REAL(SP), DIMENSION(NEMLINE), INTENT(in) :: ncsp1,ncsp2
-          REAL(SP), DIMENSION(NEMLINE), INTENT(out) :: nebdust
+           REAL(WP), DIMENSION(:), INTENT(out) :: specdust
+          REAL(WP), DIMENSION(NEMLINE), INTENT(in) :: ncsp1,ncsp2
+          REAL(WP), DIMENSION(NEMLINE), INTENT(out) :: nebdust
        END SUBROUTINE ADD_DUST
    END INTERFACE
 
@@ -44,34 +45,34 @@ MODULE SPS_UTILS
   INTERFACE
      FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: PARAMS
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-          REAL(SP), DIMENSION(:), INTENT(in) :: lam,spec
-          REAL(SP), INTENT(in) :: lbol_csp
+          REAL(WP), DIMENSION(:), INTENT(in) :: lam,spec
+          REAL(WP), INTENT(in) :: lbol_csp
           TYPE(PARAMS), INTENT(in) :: pset
-          REAL(SP), DIMENSION(SIZE(lam)) :: agn_dust
+          REAL(WP), DIMENSION(SIZE(lam)) :: agn_dust
      END FUNCTION AGN_DUST
   END INTERFACE
 
   INTERFACE
      FUNCTION AIRTOVAC(lam)
-          USE fsps_constants, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: lam
-       REAL(SP), DIMENSION(SIZE(lam)) :: airtovac
+          USE fsps_precision, ONLY: WP
+       REAL(WP), DIMENSION(:), INTENT(in) :: lam
+       REAL(WP), DIMENSION(SIZE(lam)) :: airtovac
      END FUNCTION AIRTOVAC
   END INTERFACE
 
  INTERFACE
    FUNCTION ATTN_CURVE(ctx, lambda, dtype, pset)
       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
       USE fsps_types, ONLY: PARAMS
       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
       INTEGER, INTENT(in) :: dtype
-      REAL(SP), INTENT(in), DIMENSION(:) :: lambda
+      REAL(WP), INTENT(in), DIMENSION(:) :: lambda
       TYPE(PARAMS), INTENT(in) :: pset
-      REAL(SP), DIMENSION(SIZE(lambda)) :: attn_curve
+      REAL(WP), DIMENSION(SIZE(lambda)) :: attn_curve
      END FUNCTION ATTN_CURVE
   END INTERFACE
 
@@ -79,12 +80,12 @@ MODULE SPS_UTILS
      SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile, mass_ssp, &
           lbol_ssp, spec_ssp, pset, ocompsp)
        USE fsps_context_types, ONLY: fsps_context_t
-       USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
        USE fsps_types, ONLY: PARAMS, COMPSPOUT
        TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        INTEGER, INTENT(in) :: write_compsp,nzin
-       REAL(SP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
-       REAL(SP), INTENT(in), DIMENSION(:,:,:) :: spec_ssp
+      REAL(WP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
+      REAL(WP), INTENT(in), DIMENSION(:,:,:) :: spec_ssp
        CHARACTER(100), INTENT(in) :: outfile
        TYPE(PARAMS), INTENT(in)   :: pset
        TYPE(COMPSPOUT), INTENT(inout), DIMENSION(:) :: ocompsp
@@ -93,11 +94,11 @@ MODULE SPS_UTILS
 
   INTERFACE
      SUBROUTINE COMPSP_GRID(pset,nti,specout)
-       USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
        USE fsps_types, ONLY: PARAMS
        TYPE(PARAMS), INTENT(in) :: pset
        INTEGER, INTENT(in) :: nti
-       REAL(SP), DIMENSION(:), INTENT(inout) :: specout
+      REAL(WP), DIMENSION(:), INTENT(inout) :: specout
      END SUBROUTINE COMPSP_GRID
   END INTERFACE
 
@@ -105,38 +106,39 @@ MODULE SPS_UTILS
      SUBROUTINE CSP_GEN(ctx, mass_ssp, lbol_ssp, spec_ssp, pset, tage, nzin,&
                         mass_csp, lbol_csp, spec_csp, mdust_csp, emlin_ssp, emlin_csp)
        USE fsps_context_types, ONLY: fsps_context_t
-       USE fsps_constants, ONLY: SP, NEMLINE
+      USE fsps_precision, ONLY: WP
+      USE fsps_constants, ONLY: NEMLINE
        USE fsps_types, ONLY: PARAMS
        TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), DIMENSION(:,:), INTENT(in) :: mass_ssp, lbol_ssp
-       REAL(SP), DIMENSION(:,:,:), INTENT(in) :: spec_ssp
+      REAL(WP), DIMENSION(:,:), INTENT(in) :: mass_ssp, lbol_ssp
+      REAL(WP), DIMENSION(:,:,:), INTENT(in) :: spec_ssp
        TYPE(PARAMS), intent(in) :: pset
-       REAL(SP), INTENT(in)  :: tage
+      REAL(WP), INTENT(in)  :: tage
        INTEGER, INTENT(IN) :: nzin
-       REAL(SP), INTENT(out) :: mass_csp, lbol_csp, mdust_csp
-       REAL(SP), INTENT(out), DIMENSION(:) :: spec_csp
-       REAL(SP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
-       REAL(SP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
+      REAL(WP), INTENT(out) :: mass_csp, lbol_csp, mdust_csp
+      REAL(WP), INTENT(out), DIMENSION(:) :: spec_csp
+      REAL(WP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
+      REAL(WP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
      END SUBROUTINE CSP_GEN
   END INTERFACE
 
   INTERFACE
      SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
        USE fsps_context_types, ONLY: fsps_context_t
-       USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
        USE fsps_types, ONLY: PARAMS
        TYPE(fsps_context_t), INTENT(INOUT) :: ctx
        TYPE(PARAMS), INTENT(in) :: pset
-       REAL(SP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
-       REAL(SP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
+      REAL(WP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
+      REAL(WP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
      END SUBROUTINE SSP_GEN
   END INTERFACE
 
   INTERFACE
      SUBROUTINE GETZMET(smass,pos)
-       USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
        USE fsps_types, ONLY: PARAMS
-       REAL(SP), INTENT(in) :: smass
+      REAL(WP), INTENT(in) :: smass
        TYPE(PARAMS), INTENT(inout) :: pos
      END SUBROUTINE GETZMET
   END INTERFACE
@@ -144,53 +146,53 @@ MODULE SPS_UTILS
   INTERFACE
        SUBROUTINE GETINDX(ctx, lambda, spec, indices)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), INTENT(in), DIMENSION(:) :: spec,lambda
-       REAL(SP), INTENT(inout), DIMENSION(:) :: indices
+      REAL(WP), INTENT(in), DIMENSION(:) :: spec,lambda
+      REAL(WP), INTENT(inout), DIMENSION(:) :: indices
      END SUBROUTINE GETINDX
   END INTERFACE
 
   INTERFACE
        FUNCTION GET_TUNIV(ctx, z)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(IN) :: ctx
-       REAL(SP), INTENT(in) :: z
-       REAL(SP) :: get_tuniv
+      REAL(WP), INTENT(in) :: z
+      REAL(WP) :: get_tuniv
      END FUNCTION GET_TUNIV
   END INTERFACE
  
   INTERFACE
        FUNCTION GET_LUMDIST(ctx, z)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(IN) :: ctx
-       REAL(SP), INTENT(in) :: z
-       REAL(SP) :: get_lumdist
+      REAL(WP), INTENT(in) :: z
+      REAL(WP) :: get_lumdist
      END FUNCTION GET_LUMDIST
   END INTERFACE
 
    INTERFACE
        SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
           USE fsps_context_types, ONLY: fsps_context_t
-           USE fsps_constants, ONLY: SP
+           USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(IN) :: ctx
-          REAL(SP), INTENT(in) :: yield
-          REAL(SP), INTENT(out) :: zave
-          REAL(SP), INTENT(out), DIMENSION(:,:) :: spec_pz
-          REAL(SP), INTENT(out), DIMENSION(:) :: lbol_pz, mass_pz
+          REAL(WP), INTENT(in) :: yield
+          REAL(WP), INTENT(out) :: zave
+          REAL(WP), INTENT(out), DIMENSION(:,:) :: spec_pz
+          REAL(WP), INTENT(out), DIMENSION(:) :: lbol_pz, mass_pz
        END SUBROUTINE PZ_CONVOL
    END INTERFACE
   
   INTERFACE
        SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), INTENT(in) :: zred
-       REAL(SP), INTENT(inout), DIMENSION(:) :: spec
-       REAL(SP), DIMENSION(:) :: mags
+      REAL(WP), INTENT(in) :: zred
+      REAL(WP), INTENT(inout), DIMENSION(:) :: spec
+      REAL(WP), DIMENSION(:) :: mags
        INTEGER, DIMENSION(:), INTENT(in), OPTIONAL  :: mag_compute
      END SUBROUTINE GETMAGS
   END INTERFACE
@@ -198,43 +200,43 @@ MODULE SPS_UTILS
   INTERFACE
        SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, spec)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: PARAMS
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-          REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
+          REAL(WP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
           TYPE(PARAMS), INTENT(in) :: pset
-      REAL(SP), INTENT(inout), DIMENSION(:) :: spec 
+      REAL(WP), INTENT(inout), DIMENSION(:) :: spec 
      END SUBROUTINE GETSPEC
   END INTERFACE
 
   INTERFACE
      FUNCTION IGM_ABSORB(lam,spec,zz,factor)
-       USE fsps_constants, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: lam,spec
-       REAL(SP), INTENT(in) :: zz,factor
-       REAL(SP), DIMENSION(SIZE(lam)) :: igm_absorb
+      USE fsps_precision, ONLY: WP
+      REAL(WP), DIMENSION(:), INTENT(in) :: lam,spec
+      REAL(WP), INTENT(in) :: zz,factor
+      REAL(WP), DIMENSION(SIZE(lam)) :: igm_absorb
      END FUNCTION IGM_ABSORB
   END INTERFACE
 
   INTERFACE
      FUNCTION INTIND(lam,func,lo,hi)
-       USE fsps_constants, ONLY: SP
-       REAL(SP), INTENT(in), DIMENSION(:) :: lam,func
-       REAL(SP), INTENT(in) :: lo,hi
-       REAL(SP) :: intind
+      USE fsps_precision, ONLY: WP
+      REAL(WP), INTENT(in), DIMENSION(:) :: lam,func
+      REAL(WP), INTENT(in) :: lo,hi
+      REAL(WP) :: intind
      END FUNCTION INTIND
   END INTERFACE
 
   INTERFACE
        FUNCTION INTSFWGHT(ctx, sspind, logt, sfh)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: SFHPARAMS
           TYPE(fsps_context_t), INTENT(IN) :: ctx
        TYPE(SFHPARAMS), INTENT(in) :: sfh
        INTEGER, INTENT(in) :: sspind
-       REAL(SP), DIMENSION(2), INTENT(in) :: logt
-       REAL(SP) :: intsfwght
+      REAL(WP), DIMENSION(2), INTENT(in) :: logt
+      REAL(WP) :: intsfwght
      END FUNCTION INTSFWGHT
   END INTERFACE
 
@@ -262,56 +264,56 @@ MODULE SPS_UTILS
   INTERFACE
      SUBROUTINE SFHINFO(ctx, pset, age, mfrac, sfr, frac_linear)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: PARAMS
           TYPE(fsps_context_t), INTENT(IN) :: ctx
           TYPE(PARAMS), INTENT(in) :: pset
-          REAL(SP), INTENT(in) :: age
-          REAL(SP), INTENT(out) :: mfrac, sfr, frac_linear
+          REAL(WP), INTENT(in) :: age
+          REAL(WP), INTENT(out) :: mfrac, sfr, frac_linear
      END SUBROUTINE SFHINFO
   END INTERFACE
 
   INTERFACE
        FUNCTION SFHLIMIT(ctx, tlim, sfh)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: SFHPARAMS
           TYPE(fsps_context_t), INTENT(IN) :: ctx
        TYPE(SFHPARAMS), INTENT(in) :: sfh
-       REAL(SP), INTENT(in) :: tlim
-       REAL(SP) :: sfhlimit
+      REAL(WP), INTENT(in) :: tlim
+      REAL(WP) :: sfhlimit
      END FUNCTION SFHLIMIT
   END INTERFACE
 
   INTERFACE
        FUNCTION SFH_WEIGHT(ctx, sfh, imin, imax)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           USE fsps_types, ONLY: SFHPARAMS
           TYPE(fsps_context_t), INTENT(IN) :: ctx
        TYPE(SFHPARAMS), INTENT(in) :: sfh
        INTEGER, INTENT(in) :: imin, imax
-          REAL(SP), DIMENSION(ctx%state%ntfull) :: sfh_weight
+          REAL(WP), DIMENSION(ctx%state%ntfull) :: sfh_weight
      END FUNCTION SFH_WEIGHT
   END INTERFACE
 
   INTERFACE
        SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), INTENT(inout), DIMENSION(:) :: spec
-       REAL(SP), INTENT(in), DIMENSION(:) :: lambda
-       REAL(SP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
-       REAL(SP), INTENT(in) :: sigma,minl,maxl
+      REAL(WP), INTENT(inout), DIMENSION(:) :: spec
+      REAL(WP), INTENT(in), DIMENSION(:) :: lambda
+      REAL(WP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
+      REAL(WP), INTENT(in) :: sigma,minl,maxl
      END SUBROUTINE SMOOTHSPEC
   END INTERFACE
 
   INTERFACE
      FUNCTION VACTOAIR(lam)
-          USE fsps_constants, ONLY: SP
-       REAL(SP), DIMENSION(:), INTENT(in) :: lam
-       REAL(SP), DIMENSION(SIZE(lam)) :: vactoair
+          USE fsps_precision, ONLY: WP
+       REAL(WP), DIMENSION(:), INTENT(in) :: lam
+       REAL(WP), DIMENSION(SIZE(lam)) :: vactoair
      END FUNCTION VACTOAIR
   END INTERFACE
 
@@ -328,12 +330,12 @@ MODULE SPS_UTILS
   INTERFACE
        SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
           USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_constants, ONLY: SP
+          USE fsps_precision, ONLY: WP
           TYPE(fsps_context_t), INTENT(IN) :: ctx
-       REAL(SP),INTENT(in) :: zpos
-       REAL(SP),INTENT(in), OPTIONAL :: tpos,zpow
-       REAL(SP),INTENT(inout),DIMENSION(:) :: mass, lbol
-       REAL(SP),INTENT(inout),DIMENSION(:,:) :: spec
+      REAL(WP),INTENT(in) :: zpos
+      REAL(WP),INTENT(in), OPTIONAL :: tpos,zpow
+      REAL(WP),INTENT(inout),DIMENSION(:) :: mass, lbol
+      REAL(WP),INTENT(inout),DIMENSION(:,:) :: spec
      END SUBROUTINE ZTINTERP
   END INTERFACE
 

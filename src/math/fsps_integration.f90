@@ -9,7 +9,7 @@ module fsps_integration
     !> It supports both standard mathematical functions and context-aware functions
     !> used in FSPS physics calculations.
 
-    use fsps_constants, only: SP
+    use fsps_precision, only: WP
     use fsps_context_types, only: fsps_context_t
     implicit none
 
@@ -23,9 +23,9 @@ module fsps_integration
     !> Abstract interface for a standard vectorized function f(x).
     abstract interface
         pure function func_interface(x) result(res)
-            import :: SP
-            real(SP), dimension(:), intent(in) :: x
-            real(SP), dimension(size(x)) :: res
+            import :: WP
+            real(WP), dimension(:), intent(in) :: x
+            real(WP), dimension(size(x)) :: res
         end function func_interface
     end interface
 
@@ -33,10 +33,10 @@ module fsps_integration
     !> Abstract interface for a context-aware vectorized function f(ctx, x).
     abstract interface
         pure function func_ctx_interface(ctx, x) result(res)
-            import :: SP, fsps_context_t
+            import :: WP, fsps_context_t
             type(fsps_context_t), intent(in) :: ctx
-            real(SP), dimension(:), intent(in) :: x
-            real(SP), dimension(size(x)) :: res
+            real(WP), dimension(:), intent(in) :: x
+            real(WP), dimension(size(x)) :: res
         end function func_ctx_interface
     end interface
 
@@ -66,8 +66,8 @@ contains
     !>
     !> @return    area  The integrated area. Returns NaN on error.
     pure function integrate_trapezoid_array(x, y) result(area)
-        real(SP), dimension(:), intent(in), contiguous :: x, y
-        real(SP) :: area
+        real(WP), dimension(:), intent(in), contiguous :: x, y
+        real(WP) :: area
 
         integer :: n
 
@@ -84,7 +84,7 @@ contains
         ! Optimizations:
         ! 1. Factor 0.5 out of the sum to replace N divisions with 1 multiplication.
         ! 2. Use array slicing for vectorization.
-        area = 0.5_sp * sum( abs(x(2:n) - x(1:n-1)) * (y(2:n) + y(1:n-1)) )
+        area = 0.5_wp * sum( abs(x(2:n) - x(1:n-1)) * (y(2:n) + y(1:n-1)) )
 
     end function integrate_trapezoid_array
 
@@ -101,19 +101,19 @@ contains
     !> @return    res   The integral value. Returns NaN on non-convergence.
     pure function integrate_romberg_simple(func, a, b) result(res)
         procedure(func_interface) :: func
-        real(SP), intent(in) :: a, b
-        real(SP) :: res
+        real(WP), intent(in) :: a, b
+        real(WP) :: res
 
         integer, parameter :: MAX_STEPS = 20
         integer, parameter :: K_ORDER = 5
-        real(SP), parameter :: EPS = 1.0e-7_sp
+        real(WP), parameter :: EPS = 1.0e-7_wp
         
-        real(SP), dimension(MAX_STEPS + 1) :: h, s
-        real(SP) :: dqromb, zero_h
+        real(WP), dimension(MAX_STEPS + 1) :: h, s
+        real(WP) :: dqromb, zero_h
         integer :: j
 
-        zero_h = 0.0_sp
-        h(1) = 1.0_sp
+        zero_h = 0.0_wp
+        h(1) = 1.0_wp
 
         ! Initial coarse step
         call refine_trapezoid_simple(func, a, b, s(1), 1)
@@ -128,7 +128,7 @@ contains
             res = s(j+1)
             
             ! Record the relative step size for extrapolation
-            h(j+1) = 0.25_sp * h(j)
+            h(j+1) = 0.25_wp * h(j)
 
             if (j >= K_ORDER - 1) then
                 ! We need the last K_ORDER points ending at current step (j+1).
@@ -154,19 +154,19 @@ contains
     pure function integrate_romberg_context(ctx, func, a, b) result(res)
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
-        real(SP), intent(in) :: a, b
-        real(SP) :: res
+        real(WP), intent(in) :: a, b
+        real(WP) :: res
 
         integer, parameter :: MAX_STEPS = 20
         integer, parameter :: K_ORDER = 5
-        real(SP), parameter :: EPS = 1.0e-7_sp
+        real(WP), parameter :: EPS = 1.0e-7_wp
         
-        real(SP), dimension(MAX_STEPS + 1) :: h, s
-        real(SP) :: dqromb, zero_h
+        real(WP), dimension(MAX_STEPS + 1) :: h, s
+        real(WP) :: dqromb, zero_h
         integer :: j
 
-        zero_h = 0.0_sp
-        h(1) = 1.0_sp
+        zero_h = 0.0_wp
+        h(1) = 1.0_wp
 
         call refine_trapezoid_context(ctx, func, a, b, s(1), 1)
         res = s(1)
@@ -177,7 +177,7 @@ contains
             
             call refine_trapezoid_context(ctx, func, a, b, s(j+1), j+1)
             res = s(j+1)
-            h(j+1) = 0.25_sp * h(j)
+            h(j+1) = 0.25_wp * h(j)
 
             if (j >= K_ORDER - 1) then
                 ! We need the last K_ORDER points ending at current step (j+1).
@@ -203,26 +203,26 @@ contains
     !> (Simple Function Version)
     pure subroutine refine_trapezoid_simple(func, a, b, s, n)
         procedure(func_interface) :: func
-        real(SP), intent(in) :: a, b
-        real(SP), intent(inout) :: s
+        real(WP), intent(in) :: a, b
+        real(WP), intent(inout) :: s
         integer, intent(in) :: n
 
-        real(SP) :: del, fsum
+        real(WP) :: del, fsum
         integer :: it, i
-        real(SP), allocatable :: x_points(:)
+        real(WP), allocatable :: x_points(:)
 
         if (n == 1) then
-            s = 0.5_sp * (b - a) * sum(func([a, b]))
+            s = 0.5_wp * (b - a) * sum(func([a, b]))
         else
             it = 2**(n - 2)
-            del = (b - a) / real(it, SP)
+            del = (b - a) / real(it, WP)
             
             ! Modern array constructor replaces MYARTH
             ! Generates midpoints: a + 0.5*del, a + 1.5*del, ...
-            x_points = [ (a + 0.5_sp * del + real(i - 1, SP) * del, i = 1, it) ]
+            x_points = [ (a + 0.5_wp * del + real(i - 1, WP) * del, i = 1, it) ]
             
             fsum = sum(func(x_points))
-            s = 0.5_sp * (s + del * fsum)
+            s = 0.5_wp * (s + del * fsum)
         end if
     end subroutine refine_trapezoid_simple
 
@@ -232,23 +232,23 @@ contains
     pure subroutine refine_trapezoid_context(ctx, func, a, b, s, n)
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
-        real(SP), intent(in) :: a, b
-        real(SP), intent(inout) :: s
+        real(WP), intent(in) :: a, b
+        real(WP), intent(inout) :: s
         integer, intent(in) :: n
 
-        real(SP) :: del, fsum
+        real(WP) :: del, fsum
         integer :: it, i
-        real(SP), allocatable :: x_points(:)
+        real(WP), allocatable :: x_points(:)
 
         if (n == 1) then
-            s = 0.5_sp * (b - a) * sum(func(ctx, [a, b]))
+            s = 0.5_wp * (b - a) * sum(func(ctx, [a, b]))
         else
             it = 2**(n - 2)
-            del = (b - a) / real(it, SP)
-            x_points = [ (a + 0.5_sp * del + real(i - 1, SP) * del, i = 1, it) ]
+            del = (b - a) / real(it, WP)
+            x_points = [ (a + 0.5_wp * del + real(i - 1, WP) * del, i = 1, it) ]
             
             fsum = sum(func(ctx, x_points))
-            s = 0.5_sp * (s + del * fsum)
+            s = 0.5_wp * (s + del * fsum)
         end if
     end subroutine refine_trapezoid_context
 
@@ -256,13 +256,13 @@ contains
     !> Polynomial interpolation/extrapolation (Neville's Algorithm).
     !> Given arrays xa and ya, returns value y at point x, and error estimate dy.
     pure subroutine polynomial_extrapolation(xa, ya, x, y, dy)
-        real(SP), dimension(:), intent(in) :: xa, ya
-        real(SP), intent(in) :: x
-        real(SP), intent(out) :: y, dy
+        real(WP), dimension(:), intent(in) :: xa, ya
+        real(WP), intent(in) :: x
+        real(WP), intent(out) :: y, dy
 
         integer :: m, n, ns, i
-        real(SP), dimension(size(xa)) :: c, d, den, dist
-        real(SP) :: w
+        real(WP), dimension(size(xa)) :: c, d, den, dist
+        real(WP) :: w
 
         n = size(xa)
         c = ya
@@ -280,7 +280,7 @@ contains
                 w = c(i + 1) - d(i)
                 
                 ! Protect against division by zero (identical support points)
-                if (den(i) == 0.0_sp) then
+                if (den(i) == 0.0_wp) then
                     y = get_quiet_nan()
                     dy = get_quiet_nan()
                     return
@@ -304,8 +304,8 @@ contains
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(res)
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-        real(SP) :: res
-        res = ieee_value(0.0_sp, ieee_quiet_nan)
+        real(WP) :: res
+        res = ieee_value(0.0_wp, ieee_quiet_nan)
     end function get_quiet_nan
 
 end module fsps_integration

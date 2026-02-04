@@ -11,7 +11,8 @@ module fsps_stellar_modifications
     !> - Stellar Remnants (WD, NS, BH) mass addition (formerly remnants_add.f90)
     !> - X-ray Binary (XRB) spectral contribution (formerly xrb_add.f90)
 
-    use fsps_constants, only: SP, NM, GRAVITY_L_M_T_COEFF, BHB_SBS_TIME
+    use fsps_precision, only: WP
+    use fsps_constants, only: NM, GRAVITY_L_M_T_COEFF, BHB_SBS_TIME
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
     use fsps_imf, only: get_imf_value
@@ -37,27 +38,27 @@ module fsps_stellar_modifications
     
     ! Blue Straggler Constants
     integer, parameter :: N_BS_STARS = 20          !> Number of BS stars to add per isochrone
-    real(SP), parameter :: BS_LUM_OFFSET = 0.2_sp  !> Luminosity offset (dex) for BS
-    real(SP), parameter :: BS_LUM_EXTENT = 0.75_sp !> Extent (dex) of BS sequence
-    real(SP), parameter :: ZAMS_LUM_LIMIT = 3.5_sp
-    real(SP), parameter :: MSTO_TOLERANCE = 0.2_sp
-    real(SP), parameter :: BS_PHASE_ID    = 7.0_sp
+    real(WP), parameter :: BS_LUM_OFFSET = 0.2_wp  !> Luminosity offset (dex) for BS
+    real(WP), parameter :: BS_LUM_EXTENT = 0.75_wp !> Extent (dex) of BS sequence
+    real(WP), parameter :: ZAMS_LUM_LIMIT = 3.5_wp
+    real(WP), parameter :: MSTO_TOLERANCE = 0.2_wp
+    real(WP), parameter :: BS_PHASE_ID    = 7.0_wp
 
     ! Giant Branch Constants
-    real(SP), parameter :: AGE_PADOVA_LOW = 8.0_sp
-    real(SP), parameter :: AGE_PADOVA_HIGH = 9.1_sp
+    real(WP), parameter :: AGE_PADOVA_LOW = 8.0_wp
+    real(WP), parameter :: AGE_PADOVA_HIGH = 9.1_wp
     
     ! Horizontal Branch Constants
     integer, parameter :: N_HB_SUBSTEPS = 10       !> Number of blue HB stars to add per HB star
-    real(SP), parameter :: HB_BLUE_TEMP_MAX = 4.2_sp !> Max logT for distributed HB
-    real(SP), parameter :: GRAD_THRESH_HB = -5.0e2_sp
-    real(SP), parameter :: LUM_THRESH_MIN = 2.5_sp
-    real(SP), parameter :: LUM_WIDTH_TOL = 0.1_sp
+    real(WP), parameter :: HB_BLUE_TEMP_MAX = 4.2_wp !> Max logT for distributed HB
+    real(WP), parameter :: GRAD_THRESH_HB = -5.0e2_wp
+    real(WP), parameter :: LUM_THRESH_MIN = 2.5_wp
+    real(WP), parameter :: LUM_WIDTH_TOL = 0.1_wp
 
     ! Remnant Constants (Renzini & Ciotti 1993)
-    real(SP), parameter :: MASS_NS_REMNANT = 1.4_sp
-    real(SP), parameter :: WD_SLOPE = 0.077_sp
-    real(SP), parameter :: WD_INTERCEPT = 0.48_sp
+    real(WP), parameter :: MASS_NS_REMNANT = 1.4_wp
+    real(WP), parameter :: WD_SLOPE = 0.077_wp
+    real(WP), parameter :: WD_INTERCEPT = 0.48_wp
 
 contains
 
@@ -94,25 +95,25 @@ contains
                                      phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx
-        real(SP), intent(in) :: s_bs
-        real(SP), intent(in) :: hb_weight
+        real(WP), intent(in) :: s_bs
+        real(WP), intent(in) :: hb_weight
         integer, dimension(:), intent(inout) :: n_mass
         
-        real(SP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
-        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
-        real(SP), dimension(:), intent(inout), contiguous :: weights
+        real(WP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
+        real(WP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
+        real(WP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
-        real(SP), dimension(:), allocatable :: zams_t_cache, zams_l_cache
+        real(WP), dimension(:), allocatable :: zams_t_cache, zams_l_cache
         integer :: idx_zams_limit, idx_msto
         integer :: i, k, n_curr
-        real(SP) :: bs_total_weight
-        real(SP) :: lum_expected_on_zams, diff_from_zams
-        real(SP) :: new_logl, new_logt, new_mass
-        real(SP) :: inv_nbs
+        real(WP) :: bs_total_weight
+        real(WP) :: lum_expected_on_zams, diff_from_zams
+        real(WP) :: new_logl, new_logt, new_mass
+        real(WP) :: inv_nbs
 
         ! 1. Safety Check (Legacy: IF (ctx%zin < -999999))
-        if (ctx%zin < -9.0e5_sp) return
+        if (ctx%zin < -9.0e5_wp) return
 
         bs_total_weight = s_bs * hb_weight
         n_curr = n_mass(time_idx)
@@ -148,7 +149,7 @@ contains
         !    "If this star were on the ZAMS at this LogT, what would its LogL be?"
         !    If the actual LogL differs significantly, the star has evolved off the MS.
         idx_msto = 0
-        diff_from_zams = 0.0_sp
+        diff_from_zams = 0.0_wp
         
         do while (diff_from_zams < MSTO_TOLERANCE .and. idx_msto < n_curr)
             idx_msto = idx_msto + 1
@@ -181,7 +182,7 @@ contains
         ! We step back one index to capture the point just *before* divergence
         idx_msto = idx_msto - 1
 
-        inv_nbs = 1.0_sp / real(N_BS_STARS, SP)
+        inv_nbs = 1.0_wp / real(N_BS_STARS, WP)
 
         do k = 1, N_BS_STARS
             
@@ -191,7 +192,7 @@ contains
             ! Range: [L_TO + Offset, L_TO + Offset + Extent]
             ! Legacy: logl(t,i-1) + 0.2 + k*0.75/nbs
             new_logl = log_l(time_idx, idx_msto) + BS_LUM_OFFSET + &
-                       (BS_LUM_EXTENT * real(k,SP) * inv_nbs)
+                       (BS_LUM_EXTENT * real(k,WP) * inv_nbs)
 
             log_l(time_idx, i) = new_logl
 
@@ -219,7 +220,7 @@ contains
 
             ! Calculate Gravity
             log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
-                                 log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
+                                 log_l(time_idx, i) + 4.0_wp * log_t(time_idx, i)
 
             ! Set Phase and Weight
             phase(time_idx, i) = BS_PHASE_ID
@@ -271,21 +272,21 @@ contains
                                    log_l, log_t, phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx, metal_idx, n_stars
-        real(SP), intent(in) :: age_now
-        real(SP), intent(in) :: shift_logt, shift_logl
-        real(SP), intent(in) :: scale_pagb, scale_redgb, scale_agb
+        real(WP), intent(in) :: age_now
+        real(WP), intent(in) :: shift_logt, shift_logl
+        real(WP), intent(in) :: scale_pagb, scale_redgb, scale_agb
         
-        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t
-        real(SP), dimension(:,:), intent(in), contiguous :: phase
-        real(SP), dimension(:), intent(inout), contiguous :: weights
+        real(WP), dimension(:,:), intent(inout), contiguous :: log_l, log_t
+        real(WP), dimension(:,:), intent(in), contiguous :: phase
+        real(WP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
         integer :: i
-        real(SP) :: current_phase
-        real(SP) :: z_ratio_log
-        real(SP) :: villaume_factor
-        real(SP) :: combined_agb_scale
-        real(SP) :: cg_shift_l, cg_shift_t_low_z, cg_shift_t_high_age
+        real(WP) :: current_phase
+        real(WP) :: z_ratio_log
+        real(WP) :: villaume_factor
+        real(WP) :: combined_agb_scale
+        real(WP) :: cg_shift_l, cg_shift_t_low_z, cg_shift_t_high_age
         logical :: apply_cg_norm
         
         logical :: is_padova
@@ -297,41 +298,41 @@ contains
 
         ! Pre-calculate metallicity ratio for Normalization 1 (Conroy & Gunn)
         ! Ratio = Log10(Z / Zsol)
-        z_ratio_log = 0.0_sp
+        z_ratio_log = 0.0_wp
         if (norm_type == 1 .and. is_padova) then
-            if (ctx%state%zsol > 0.0_sp) then
+            if (ctx%state%zsol > 0.0_wp) then
                 z_ratio_log = log10(ctx%state%zlegend(metal_idx) / ctx%state%zsol)
             end if
         end if
 
         ! Calculate the Villaume et al. (2014) scaling factor once
-        villaume_factor = 1.0_sp
+        villaume_factor = 1.0_wp
         if (is_padova .and. norm_type == 2) then
-            villaume_factor = max(0.1_sp, 10.0_sp**(-1.0_sp + (age_now - 8.0_sp)/2.5_sp))
+            villaume_factor = max(0.1_wp, 10.0_wp**(-1.0_wp + (age_now - 8.0_wp)/2.5_wp))
         end if
 
         ! Pre-calculate combined AGB weight scaling
         ! Phase 5 stars get Villaume * scale_agb * scale_redgb
         combined_agb_scale = villaume_factor * scale_agb
-        if (abs(scale_redgb - 1.0_sp) > tiny(0.0_sp)) then
+        if (abs(scale_redgb - 1.0_wp) > tiny(0.0_wp)) then
             combined_agb_scale = combined_agb_scale * scale_redgb
         end if
 
         ! Pre-calculate Conroy & Gunn (2010) shifts
         apply_cg_norm = (is_padova .and. norm_type == 1)
-        cg_shift_l = 0.0_sp
-        cg_shift_t_low_z = 0.0_sp
-        cg_shift_t_high_age = 0.0_sp
+        cg_shift_l = 0.0_wp
+        cg_shift_t_low_z = 0.0_wp
+        cg_shift_t_high_age = 0.0_wp
 
         if (apply_cg_norm) then
             if (age_now > AGE_PADOVA_LOW .and. age_now < AGE_PADOVA_HIGH) then
                 ! Intermediate Age
-                cg_shift_l = -1.0_sp + (age_now - 8.0_sp) / 1.5_sp
-                cg_shift_t_low_z = 0.10_sp
+                cg_shift_l = -1.0_wp + (age_now - 8.0_wp) / 1.5_wp
+                cg_shift_t_low_z = 0.10_wp
             else
                 ! Outside Intermediate Age
-                cg_shift_l = -max(min(0.4_sp, -z_ratio_log), 0.2_sp)
-                cg_shift_t_high_age = 0.1_sp - min((age_now - AGE_PADOVA_HIGH) / 1.5_sp, 0.2_sp)
+                cg_shift_l = -max(min(0.4_wp, -z_ratio_log), 0.2_wp)
+                cg_shift_t_high_age = 0.1_wp - min((age_now - AGE_PADOVA_HIGH) / 1.5_wp, 0.2_wp)
             end if
         end if
 
@@ -345,20 +346,20 @@ contains
             ! ----------------------------------------------------------------
             ! PHASE 5: TP-AGB MODIFICATIONS
             ! ----------------------------------------------------------------
-            if (current_phase == 5.0_sp) then
+            if (current_phase == 5.0_wp) then
 
                 ! Apply pre-calculated combined weights
                 weights(i) = weights(i) * combined_agb_scale
 
                 ! Apply shifts (only if non-zero, to save adds/stores)
-                if (abs(shift_logl) > 0.0_sp) log_l(time_idx, i) = log_l(time_idx, i) + shift_logl
-                if (abs(shift_logt) > 0.0_sp) log_t(time_idx, i) = log_t(time_idx, i) + shift_logt
+                if (abs(shift_logl) > 0.0_wp) log_l(time_idx, i) = log_l(time_idx, i) + shift_logl
+                if (abs(shift_logt) > 0.0_wp) log_t(time_idx, i) = log_t(time_idx, i) + shift_logt
 
                 ! Apply Padova-specific Normalizations
                 if (apply_cg_norm) then
                     if (age_now > AGE_PADOVA_LOW .and. age_now < AGE_PADOVA_HIGH) then
                         log_l(time_idx, i) = log_l(time_idx, i) + cg_shift_l
-                        if (z_ratio_log < -0.25_sp) then
+                        if (z_ratio_log < -0.25_wp) then
                             log_t(time_idx, i) = log_t(time_idx, i) + cg_shift_t_low_z
                         end if
                     else
@@ -372,8 +373,8 @@ contains
             ! ----------------------------------------------------------------
             ! PHASE 6: POST-AGB MODIFICATIONS
             ! ----------------------------------------------------------------
-            if (current_phase == 6.0_sp) then
-                if (abs(scale_pagb - 1.0_sp) > tiny(0.0_sp)) then
+            if (current_phase == 6.0_wp) then
+                if (abs(scale_pagb - 1.0_wp) > tiny(0.0_wp)) then
                     weights(i) = weights(i) * scale_pagb
                 end if
             end if
@@ -381,8 +382,8 @@ contains
             ! ----------------------------------------------------------------
             ! GENERAL GIANT BRANCH SCALING (Phases 2, 3, 4, 5)
             ! ----------------------------------------------------------------
-            if (current_phase >= 2.0_sp .and. current_phase <= 4.0_sp) then
-                if (abs(scale_redgb - 1.0_sp) > tiny(0.0_sp)) then
+            if (current_phase >= 2.0_wp .and. current_phase <= 4.0_wp) then
+                if (abs(scale_redgb - 1.0_wp) > tiny(0.0_wp)) then
                     weights(i) = weights(i) * scale_redgb
                 end if
             end if
@@ -424,27 +425,27 @@ contains
                                         log_g, phase, weights)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx
-        real(SP), intent(in) :: f_bhb, hb_time
-        real(SP), intent(out) :: hb_total_weight
+        real(WP), intent(in) :: f_bhb, hb_time
+        real(WP), intent(out) :: hb_total_weight
         integer, dimension(:), intent(inout) :: n_mass
         
-        real(SP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
-        real(SP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
-        real(SP), dimension(:), intent(inout), contiguous :: weights
+        real(WP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
+        real(WP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
+        real(WP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
         integer :: i, j, k, n_curr
         integer :: n_blue_added
-        real(SP) :: grad_l, hb_lum_marker
+        real(WP) :: grad_l, hb_lum_marker
         logical :: is_in_hb_region
-        real(SP) :: inv_nbs
+        real(WP) :: inv_nbs
         
         ! MIST specific vars
-        real(SP) :: min_teff_hb
+        real(WP) :: min_teff_hb
         integer :: total_hb_stars
         integer :: mist_counter
 
-        hb_total_weight = 0.0_sp
+        hb_total_weight = 0.0_wp
         n_curr = n_mass(time_idx)
 
         ! --------------------------------------------------------------------
@@ -454,17 +455,17 @@ contains
         if (trim(ctx%state%isoc_type) == 'pdva') then
             
             is_in_hb_region = .false.
-            hb_lum_marker = -999.0_sp
+            hb_lum_marker = -999.0_wp
 
             ! Iterate through the isochrone points
             do j = 2, n_curr
                 
                 ! Compute gradient d(LogL)/d(Mass)
-                if (abs(mass_ini(time_idx, j) - mass_ini(time_idx, j-1)) > tiny(0.0_sp)) then
+                if (abs(mass_ini(time_idx, j) - mass_ini(time_idx, j-1)) > tiny(0.0_wp)) then
                     grad_l = (log_l(time_idx, j) - log_l(time_idx, j-1)) / &
                              (mass_ini(time_idx, j) - mass_ini(time_idx, j-1))
                 else
-                    grad_l = 0.0_sp
+                    grad_l = 0.0_wp
                 end if
 
                 ! Check for start of HB (Sharp drop in Lum at specific brightness)
@@ -489,7 +490,7 @@ contains
                     hb_total_weight = hb_total_weight + weights(j)
 
                     ! Apply modification if requested and age is appropriate
-                    if (f_bhb > 1.0e-3_sp .and. hb_time >= BHB_SBS_TIME) then
+                    if (f_bhb > 1.0e-3_wp .and. hb_time >= BHB_SBS_TIME) then
                         
                         ! Ensure we have space in arrays
                         if (n_mass(time_idx) + N_HB_SUBSTEPS > NM) then
@@ -500,7 +501,7 @@ contains
                         ! Add N_HB_SUBSTEPS (10) new stars
                         ! They inherit properties from the current HB star j
                         n_blue_added = N_HB_SUBSTEPS
-                        inv_nbs = 1.0_sp / real(n_blue_added, SP)
+                        inv_nbs = 1.0_wp / real(n_blue_added, WP)
                         
                         do k = 1, n_blue_added
                             i = n_mass(time_idx) + k
@@ -513,18 +514,18 @@ contains
                             ! Distribute Temperature uniformly to high T
                             ! Legacy: logt(t,j)+(4.2-logt(t,j))*i/REAL(nhb)
                             log_t(time_idx, i) = log_t(time_idx, j) + &
-                                (HB_BLUE_TEMP_MAX - log_t(time_idx, j)) * real(k, SP)*inv_nbs
+                                (HB_BLUE_TEMP_MAX - log_t(time_idx, j)) * real(k, WP)*inv_nbs
 
                             ! Recompute Gravity
                             log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
-                                                 log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
+                                                 log_l(time_idx, i) + 4.0_wp * log_t(time_idx, i)
 
                             ! Distribute Weight
                             weights(i) = (f_bhb * weights(j)) * inv_nbs
                         end do
 
                         ! Reduce weight of the original red clump star
-                        weights(j) = weights(j) * (1.0_sp - f_bhb)
+                        weights(j) = weights(j) * (1.0_wp - f_bhb)
                         
                         ! Update total count
                         n_mass(time_idx) = n_mass(time_idx) + n_blue_added
@@ -541,17 +542,17 @@ contains
 
             ! 1. Pre-scan: Count HB stars and find the Red Clump (minimum Teff on HB)
             total_hb_stars = 0
-            min_teff_hb = 1.0e6_sp ! Arbitrary high start
+            min_teff_hb = 1.0e6_wp ! Arbitrary high start
 
             do j = 1, n_curr
-                if (phase(time_idx, j) == 3.0_sp) then
+                if (phase(time_idx, j) == 3.0_wp) then
                     total_hb_stars = total_hb_stars + 1
                     
                     ! MIST specific filter: skip TRGB descenders using mass continuity check
                     ! Legacy: (mini(t,i+1)-mini(t,i)).GT.1E-6
                     if (j < n_curr) then
                          if (log_t(time_idx, j) < min_teff_hb .and. &
-                            (mass_ini(time_idx, j+1) - mass_ini(time_idx, j) > 1.0e-6_sp)) then
+                            (mass_ini(time_idx, j+1) - mass_ini(time_idx, j) > 1.0e-6_wp)) then
                             min_teff_hb = log_t(time_idx, j)
                          end if
                     end if
@@ -560,16 +561,16 @@ contains
 
             ! 2. Modification Loop
             mist_counter = 1
-            inv_nbs = 1.0_sp / real(total_hb_stars, SP)
+            inv_nbs = 1.0_wp / real(total_hb_stars, WP)
             
             do j = 1, n_curr
                 
                 ! Only modify Core Helium Burning stars (Phase 3)
-                if (phase(time_idx, j) == 3.0_sp) then
+                if (phase(time_idx, j) == 3.0_wp) then
                     
                     hb_total_weight = hb_total_weight + weights(j)
 
-                    if (f_bhb > 1.0e-4_sp .and. hb_time >= BHB_SBS_TIME) then
+                    if (f_bhb > 1.0e-4_wp .and. hb_time >= BHB_SBS_TIME) then
                         
                          if (n_mass(time_idx) + 1 > NM) then
                             write(*,*) '[FSPS-STELLAR] Error: Arrays full in modify_horizontal_branch (MIST).'
@@ -584,7 +585,7 @@ contains
                         mass_ini(time_idx, i) = mass_ini(time_idx, j)
                         mass_act(time_idx, i) = mass_act(time_idx, j)
                         log_l(time_idx, i)    = log_l(time_idx, j)
-                        phase(time_idx, i)    = 8.0_sp ! Mark as modified
+                        phase(time_idx, i)    = 8.0_wp ! Mark as modified
                         
                         ! Force original star to be strictly Red Clump (min_teff)
                         log_t(time_idx, j) = min_teff_hb
@@ -592,17 +593,17 @@ contains
                         ! Set new star to Distributed Temperature
                         ! Legacy: logt + (4.5 - logt) * counter / total_hb
                         log_t(time_idx, i) = log_t(time_idx, j) + &
-                            (4.5_sp - log_t(time_idx, j)) * real(mist_counter,SP) * inv_nbs
+                            (4.5_wp - log_t(time_idx, j)) * real(mist_counter,WP) * inv_nbs
                         
                         mist_counter = mist_counter + 1
 
                         ! Recompute Gravity for new star
                         log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
-                                             log_l(time_idx, i) + 4.0_sp * log_t(time_idx, i)
+                                             log_l(time_idx, i) + 4.0_wp * log_t(time_idx, i)
 
                         ! Swap Weights
                         weights(i) = f_bhb * weights(j)
-                        weights(j) = weights(j) * (1.0_sp - f_bhb)
+                        weights(j) = weights(j) * (1.0_wp - f_bhb)
                         
                     end if
                 end if
@@ -632,14 +633,14 @@ contains
     !> @param[in]    max_living_mass Maximum mass of stars still alive (M_max).
     subroutine add_remnant_mass(ctx, current_mass, max_living_mass)
         type(fsps_context_t), intent(inout) :: ctx
-        real(SP), intent(inout) :: current_mass
-        real(SP), intent(in) :: max_living_mass
+        real(WP), intent(inout) :: current_mass
+        real(WP), intent(in) :: max_living_mass
 
-        real(SP) :: imf_norm
-        real(SP) :: integration_min, integration_max
-        real(SP) :: term_bh, term_ns, term_wd_const, term_wd_linear
+        real(WP) :: imf_norm
+        real(WP) :: integration_min, integration_max
+        real(WP) :: term_bh, term_ns, term_wd_const, term_wd_linear
         
-        real(SP) :: limit_low, limit_high, limit_bh, limit_ns
+        real(WP) :: limit_low, limit_high, limit_bh, limit_ns
 
         ! Pull constants from context for cleaner reading
         limit_low  = ctx%state%imf_lower_limit
@@ -651,7 +652,7 @@ contains
         !    This ensures we are working with the correct mass fractions.
         imf_norm = integrate_romberg(ctx, wrapper_imf_mass, limit_low, limit_high)
 
-        if (imf_norm <= 0.0_sp) then
+        if (imf_norm <= 0.0_wp) then
             ! Guard against division by zero if IMF is invalid
             return 
         end if
@@ -669,7 +670,7 @@ contains
         ! Only integrate if the range is valid (min < max)
         if (integration_min < limit_high) then
             term_bh = integrate_romberg(ctx, wrapper_imf_mass, integration_min, limit_high)
-            current_mass = current_mass + (0.5_sp * term_bh / imf_norm)
+            current_mass = current_mass + (0.5_wp * term_bh / imf_norm)
         end if
 
         ! --------------------------------------------------------------------
@@ -739,19 +740,19 @@ contains
     subroutine add_xray_binaries(ctx, pset, spec_in, spec_out)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in) :: pset
-        real(SP), dimension(:,:), intent(in), contiguous :: spec_in
-        real(SP), dimension(:,:), intent(inout), contiguous :: spec_out
+        real(WP), dimension(:,:), intent(in), contiguous :: spec_in
+        real(WP), dimension(:,:), intent(inout), contiguous :: spec_out
 
         ! Local variables
         integer :: t_idx
         integer :: idx_z, idx_age
-        real(SP) :: val_z_log
-        real(SP) :: weight_z, weight_age
-        real(SP) :: w00, w10, w01, w11
+        real(WP) :: val_z_log
+        real(WP) :: weight_z, weight_age
+        real(WP) :: w00, w10, w01, w11
         
         ! Pointers/Aliases for readability
-        real(SP), dimension(:), pointer :: grid_z, grid_age, grid_time
-        real(SP), dimension(:,:,:), pointer :: grid_spec
+        real(WP), dimension(:), pointer :: grid_z, grid_age, grid_time
+        real(WP), dimension(:,:,:), pointer :: grid_spec
         integer :: n_z_grid, n_age_grid, n_time_steps
 
         ! Setup pointers to context data
@@ -768,7 +769,7 @@ contains
         spec_out = spec_in
 
         ! Quick exit if XRB fraction is effectively zero
-        if (pset%frac_xrb <= tiny(0.0_sp)) return
+        if (pset%frac_xrb <= tiny(0.0_wp)) return
 
         ! --------------------------------------------------------------------
         ! 1. METALLICITY INTERPOLATION (Constant for all time steps)
@@ -783,7 +784,7 @@ contains
 
         ! Calculate weight (0.0 to 1.0)
         weight_z = (val_z_log - grid_z(idx_z)) / (grid_z(idx_z+1) - grid_z(idx_z))
-        weight_z = max(0.0_sp, min(weight_z, 1.0_sp)) ! No extrapolation
+        weight_z = max(0.0_wp, min(weight_z, 1.0_wp)) ! No extrapolation
 
         ! --------------------------------------------------------------------
         ! 2. TIME LOOP
@@ -800,12 +801,12 @@ contains
                          (grid_age(idx_age+1) - grid_age(idx_age))
             
             ! Check if we are inside the valid XRB age grid
-            if (weight_age < 0.0_sp .or. weight_age > 1.0_sp) cycle
+            if (weight_age < 0.0_wp .or. weight_age > 1.0_wp) cycle
 
             ! Pre-compute scalars
-            w00 = pset%frac_xrb * (1.0_sp - weight_age) * (1.0_sp - weight_z)
-            w10 = pset%frac_xrb * (weight_age)          * (1.0_sp - weight_z)
-            w01 = pset%frac_xrb * (1.0_sp - weight_age) * (weight_z)
+            w00 = pset%frac_xrb * (1.0_wp - weight_age) * (1.0_wp - weight_z)
+            w10 = pset%frac_xrb * (weight_age)          * (1.0_wp - weight_z)
+            w01 = pset%frac_xrb * (1.0_wp - weight_age) * (weight_z)
             w11 = pset%frac_xrb * (weight_age)          * (weight_z)
             
             ! Array operation using pre-computed scalars
@@ -828,8 +829,8 @@ contains
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_number(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(SP), dimension(:), intent(in) :: x
-        real(SP), dimension(size(x)) :: res
+        real(WP), dimension(:), intent(in) :: x
+        real(WP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_number
@@ -838,8 +839,8 @@ contains
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_mass(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(SP), dimension(:), intent(in) :: x
-        real(SP), dimension(size(x)) :: res
+        real(WP), dimension(:), intent(in) :: x
+        real(WP), dimension(size(x)) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass

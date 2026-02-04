@@ -1,7 +1,7 @@
 PROGRAM LESSSIMPLE
 
   !set up modules
-      USE fsps_constants, ONLY: SP
+      USE fsps_precision, ONLY: WP
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
         USE sps_utils
         USE fsps_context, ONLY: fsps_context_create
@@ -14,17 +14,17 @@ PROGRAM LESSSIMPLE
         INTEGER :: i
         TYPE(fsps_context_t) :: ctx
   !define variable for SSP spectrum
-      REAL(SP), ALLOCATABLE :: spec_pz(:,:)
-      REAL(SP), ALLOCATABLE :: spec_pz_zz(:,:,:)
+      REAL(WP), ALLOCATABLE :: spec_pz(:,:)
+      REAL(WP), ALLOCATABLE :: spec_pz_zz(:,:,:)
   !define variables for Mass and Lbol info
-      REAL(SP), ALLOCATABLE :: mass_pz(:),lbol_pz(:)
-      REAL(SP), ALLOCATABLE :: mass_pz_zz(:,:), lbol_pz_zz(:,:)
+      REAL(WP), ALLOCATABLE :: mass_pz(:),lbol_pz(:)
+      REAL(WP), ALLOCATABLE :: mass_pz_zz(:,:), lbol_pz_zz(:,:)
   CHARACTER(100) :: file2=''
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
   TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
-  REAL(SP) :: zave
+      REAL(WP) :: zave
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

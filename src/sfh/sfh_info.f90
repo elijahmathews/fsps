@@ -28,23 +28,24 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
   !   in the linear portion.
   !
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP, SAFE_FLOOR
+   use fsps_precision, only: WP
+   use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: PARAMS
    use fsps_interpolation, only: find_interval
   implicit none
 
   type(fsps_context_t), intent(in) :: ctx
   type(PARAMS), intent(in) :: pset
-  real(SP), intent(in) :: age
+   real(WP), intent(in) :: age
 
-  real(SP), intent(out) :: mfrac, sfr, frac_linear
+   real(WP), intent(out) :: mfrac, sfr, frac_linear
 
-  real(SP) :: Tmax, Tprime, Tz, Ttrunc, Thi
-   real(SP) :: m
-   real(SP), external :: gammainc
-  real(SP) :: mass_tau, mass_linear, mfrac_burst
-  real(SP) :: total_mass_tau, total_mass_linear
-  real(SP) :: sfr_tau, sfr_trunc, sfr_const
+   real(WP) :: Tmax, Tprime, Tz, Ttrunc, Thi
+    real(WP) :: m
+    real(WP), external :: gammainc
+   real(WP) :: mass_tau, mass_linear, mfrac_burst
+   real(WP) :: total_mass_tau, total_mass_linear
+   real(WP) :: sfr_tau, sfr_trunc, sfr_const
   integer :: power, itab
 
   ! Defaults
@@ -198,12 +199,12 @@ function gammainc(power, arg)
   !
   ! Calculate incomplete gamma for a = 1 or 2
 
-   use fsps_types, only: SP
+   use fsps_precision, only: WP
   implicit none
   integer, intent(in) :: power
-  real(SP), intent(in) :: arg
+   real(WP), intent(in) :: arg
 
-  real(SP) :: gammainc
+   real(WP) :: gammainc
 
   if (power.eq.2) then
      gammainc = 1.0 - exp(-arg) - arg * exp(-arg)

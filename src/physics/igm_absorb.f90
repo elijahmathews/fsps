@@ -4,17 +4,17 @@ FUNCTION IGM_ABSORB(lam,spec,zz,factor)
   !this routine includes a fudge factor (accessed by pset%igm_factor)
   !that allows the user to scale the IGM optical depth
 
-  USE fsps_constants, ONLY: SP
+  USE fsps_precision, ONLY: WP
   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
-   REAL(SP), DIMENSION(:), INTENT(in) :: lam,spec
-   REAL(SP), DIMENSION(SIZE(lam)) :: igm_absorb,lobs,xc,tau
-  REAL(SP), INTENT(in) :: zz,factor
-  REAL(SP) :: z1,lylim,a_metal
+   REAL(WP), DIMENSION(:), INTENT(in) :: lam,spec
+   REAL(WP), DIMENSION(SIZE(lam)) :: igm_absorb,lobs,xc,tau
+  REAL(WP), INTENT(in) :: zz,factor
+  REAL(WP) :: z1,lylim,a_metal
   INTEGER, PARAMETER  :: nly=17
   INTEGER :: vv,i
-  REAL(SP), DIMENSION(nly) :: lyw,lycoeff
+   REAL(WP), DIMENSION(nly) :: lyw,lycoeff
 
   !--------------------------------------------------------------!
 

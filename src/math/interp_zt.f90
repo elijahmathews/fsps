@@ -6,19 +6,19 @@ SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
   !3) single metallicity (zpos) for a grid of ages
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
    USE fsps_interpolation, ONLY: find_interval
    USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(IN) :: ctx
-  REAL(SP),INTENT(in) :: zpos
-  REAL(SP),INTENT(in), OPTIONAL :: tpos,zpow
-  REAL(SP),INTENT(inout),DIMENSION(:) :: mass, lbol
-  REAL(SP),INTENT(inout),DIMENSION(:,:) :: spec
+   REAL(WP),INTENT(in) :: zpos
+   REAL(WP),INTENT(in), OPTIONAL :: tpos,zpow
+   REAL(WP),INTENT(inout),DIMENSION(:) :: mass, lbol
+   REAL(WP),INTENT(inout),DIMENSION(:,:) :: spec
    INTEGER  :: zlo,zhi,tlo,i
-    REAL(SP) :: dz,dt,z0,w1=0.25,w2=0.5,w3=0.25
-    REAL(SP), ALLOCATABLE :: mdf(:)
+   REAL(WP) :: dz,dt,z0,w1=0.25,w2=0.5,w3=0.25
+   REAL(WP), ALLOCATABLE :: mdf(:)
 
   !------------------------------------------------------------!
 

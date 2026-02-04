@@ -16,7 +16,8 @@
 
 SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
-   USE fsps_constants, ONLY: SP, NM, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: NM, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR
    USE fsps_types, ONLY: PARAMS
   USE sps_utils, ONLY: getspec, smoothspec
   USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
@@ -30,24 +31,24 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   INTEGER :: i=1, j=1, stat,ii,klo,khi !,tlo,thi
   !weight given to the entire horizontal branch
-  REAL(SP) :: hb_wght,dt,tco
+     REAL(WP) :: hb_wght,dt,tco
   !array of IMF weights
-  REAL(SP), DIMENSION(NM) :: wght
+     REAL(WP), DIMENSION(NM) :: wght
   !SSP spectrum
-  REAL(SP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
-  REAL(SP), DIMENSION(SIZE(spec_ssp,1), SIZE(spec_ssp,2)) :: tspec_ssp
+     REAL(WP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
+     REAL(WP), DIMENSION(SIZE(spec_ssp,1), SIZE(spec_ssp,2)) :: tspec_ssp
   !Mass and Lbol info
-  REAL(SP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
+     REAL(WP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
 
   !temp arrays for the isochrone data
-  REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
+     REAL(WP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
      ffco(:,:),phase(:,:),lmdot(:,:)
-  REAL(SP), DIMENSION(NM) :: temp_mini
+   REAL(WP), DIMENSION(NM) :: temp_mini
   !arrays holding the number of mass elements for each
   !isochrone and the age of each isochrone
   INTEGER, ALLOCATABLE :: nmass(:)
-  REAL(SP), ALLOCATABLE :: time(:)
-  REAL(SP), DIMENSION(SIZE(spec_ssp,1)) :: tspec
+   REAL(WP), ALLOCATABLE :: time(:)
+   REAL(WP), DIMENSION(SIZE(spec_ssp,1)) :: tspec
   !structure containing all necessary parameters
   !(TYPE objects defined in sps_vars.f90)
   TYPE(PARAMS), INTENT(in) :: pset

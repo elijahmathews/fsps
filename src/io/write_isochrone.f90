@@ -5,7 +5,8 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   !by the parameter TIME_RES_INCR
 
      USE fsps_context_types, ONLY: fsps_context_t
-     USE fsps_constants, ONLY: SP, NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
+     USE fsps_precision, ONLY: WP
+     USE fsps_constants, ONLY: NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
      USE fsps_types, ONLY: PARAMS
      USE sps_utils, ONLY : getmags,getspec
      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
@@ -18,12 +19,12 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
   TYPE(PARAMS), INTENT(in) :: pset
   CHARACTER(100), INTENT(in)  :: outfile
   CHARACTER(60)  :: fmt
-  REAL(SP) :: dz=0.0,loggi,hb_wght
-  REAL(SP), DIMENSION(NM)     :: wght
-  REAL(SP), ALLOCATABLE :: spec(:)
-  REAL(SP), ALLOCATABLE :: mags(:)
+     REAL(WP) :: dz=0.0,loggi,hb_wght
+     REAL(WP), DIMENSION(NM)     :: wght
+     REAL(WP), ALLOCATABLE :: spec(:)
+     REAL(WP), ALLOCATABLE :: mags(:)
   !temp arrays for the isochrone data
-  REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
+     REAL(WP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),&
        ffco(:,:),phase(:,:),lmdot(:,:)
   INTEGER, ALLOCATABLE :: nmass(:)
 

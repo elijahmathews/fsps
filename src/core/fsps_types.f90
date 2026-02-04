@@ -1,13 +1,14 @@
 MODULE FSPS_TYPES
 
-  USE fsps_constants, ONLY: SP, NPZPHOT
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: NPZPHOT
 
   IMPLICIT NONE
   SAVE
 
   !structure for the set of parameters necessary to generate a model
   TYPE PARAMS
-     REAL(SP) :: pagb=1.0,dell=0.,delt=0.,fbhb=0.,sbss=0.,tau=1.0,&
+   REAL(WP) :: pagb=1.0,dell=0.,delt=0.,fbhb=0.,sbss=0.,tau=1.0,&
           const=0.,tage=0.,fburst=0.,tburst=11.0,dust1=0.,dust2=0.,&
           logzsol=0.,zred=0.,pmetals=0.02,imf1=1.3,imf2=2.3,imf3=2.3,&
           vdmc=0.08,dust_clumps=-99.,frac_nodust=0.,dust_index=-0.7,&
@@ -25,34 +26,34 @@ MODULE FSPS_TYPES
 
   !structure for the output of the compsp routine
   TYPE COMPSPOUT
-     REAL(SP) :: age=0.,mass_csp=0.,lbol_csp=0.,sfr=0.,mdust=0.,mformed=0.
-     REAL(SP), ALLOCATABLE  :: mags(:)
-     REAL(SP), ALLOCATABLE   :: spec(:)
-     REAL(SP), ALLOCATABLE   :: indx(:)
-     REAL(SP), ALLOCATABLE :: emlines(:)
+   REAL(WP) :: age=0.,mass_csp=0.,lbol_csp=0.,sfr=0.,mdust=0.,mformed=0.
+   REAL(WP), ALLOCATABLE  :: mags(:)
+   REAL(WP), ALLOCATABLE   :: spec(:)
+   REAL(WP), ALLOCATABLE   :: indx(:)
+   REAL(WP), ALLOCATABLE :: emlines(:)
   END TYPE COMPSPOUT
 
   ! A structure to hold SFH params converted to intrinsic units
   TYPE SFHPARAMS
-     REAL(SP) :: tau=1.0,tage=0.,tburst=0.,sf_trunc=0.,sf_slope=0.,&
+   REAL(WP) :: tau=1.0,tage=0.,tburst=0.,sf_trunc=0.,sf_slope=0.,&
           tq=0.,t0=0.,tb=0.
      INTEGER :: type=0,use_simha_limits=0
   END TYPE SFHPARAMS
 
   TYPE TLSF
-     REAL(SP), ALLOCATABLE :: lsf(:)
-     REAL(SP) :: minlam=0.,maxlam=0.
+   REAL(WP), ALLOCATABLE :: lsf(:)
+   REAL(WP) :: minlam=0.,maxlam=0.
   END TYPE TLSF
 
   !structure for observational data
   TYPE OBSDAT
-     REAL(SP)                    :: zred=0.,logsmass=0.
-     REAL(SP), ALLOCATABLE :: mags(:),magerr(:)
-     REAL(SP), ALLOCATABLE  :: spec(:),specerr(:)
+   REAL(WP)                    :: zred=0.,logsmass=0.
+   REAL(WP), ALLOCATABLE :: mags(:),magerr(:)
+   REAL(WP), ALLOCATABLE  :: spec(:),specerr(:)
   END TYPE OBSDAT
 
   TYPE TPZPHOT
-     REAL(SP), DIMENSION(NPZPHOT) :: zz=0.,pz=0.
+   REAL(WP), DIMENSION(NPZPHOT) :: zz=0.,pz=0.
   END TYPE TPZPHOT
 
 END MODULE FSPS_TYPES

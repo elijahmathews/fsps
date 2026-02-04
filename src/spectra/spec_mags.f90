@@ -7,7 +7,8 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
   !This routine also redshifts the spectrum, if necessary.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP, SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
    USE fsps_interpolation, ONLY: interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -16,13 +17,13 @@ SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER  :: i
-  REAL(SP), INTENT(in) :: zred
-   REAL(SP), INTENT(inout), DIMENSION(:) :: spec
-   REAL(SP), INTENT(inout), DIMENSION(:) :: mags
+   REAL(WP), INTENT(in) :: zred
+    REAL(WP), INTENT(inout), DIMENSION(:) :: spec
+    REAL(WP), INTENT(inout), DIMENSION(:) :: mags
    INTEGER, DIMENSION(:), INTENT(in), OPTIONAL  :: mag_compute
    INTEGER, DIMENSION(SIZE(mags)) :: magflag
-   REAL(SP), DIMENSION(SIZE(spec))  :: tspec
-  REAL(SP) :: const, dm
+   REAL(WP), DIMENSION(SIZE(spec))  :: tspec
+  REAL(WP) :: const, dm
    INTEGER :: n_spec, n_bands
 
   !-----------------------------------------------------------!

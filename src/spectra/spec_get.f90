@@ -8,7 +8,8 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   ! recomputed each time the IMF or isochrone parameters change.
 
       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_constants, ONLY: SP, SAFE_FLOOR, VERBOSE, C_LIGHT, PI, M_SOL, G_NEWTON, YEAR_TO_SECOND, L_SOL, GRAVITY_L_M_T_COEFF, &
+      USE fsps_precision, ONLY: WP
+      USE fsps_constants, ONLY: SAFE_FLOOR, VERBOSE, C_LIGHT, PI, M_SOL, G_NEWTON, YEAR_TO_SECOND, L_SOL, GRAVITY_L_M_T_COEFF, &
          CSTAR_ARINGER, N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
          NDIM_LOGT, NDIM_LOGG
       USE fsps_types, ONLY: PARAMS
@@ -17,11 +18,11 @@ SUBROUTINE GETSPEC(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, wght, 
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-  REAL(SP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
+   REAL(WP), INTENT(in) :: mact,logt,lbol,logg,phase,ffco,wght,lmdot
   TYPE(PARAMS), INTENT(in) :: pset
-   REAL(SP), INTENT(inout), DIMENSION(:) :: spec  
-   REAL(SP), DIMENSION(SIZE(spec)) :: ispec
-   REAL(SP) :: t,u,r2,test1,test2,test3,test4,loggi,rwr,twr,logt_cut
+   REAL(WP), INTENT(inout), DIMENSION(:) :: spec  
+   REAL(WP), DIMENSION(SIZE(spec)) :: ispec
+   REAL(WP) :: t,u,r2,test1,test2,test3,test4,loggi,rwr,twr,logt_cut
   INTEGER  :: klo,jlo,flag
 
   !---------------------------------------------------------------!

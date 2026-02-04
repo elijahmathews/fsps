@@ -3,7 +3,8 @@ PROGRAM GENERATE_TEST_DATA
   ! Generates reference data for FSPS regression testing.
   ! Uses allocatable arrays to support multiple compile-time configurations.
 
-   USE fsps_constants, ONLY: SP, NEMLINE
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: NEMLINE
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
@@ -11,10 +12,10 @@ PROGRAM GENERATE_TEST_DATA
   IMPLICIT NONE
 
   ! Variables for SSP generation (allocatable)
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: spec_ssp
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:,:) :: spec_ssp3
-   REAL(SP), ALLOCATABLE, DIMENSION(:)   :: mass_ssp, lbol_ssp
-   REAL(SP), ALLOCATABLE, DIMENSION(:,:) :: mass_ssp2, lbol_ssp2
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: spec_ssp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:,:) :: spec_ssp3
+   REAL(WP), ALLOCATABLE, DIMENSION(:)   :: mass_ssp, lbol_ssp
+   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: mass_ssp2, lbol_ssp2
   
   ! Variables for CSP generation (allocatable)
   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp

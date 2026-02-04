@@ -1,6 +1,6 @@
 PROGRAM AUTOSPS
 
-   USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
    USE fsps_context, ONLY: fsps_context_create
@@ -11,14 +11,14 @@ PROGRAM AUTOSPS
    INTEGER :: z
    TYPE(fsps_context_t) :: ctx
 
-   REAL(SP), ALLOCATABLE :: spec_ssp(:,:,:)
-   REAL(SP), ALLOCATABLE :: mass_ssp(:,:),lbol_ssp(:,:)
+   REAL(WP), ALLOCATABLE :: spec_ssp(:,:,:)
+   REAL(WP), ALLOCATABLE :: mass_ssp(:,:),lbol_ssp(:,:)
   TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
 
   CHARACTER(100) :: file1='',aux
   CHARACTER(3)  :: str
   TYPE(PARAMS)  :: pset
-   REAL(SP) :: tuniv
+   REAL(WP) :: tuniv
 
   ! Variables for library selection
   CHARACTER(10) :: iso_in, spec_in

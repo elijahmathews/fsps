@@ -2,15 +2,15 @@ FUNCTION INTIND(lam,func,lo,hi)
 
   !perform integral over spectrum for index computation
 
-   USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
    USE fsps_integration, ONLY: integrate_trapezoid_array
    USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
    INTEGER :: l1,l2
-   REAL(SP), INTENT(in), DIMENSION(:) :: lam, func
-  REAL(SP), INTENT(in) :: lo,hi
-  REAL(SP) :: f1,f2,intind
+   REAL(WP), INTENT(in), DIMENSION(:) :: lam, func
+  REAL(WP), INTENT(in) :: lo,hi
+  REAL(WP) :: f1,f2,intind
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -43,16 +43,16 @@ SUBROUTINE GETINDX(ctx, lambda, spec, indices)
   !indices are defined in fsps/data/allindices.dat
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP
+   USE fsps_precision, ONLY: WP
    USE sps_utils, ONLY : intind
   IMPLICIT NONE
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
 
   INTEGER :: j
-   REAL(SP), INTENT(in), DIMENSION(:) :: spec,lambda
-   REAL(SP), INTENT(inout), DIMENSION(:) :: indices
-  REAL(SP) :: intfifc,cb,cr,lr,lb
+   REAL(WP), INTENT(in), DIMENSION(:) :: spec,lambda
+   REAL(WP), INTENT(inout), DIMENSION(:) :: indices
+  REAL(WP) :: intfifc,cb,cr,lr,lb
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

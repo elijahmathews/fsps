@@ -1,14 +1,13 @@
 module fsps_constants
     !> @brief
-    !> Defines global constants, precision parameters, and array dimensions for FSPS.
+    !> Defines global constants and array dimensions for FSPS.
     !>
     !> @details
     !> This module consolidates all physical constants, array limits, and configuration
-    !> parameters used throughout the FSPS codebase. It serves as the root dependency
-    !> for precision definitions (SP) and is used by almost all other modules.
+    !> parameters used throughout the FSPS codebase.
 
     ! Use the modern ISO standard for precision definitions
-    use, intrinsic :: iso_fortran_env, only: real64
+    use fsps_precision, only: WP
 
     implicit none
     public
@@ -16,10 +15,6 @@ module fsps_constants
     ! ------------------------------------------------------------------------
     ! PRECISION & CONFIGURATION
     ! ------------------------------------------------------------------------
-
-    !> @brief Precision definition (64-bit Double Precision).
-    !> @details We map the legacy FSPS name "SP" to the standard real64.
-    integer, parameter :: SP = real64
 
     !> @brief Verbosity Flags
     integer, parameter :: VERBOSE_MINIMAL = 0
@@ -34,66 +29,66 @@ module fsps_constants
     ! Defined first so they can be used to calculate derived constants below.
 
     !> @brief π (machine precision).
-    real(sp), parameter :: PI = acos(-1.0_sp)
+    real(WP), parameter :: PI = acos(-1.0_wp)
 
     !> @brief Planck constant [erg s] (2022 CODATA; exact).
-    real(sp), parameter :: H_PLANCK = 6.62607015e-27_sp
+    real(WP), parameter :: H_PLANCK = 6.62607015e-27_wp
 
     !> @brief Boltzmann constant [erg K⁻¹] (2022 CODATA; exact).
-    real(sp), parameter :: K_BOLTZMANN = 1.380649e-16_sp
+    real(WP), parameter :: K_BOLTZMANN = 1.380649e-16_wp
 
     !> @brief Speed of light in vacuum [Å s⁻¹] (2022 CODATA; exact).
-    real(sp), parameter :: C_LIGHT = 2.99792458e18_sp
+    real(WP), parameter :: C_LIGHT = 2.99792458e18_wp
 
     !> @brief Newtonian constant of gravitation [cm³ g⁻¹ s⁻²] (2022 CODATA; estimated).
-    real(sp), parameter :: G_NEWTON = 6.6743e-8_sp
+    real(WP), parameter :: G_NEWTON = 6.6743e-8_wp
 
     !> @brief Nominal solar radius [cm] (IAU 2015 Resolution B3; exact).
-    real(sp), parameter :: R_SOL = 6.957e10_sp
+    real(WP), parameter :: R_SOL = 6.957e10_wp
 
     !> @brief Nominal solar luminosity [erg s⁻¹] (IAU 2015 Resolution B3; exact).
-    real(sp), parameter :: L_SOL = 3.828e33_sp
+    real(WP), parameter :: L_SOL = 3.828e33_wp
 
     !> @brief Nominal solar mass parameter [cm³ s⁻²] (IAU 2015 Resolution B3; exact).
-    real(sp), parameter :: M_SOL_PAR = 1.3271244e26_sp
+    real(WP), parameter :: M_SOL_PAR = 1.3271244e26_wp
 
     !> @brief Astronomical unit [cm] (IAU 2012 Resolution B2; exact).
-    real(sp), parameter :: A_U = 1.495978707e13_sp
+    real(WP), parameter :: A_U = 1.495978707e13_wp
 
     ! ------------------------------------------------------------------------
     ! PHYSICAL CONSTANTS (DERIVED)
     ! ------------------------------------------------------------------------
 
     !> @brief Parsec [cm].
-    real(sp), parameter :: PARSEC = (648000.0_sp / PI) * A_U
+    real(WP), parameter :: PARSEC = (648000.0_wp / PI) * A_U
 
     !> @brief Solar mass [g].
-    real(sp), parameter :: M_SOL = M_SOL_PAR / G_NEWTON
+    real(WP), parameter :: M_SOL = M_SOL_PAR / G_NEWTON
 
     !> @brief Stefan-Boltzmann constant [erg cm⁻² s⁻¹ K⁻⁴].
-    real(sp), parameter :: SIGMA_SB = (2.0_sp * PI**5 * K_BOLTZMANN**4) / &
-                                      (15.0_sp * (C_LIGHT * 1.0e-8_sp)**2 * H_PLANCK**3)
+    real(WP), parameter :: SIGMA_SB = (2.0_wp * PI**5 * K_BOLTZMANN**4) / &
+                                      (15.0_wp * (C_LIGHT * 1.0e-8_wp)**2 * H_PLANCK**3)
 
     !> @brief Coefficient to calculate Surface Gravity (g) from L, M, and Teff.
     !> Derivation: From g = GM/R² and L = 4πR²σT⁴, we substitute R² to get:
     !>             g = (4π * G * σ_SB) * (M * T⁴ / L)
     !> This constant contains the (4π * G * σ_SB) term, adjusted for Solar units.
-    real(sp), parameter :: GRAVITY_L_M_T_COEFF = 4.0_sp * PI * SIGMA_SB * G_NEWTON * (M_SOL / L_SOL)
+    real(WP), parameter :: GRAVITY_L_M_T_COEFF = 4.0_wp * PI * SIGMA_SB * G_NEWTON * (M_SOL / L_SOL)
 
     !> @brief Reference log-flux for Absolute Bolometric Magnitude [log10(erg s⁻¹ cm⁻²)].
     !> Represents the log10 flux of 1.0 Solar Luminosity at a distance of 10 parsecs.
     !> Used to convert theoretical Luminosity to Absolute Magnitude (M_bol).
-    real(sp), parameter :: ABS_MAG_ZEROPOINT_LOG = log10(L_SOL / (4.0_sp * PI * (10.0_sp * PARSEC)**2))
+    real(WP), parameter :: ABS_MAG_ZEROPOINT_LOG = log10(L_SOL / (4.0_wp * PI * (10.0_wp * PARSEC)**2))
 
     !> @brief Julian year [s].
-    real(sp), parameter :: YEAR_TO_SECOND = 3.15576e7_sp
+    real(WP), parameter :: YEAR_TO_SECOND = 3.15576e7_wp
 
     ! ------------------------------------------------------------------------
     ! FSPS SPECIFIC PARAMETERS
     ! ------------------------------------------------------------------------
 
     !> @brief Turn-on time for BHB and SBS phases, time is in log(yrs).
-    real(sp), parameter :: BHB_SBS_TIME = 9.5_sp
+    real(WP), parameter :: BHB_SBS_TIME = 9.5_wp
 
     !> @brief The factor by which we increase the time array.
     integer, parameter :: TIME_RES_INCR = 1
@@ -160,6 +155,6 @@ module fsps_constants
     ! NUMERICAL LIMITS
     ! ------------------------------------------------------------------------
 
-    real(sp), parameter :: SAFE_FLOOR   = tiny(1.0_sp)
+    real(WP), parameter :: SAFE_FLOOR   = tiny(1.0_wp)
 
 end module fsps_constants

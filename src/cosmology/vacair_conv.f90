@@ -4,13 +4,13 @@ FUNCTION AIRTOVAC(lam)
   !see Morton (1991 Ap.J. Suppl. 77, 119)
   !this code was adapted from the IDL routine airtovac.pro
 
-  USE fsps_constants, ONLY: SP
+  USE fsps_precision, ONLY: WP
   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   INTEGER :: vv,nn
-  REAL(SP), DIMENSION(:), INTENT(in) :: lam
-  REAL(SP), DIMENSION(SIZE(lam)) :: airtovac,fact,sigma2
+  REAL(WP), DIMENSION(:), INTENT(in) :: lam
+  REAL(WP), DIMENSION(SIZE(lam)) :: airtovac,fact,sigma2
 
   !------------------------------------------------------!
 
@@ -44,13 +44,13 @@ FUNCTION VACTOAIR(lam)
   !see Morton (1991 Ap.J. Suppl. 77, 119)
   !this code was adapted from the IDL routine vactoair.pro
 
-  USE fsps_types, ONLY: SP
+  USE fsps_precision, ONLY: WP
   USE fsps_interpolation, ONLY: find_interval
   IMPLICIT NONE
 
   INTEGER :: vv,nn
-  REAL(SP), DIMENSION(:), INTENT(in) :: lam
-  REAL(SP), DIMENSION(SIZE(lam)) :: vactoair,fact
+  REAL(WP), DIMENSION(:), INTENT(in) :: lam
+  REAL(WP), DIMENSION(SIZE(lam)) :: vactoair,fact
 
   !------------------------------------------------------!
 

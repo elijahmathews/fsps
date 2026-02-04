@@ -8,7 +8,8 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
   !smoothed by a wavelength dependent velocity dispersion.
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP, SAFE_FLOOR, C_LIGHT, PI
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: SAFE_FLOOR, C_LIGHT, PI
    USE fsps_interpolation, ONLY: find_interval, interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -16,12 +17,12 @@ SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
 
    TYPE(fsps_context_t), INTENT(INOUT) :: ctx
   
-   REAL(SP), INTENT(inout), DIMENSION(:) :: spec
-   REAL(SP), INTENT(in), DIMENSION(:)    :: lambda
-   REAL(SP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
-  REAL(SP), INTENT(in) :: sigma,minl,maxl
-    REAL(SP), DIMENSION(SIZE(lambda)) :: tspec,tnspec,vel,func,psf,lnlam
-   REAL(SP) :: ckms,xmax,fwhm,psig,dlstep,sigmal
+    REAL(WP), INTENT(inout), DIMENSION(:) :: spec
+    REAL(WP), INTENT(in), DIMENSION(:)    :: lambda
+    REAL(WP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
+   REAL(WP), INTENT(in) :: sigma,minl,maxl
+      REAL(WP), DIMENSION(SIZE(lambda)) :: tspec,tnspec,vel,func,psf,lnlam
+    REAL(WP) :: ckms,xmax,fwhm,psig,dlstep,sigmal
     INTEGER :: i,il,ih,m=4,grange,n
 
   !---------------------------------------------------------------!

@@ -9,7 +9,8 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   !is read.  Specifying only the metallicity of interest results
   !in a much faster setup.
 
-   USE fsps_constants, ONLY: SP, VERBOSE, TIME_RES_INCR, BASEL_STR, NM, NLINES, NTABMAX, NDIM_LOGT, NDIM_LOGG, &
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: VERBOSE, TIME_RES_INCR, BASEL_STR, NM, NLINES, NTABMAX, NDIM_LOGT, NDIM_LOGG, &
             N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
             NTAU_DAGB, NTEFF_DAGB, NEMLINE, NLAM_NEBCONT, NEBNZ, NEBNAGE, NEBNIP, &
             NAGNDUST, NAGNDUST_SPEC, SAFE_FLOOR, C_LIGHT, PI, L_SOL
@@ -34,7 +35,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   CHARACTER(1) :: char,sqpah
   CHARACTER(6) :: zstype
   CHARACTER(5) :: zstype5
-  REAL(SP) :: dumr1,d1,d2,logage,x,a,zero=0.0,d,one=1.0,dz,dlam
+   REAL(WP) :: dumr1,d1,d2,logage,x,a,zero=0.0,d,one=1.0,dz,dlam
   CHARACTER(LEN=512) :: cache_key
    CHARACTER(LEN=250) :: SPS_HOME
   LOGICAL :: cache_new
@@ -42,38 +43,38 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   
   CHARACTER(5), ALLOCATABLE :: zlegend_str(:)
   CHARACTER(5), ALLOCATABLE :: zz_str_xrb(:)
-  REAL(SP), ALLOCATABLE :: tspec(:)
-  REAL(SP), DIMENSION(ntlam) :: tvega_lam=0.,tvega_spec=0.
-  REAL(SP), DIMENSION(ntlam) :: tsun_lam=0.,tsun_spec=0.
-  REAL(SP), DIMENSION(nlamwr) :: tlamwr=0.,tspecwr=0.
-  REAL(SP), DIMENSION(nlamwr,NDIM_WR,5) :: twrc=0.,twrn=0.
-  REAL(SP), DIMENSION(5) :: twrzmet=0.
-  REAL(SP), DIMENSION(50000) :: readlamb=0.,readband=0.
-  REAL(SP), DIMENSION(25) :: wglam=0.
-  REAL(SP), DIMENSION(25,18,2,6) :: wgtmp=0.
-  REAL(SP), DIMENSION(10000) :: lambda_dagb=0.,fluxin_dagb=0.
-  REAL(SP), DIMENSION(14) :: lami=0.
+   REAL(WP), ALLOCATABLE :: tspec(:)
+   REAL(WP), DIMENSION(ntlam) :: tvega_lam=0.,tvega_spec=0.
+   REAL(WP), DIMENSION(ntlam) :: tsun_lam=0.,tsun_spec=0.
+   REAL(WP), DIMENSION(nlamwr) :: tlamwr=0.,tspecwr=0.
+   REAL(WP), DIMENSION(nlamwr,NDIM_WR,5) :: twrc=0.,twrn=0.
+   REAL(WP), DIMENSION(5) :: twrzmet=0.
+   REAL(WP), DIMENSION(50000) :: readlamb=0.,readband=0.
+   REAL(WP), DIMENSION(25) :: wglam=0.
+   REAL(WP), DIMENSION(25,18,2,6) :: wgtmp=0.
+   REAL(WP), DIMENSION(10000) :: lambda_dagb=0.,fluxin_dagb=0.
+   REAL(WP), DIMENSION(14) :: lami=0.
   INTEGER,  DIMENSION(14) :: ind
-  REAL(SP), DIMENSION(NLAM_NEBCONT) :: readlambneb=0.,readcontneb=0.
-  REAL(SP), DIMENSION(22,N_AGB_O)   :: tagb_logt_o
-  REAL(SP), DIMENSION(22)           :: tagb_logz_o
-  REAL(SP), DIMENSION(nspec_pagb) :: pagb_lam=0.0
-  REAL(SP), DIMENSION(nspec_pagb,NDIM_PAGB,2) :: pagb_specinit=0.
-  REAL(SP), DIMENSION(nspec_agb)  :: agb_lam=0.0
-  REAL(SP), DIMENSION(nspec_aringer)  :: aringer_lam=0.0
-  REAL(SP), DIMENSION(nspec_agb,N_AGB_O) :: agb_specinit_o=0.
-  REAL(SP), DIMENSION(nspec_agb,N_AGB_C) :: agb_specinit_c=0.
-  REAL(SP), DIMENSION(nspec_aringer,N_AGB_CAR) :: aringer_specinit=0.
-  REAL(SP), DIMENSION(NAGNDUST_SPEC)           :: agndust_lam=0.
-  REAL(SP), DIMENSION(NAGNDUST_SPEC,NAGNDUST)  :: agndust_specinit=0.
+   REAL(WP), DIMENSION(NLAM_NEBCONT) :: readlambneb=0.,readcontneb=0.
+   REAL(WP), DIMENSION(22,N_AGB_O)   :: tagb_logt_o
+   REAL(WP), DIMENSION(22)           :: tagb_logz_o
+   REAL(WP), DIMENSION(nspec_pagb) :: pagb_lam=0.0
+   REAL(WP), DIMENSION(nspec_pagb,NDIM_PAGB,2) :: pagb_specinit=0.
+   REAL(WP), DIMENSION(nspec_agb)  :: agb_lam=0.0
+   REAL(WP), DIMENSION(nspec_aringer)  :: aringer_lam=0.0
+   REAL(WP), DIMENSION(nspec_agb,N_AGB_O) :: agb_specinit_o=0.
+   REAL(WP), DIMENSION(nspec_agb,N_AGB_C) :: agb_specinit_c=0.
+   REAL(WP), DIMENSION(nspec_aringer,N_AGB_CAR) :: aringer_specinit=0.
+   REAL(WP), DIMENSION(NAGNDUST_SPEC)           :: agndust_lam=0.
+   REAL(WP), DIMENSION(NAGNDUST_SPEC,NAGNDUST)  :: agndust_specinit=0.
   REAL(KIND(1.0)), ALLOCATABLE :: speclibinit(:,:,:,:)
-  REAL(SP), ALLOCATABLE :: wmbsi(:,:,:,:)
-  REAL(SP), DIMENSION(nzwmb)     :: zwmb=0.
-  REAL(SP), DIMENSION(nspec_wmb) :: wmb_lam=0.
-  REAL(SP), DIMENSION(nspec_wmb,NDIM_WMB_LOGT,NDIM_WMB_LOGG) :: wmb_specinit=0.
-  REAL(SP), DIMENSION(NTABMAX)   :: lsflam=0.,lsfsig=0.
-  REAL(SP), DIMENSION(30) :: g03lam=0., g03smc=0.
-  REAL(SP), ALLOCATABLE :: tspec_xrb(:)
+   REAL(WP), ALLOCATABLE :: wmbsi(:,:,:,:)
+   REAL(WP), DIMENSION(nzwmb)     :: zwmb=0.
+   REAL(WP), DIMENSION(nspec_wmb) :: wmb_lam=0.
+   REAL(WP), DIMENSION(nspec_wmb,NDIM_WMB_LOGT,NDIM_WMB_LOGG) :: wmb_specinit=0.
+   REAL(WP), DIMENSION(NTABMAX)   :: lsflam=0.,lsfsig=0.
+   REAL(WP), DIMENSION(30) :: g03lam=0., g03smc=0.
+   REAL(WP), ALLOCATABLE :: tspec_xrb(:)
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

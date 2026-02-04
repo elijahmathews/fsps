@@ -5,14 +5,14 @@ FUNCTION GET_TUNIV(ctx, z)
   !assumes om0,ol0,H0 set in sps_vars.f90
   
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i
   INTEGER, PARAMETER :: ii=10000
-  REAL(SP), INTENT(in) :: z
-  REAL(SP) :: get_tuniv, thub
-  REAL(SP), DIMENSION(ii) :: lnstig, hub
+   REAL(WP), INTENT(in) :: z
+   REAL(WP) :: get_tuniv, thub
+   REAL(WP), DIMENSION(ii) :: lnstig, hub
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

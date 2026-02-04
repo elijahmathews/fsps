@@ -1,5 +1,5 @@
 module test_utils_mod
-    use fsps_constants, only: SP
+    use fsps_precision, only: WP
     use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_class, ieee_negative_inf, ieee_class_type, operator(==)
     implicit none
 
@@ -64,7 +64,7 @@ contains
     end subroutine
 
     subroutine assert_float_equals(expected, actual, tol, label, n_tests, n_fails)
-        real(SP), intent(in) :: expected, actual, tol
+        real(WP), intent(in) :: expected, actual, tol
         integer, intent(inout) :: n_tests, n_fails
         character(len=*), intent(in) :: label
         
@@ -110,7 +110,7 @@ contains
     end subroutine assert_true
 
     subroutine assert_is_nan(val, label, n_tests, n_fails)
-        real(SP), intent(in) :: val
+        real(WP), intent(in) :: val
         integer, intent(inout) :: n_tests, n_fails
         character(len=*), intent(in) :: label
 
@@ -125,7 +125,7 @@ contains
     end subroutine assert_is_nan
 
     subroutine assert_is_neg_inf(val, label, n_tests, n_fails)
-        real(SP), intent(in) :: val
+        real(WP), intent(in) :: val
         integer, intent(inout) :: n_tests, n_fails
         character(len=*), intent(in) :: label
         type(ieee_class_type) :: cl
@@ -142,10 +142,10 @@ contains
     end subroutine assert_is_neg_inf
 
     subroutine assert_relative_error(expected, actual, rel_tol, label, n_tests, n_fails)
-        real(SP), intent(in) :: expected, actual, rel_tol
+        real(WP), intent(in) :: expected, actual, rel_tol
         integer, intent(inout) :: n_tests, n_fails
         character(len=*), intent(in) :: label
-        real(SP) :: rel_diff
+        real(WP) :: rel_diff
         
         rel_diff = abs((expected - actual) / expected)
         

@@ -9,7 +9,7 @@ module fsps_interpolation
     !> It exposes a generic interface `interpolate_linear` that automatically
     !> handles both scalar and array query points.
     
-    use fsps_constants, only: SP
+    use fsps_precision, only: WP
     implicit none
 
     private
@@ -40,12 +40,12 @@ contains
     !>
     !> @return    y_out  The interpolated value.
     pure function interpolate_linear_scalar(x_in, y_in, x_out) result(y_out)
-        real(SP), dimension(:), intent(in), contiguous :: x_in, y_in
-        real(SP), intent(in) :: x_out
-        real(SP) :: y_out
+        real(WP), dimension(:), intent(in), contiguous :: x_in, y_in
+        real(WP), intent(in) :: x_out
+        real(WP) :: y_out
 
         integer :: idx
-        real(SP) :: slope
+        real(WP) :: slope
         
         ! Return NaN if inputs are insufficient or mismatched
         if (size(x_in) < 2 .or. (size(x_in) /= size(y_in))) then
@@ -79,11 +79,11 @@ contains
     !>
     !> @return    y_out  The interpolated values at x_out.
     pure function interpolate_linear_array(x_in, y_in, x_out) result(y_out)
-        real(SP), dimension(:), intent(in), contiguous :: x_in, y_in, x_out
-        real(SP), dimension(size(x_out)) :: y_out
+        real(WP), dimension(:), intent(in), contiguous :: x_in, y_in, x_out
+        real(WP), dimension(size(x_out)) :: y_out
 
         integer :: i, idx, n
-        real(SP) :: slope
+        real(WP) :: slope
         
         n = size(x_in)
         
@@ -128,8 +128,8 @@ contains
     !>                   Returns 1 if value < array(1).
     !>                   Returns n-1 if value > array(n).
     pure function find_interval(array, value) result(idx)
-        real(SP), dimension(:), intent(in), contiguous :: array
-        real(SP), intent(in) :: value
+        real(WP), dimension(:), intent(in), contiguous :: array
+        real(WP), intent(in) :: value
         integer :: idx
 
         integer :: n, lower, upper, mid
@@ -188,8 +188,8 @@ contains
     !> and ensures a safe return value for error conditions in PURE functions.
     pure function get_quiet_nan() result(res)
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-        real(SP) :: res
-        res = ieee_value(0.0_sp, ieee_quiet_nan)
+        real(WP) :: res
+        res = ieee_value(0.0_wp, ieee_quiet_nan)
     end function get_quiet_nan
 
 end module fsps_interpolation

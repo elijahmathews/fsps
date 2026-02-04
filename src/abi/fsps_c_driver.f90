@@ -1,6 +1,7 @@
 MODULE FSPS_C_DRIVER
     USE ISO_C_BINDING
-      USE fsps_constants, ONLY: SP, NEMLINE
+      USE fsps_precision, ONLY: WP
+      USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
       USE fsps_interpolation, ONLY: find_interval
@@ -721,123 +722,123 @@ CONTAINS
     SELECT CASE (TRIM(key))
     ! Globals
     CASE ('om0')
-       om0 = REAL(val, SP)
+      om0 = REAL(val, WP)
     CASE ('ol0')
-       ol0 = REAL(val, SP)
+      ol0 = REAL(val, WP)
     CASE ('H0')
-       H0 = REAL(val, SP)
+      H0 = REAL(val, WP)
     CASE ('tiny_logt')
-       tiny_logt = REAL(val, SP)
+      tiny_logt = REAL(val, WP)
     CASE ('imf_upper_limit')
-       imf_upper_limit = REAL(val, SP)
+      imf_upper_limit = REAL(val, WP)
     CASE ('imf_lower_limit')
-       imf_lower_limit = REAL(val, SP)
+      imf_lower_limit = REAL(val, WP)
     CASE ('logt_wmb_hot')
-       logt_wmb_hot = REAL(val, SP)
+      logt_wmb_hot = REAL(val, WP)
     CASE ('nebular_smooth_init')
-       nebular_smooth_init = REAL(val, SP)
+      nebular_smooth_init = REAL(val, WP)
 
     ! PARAMS Members - SSP
     CASE ('imf1')
-       global_pset%imf1 = REAL(val, SP)
+      global_pset%imf1 = REAL(val, WP)
     CASE ('imf2')
-       global_pset%imf2 = REAL(val, SP)
+      global_pset%imf2 = REAL(val, WP)
     CASE ('imf3')
-       global_pset%imf3 = REAL(val, SP)
+      global_pset%imf3 = REAL(val, WP)
     CASE ('vdmc')
-       global_pset%vdmc = REAL(val, SP)
+      global_pset%vdmc = REAL(val, WP)
     CASE ('mdave')
-       global_pset%mdave = REAL(val, SP)
+      global_pset%mdave = REAL(val, WP)
     CASE ('dell')
-       global_pset%dell = REAL(val, SP)
+      global_pset%dell = REAL(val, WP)
     CASE ('delt')
-       global_pset%delt = REAL(val, SP)
+      global_pset%delt = REAL(val, WP)
     CASE ('sbss')
-       global_pset%sbss = REAL(val, SP)
+      global_pset%sbss = REAL(val, WP)
     CASE ('fbhb')
-       global_pset%fbhb = REAL(val, SP)
+      global_pset%fbhb = REAL(val, WP)
     CASE ('pagb')
-       global_pset%pagb = REAL(val, SP)
+      global_pset%pagb = REAL(val, WP)
     CASE ('agb_dust')
-       global_pset%agb_dust = REAL(val, SP)
+      global_pset%agb_dust = REAL(val, WP)
     CASE ('redgb')
-       global_pset%redgb = REAL(val, SP)
+      global_pset%redgb = REAL(val, WP)
     CASE ('agb')
-       global_pset%agb = REAL(val, SP)
+      global_pset%agb = REAL(val, WP)
     CASE ('masscut')
-       global_pset%masscut = REAL(val, SP)
+      global_pset%masscut = REAL(val, WP)
     CASE ('fcstar')
-       global_pset%fcstar = REAL(val, SP)
+      global_pset%fcstar = REAL(val, WP)
     CASE ('frac_xrb')
-       global_pset%frac_xrb = REAL(val, SP)
+      global_pset%frac_xrb = REAL(val, WP)
 
     ! PARAMS Members - CSP
     CASE ('logzsol')
-       global_pset%logzsol = REAL(val, SP)
+      global_pset%logzsol = REAL(val, WP)
     CASE ('tau')
-       global_pset%tau = REAL(val, SP)
+      global_pset%tau = REAL(val, WP)
     CASE ('const')
-       global_pset%const = REAL(val, SP)
+      global_pset%const = REAL(val, WP)
     CASE ('tage')
-       global_pset%tage = REAL(val, SP)
+      global_pset%tage = REAL(val, WP)
     CASE ('fburst')
-       global_pset%fburst = REAL(val, SP)
+      global_pset%fburst = REAL(val, WP)
     CASE ('tburst')
-       global_pset%tburst = REAL(val, SP)
+      global_pset%tburst = REAL(val, WP)
     CASE ('dust1')
-       global_pset%dust1 = REAL(val, SP)
+      global_pset%dust1 = REAL(val, WP)
     CASE ('dust2')
-       global_pset%dust2 = REAL(val, SP)
+      global_pset%dust2 = REAL(val, WP)
     CASE ('dust3')
-       global_pset%dust3 = REAL(val, SP)
+      global_pset%dust3 = REAL(val, WP)
     CASE ('zred')
-       global_pset%zred = REAL(val, SP)
+      global_pset%zred = REAL(val, WP)
     CASE ('pmetals')
-       global_pset%pmetals = REAL(val, SP)
+      global_pset%pmetals = REAL(val, WP)
     CASE ('dust_clumps')
-       global_pset%dust_clumps = REAL(val, SP)
+      global_pset%dust_clumps = REAL(val, WP)
     CASE ('frac_nodust')
-       global_pset%frac_nodust = REAL(val, SP)
+      global_pset%frac_nodust = REAL(val, WP)
     CASE ('dust_index')
-       global_pset%dust_index = REAL(val, SP)
+      global_pset%dust_index = REAL(val, WP)
     CASE ('dust_tesc')
-       global_pset%dust_tesc = REAL(val, SP)
+      global_pset%dust_tesc = REAL(val, WP)
     CASE ('frac_obrun')
-       global_pset%frac_obrun = REAL(val, SP)
+      global_pset%frac_obrun = REAL(val, WP)
     CASE ('uvb')
-       global_pset%uvb = REAL(val, SP)
+      global_pset%uvb = REAL(val, WP)
     CASE ('mwr')
-       global_pset%mwr = REAL(val, SP)
+      global_pset%mwr = REAL(val, WP)
     CASE ('dust1_index')
-       global_pset%dust1_index = REAL(val, SP)
+      global_pset%dust1_index = REAL(val, WP)
     CASE ('sf_start')
-       global_pset%sf_start = REAL(val, SP)
+      global_pset%sf_start = REAL(val, WP)
     CASE ('sf_trunc')
-       global_pset%sf_trunc = REAL(val, SP)
+      global_pset%sf_trunc = REAL(val, WP)
     CASE ('sf_slope')
-       global_pset%sf_slope = REAL(val, SP)
+      global_pset%sf_slope = REAL(val, WP)
     CASE ('duste_gamma')
-       global_pset%duste_gamma = REAL(val, SP)
+      global_pset%duste_gamma = REAL(val, WP)
     CASE ('duste_umin')
-       global_pset%duste_umin = REAL(val, SP)
+      global_pset%duste_umin = REAL(val, WP)
     CASE ('duste_qpah')
-       global_pset%duste_qpah = REAL(val, SP)
+      global_pset%duste_qpah = REAL(val, WP)
     CASE ('sigma_smooth')
-       global_pset%sigma_smooth = REAL(val, SP)
+      global_pset%sigma_smooth = REAL(val, WP)
     CASE ('min_wave_smooth')
-       global_pset%min_wave_smooth = REAL(val, SP)
+      global_pset%min_wave_smooth = REAL(val, WP)
     CASE ('max_wave_smooth')
-       global_pset%max_wave_smooth = REAL(val, SP)
+      global_pset%max_wave_smooth = REAL(val, WP)
     CASE ('gas_logu')
-       global_pset%gas_logu = REAL(val, SP)
+      global_pset%gas_logu = REAL(val, WP)
     CASE ('gas_logz')
-       global_pset%gas_logz = REAL(val, SP)
+      global_pset%gas_logz = REAL(val, WP)
     CASE ('igm_factor')
-       global_pset%igm_factor = REAL(val, SP)
+      global_pset%igm_factor = REAL(val, WP)
     CASE ('fagn')
-       global_pset%fagn = REAL(val, SP)
+      global_pset%fagn = REAL(val, WP)
     CASE ('agn_tau')
-       global_pset%agn_tau = REAL(val, SP)
+      global_pset%agn_tau = REAL(val, WP)
 
     CASE DEFAULT
        CALL fsps_set_error(102, "[FSPS-C] Warning: Unknown float parameter: "//TRIM(key))
@@ -847,7 +848,7 @@ CONTAINS
    ! Validate common parameter constraints.
    SUBROUTINE fsps_validate_params(status) BIND(C, name="fsps_validate_params")
     INTEGER(C_INT), INTENT(OUT) :: status
-    REAL(SP) :: sumcb
+    REAL(WP) :: sumcb
 
     status = 0
        CALL fsps_ensure_default_ctx()
@@ -900,12 +901,12 @@ CONTAINS
    ! Compute SSP or CSP depending on `sfh`.
    SUBROUTINE fsps_compute(c_spec) BIND(C, name="fsps_compute")
     TYPE(C_PTR), VALUE :: c_spec
-    REAL(SP), POINTER :: f_spec(:,:) 
+    REAL(WP), POINTER :: f_spec(:,:) 
     
     ! SSP Workspace
-    REAL(SP), ALLOCATABLE, TARGET :: ssp_mass(:), ssp_lbol(:)
-    REAL(SP), ALLOCATABLE, TARGET :: ssp_spec(:,:)
-      REAL(SP), ALLOCATABLE :: ssp_mass_zz(:,:), ssp_lbol_zz(:,:), ssp_spec_zz(:,:,:)
+    REAL(WP), ALLOCATABLE, TARGET :: ssp_mass(:), ssp_lbol(:)
+    REAL(WP), ALLOCATABLE, TARGET :: ssp_spec(:,:)
+      REAL(WP), ALLOCATABLE :: ssp_mass_zz(:,:), ssp_lbol_zz(:,:), ssp_spec_zz(:,:,:)
     
     INTEGER :: i
       INTEGER :: n_spec, n_time
@@ -1025,10 +1026,10 @@ CONTAINS
    ! Compute CSP with metallicity interpolation mode (0-3).
    SUBROUTINE fsps_compute_zdep(ztype) BIND(C, name="fsps_compute_zdep")
     INTEGER(C_INT), VALUE :: ztype
-    REAL(SP), ALLOCATABLE :: mass(:), lbol(:)
-    REAL(SP), ALLOCATABLE :: spec(:,:)
-      REAL(SP), ALLOCATABLE :: mass_zz(:,:), lbol_zz(:,:), spec_zz(:,:,:)
-    REAL(SP) :: zpos
+    REAL(WP), ALLOCATABLE :: mass(:), lbol(:)
+    REAL(WP), ALLOCATABLE :: spec(:,:)
+      REAL(WP), ALLOCATABLE :: mass_zz(:,:), lbol_zz(:,:), spec_zz(:,:,:)
+    REAL(WP) :: zpos
       INTEGER :: zlo, zmet
       INTEGER :: n_spec, n_time
     CHARACTER(LEN=128) :: junk_file = 'fsps.out'
@@ -1102,8 +1103,8 @@ CONTAINS
        BIND(C, name="fsps_interp_ssp")
     REAL(C_DOUBLE), VALUE :: zpos, tpos
     TYPE(C_PTR), VALUE :: c_spec, c_mass, c_lbol
-    REAL(SP), POINTER :: f_spec(:,:), f_mass(:), f_lbol(:)
-      REAL(SP), ALLOCATABLE :: time(:)
+    REAL(WP), POINTER :: f_spec(:,:), f_mass(:), f_lbol(:)
+      REAL(WP), ALLOCATABLE :: time(:)
       INTEGER :: zlo, zmet, tlo, n_spec, n_t
 
     IF (.NOT. ASSOCIATED(global_pset)) THEN
@@ -1116,9 +1117,9 @@ CONTAINS
        n_spec = fsps_default_ctx%state%nspec
        ALLOCATE(time(n_t))
        zlo = MAX(MIN(find_interval(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), &
-          REAL(zpos, SP)), fsps_default_ctx%state%nz-1), 1)
+          REAL(zpos, WP)), fsps_default_ctx%state%nz-1), 1)
        time = fsps_default_ctx%state%timestep_isoc(zlo,:)
-      tlo = MAX(MIN(find_interval(time, REAL(tpos, SP)), n_t-1), 1)
+      tlo = MAX(MIN(find_interval(time, REAL(tpos, WP)), n_t-1), 1)
 
     DO zmet = zlo, zlo+1
        IF (has_ssp_age(zmet,tlo) == 0 .OR. has_ssp_age(zmet,tlo+1) == 0) THEN
@@ -1132,7 +1133,7 @@ CONTAINS
    CALL C_F_POINTER(c_spec, f_spec, [n_spec, 1])
     CALL C_F_POINTER(c_mass, f_mass, [1])
     CALL C_F_POINTER(c_lbol, f_lbol, [1])
-   CALL ztinterp(fsps_default_ctx, REAL(zpos, SP), f_spec, f_lbol, f_mass, tpos=REAL(tpos, SP))
+   CALL ztinterp(fsps_default_ctx, REAL(zpos, WP), f_spec, f_lbol, f_mass, tpos=REAL(tpos, WP))
    DEALLOCATE(time)
   END SUBROUTINE fsps_interp_ssp
 
@@ -1143,11 +1144,11 @@ CONTAINS
    SUBROUTINE fsps_get_mags(zred, c_mags) BIND(C, name="fsps_get_mags")
      REAL(C_DOUBLE), VALUE :: zred
      TYPE(C_PTR), VALUE :: c_mags
-     REAL(SP), POINTER :: f_mags(:,:) ! (nbands, ntfull)
+     REAL(WP), POINTER :: f_mags(:,:) ! (nbands, ntfull)
      
      INTEGER :: i
         INTEGER :: n_spec, n_bands, n_time
-        REAL(SP), ALLOCATABLE :: tspec(:)
+        REAL(WP), ALLOCATABLE :: tspec(:)
         INTEGER, ALLOCATABLE :: all_bands(:)
      
         CALL fsps_ensure_default_ctx()
@@ -1163,7 +1164,7 @@ CONTAINS
      
         DO i = 1, n_time
         tspec = global_ocompsp(i)%spec
-      CALL GETMAGS(fsps_default_ctx, REAL(zred, SP), tspec, f_mags(:,i), all_bands)
+      CALL GETMAGS(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), all_bands)
      END DO
 
         DEALLOCATE(tspec)
@@ -1176,12 +1177,12 @@ CONTAINS
      REAL(C_DOUBLE), VALUE :: zred
      TYPE(C_PTR), VALUE :: c_mags
      TYPE(C_PTR), VALUE :: c_mc
-     REAL(SP), POINTER :: f_mags(:,:) ! (nbands, ntfull)
+     REAL(WP), POINTER :: f_mags(:,:) ! (nbands, ntfull)
      INTEGER(C_INT), POINTER :: f_mc(:)
 
      INTEGER :: i
        INTEGER :: n_spec, n_bands, n_time
-       REAL(SP), ALLOCATABLE :: tspec(:)
+       REAL(WP), ALLOCATABLE :: tspec(:)
 
        CALL fsps_ensure_default_ctx()
        n_spec = fsps_default_ctx%state%nspec
@@ -1194,7 +1195,7 @@ CONTAINS
 
        DO i = 1, n_time
         tspec = global_ocompsp(i)%spec
-      CALL GETMAGS(fsps_default_ctx, REAL(zred, SP), tspec, f_mags(:,i), f_mc)
+      CALL GETMAGS(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), f_mc)
      END DO
 
        DEALLOCATE(tspec)
@@ -1204,7 +1205,7 @@ CONTAINS
    ! Return spectra from the compsp output buffer.
    SUBROUTINE fsps_get_spec(c_spec) BIND(C, name="fsps_get_spec")
      TYPE(C_PTR), VALUE :: c_spec
-     REAL(SP), POINTER :: f_spec(:,:)
+     REAL(WP), POINTER :: f_spec(:,:)
         INTEGER :: i
         INTEGER :: n_spec, n_time
 
@@ -1221,9 +1222,9 @@ CONTAINS
    ! Return spectra converted to Lsun/Angstrom.
    SUBROUTINE fsps_get_spec_peraa(c_spec) BIND(C, name="fsps_get_spec_peraa")
      TYPE(C_PTR), VALUE :: c_spec
-     REAL(SP), POINTER :: f_spec(:,:)
-     REAL(SP) :: lam
-        REAL(SP) :: lamarr(1)
+     REAL(WP), POINTER :: f_spec(:,:)
+     REAL(WP) :: lam
+        REAL(WP) :: lamarr(1)
         INTEGER :: i, j
         INTEGER :: n_spec, n_time
 
@@ -1240,7 +1241,7 @@ CONTAINS
            ELSE
                  lam = fsps_default_ctx%state%spec_lambda(i)
            END IF
-           f_spec(i,j) = global_ocompsp(j)%spec(i) * (3.0e18_SP / (lam*lam))
+           f_spec(i,j) = global_ocompsp(j)%spec(i) * (3.0e18_WP / (lam*lam))
         END DO
      END DO
   END SUBROUTINE fsps_get_spec_peraa
@@ -1250,8 +1251,8 @@ CONTAINS
                             c_emlines) BIND(C, name="fsps_get_stats")
      TYPE(C_PTR), VALUE :: c_age, c_mass, c_lbol, c_sfr, c_mdust, c_mformed
      TYPE(C_PTR), VALUE :: c_emlines
-     REAL(SP), POINTER :: f_age(:), f_mass(:), f_lbol(:), f_sfr(:), f_mdust(:), f_mformed(:)
-     REAL(SP), POINTER :: f_emlines(:,:)
+     REAL(WP), POINTER :: f_age(:), f_mass(:), f_lbol(:), f_sfr(:), f_mdust(:), f_mformed(:)
+     REAL(WP), POINTER :: f_emlines(:,:)
      INTEGER :: i
      INTEGER :: n_time
 
@@ -1279,9 +1280,9 @@ CONTAINS
   SUBROUTINE fsps_get_indices(c_spec, c_indices) BIND(C, name="fsps_get_indices")
      TYPE(C_PTR), VALUE :: c_spec
      TYPE(C_PTR), VALUE :: c_indices
-     REAL(SP), POINTER :: f_spec(:)
-     REAL(SP), POINTER :: f_indices(:)
-     REAL(SP), ALLOCATABLE :: lamarr(:)
+     REAL(WP), POINTER :: f_spec(:)
+     REAL(WP), POINTER :: f_indices(:)
+     REAL(WP), ALLOCATABLE :: lamarr(:)
      INTEGER :: n_spec, n_indx
 
      CALL fsps_ensure_default_ctx()
@@ -1307,7 +1308,7 @@ CONTAINS
                                    wght, c_spec) BIND(C, name="fsps_stellar_spectrum")
     REAL(C_DOUBLE), VALUE :: mact, logt, lbol, logg, phase, ffco, lmdot, wght
     TYPE(C_PTR), VALUE :: c_spec
-    REAL(SP), POINTER :: f_spec(:)
+    REAL(WP), POINTER :: f_spec(:)
 
     IF (.NOT. ASSOCIATED(global_pset)) THEN
        CALL fsps_set_error(308, "[FSPS-C] Error: fsps_stellar_spectrum called before initialize!")
@@ -1316,9 +1317,9 @@ CONTAINS
 
    CALL fsps_ensure_default_ctx()
    CALL C_F_POINTER(c_spec, f_spec, [fsps_default_ctx%state%nspec])
-   CALL GETSPEC(fsps_default_ctx, global_pset, REAL(mact, SP), REAL(logt, SP), REAL(lbol, SP), &
-             REAL(logg, SP), REAL(phase, SP), REAL(ffco, SP), &
-             REAL(lmdot, SP), REAL(wght, SP), f_spec)
+   CALL GETSPEC(fsps_default_ctx, global_pset, REAL(mact, WP), REAL(logt, WP), REAL(lbol, WP), &
+             REAL(logg, WP), REAL(phase, WP), REAL(ffco, WP), &
+             REAL(lmdot, WP), REAL(wght, WP), f_spec)
   END SUBROUTINE fsps_stellar_spectrum
 
   ! -------------------------------------------------------------------------
@@ -1445,7 +1446,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_zlegend(c_zlegend) BIND(C, name="fsps_get_zlegend")
       TYPE(C_PTR), VALUE :: c_zlegend
-      REAL(SP), POINTER :: f_zlegend(:)
+      REAL(WP), POINTER :: f_zlegend(:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_zlegend, f_zlegend, [fsps_default_ctx%state%nz])
       f_zlegend = fsps_default_ctx%state%zlegend
@@ -1453,7 +1454,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_timefull(c_timefull) BIND(C, name="fsps_get_timefull")
       TYPE(C_PTR), VALUE :: c_timefull
-      REAL(SP), POINTER :: f_timefull(:)
+      REAL(WP), POINTER :: f_timefull(:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_timefull, f_timefull, [fsps_default_ctx%state%ntfull])
       f_timefull = fsps_default_ctx%state%time_full
@@ -1461,7 +1462,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_lambda(c_lambda) BIND(C, name="fsps_get_lambda")
       TYPE(C_PTR), VALUE :: c_lambda
-      REAL(SP), POINTER :: f_lambda(:)
+      REAL(WP), POINTER :: f_lambda(:)
         CALL fsps_ensure_default_ctx()
         CALL C_F_POINTER(c_lambda, f_lambda, [fsps_default_ctx%state%nspec])
         IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
@@ -1473,7 +1474,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_emlambda(c_emlambda) BIND(C, name="fsps_get_emlambda")
       TYPE(C_PTR), VALUE :: c_emlambda
-      REAL(SP), POINTER :: f_emlambda(:)
+      REAL(WP), POINTER :: f_emlambda(:)
       CALL C_F_POINTER(c_emlambda, f_emlambda, [NEMLINE])
         CALL fsps_ensure_default_ctx()
         IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
@@ -1485,7 +1486,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_res(c_res) BIND(C, name="fsps_get_res")
       TYPE(C_PTR), VALUE :: c_res
-      REAL(SP), POINTER :: f_res(:)
+      REAL(WP), POINTER :: f_res(:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_res, f_res, [fsps_default_ctx%state%nspec])
       f_res = fsps_default_ctx%state%spec_res
@@ -1494,7 +1495,7 @@ CONTAINS
    SUBROUTINE fsps_get_filter_data(c_wave_eff, c_mag_vega, c_mag_sun) &
           BIND(C, name="fsps_get_filter_data")
       TYPE(C_PTR), VALUE :: c_wave_eff, c_mag_vega, c_mag_sun
-      REAL(SP), POINTER :: f_wave_eff(:), f_mag_vega(:), f_mag_sun(:)
+      REAL(WP), POINTER :: f_wave_eff(:), f_mag_vega(:), f_mag_sun(:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_wave_eff, f_wave_eff, [fsps_default_ctx%state%nbands])
       CALL C_F_POINTER(c_mag_vega, f_mag_vega, [fsps_default_ctx%state%nbands])
@@ -1506,7 +1507,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_ssp_weights(c_wghts) BIND(C, name="fsps_get_ssp_weights")
       TYPE(C_PTR), VALUE :: c_wghts
-      REAL(SP), POINTER :: f_wghts(:,:)
+      REAL(WP), POINTER :: f_wghts(:,:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_wghts, f_wghts, [fsps_default_ctx%state%ntfull, fsps_default_ctx%state%nz])
       f_wghts = fsps_default_ctx%state%weight_ssp
@@ -1514,7 +1515,7 @@ CONTAINS
 
    SUBROUTINE fsps_get_csp_components(c_young, c_old) BIND(C, name="fsps_get_csp_components")
       TYPE(C_PTR), VALUE :: c_young, c_old
-      REAL(SP), POINTER :: f_young(:), f_old(:)
+      REAL(WP), POINTER :: f_young(:), f_old(:)
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_young, f_young, [fsps_default_ctx%state%nspec])
       CALL C_F_POINTER(c_old, f_old, [fsps_default_ctx%state%nspec])
@@ -1524,8 +1525,8 @@ CONTAINS
 
    SUBROUTINE fsps_get_ssp_spec(c_spec, c_mass, c_lbol) BIND(C, name="fsps_get_ssp_spec")
       TYPE(C_PTR), VALUE :: c_spec, c_mass, c_lbol
-      REAL(SP), POINTER :: f_spec(:,:,:)
-      REAL(SP), POINTER :: f_mass(:,:), f_lbol(:,:)
+      REAL(WP), POINTER :: f_spec(:,:,:)
+      REAL(WP), POINTER :: f_mass(:,:), f_lbol(:,:)
       INTEGER :: zidx
 
       CALL fsps_ensure_default_ctx()
@@ -1545,7 +1546,7 @@ CONTAINS
    SUBROUTINE fsps_set_sfh_tab(ntab, c_age, c_sfr, c_met) BIND(C, name="fsps_set_sfh_tab")
       INTEGER(C_INT), VALUE :: ntab
       TYPE(C_PTR), VALUE :: c_age, c_sfr, c_met
-      REAL(SP), POINTER :: f_age(:), f_sfr(:), f_met(:)
+      REAL(WP), POINTER :: f_age(:), f_sfr(:), f_met(:)
 
       CALL C_F_POINTER(c_age, f_age, [ntab])
       CALL C_F_POINTER(c_sfr, f_sfr, [ntab])
@@ -1609,13 +1610,13 @@ CONTAINS
       INTEGER(C_INT), VALUE :: nsv
       TYPE(C_PTR), VALUE :: c_sigma
       REAL(C_DOUBLE), VALUE :: wlo, whi
-      REAL(SP), POINTER :: f_sigma(:)
+      REAL(WP), POINTER :: f_sigma(:)
 
       CALL C_F_POINTER(c_sigma, f_sigma, [nsv])
 
       CALL fsps_ensure_default_ctx()
-      fsps_default_ctx%state%lsfinfo%minlam = REAL(wlo, SP)
-      fsps_default_ctx%state%lsfinfo%maxlam = REAL(whi, SP)
+      fsps_default_ctx%state%lsfinfo%minlam = REAL(wlo, WP)
+      fsps_default_ctx%state%lsfinfo%maxlam = REAL(whi, WP)
       IF (ALLOCATED(fsps_default_ctx%state%lsfinfo%lsf)) DEALLOCATE(fsps_default_ctx%state%lsfinfo%lsf)
       ALLOCATE(fsps_default_ctx%state%lsfinfo%lsf(nsv))
       fsps_default_ctx%state%lsfinfo%lsf = f_sigma
@@ -1626,14 +1627,14 @@ CONTAINS
           BIND(C, name="fsps_smooth_spectrum")
       TYPE(C_PTR), VALUE :: c_wave, c_spec
       REAL(C_DOUBLE), VALUE :: sigma_broad, minw, maxw
-      REAL(SP), POINTER :: f_wave(:), f_spec(:)
+      REAL(WP), POINTER :: f_wave(:), f_spec(:)
 
       CALL fsps_ensure_default_ctx()
       CALL C_F_POINTER(c_wave, f_wave, [fsps_default_ctx%state%nspec])
       CALL C_F_POINTER(c_spec, f_spec, [fsps_default_ctx%state%nspec])
 
-      CALL SMOOTHSPEC(fsps_default_ctx, f_wave, f_spec, REAL(sigma_broad, SP), &
-                  REAL(minw, SP), REAL(maxw, SP))
+      CALL SMOOTHSPEC(fsps_default_ctx, f_wave, f_spec, REAL(sigma_broad, WP), &
+            REAL(minw, WP), REAL(maxw, WP))
    END SUBROUTINE fsps_smooth_spectrum
 
    ! Write isochrone data to a .cmd file.

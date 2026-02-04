@@ -8,19 +8,19 @@ SUBROUTINE PZ_CONVOL(ctx, yield, zave, spec_pz, lbol_pz, mass_pz)
   !The average metallicity is returned as zave
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_constants, ONLY: SP
+   USE fsps_precision, ONLY: WP
    USE fsps_interpolation, ONLY: interpolate_linear
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
   
   INTEGER  :: i,t,z
-  REAL(SP) :: norm
-   REAL(SP), INTENT(out), DIMENSION(:,:) :: spec_pz
-   REAL(SP), INTENT(out), DIMENSION(:) :: mass_pz, lbol_pz
-  REAL(SP), INTENT(out)    :: zave
-   REAL(SP), ALLOCATABLE :: pzz1(:)
-  REAL(SP), DIMENSION(100) :: pzz2,zz2,zzspec
-  REAL(SP), INTENT(in) :: yield
+   REAL(WP) :: norm
+    REAL(WP), INTENT(out), DIMENSION(:,:) :: spec_pz
+    REAL(WP), INTENT(out), DIMENSION(:) :: mass_pz, lbol_pz
+   REAL(WP), INTENT(out)    :: zave
+    REAL(WP), ALLOCATABLE :: pzz1(:)
+   REAL(WP), DIMENSION(100) :: pzz2,zz2,zzspec
+   REAL(WP), INTENT(in) :: yield
 
   !-----------------------------------------------------------!
 

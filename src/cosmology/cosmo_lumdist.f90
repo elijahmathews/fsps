@@ -5,15 +5,16 @@ FUNCTION GET_LUMDIST(ctx, z)
   !assumes om0,ol0,H0 set in sps_vars.f90
   
   USE fsps_context_types, ONLY: fsps_context_t
-  USE fsps_constants, ONLY: SP, C_LIGHT
+  USE fsps_precision, ONLY: WP
+  USE fsps_constants, ONLY: C_LIGHT
   USE fsps_integration, ONLY: integrate_trapezoid_array
   IMPLICIT NONE
   TYPE(fsps_context_t), INTENT(IN) :: ctx
   INTEGER :: i
   INTEGER, PARAMETER :: ii=10000
-  REAL(SP), INTENT(in) :: z
-  REAL(SP) :: get_lumdist, dhub
-  REAL(SP), DIMENSION(ii) :: zz, hub
+  REAL(WP), INTENT(in) :: z
+  REAL(WP) :: get_lumdist, dhub
+  REAL(WP), DIMENSION(ii) :: zz, hub
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!

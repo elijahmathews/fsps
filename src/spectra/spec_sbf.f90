@@ -5,7 +5,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
   !of the stellar luminosities over stellar mass
 
    USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_constants, ONLY: SP, NM, BHB_SBS_TIME
+      USE fsps_precision, ONLY: WP
+      USE fsps_constants, ONLY: NM, BHB_SBS_TIME
       USE fsps_types, ONLY: PARAMS
       USE sps_utils, ONLY : getmags,getspec
       USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
@@ -18,13 +19,13 @@ SUBROUTINE SBF(ctx, pset, outfile)
   TYPE(PARAMS), INTENT(in)   :: pset
   INTEGER       :: i,j
   CHARACTER(34) :: fmt
-  REAL(SP)      :: zero=0.0,hb_wght
-     REAL(SP), DIMENSION(NM)     :: wght
-     REAL(SP), ALLOCATABLE :: tspec(:),tspec2(:),spec1(:),spec2(:)
-     REAL(SP), ALLOCATABLE :: mags(:)
-     REAL(SP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),ffco(:,:),phase(:,:),lmdot(:,:)
+  REAL(WP)      :: zero=0.0,hb_wght
+     REAL(WP), DIMENSION(NM)     :: wght
+     REAL(WP), ALLOCATABLE :: tspec(:),tspec2(:),spec1(:),spec2(:)
+     REAL(WP), ALLOCATABLE :: mags(:)
+     REAL(WP), ALLOCATABLE :: mini(:,:),mact(:,:),logl(:,:),logt(:,:),logg(:,:),ffco(:,:),phase(:,:),lmdot(:,:)
      INTEGER, ALLOCATABLE  :: nmass(:)
-     REAL(SP), ALLOCATABLE :: time(:)
+   REAL(WP), ALLOCATABLE :: time(:)
 
   !-----------------------------------------------------------!
   !-----------------------------------------------------------!

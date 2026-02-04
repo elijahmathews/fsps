@@ -14,17 +14,17 @@ function sfhlimit(ctx, tlim, sfh)
   !    An sfhparams structure containing the relevant special lookback times.
   !
    use fsps_context_types, only: fsps_context_t
-   use fsps_constants, only: SP
+   use fsps_precision, only: WP
    use fsps_types, only: SFHPARAMS
   implicit none
 
    type(fsps_context_t), intent(in) :: ctx
-  real(SP), intent(in) :: tlim
+   real(WP), intent(in) :: tlim
   type(SFHPARAMS), intent(in) :: sfh
 
-  real(SP) :: sfhlimit
+   real(WP) :: sfhlimit
 
-  real(SP) :: tlo, thi
+   real(WP) :: tlo, thi
 
   ! For the simha linear portion, we integrate from sf_trunc to tage or the
   ! zero crossing, whichever is smaller but still greater than sf_trunc.

@@ -1,5 +1,5 @@
 module test_fsps_special_functions_mod
-    use fsps_constants, only: SP
+    use fsps_precision, only: WP
     use fsps_special_functions
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_is_nan, assert_is_neg_inf, assert_float_equals, &
@@ -37,32 +37,32 @@ contains
     ! TEST SUITE: POWER SERIES DOMAIN (0 < x <= 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_small_x()
-        real(SP) :: x, expected, res
+        real(WP) :: x, expected, res
         
         call print_group("Exponential Integral (Small x, Power Series)")
 
         ! Case 1: x = 0.5
         ! Reference: scipy.special.expi(0.5) = 0.454219904863
-        x = 0.5_sp
-        expected = 0.45421990486317343_sp
+        x = 0.5_wp
+        expected = 0.45421990486317343_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e-6_sp, "Ei(0.5)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-6_wp, "Ei(0.5)", total_tests, total_failures)
 
         ! Case 2: x = 1.0
         ! Reference: scipy.special.expi(1.0) = 1.895117816356
-        x = 1.0_sp
-        expected = 1.8951178163559368_sp
+        x = 1.0_wp
+        expected = 1.8951178163559368_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e-6_sp, "Ei(1.0)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-6_wp, "Ei(1.0)", total_tests, total_failures)
 
         ! Case 3: x = 10.0
         ! Reference: scipy.special.expi(10.0) = 2492.22897624
-        x = 10.0_sp
-        expected = 2492.2289762418773_sp
+        x = 10.0_wp
+        expected = 2492.2289762418773_wp
         res = exponential_integral(x)
         ! Tolerance scaled relative to magnitude, or use relative error check.
         ! Here we check roughly 6 sig figs.
-        call assert_float_equals(expected, res, 0.01_sp, "Ei(10.0)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 0.01_wp, "Ei(10.0)", total_tests, total_failures)
 
     end subroutine test_ei_small_x
 
@@ -70,26 +70,26 @@ contains
     ! TEST SUITE: ASYMPTOTIC DOMAIN (x > 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_large_x()
-        real(SP) :: x, expected, res
+        real(WP) :: x, expected, res
         
         call print_group("Exponential Integral (Large x, Asymptotic)")
 
         ! Case 1: x = 45.0
         ! Reference: scipy.special.expi(45.0) = 7.78533476 * 10^17
         ! Note: exp(45) is approx 3.49e19, well within single precision limit (3.4e38)
-        x = 45.0_sp
-        expected = 7.943916035704438e17_sp
+        x = 45.0_wp
+        expected = 7.943916035704438e17_wp
         res = exponential_integral(x)
         
         ! Check relative error for large numbers
-        call assert_relative_error(expected, res, 1.0e-5_sp, "Ei(45.0)", total_tests, total_failures)
+        call assert_relative_error(expected, res, 1.0e-5_wp, "Ei(45.0)", total_tests, total_failures)
 
         ! Case 2: x = 50.0
         ! Reference: scipy.special.expi(50.0) = 1.03644598 * 10^20
-        x = 50.0_sp
-        expected = 1.058563689713169e20_sp
+        x = 50.0_wp
+        expected = 1.058563689713169e20_wp
         res = exponential_integral(x)
-        call assert_relative_error(expected, res, 1.0e-5_sp, "Ei(50.0)", total_tests, total_failures)
+        call assert_relative_error(expected, res, 1.0e-5_wp, "Ei(50.0)", total_tests, total_failures)
 
     end subroutine test_ei_large_x
 
@@ -97,18 +97,18 @@ contains
     ! TEST SUITE: EDGE CASES & ERRORS
     ! ------------------------------------------------------------------------
     subroutine test_ei_edge_cases()
-        real(SP) :: res
+        real(WP) :: res
         
         call print_group("Robustness (0 and Negative)")
 
         ! Case 1: x = 0.0
         ! Expected: -Infinity
-        res = exponential_integral(0.0_sp)
+        res = exponential_integral(0.0_wp)
         call assert_is_neg_inf(res, "Ei(0.0) is -Infinity", total_tests, total_failures)
 
         ! Case 2: x = -1.0
         ! Expected: NaN (Ei is complex for x < 0, implementation assumes real)
-        res = exponential_integral(-1.0_sp)
+        res = exponential_integral(-1.0_wp)
         call assert_is_nan(res, "Ei(-1.0) is NaN", total_tests, total_failures)
 
     end subroutine test_ei_edge_cases
@@ -117,44 +117,44 @@ contains
     ! TEST SUITE: BEHAVIOR AROUND TRANSITION (x == 40)
     ! ------------------------------------------------------------------------
     subroutine test_ei_transition()
-        real(SP) :: x, expected, res
+        real(WP) :: x, expected, res
         
         call print_group("Transition Behavior (x ≈ 40)")
 
         ! Case 1: x = 39.8
         ! Reference: scipy.special.expi(39.8) = 4970429108552322.0
-        x = 39.8_sp
-        expected = 4970429108552322.0_sp
+        x = 39.8_wp
+        expected = 4970429108552322.0_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(39.8)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e9_wp, "Ei(39.8)", total_tests, total_failures)
 
         ! Case 2: x = 39.9
         ! Reference: scipy.special.expi(39.9) = 5479032048901892.0
-        x = 39.9_sp
-        expected = 5479032048901892.0_sp
+        x = 39.9_wp
+        expected = 5479032048901892.0_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(39.9)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e9_wp, "Ei(39.9)", total_tests, total_failures)
 
         ! Case 3: x = 40.0
         ! Reference: scipy.special.expi(40.0) = 6039718263611238.0
-        x = 40.0_sp
-        expected = 6039718263611238.0_sp
+        x = 40.0_wp
+        expected = 6039718263611238.0_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.0)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e9_wp, "Ei(40.0)", total_tests, total_failures)
 
         ! Case 4: x = 40.1
         ! Reference: scipy.special.expi(40.1) = 6657825191606925.0
-        x = 40.1_sp
-        expected = 6657825191606925.0_sp
+        x = 40.1_wp
+        expected = 6657825191606925.0_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.1)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e9_wp, "Ei(40.1)", total_tests, total_failures)
 
         ! Case 5: x = 40.2
         ! Reference: scipy.special.expi(40.2) = 7339237621998727.0
-        x = 40.2_sp
-        expected = 7339237621998727.0_sp
+        x = 40.2_wp
+        expected = 7339237621998727.0_wp
         res = exponential_integral(x)
-        call assert_float_equals(expected, res, 1.0e9_sp, "Ei(40.2)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e9_wp, "Ei(40.2)", total_tests, total_failures)
 
     end subroutine test_ei_transition
 

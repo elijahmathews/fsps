@@ -3,20 +3,21 @@ PROGRAM SPEC_BIN
   !routine to convert ascii spectral files to binary
   !must be run twice for each value of isoc_type var
 
-   USE fsps_constants, ONLY: SP, BASEL_STR, NDIM_LOGT, NDIM_LOGG
+   USE fsps_precision, ONLY: WP
+   USE fsps_constants, ONLY: BASEL_STR, NDIM_LOGT, NDIM_LOGG
    USE sps_utils, ONLY: fsps_resolve_paths
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
   INTEGER  :: z,dumi1,i,j,status
-  REAL(SP) :: dumr1,d2,d3
+   REAL(WP) :: dumr1,d2,d3
   CHARACTER(6) :: zstype
   CHARACTER(100) :: arg_spec_type
   CHARACTER(LEN=250) :: SPS_HOME
   TYPE(fsps_context_t) :: ctx
    INTEGER :: nzinit, nspec
    CHARACTER(LEN=64) :: spec_type
-   REAL(SP), ALLOCATABLE :: zlegendinit(:)
-   REAL(SP), ALLOCATABLE :: speclib(:,:,:,:)
+   REAL(WP), ALLOCATABLE :: zlegendinit(:)
+   REAL(WP), ALLOCATABLE :: speclib(:,:,:,:)
 
   !----------------------------------------------------------------!
 
