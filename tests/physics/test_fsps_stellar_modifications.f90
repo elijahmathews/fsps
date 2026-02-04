@@ -212,6 +212,7 @@ contains
         integer :: i, k
         real(sp) :: expected_logl, expected_mass
         real(sp) :: inv_nbs
+        character(len=64) :: msg
 
         call print_group("BS: Luminosity/Mass Distribution")
 
@@ -263,8 +264,10 @@ contains
             i = n_curr + k
             expected_logl = log_l(2, 50) + 0.2_sp + (0.75_sp * real(k, sp) * inv_nbs)
             expected_mass = expected_logl + 1.0_sp
-            call assert_float_equals(expected_logl, log_l(2, i), EPS, "BS logL distribution", total_tests, total_failures)
-            call assert_float_equals(expected_mass, mass_ini(2, i), EPS, "BS mass from ZAMS", total_tests, total_failures)
+            write(msg, '("BS logL distribution (iter ", I0, ")")') k
+            call assert_float_equals(expected_logl, log_l(2, i), EPS, trim(msg), total_tests, total_failures)
+            write(msg, '("BS mass from ZAMS (iter ", I0, ")")') k
+            call assert_float_equals(expected_mass, mass_ini(2, i), EPS, trim(msg), total_tests, total_failures)
         end do
 
         deallocate(ctx)
@@ -459,6 +462,7 @@ contains
         integer :: i, j
         real(sp) :: min_teff, expected_logt
         real(sp) :: inv_nhb
+        character(len=64) :: msg
 
         call print_group("HB: MIST Phase Redistribution")
 
@@ -506,12 +510,12 @@ contains
         inv_nhb = 1.0_sp / real(n_curr, sp)
         do j = 1, n_curr
             expected_logt = min_teff + (4.5_sp - min_teff) * real(j, sp) * inv_nhb
-            call assert_float_equals(expected_logt, log_t(1, n_curr + j), EPS, &
-                                     "Blue HB Teff distribution", total_tests, total_failures)
-            call assert_float_equals(0.4_sp * weights_init(j), weights(n_curr + j), EPS, &
-                                     "Blue HB weight", total_tests, total_failures)
-            call assert_float_equals(0.6_sp * weights_init(j), weights(j), EPS, &
-                                     "Red HB weight", total_tests, total_failures)
+            write(msg, '("Blue HB Teff distribution (iter ", I0, ")")') j
+            call assert_float_equals(expected_logt, log_t(1, n_curr + j), EPS, trim(msg), total_tests, total_failures)
+            write(msg, '("Blue HB weight (iter ", I0, ")")') j
+            call assert_float_equals(0.4_sp * weights_init(j), weights(n_curr + j), EPS, trim(msg), total_tests, total_failures)
+            write(msg, '("Red HB weight (iter ", I0, ")")') j
+            call assert_float_equals(0.6_sp * weights_init(j), weights(j), EPS, trim(msg), total_tests, total_failures)
         end do
 
         deallocate(ctx)
