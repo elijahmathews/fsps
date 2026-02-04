@@ -15,6 +15,7 @@ build/
 *.o
 *.mod
 *.exe
+compile_commands.json
 
 # Main executables produced by Makefile
 autosps
