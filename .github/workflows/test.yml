@@ -18,13 +18,16 @@ jobs:
           # Linux + GFortran (standard target configuration)
           - os: ubuntu-latest
             compiler: gfortran
+            coverage: true
+            # gcovr only required for coverage reports
             install_cmd: |
-              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
+              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build gcovr
           
           # Linux + LLVM Flang (experimental)
           # This is currently pinned to Flang-20, consider bumping in the future.
           - os: ubuntu-latest
             compiler: flang-20
+            coverage: false
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y flang-20 ninja-build python3-pip
               sudo apt-get remove -y meson || true
@@ -33,7 +36,9 @@ jobs:
           # MacOS + GFortran
           - os: macos-latest
             compiler: gfortran-homebrew
-            install_cmd: brew install gcc meson ninja
+            coverage: false
+            install_cmd: |
+              brew install gcc meson ninja
 
     env:
       FSPS_DATA_HOME: ${{ github.workspace }}
@@ -64,7 +69,13 @@ jobs:
       run: $FC --version
 
     - name: Configure FSPS (Meson)
-      run: meson setup build
+      # Coverage build requires extra flags
+      run: |
+        if [[ "${{ matrix.coverage }}" == true ]]; then
+          meson setup build -Db_coverage=true
+        else
+          meson setup build
+        fi
 
     - name: Compile FSPS and Unit Tests
       run: meson compile -C build
@@ -72,6 +83,18 @@ jobs:
     - name: Run Unit Tests
       # Verbose output for CI logs
       run: meson test -v -C build
+    
+    - name: Generate Coverage Report
+      if: matrix.coverage == true
+      run: ninja -C build coverage-xml
+
+    - name: Upload Coverage Report to Codecov.io
+      if: matrix.coverage == true
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./build/meson-logs/coverage.xml
+        fail_ci_if_error: true
 
   regression-tests:
     name: Regression Test (${{ matrix.name }})
