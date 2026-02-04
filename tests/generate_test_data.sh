@@ -6,13 +6,28 @@
 
 set -e
 
-# Validate we're in the correct directory
-if [[ ! -f "generate_test_data.sh" ]]; then
-    echo "ERROR: This script must be run from the tests/ directory"
-    exit 1
-fi
+# ============================================================================
+# 1. Resolve Paths
+# ============================================================================
 
-# Define the library combinations
+# Get the absolute directory where this script is located (tests/)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Resolve the project root (one level up from tests/)
+PROJECT_ROOT="$( dirname "$SCRIPT_DIR" )"
+
+# Define critical paths relative to the resolved root
+TEST_DATA_DIR="$SCRIPT_DIR/data"
+BUILD_DIR="$PROJECT_ROOT/build"
+GENERATOR="$BUILD_DIR/generate_test_data"
+
+# Ensure FSPS finds data files by setting FSPS_DATA_HOME to the project root
+export FSPS_DATA_HOME="$PROJECT_ROOT"
+
+# ============================================================================
+# 2. Configuration
+# ============================================================================
+
 # Format: "Legacy_File_Suffix|Runtime_Args"
 declare -a configurations=(
     "MILES-1_MIST-1|--isoc mist --spec miles"
@@ -22,28 +37,40 @@ declare -a configurations=(
     "MIST-0_BPASS-1|--isoc bpss --spec bpass"
 )
 
-# Create the data directory if it doesn't exist
-mkdir -p data
+# Create the data output directory if it doesn't exist
+mkdir -p "$TEST_DATA_DIR"
 
-# Move into root directory to run Make
-cd ..
+# ============================================================================
+# 3. Compilation
+# ============================================================================
 
 echo "=========================================================="
-echo "Compiling FSPS objects and generator..."
+echo "Compiling generator with Meson..."
+echo "Project Root: $PROJECT_ROOT"
 echo "=========================================================="
 
-# Clean previous build artifacts
-make clean > /dev/null 2>&1
+# Switch to the project root context to run build commands
+pushd "$PROJECT_ROOT" > /dev/null
 
-# Build the generator target ONCE
-make generate_test_data
+# Setup build directory if it doesn't exist
+if [ ! -d "build" ]; then
+    echo "Build directory not found. Running meson setup..."
+    meson setup build
+fi
 
-if [ ! -f ./generate_test_data ]; then
-    echo "ERROR: Compilation failed."
+# Compile the specific target
+meson compile -C build generate_test_data
+
+if [ ! -f "$GENERATOR" ]; then
+    echo "ERROR: Compilation failed or executable not found at $GENERATOR"
+    popd > /dev/null
     exit 1
 fi
 
-# Main Loop
+# ============================================================================
+# 4. Generation Loop
+# ============================================================================
+
 for config in "${configurations[@]}"; do
     IFS="|" read -r suffix args <<< "$config"
     
@@ -53,20 +80,24 @@ for config in "${configurations[@]}"; do
     echo "=========================================================="
 
     # Run the generator
-    ./generate_test_data $args
+    # The binary will write 'sps_test_output.bin' to the CURRENT directory (Project Root)
+    $GENERATOR $args
     
-    # Move and rename output to the tests/data folder
+    # Move and rename output to the resolved tests/data folder
     if [ -f "sps_test_output.bin" ]; then
-        mv sps_test_output.bin "tests/data/sps_ref_${suffix}.bin"
-        echo "Created: tests/data/sps_ref_${suffix}.bin"
+        mv sps_test_output.bin "$TEST_DATA_DIR/sps_ref_${suffix}.bin"
+        echo "Created: $TEST_DATA_DIR/sps_ref_${suffix}.bin"
     else
         echo "ERROR: Output file not generated for $args"
+        # Cleanup context before exiting
+        popd > /dev/null
         exit 1
     fi
     
     echo ""
 done
 
-# Cleanup the executable from src
-rm -f generate_test_data
+# Restore original directory context
+popd > /dev/null
+
 echo "Done."
