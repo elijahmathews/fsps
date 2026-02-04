@@ -24,20 +24,6 @@ MODULE SPS_UTILS
      END SUBROUTINE ADD_AGB_DUST
   END INTERFACE
 
-  INTERFACE
-   SUBROUTINE ADD_BS(ctx, s_bs, t, mini, mact, logl, logt, logg, phase, &
-          wght,hb_wght,nmass)
-     USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_types, ONLY: SP, nm
-     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-     REAL(SP), INTENT(inout), DIMENSION(:,:) :: mini,mact,&
-            logl,logt,logg,phase
-       REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
-       REAL(SP), INTENT(in) :: hb_wght,s_bs
-       INTEGER, INTENT(in)  :: t
-     INTEGER, INTENT(inout), DIMENSION(:)  :: nmass
-     END SUBROUTINE ADD_BS
-  END INTERFACE
 
    INTERFACE
        SUBROUTINE ADD_DUST(ctx, pset, csp1, csp2, specdust, mdust, ncsp1, ncsp2, nebdust)
@@ -53,26 +39,6 @@ MODULE SPS_UTILS
        END SUBROUTINE ADD_DUST
    END INTERFACE
 
-  INTERFACE
-       SUBROUTINE ADD_XRB(ctx, pset, sspi, sspo)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP, PARAMS
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       TYPE(PARAMS), INTENT(in) :: pset
-       REAL(SP), INTENT(in), DIMENSION(:,:)    :: sspi
-       REAL(SP), INTENT(inout), DIMENSION(:,:) :: sspo
-     END SUBROUTINE ADD_XRB
-  END INTERFACE
-
-  INTERFACE
-       SUBROUTINE ADD_REMNANTS(ctx, mass, maxmass)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_types, ONLY: SP
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       REAL(SP), INTENT(inout) :: mass
-       REAL(SP), INTENT(in) :: maxmass
-     END SUBROUTINE ADD_REMNANTS
-  END INTERFACE
 
   INTERFACE
      FUNCTION AGN_DUST(ctx, lam, spec, pset, lbol_csp)
@@ -262,37 +228,6 @@ MODULE SPS_UTILS
      END FUNCTION INTSFWGHT
   END INTERFACE
 
-  INTERFACE
-     SUBROUTINE MOD_GB(ctx, zz, t, age, delt, dell, pagb, redgb, agb, &
-          nn, logl, logt, phase, wght)
-       USE fsps_context_types, ONLY: fsps_context_t
-       USE fsps_types, ONLY: SP, nm
-       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       INTEGER,  INTENT(in) :: t, nn,zz
-       REAL(SP), INTENT(inout), DIMENSION(:,:) :: logl,logt
-       REAL(SP), INTENT(in), DIMENSION(:,:)    :: phase
-       REAL(SP), INTENT(inout), DIMENSION(nm)    :: wght
-       REAL(SP), INTENT(in) :: delt, dell, pagb,redgb, agb
-       REAL(SP), INTENT(in), DIMENSION(:) :: age
-     END SUBROUTINE MOD_GB
-  END INTERFACE
-
-  INTERFACE
-   SUBROUTINE MOD_HB(ctx, f_bhb, t, mini, mact, logl, logt, logg, phase, &
-      wght, hb_wght, nmass, hbtime)
-     USE fsps_context_types, ONLY: fsps_context_t
-     USE fsps_types, ONLY: SP, nm
-     TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-     REAL(SP), INTENT(inout), DIMENSION(:,:) :: mini,mact,&
-            logl,logt,logg,phase
-       REAL(SP), INTENT(inout), DIMENSION(nm) :: wght
-       REAL(SP), DIMENSION(nm) :: tphase=0.0
-     INTEGER, INTENT(inout), DIMENSION(:) :: nmass
-       REAL(SP), INTENT(inout) :: hb_wght
-       INTEGER, INTENT(in) :: t
-       REAL(SP), INTENT(in) :: f_bhb, hbtime
-     END SUBROUTINE MOD_HB
-  END INTERFACE
 
   INTERFACE
        SUBROUTINE SBF(ctx, pset, outfile)

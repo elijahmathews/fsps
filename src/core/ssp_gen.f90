@@ -17,8 +17,9 @@
 SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
    USE fsps_types, ONLY: SP, PARAMS, nm, verbose, bhb_sbs_time, time_res_incr
-  USE sps_utils, ONLY: mod_hb, add_bs, mod_gb, add_remnants, &
-     getspec, add_xrb, smoothspec
+  USE sps_utils, ONLY: getspec, smoothspec
+  USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
+     modify_horizontal_branch, add_remnant_mass, add_xray_binaries
   USE fsps_gas, only: apply_nebular_emission
   USE fsps_interpolation, ONLY: find_interval
    USE fsps_imf, ONLY: compute_imf_weights
@@ -199,15 +200,15 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
         !modify the horizontal branch
         !need the hb weight for the blue stragglers too
          IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-            CALL MOD_HB(ctx, pset%fbhb, i, mini, mact, logl, logt, logg, phase, &
-            wght, hb_wght, nmass, time(i))
+            CALL modify_horizontal_branch(ctx, i, pset%fbhb, time(i), hb_wght, nmass, &
+            mini, mact, logl, logt, logg, phase, wght)
         !add in blue stragglers
          IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-            CALL ADD_BS(ctx, pset%sbss, i, mini, mact, logl, logt, logg, phase, &
-            wght, hb_wght, nmass)
+            CALL apply_blue_stragglers(ctx, i, pset%sbss, hb_wght, nmass, &
+            mini, mact, logl, logt, logg, phase, wght)
         !modify the TP-AGB stars and Post-AGB stars
-         CALL MOD_GB(ctx, pset%zmet, i, time, pset%delt, pset%dell, pset%pagb, &
-            pset%redgb, pset%agb, nmass(i), logl, logt, phase, wght)
+         CALL modify_giant_branch(ctx, i, pset%zmet, time(i), nmass(i), pset%delt, pset%dell, &
+            pset%pagb, pset%redgb, pset%agb, logl, logt, phase, wght)
         ii = 1 + (i-1)*time_res_incr
 
         !compute IMF-weighted mass of the SSP
@@ -215,7 +216,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
         !add in remant masses
         IF (add_stellar_remnants.EQ.1) THEN
-           CALL ADD_REMNANTS(ctx, mass_ssp(ii), MAXVAL(mini(i,:)))
+           CALL add_remnant_mass(ctx, mass_ssp(ii), MAXVAL(mini(i,:)))
         ENDIF
 
         !compute IMF-weighted bolometric luminosity (actually log(Lbol))
@@ -279,7 +280,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
   !-------------------------------------------------------------!
 
   IF (add_xrb_emission.EQ.1) THEN
-     CALL ADD_XRB(ctx, pset, spec_ssp, tspec_ssp)
+   CALL add_xray_binaries(ctx, pset, spec_ssp, tspec_ssp)
      spec_ssp = tspec_ssp
   ENDIF
 

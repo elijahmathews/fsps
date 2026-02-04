@@ -6,7 +6,9 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
      USE fsps_context_types, ONLY: fsps_context_t
      USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time, gsig4pi
-     USE sps_utils, ONLY : getmags,getspec,mod_hb,mod_gb,add_bs
+     USE sps_utils, ONLY : getmags,getspec
+     USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
+          modify_horizontal_branch
      USE fsps_imf, ONLY: compute_imf_weights
   IMPLICIT NONE
 
@@ -75,17 +77,17 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too
      IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-          CALL MOD_HB(ctx, pset%fbhb, tt, mini, mact, logl, logt, logg, phase, &
-          wght, hb_wght, nmass, timestep_isoc(zz,tt))
+          CALL modify_horizontal_branch(ctx, tt, pset%fbhb, timestep_isoc(zz,tt), hb_wght, nmass, &
+          mini, mact, logl, logt, logg, phase, wght)
 
      !add in blue stragglers
      IF (timestep_isoc(zz,tt).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-          CALL ADD_BS(ctx, pset%sbss, tt, mini, mact, logl, logt, logg, phase, &
-          wght, hb_wght, nmass)
+          CALL apply_blue_stragglers(ctx, tt, pset%sbss, hb_wght, nmass, &
+          mini, mact, logl, logt, logg, phase, wght)
 
      !modify the RGB and/or AGB stars
-     CALL MOD_GB(ctx, zz, tt, timestep_isoc(zz,:), pset%delt, &
-          pset%dell, pset%pagb, pset%redgb, pset%agb, nmass(tt), logl, logt, phase, wght)
+     CALL modify_giant_branch(ctx, tt, zz, timestep_isoc(zz,tt), nmass(tt), pset%delt, &
+          pset%dell, pset%pagb, pset%redgb, pset%agb, logl, logt, phase, wght)
 
      DO i=1,nmass(tt)
         

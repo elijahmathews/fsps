@@ -5,8 +5,10 @@ SUBROUTINE SBF(ctx, pset, outfile)
   !of the stellar luminosities over stellar mass
 
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time
-   USE sps_utils, ONLY : mod_hb,add_bs,mod_gb,getmags,getspec
+      USE fsps_types, ONLY: SP, PARAMS, nm, bhb_sbs_time
+      USE sps_utils, ONLY : getmags,getspec
+      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
+         modify_horizontal_branch
    USE fsps_imf, ONLY: compute_imf_weights
   IMPLICIT NONE
 
@@ -74,18 +76,18 @@ SUBROUTINE SBF(ctx, pset, outfile)
      
      !modify the horizontal branch
      !need the hb weight for the blue stragglers too
-     IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
-          CALL MOD_HB(ctx, pset%fbhb, i, mini, mact, logl, logt, logg, phase, &
-          wght, hb_wght, nmass, time(i))
+   IF (pset%fbhb.GT.0.0.OR.pset%sbss.GT.1E-3) &
+      CALL modify_horizontal_branch(ctx, i, pset%fbhb, time(i), hb_wght, nmass, &
+      mini, mact, logl, logt, logg, phase, wght)
 
      !add in blue stragglers
-     IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
-          CALL ADD_BS(ctx, pset%sbss, i, mini, mact, logl, logt, logg, phase, &
-          wght, hb_wght, nmass)
+   IF (time(i).GE.bhb_sbs_time.AND.pset%sbss.GT.1E-3) &
+      CALL apply_blue_stragglers(ctx, i, pset%sbss, hb_wght, nmass, &
+      mini, mact, logl, logt, logg, phase, wght)
 
      !modify the TP-AGB stars and Post-AGB stars
-     CALL MOD_GB(ctx, pset%zmet, i, time, pset%delt, pset%dell, pset%pagb, &
-          pset%redgb, pset%agb, nmass(i), logl, logt, phase, wght)
+   CALL modify_giant_branch(ctx, i, pset%zmet, time(i), nmass(i), pset%delt, pset%dell, pset%pagb, &
+      pset%redgb, pset%agb, logl, logt, phase, wght)
  
      spec1 = 0.0
      spec2 = 0.0
