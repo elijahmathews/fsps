@@ -85,7 +85,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
 
      !add in blue stragglers
      IF (timestep_isoc(zz,tt).GE.BHB_SBS_TIME.AND.pset%sbss.GT.1E-3) &
-          CALL apply_blue_stragglers(ctx, tt, pset%sbss, hb_wght, nmass, &
+          CALL apply_blue_stragglers(ctx, tt, zz, pset%sbss, hb_wght, nmass, &
           mini, mact, logl, logt, logg, phase, wght)
 
      !modify the RGB and/or AGB stars

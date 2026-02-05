@@ -2,7 +2,8 @@ MODULE FSPS_CONTEXT
    USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
-  USE sps_utils
+   USE sps_utils
+   USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
    INTEGER, PARAMETER :: FSPS_ERR_UNKNOWN_INT_PARAM = 101
@@ -417,7 +418,7 @@ CONTAINS
 
         CALL fsps_context_ensure_setup(ctx)
       CALL fsps_context_prepare_pset(ctx)
-      CALL SSP_GEN(ctx, ctx%pset, mass_ssp, lbol_ssp, spec_ssp)
+      CALL generate_ssp_grid(ctx, ctx%pset, mass_ssp, lbol_ssp, spec_ssp)
    END SUBROUTINE fsps_context_compute_ssp
 
    SUBROUTINE fsps_context_compute_csp(ctx, write_compsp, nzin, outfile, mass_ssp, lbol_ssp, spec_ssp, ocompsp)

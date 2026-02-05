@@ -1,0 +1,546 @@
+module test_fsps_ssp_mod
+    use fsps_precision, only: WP
+    use fsps_constants, only: NM, SAFE_FLOOR, TIME_RES_INCR, BHB_SBS_TIME, C_LIGHT
+    use fsps_types, only: params
+    use fsps_context_types, only: fsps_context_t
+    use fsps_ssp, only: generate_ssp_grid, isochrone_buffer_t, init_isochrone_buffer, reset_buffer, &
+                        free_isochrone_buffer, load_timestep_data, apply_isochrone_physics, &
+                        compute_integrated_properties, accumulate_spectrum, interpolate_time_grid, &
+                        configure_imf_parameters
+    use fsps_spectral_library, only: get_stellar_spectrum
+    use fsps_imf, only: compute_imf_weights
+    use fsps_stellar_modifications, only: add_remnant_mass, modify_giant_branch
+    use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
+                              assert_float_equals, assert_true, assert_int_equals, assert_relative_error
+    implicit none
+
+    integer :: total_failures = 0
+    integer :: total_tests = 0
+
+    real(WP), parameter :: EPS = 1.0e-10_wp
+    real(WP), parameter :: REL_EPS = 1.0e-10_wp
+
+    public :: run_fsps_ssp_tests, total_failures, total_tests
+
+contains
+
+    subroutine run_fsps_ssp_tests()
+        call print_minor_header("fsps_ssp")
+
+        call test_strided_gather()
+        call test_silent_truncation_guard()
+        call test_fresh_start_zeroing()
+
+        call test_cache_blocked_summation()
+        call test_remnant_budgeting()
+
+        call test_sequential_hunter()
+        call test_log_linear_interpolation()
+
+        call test_bpass_short_circuit()
+        call test_user_imf_file_parsing()
+
+        call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
+    end subroutine run_fsps_ssp_tests
+
+    ! --------------------------------------------------------------------
+    ! Helper: allocate minimal isochrone context
+    ! --------------------------------------------------------------------
+    subroutine setup_isochrone_context(ctx, n_z, n_t)
+        type(fsps_context_t), intent(inout) :: ctx
+        integer, intent(in) :: n_z, n_t
+
+        allocate(ctx%state%mini_isoc(n_z, n_t, NM))
+        allocate(ctx%state%mact_isoc(n_z, n_t, NM))
+        allocate(ctx%state%logl_isoc(n_z, n_t, NM))
+        allocate(ctx%state%logt_isoc(n_z, n_t, NM))
+        allocate(ctx%state%logg_isoc(n_z, n_t, NM))
+        allocate(ctx%state%phase_isoc(n_z, n_t, NM))
+        allocate(ctx%state%ffco_isoc(n_z, n_t, NM))
+        allocate(ctx%state%lmdot_isoc(n_z, n_t, NM))
+        allocate(ctx%state%nmass_isoc(n_z, n_t))
+        allocate(ctx%state%timestep_isoc(n_z, n_t))
+        allocate(ctx%state%zlegend(n_z))
+
+        ctx%state%mini_isoc = 0.0_wp
+        ctx%state%mact_isoc = 0.0_wp
+        ctx%state%logl_isoc = 0.0_wp
+        ctx%state%logt_isoc = 0.0_wp
+        ctx%state%logg_isoc = 0.0_wp
+        ctx%state%phase_isoc = 0.0_wp
+        ctx%state%ffco_isoc = 0.0_wp
+        ctx%state%lmdot_isoc = 0.0_wp
+        ctx%state%nmass_isoc = 0
+        ctx%state%timestep_isoc = 0.0_wp
+        ctx%state%zlegend = 0.019_wp
+
+        ctx%state%nt = n_t
+        ctx%state%nz = n_z
+    end subroutine setup_isochrone_context
+
+    subroutine teardown_isochrone_context(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        if (associated(ctx%state%mini_isoc)) deallocate(ctx%state%mini_isoc)
+        if (associated(ctx%state%mact_isoc)) deallocate(ctx%state%mact_isoc)
+        if (associated(ctx%state%logl_isoc)) deallocate(ctx%state%logl_isoc)
+        if (associated(ctx%state%logt_isoc)) deallocate(ctx%state%logt_isoc)
+        if (associated(ctx%state%logg_isoc)) deallocate(ctx%state%logg_isoc)
+        if (associated(ctx%state%phase_isoc)) deallocate(ctx%state%phase_isoc)
+        if (associated(ctx%state%ffco_isoc)) deallocate(ctx%state%ffco_isoc)
+        if (associated(ctx%state%lmdot_isoc)) deallocate(ctx%state%lmdot_isoc)
+        if (associated(ctx%state%nmass_isoc)) deallocate(ctx%state%nmass_isoc)
+        if (associated(ctx%state%timestep_isoc)) deallocate(ctx%state%timestep_isoc)
+        if (associated(ctx%state%zlegend)) deallocate(ctx%state%zlegend)
+    end subroutine teardown_isochrone_context
+
+    ! --------------------------------------------------------------------
+    ! Helper: allocate minimal spectral context for get_stellar_spectrum
+    ! --------------------------------------------------------------------
+    subroutine setup_spectral_context(ctx, n_wave, speclib_val)
+        type(fsps_context_t), intent(inout) :: ctx
+        integer, intent(in) :: n_wave
+        real(WP), intent(in) :: speclib_val
+
+        integer :: i
+        real(WP) :: logt_min, logt_step
+        real(WP) :: logg_min, logg_step
+
+        allocate(ctx%state%spec_lambda(n_wave))
+        allocate(ctx%state%spec_nu(n_wave))
+        allocate(ctx%state%speclib(n_wave, 1, size(ctx%state%speclib_logt), size(ctx%state%speclib_logg)))
+
+        ctx%state%spec_lambda = [(1000.0_wp + 100.0_wp * real(i - 1, WP), i = 1, n_wave)]
+        ctx%state%spec_nu = C_LIGHT / ctx%state%spec_lambda
+        ctx%state%whlam5000 = 1
+
+        logt_min = 3.0_wp
+        logt_step = 0.02_wp
+        do i = 1, size(ctx%state%speclib_logt)
+            ctx%state%speclib_logt(i) = logt_min + logt_step * real(i - 1, WP)
+        end do
+
+        logg_min = 0.0_wp
+        logg_step = 0.2_wp
+        do i = 1, size(ctx%state%speclib_logg)
+            ctx%state%speclib_logg(i) = logg_min + logg_step * real(i - 1, WP)
+        end do
+
+        ctx%state%speclib = real(speclib_val, kind=kind(1.0))
+
+        ctx%use_wr_spectra_val = 0
+        ctx%logt_wmb_hot_val = 10.0_wp
+        ctx%state%wmb_logt = 10.0_wp
+    end subroutine setup_spectral_context
+
+    subroutine teardown_spectral_context(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
+        if (associated(ctx%state%spec_nu)) deallocate(ctx%state%spec_nu)
+        if (associated(ctx%state%speclib)) deallocate(ctx%state%speclib)
+    end subroutine teardown_spectral_context
+
+    ! --------------------------------------------------------------------
+    ! GROUP 1: Buffer Management & Memory Safety
+    ! --------------------------------------------------------------------
+    subroutine test_strided_gather()
+        type(fsps_context_t), allocatable :: ctx
+        type(isochrone_buffer_t) :: buf
+        integer :: i
+
+        call print_group("Buffer: Strided Gather")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 1, 6)
+        call init_isochrone_buffer(buf)
+
+        ctx%state%nmass_isoc(1, 5) = 10
+        do i = 1, 10
+            ctx%state%mini_isoc(1, 5, i) = real(i + 5000, WP)
+            ctx%state%mact_isoc(1, 5, i) = 1.0_wp
+            ctx%state%logl_isoc(1, 5, i) = 0.0_wp
+            ctx%state%logt_isoc(1, 5, i) = 0.0_wp
+            ctx%state%logg_isoc(1, 5, i) = 0.0_wp
+            ctx%state%phase_isoc(1, 5, i) = 0.0_wp
+            ctx%state%ffco_isoc(1, 5, i) = 0.0_wp
+            ctx%state%lmdot_isoc(1, 5, i) = 0.0_wp
+        end do
+
+        call load_timestep_data(ctx, 1, 5, buf)
+
+        do i = 1, 10
+            call assert_float_equals(real(i + 5000, WP), buf%initial_mass(i), EPS, &
+                                     "Strided gather idx " // trim(adjustl(to_str(i))), total_tests, total_failures)
+        end do
+
+        call free_isochrone_buffer(buf)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_strided_gather
+
+    subroutine test_silent_truncation_guard()
+        type(fsps_context_t), allocatable :: ctx
+        type(isochrone_buffer_t) :: buf
+        integer :: i
+
+        call print_group("Buffer: Silent Truncation Guard")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 1, 1)
+        call init_isochrone_buffer(buf)
+
+        ctx%state%nmass_isoc(1, 1) = NM + 50
+        do i = 1, NM
+            ctx%state%mini_isoc(1, 1, i) = real(i, WP)
+            ctx%state%mact_isoc(1, 1, i) = 1.0_wp
+            ctx%state%logl_isoc(1, 1, i) = 0.0_wp
+            ctx%state%logt_isoc(1, 1, i) = 0.0_wp
+            ctx%state%logg_isoc(1, 1, i) = 0.0_wp
+            ctx%state%phase_isoc(1, 1, i) = 0.0_wp
+            ctx%state%ffco_isoc(1, 1, i) = 0.0_wp
+            ctx%state%lmdot_isoc(1, 1, i) = 0.0_wp
+        end do
+
+        call load_timestep_data(ctx, 1, 1, buf)
+        call assert_int_equals(NM, buf%n_stars, "Clamped to NM", total_tests, total_failures)
+
+        call free_isochrone_buffer(buf)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_silent_truncation_guard
+
+    subroutine test_fresh_start_zeroing()
+        type(fsps_context_t), allocatable :: ctx
+        type(isochrone_buffer_t) :: buf
+        integer :: i
+
+        call print_group("Buffer: Fresh Start Zeroing")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 1, 2)
+        call init_isochrone_buffer(buf)
+
+        ctx%state%nmass_isoc(1, 1) = 5
+        ctx%state%nmass_isoc(1, 2) = 5
+        do i = 1, 5
+            ctx%state%mini_isoc(1, 1, i) = real(i, WP)
+            ctx%state%mini_isoc(1, 2, i) = real(i, WP)
+        end do
+
+        call load_timestep_data(ctx, 1, 1, buf)
+        buf%weights(1:buf%n_stars) = 1.0_wp
+
+        call load_timestep_data(ctx, 1, 2, buf)
+        do i = 1, buf%n_stars
+            call assert_float_equals(0.0_wp, buf%weights(i), EPS, &
+                                     "Weights reset idx " // trim(adjustl(to_str(i))), total_tests, total_failures)
+        end do
+
+        call free_isochrone_buffer(buf)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_fresh_start_zeroing
+
+    ! --------------------------------------------------------------------
+    ! GROUP 2: Integration & Spectral Accumulation
+    ! --------------------------------------------------------------------
+
+    subroutine test_cache_blocked_summation()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(isochrone_buffer_t) :: buf
+        real(WP), allocatable :: spec_out(:)
+        real(WP), allocatable :: work_spec(:)
+        real(WP), allocatable :: ref_spec(:)
+        real(WP) :: expected_sum
+        integer :: i, n_wave
+
+        call print_group("Accumulate: Cache-Blocked Summation")
+
+        allocate(ctx)
+        call setup_spectral_context(ctx, 4, 1.0e20_wp)
+
+        n_wave = 4
+        allocate(spec_out(n_wave))
+        allocate(work_spec(n_wave))
+        allocate(ref_spec(n_wave))
+        spec_out = 0.0_wp
+
+        pset%zmet = 1
+        pset%evtype = -1
+        pset%masscut = 1.0e9_wp
+
+        call init_isochrone_buffer(buf)
+        ! Use 65 stars to force 2 full batches (32+32) plus 1 leftover
+        buf%n_stars = 65
+        expected_sum = 0.0_wp
+        
+        do i = 1, buf%n_stars
+            buf%initial_mass(i) = 1.0_wp
+            buf%current_mass(i) = 1.0_wp
+            buf%log_lum(i) = 0.0_wp
+            buf%log_teff(i) = 4.0_wp
+            buf%log_g(i) = 4.0_wp
+            buf%phase(i) = 1.0_wp
+            buf%co_ratio(i) = 0.0_wp
+            buf%log_mdot(i) = 0.0_wp
+            ! Assign varying weights to verify accumulation handles scaling
+            buf%weights(i) = 0.01_wp * real(i, WP)
+            expected_sum = expected_sum + buf%weights(i)
+        end do
+
+        ! Pre-calculate the spectrum for a single star (all stars are identical here)
+        call get_stellar_spectrum(ctx, pset, 1.0_wp, 4.0_wp, 1.0_wp, 4.0_wp, 1.0_wp, 0.0_wp, 0.0_wp, ref_spec)
+
+        ! Run accumulation (Unsorted)
+        call accumulate_spectrum(ctx, pset, buf, spec_out, work_spec)
+
+        do i = 1, n_wave
+            call assert_relative_error(ref_spec(i) * expected_sum, spec_out(i), 1.0e-12_wp, &
+                                       "Cache-block spec " // trim(adjustl(to_str(i))), total_tests, total_failures)
+        end do
+
+        deallocate(spec_out, work_spec, ref_spec)
+        call free_isochrone_buffer(buf)
+        call teardown_spectral_context(ctx)
+        deallocate(ctx)
+    end subroutine test_cache_blocked_summation
+
+    subroutine test_remnant_budgeting()
+        type(fsps_context_t), allocatable :: ctx
+        type(isochrone_buffer_t) :: buf
+        real(WP) :: tot_mass, tot_lbol
+        real(WP) :: expected_mass
+
+        call print_group("Integrate: Remnant Budgeting")
+
+        allocate(ctx)
+        ctx%add_stellar_remnants_val = 1
+        ctx%imf_type_val = 0
+        ctx%state%imf_lower_limit = 0.1_wp
+        ctx%state%imf_upper_limit = 100.0_wp
+        ctx%state%imf_lower_bound = 0.08_wp
+
+        call init_isochrone_buffer(buf)
+        buf%n_stars = 3
+        buf%initial_mass(1:3) = [0.5_wp, 0.6_wp, 0.8_wp]
+        buf%current_mass(1:3) = [0.5_wp, 0.6_wp, 0.8_wp]
+        buf%log_lum(1:3) = 0.0_wp
+        buf%weights(1:3) = 1.0_wp
+
+        expected_mass = sum(buf%weights(1:3) * buf%current_mass(1:3))
+        call add_remnant_mass(ctx, expected_mass, maxval(buf%initial_mass(1:3)))
+
+        call compute_integrated_properties(ctx, buf, tot_mass, tot_lbol)
+        call assert_relative_error(expected_mass, tot_mass, 1.0e-10_wp, &
+                                   "Remnant mass added", total_tests, total_failures)
+
+        call free_isochrone_buffer(buf)
+        deallocate(ctx)
+    end subroutine test_remnant_budgeting
+
+    ! --------------------------------------------------------------------
+    ! GROUP 3: Post-Processing & Interpolation
+    ! --------------------------------------------------------------------
+    subroutine test_sequential_hunter()
+        type(fsps_context_t), allocatable :: ctx
+        real(WP), allocatable :: mass_grid(:)
+        real(WP), allocatable :: lbol_grid(:)
+        real(WP), allocatable :: spec_grid(:,:)
+        integer :: nt, nt_full
+
+        call print_group("Interpolate: Sequential Hunter")
+
+        if (TIME_RES_INCR /= 2) then
+            call assert_true(.true., "TIME_RES_INCR /= 2 (skipped)", total_tests, total_failures)
+            return
+        end if
+
+        allocate(ctx)
+        nt = 4
+        nt_full = 1 + (nt - 1) * TIME_RES_INCR
+
+        ctx%state%nt = nt
+        ctx%state%ntfull = nt_full
+
+        allocate(ctx%state%timestep_isoc(1, nt))
+        allocate(ctx%state%time_full(nt_full))
+
+        ctx%state%timestep_isoc(1, :) = [6.0_wp, 7.0_wp, 8.0_wp, 9.0_wp]
+        ctx%state%time_full = [6.0_wp, 6.5_wp, 7.0_wp, 7.5_wp, 8.0_wp, 8.5_wp, 9.0_wp]
+
+        allocate(mass_grid(nt_full))
+        allocate(lbol_grid(nt_full))
+        allocate(spec_grid(1, nt_full))
+
+        mass_grid = 0.0_wp
+        lbol_grid = 0.0_wp
+        spec_grid = 0.0_wp
+
+        mass_grid(1) = 1.0_wp
+        mass_grid(3) = 3.0_wp
+        mass_grid(5) = 5.0_wp
+        mass_grid(7) = 7.0_wp
+
+        call interpolate_time_grid(ctx, 1, mass_grid, lbol_grid, spec_grid)
+        call assert_float_equals(4.0_wp, mass_grid(4), 1.0e-12_wp, &
+                                 "Sequential hunt midpoint", total_tests, total_failures)
+
+        if (associated(ctx%state%timestep_isoc)) deallocate(ctx%state%timestep_isoc)
+        if (associated(ctx%state%time_full)) deallocate(ctx%state%time_full)
+        deallocate(mass_grid, lbol_grid, spec_grid)
+        deallocate(ctx)
+    end subroutine test_sequential_hunter
+
+    subroutine test_log_linear_interpolation()
+        type(fsps_context_t), allocatable :: ctx
+        real(WP), allocatable :: mass_grid(:)
+        real(WP), allocatable :: lbol_grid(:)
+        real(WP), allocatable :: spec_grid(:,:)
+        integer :: nt, nt_full
+
+        call print_group("Interpolate: Log-Linear Spectra")
+
+        if (TIME_RES_INCR /= 2) then
+            call assert_true(.true., "TIME_RES_INCR /= 2 (skipped)", total_tests, total_failures)
+            return
+        end if
+
+        allocate(ctx)
+        nt = 2
+        nt_full = 1 + (nt - 1) * TIME_RES_INCR
+
+        ctx%state%nt = nt
+        ctx%state%ntfull = nt_full
+
+        allocate(ctx%state%timestep_isoc(1, nt))
+        allocate(ctx%state%time_full(nt_full))
+
+        ctx%state%timestep_isoc(1, :) = [1.0_wp, 2.0_wp]
+        ctx%state%time_full = [1.0_wp, 1.5_wp, 2.0_wp]
+
+        allocate(mass_grid(nt_full))
+        allocate(lbol_grid(nt_full))
+        allocate(spec_grid(1, nt_full))
+
+        mass_grid = 0.0_wp
+        lbol_grid = 0.0_wp
+        spec_grid = 0.0_wp
+
+        spec_grid(1, 1) = 10.0_wp
+        spec_grid(1, 3) = 1000.0_wp
+
+        call interpolate_time_grid(ctx, 1, mass_grid, lbol_grid, spec_grid)
+        call assert_float_equals(100.0_wp, spec_grid(1, 2), 1.0e-10_wp, &
+                                 "Log-linear midpoint", total_tests, total_failures)
+
+        if (associated(ctx%state%timestep_isoc)) deallocate(ctx%state%timestep_isoc)
+        if (associated(ctx%state%time_full)) deallocate(ctx%state%time_full)
+        deallocate(mass_grid, lbol_grid, spec_grid)
+        deallocate(ctx)
+    end subroutine test_log_linear_interpolation
+
+    ! --------------------------------------------------------------------
+    ! GROUP 4: BPASS & Configuration
+    ! --------------------------------------------------------------------
+    subroutine test_bpass_short_circuit()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: mass_grid(:)
+        real(WP), allocatable :: lbol_grid(:)
+        real(WP), allocatable :: spec_grid(:,:)
+        integer :: n_wave, n_time
+
+        call print_group("BPASS: Short-Circuit")
+
+        allocate(ctx)
+        n_wave = 3
+        n_time = 2
+        allocate(ctx%state%bpass_spec_ssp(n_wave, n_time, 1))
+        allocate(ctx%state%bpass_mass_ssp(n_time, 1))
+
+        ctx%state%check_sps_setup = 1
+        ctx%state%nz = 1
+        ctx%state%nt = n_time
+        ctx%state%isoc_type = 'bpss'
+
+        ctx%state%bpass_spec_ssp(:, :, 1) = reshape([1.0_wp, 2.0_wp, 3.0_wp, &
+                                                    4.0_wp, 5.0_wp, 6.0_wp], &
+                                                   [n_wave, n_time])
+        ctx%state%bpass_mass_ssp(:, 1) = [2.5_wp, 3.5_wp]
+
+        allocate(mass_grid(n_time))
+        allocate(lbol_grid(n_time))
+        allocate(spec_grid(n_wave, n_time))
+
+        pset%zmet = 1
+
+        call generate_ssp_grid(ctx, pset, mass_grid, lbol_grid, spec_grid)
+
+        call assert_float_equals(2.5_wp, mass_grid(1), EPS, "BPASS mass idx1", total_tests, total_failures)
+        call assert_float_equals(3.5_wp, mass_grid(2), EPS, "BPASS mass idx2", total_tests, total_failures)
+        call assert_float_equals(1.0_wp, spec_grid(1, 1), EPS, "BPASS spec (1,1)", total_tests, total_failures)
+        call assert_float_equals(6.0_wp, spec_grid(3, 2), EPS, "BPASS spec (3,2)", total_tests, total_failures)
+        call assert_float_equals(0.0_wp, lbol_grid(1), EPS, "BPASS lbol zero", total_tests, total_failures)
+
+        deallocate(mass_grid, lbol_grid, spec_grid)
+        if (associated(ctx%state%bpass_spec_ssp)) deallocate(ctx%state%bpass_spec_ssp)
+        if (associated(ctx%state%bpass_mass_ssp)) deallocate(ctx%state%bpass_mass_ssp)
+        deallocate(ctx)
+    end subroutine test_bpass_short_circuit
+
+    subroutine test_user_imf_file_parsing()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        integer :: unit_imf
+        character(len=256) :: filepath
+        character(len=256) :: build_root
+        character(len=256) :: data_dir
+        integer :: env_len, env_status, cmd_status
+
+        call print_group("IMF: User File Parsing")
+
+        allocate(ctx)
+        ctx%imf_type_val = 5
+        pset%imf_filename = 'imf_test.dat'
+
+        build_root = ''
+        call get_environment_variable('MESON_BUILD_ROOT', build_root, env_len, env_status, .false.)
+        if (env_status /= 0 .or. env_len == 0) then
+            build_root = '.'
+        else
+            build_root = build_root(1:env_len)
+        end if
+
+        data_dir = trim(build_root) // '/data'
+        call execute_command_line('mkdir -p ' // trim(data_dir), exitstat=cmd_status)
+
+        ctx%sps_home = trim(build_root)
+        filepath = trim(ctx%sps_home) // '/data/' // trim(pset%imf_filename)
+        open(newunit=unit_imf, file=trim(filepath), status='replace', action='write')
+        write(unit_imf, *) 0.1_wp, 1.0_wp, 1.3_wp
+        write(unit_imf, *) 1.0_wp, 100.0_wp, 2.3_wp
+        close(unit_imf)
+
+        call configure_imf_parameters(ctx, pset)
+
+        call assert_float_equals(0.1_wp, ctx%state%imf_user_alpha(1, 1), EPS, "IMF seg1 low", total_tests, total_failures)
+        call assert_float_equals(1.0_wp, ctx%state%imf_user_alpha(2, 1), EPS, "IMF seg1 high", total_tests, total_failures)
+        call assert_float_equals(1.3_wp, ctx%state%imf_user_alpha(3, 1), EPS, "IMF seg1 slope", total_tests, total_failures)
+        call assert_float_equals(1.0_wp, ctx%state%imf_user_alpha(1, 2), EPS, "IMF seg2 low", total_tests, total_failures)
+        call assert_float_equals(100.0_wp, ctx%state%imf_user_alpha(2, 2), EPS, "IMF seg2 high", total_tests, total_failures)
+        call assert_float_equals(2.3_wp, ctx%state%imf_user_alpha(3, 2), EPS, "IMF seg2 slope", total_tests, total_failures)
+        deallocate(ctx)
+    end subroutine test_user_imf_file_parsing
+
+    ! --------------------------------------------------------------------
+    ! Utility: int to string
+    ! --------------------------------------------------------------------
+    pure function to_str(i) result(str)
+        integer, intent(in) :: i
+        character(len=16) :: str
+        write(str, '(I0)') i
+    end function to_str
+
+end module test_fsps_ssp_mod

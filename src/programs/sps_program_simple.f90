@@ -4,6 +4,7 @@
   USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE sps_utils
+  USE fsps_ssp, ONLY: generate_ssp_grid
   USE fsps_context, ONLY: fsps_context_create
   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
@@ -63,7 +64,7 @@
   ctx%add_neb_emission_val=1
 
   !compute the SSP
-  CALL SSP_GEN(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
+  CALL generate_ssp_grid(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags and write out mags and spec for SSP
   file1 = 'SSP_BPASS.out'
   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
@@ -90,7 +91,7 @@
   !pset%tage  = 12.5  !age at which we want the mags
 
   !compute the CSP
-  CALL SSP_GEN(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
+  CALL generate_ssp_grid(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags, and write out mags and spec for CSP
   file1 = 'CSP.out'
   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)

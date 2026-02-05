@@ -85,7 +85,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
 
      !add in blue stragglers
    IF (time(i).GE.BHB_SBS_TIME.AND.pset%sbss.GT.1E-3) &
-      CALL apply_blue_stragglers(ctx, i, pset%sbss, hb_wght, nmass, &
+      CALL apply_blue_stragglers(ctx, i, pset%zmet, pset%sbss, hb_wght, nmass, &
       mini, mact, logl, logt, logg, phase, wght)
 
      !modify the TP-AGB stars and Post-AGB stars

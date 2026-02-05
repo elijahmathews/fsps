@@ -27,6 +27,7 @@ contains
         call test_bs_perfect_line_zams()
         call test_bs_cache_safety()
         call test_bs_distribution()
+        call test_bs_zams_vs_current()
 
         call test_gb_phase_selectivity()
         call test_gb_villaume_factor()
@@ -61,6 +62,7 @@ contains
         call print_group("BS: Perfect Line ZAMS MSTO")
 
         allocate(ctx)
+        call setup_zams_context(ctx)
 
         allocate(mass_ini(n_time, NM))
         allocate(mass_act(n_time, NM))
@@ -78,18 +80,25 @@ contains
         phase = 0.0_wp
         weights = 0.0_wp
 
+        ! Setup ZAMS: Steeper slope (0.1) so we hit L=3.5 at index 35 (safe within NM)
         do i = 1, NM
-            log_t(1, i) = 0.05_wp * real(i, WP)
+            log_t(1, i) = 0.1_wp * real(i, WP)
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 1.0_wp
             mass_act(1, i) = mass_ini(1, i)
+            
+            ctx%state%logt_isoc(1, 1, i) = log_t(1, i)
+            ctx%state%logl_isoc(1, 1, i) = log_l(1, i)
+            ctx%state%mini_isoc(1, 1, i) = mass_ini(1, i)
         end do
 
+        ! Setup Current Age: Same as ZAMS until i=50, then turn off
         do i = 1, n_curr
             log_t(2, i) = log_t(1, i)
             if (i <= 50) then
                 log_l(2, i) = log_t(2, i)
             else
+                ! Turn off: Brighter than ZAMS by 1.0 dex
                 log_l(2, i) = log_t(2, i) + 1.0_wp
             end if
             mass_ini(2, i) = log_l(2, i) + 1.0_wp
@@ -100,21 +109,33 @@ contains
         n_mass = n_curr
         ctx%zin = 0
 
-        ! Logic Check:
-        ! MSTO should be detected at index 51. Code steps back to 50.
-        ! BS starts at index 50 properties.
-        ! log_l(50) = 0.05 * 50 = 2.5
-        ! BS_LUM_OFFSET = 0.2
-        ! First Step = 0.75 * (1/20) = 0.0375
-        ! Expected = 2.5 + 0.2 + 0.0375 = 2.7375
-        expected_logl = 2.7375_wp
+        ! MSTO should be detected at index 51. BS starts at index 50.
+        ! log_l(50) = 0.1 * 50 = 5.0. 
+        ! Wait, 5.0 > ZAMS_LUM_LIMIT (3.5). 
+        ! The ZAMS cache cut-off will handle this, but MSTO detection logic 
+        ! interpolates against the *cached* ZAMS. 
+        ! If Current T=5.0, and Cache max T=3.5, interpolate_linear will extrapolate or use max.
+        
+        ! Let's adjust the turn off to be earlier to be safe.
+        ! Turn off at 20.
+        do i = 1, n_curr
+            if (i <= 20) then
+                log_l(2, i) = log_t(2, i)
+            else
+                log_l(2, i) = log_t(2, i) + 1.0_wp
+            end if
+        end do
+        
+        ! log_l(20) = 0.1 * 20 = 2.0.
+        expected_logl = 2.0_wp + 0.2_wp + (0.75_wp * (1.0_wp/20.0_wp))
 
-        call apply_blue_stragglers(ctx, 2, 1.0_wp, 10.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+        call apply_blue_stragglers(ctx, 2, 1, 1.0_wp, 10.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
 
         call assert_int_equals(n_curr + 20, n_mass(2), "BS count updated", total_tests, total_failures)
         call assert_float_equals(expected_logl, log_l(2, n_curr + 1), EPS, "BS starts at MSTO-1", total_tests, total_failures)
         call assert_float_equals(7.0_wp, phase(2, n_curr + 1), EPS, "BS phase tag", total_tests, total_failures)
 
+        call teardown_zams_context(ctx)
         deallocate(ctx)
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_bs_perfect_line_zams
@@ -132,6 +153,7 @@ contains
         call print_group("BS: ZAMS Cache Safety")
 
         allocate(ctx)
+        call setup_zams_context(ctx)
 
         allocate(mass_ini(n_time, NM))
         allocate(mass_act(n_time, NM))
@@ -150,10 +172,14 @@ contains
         weights = 0.0_wp
 
         do i = 1, NM
-            log_t(1, i) = 0.04_wp * real(i, WP)
+            log_t(1, i) = 0.1_wp * real(i, WP) ! Steeper slope for safety
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 0.5_wp
             mass_act(1, i) = mass_ini(1, i)
+            
+            ctx%state%logt_isoc(1, 1, i) = log_t(1, i)
+            ctx%state%logl_isoc(1, 1, i) = log_l(1, i)
+            ctx%state%mini_isoc(1, 1, i) = mass_ini(1, i)
 
             log_t(2, i) = log_t(1, i)
             log_l(2, i) = log_t(2, i)
@@ -161,17 +187,22 @@ contains
             mass_act(2, i) = mass_ini(2, i)
         end do
 
+        ! Turn off at 20
+        do i = 21, n_curr
+             log_l(1, i) = log_t(1, i) + 1.0_wp
+             log_l(2, i) = log_t(2, i) + 1.0_wp
+        end do
+
         weights(1:n_curr) = 1.0_wp
         n_mass = n_curr
         ctx%zin = 0
 
-        call apply_blue_stragglers(ctx, 1, 1.0_wp, 2.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+        call apply_blue_stragglers(ctx, 1, 1, 1.0_wp, 2.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
 
         logl_t1 = log_l(1, n_curr + 1)
-
         call assert_int_equals(n_curr + 20, n_mass(1), "BS count time 1", total_tests, total_failures)
 
-        ! Reset arrays to original state before second call
+        ! Reset arrays but KEEP ZAMS context
         mass_ini = 0.0_wp
         mass_act = 0.0_wp
         log_l = 0.0_wp
@@ -180,26 +211,28 @@ contains
         phase = 0.0_wp
         weights = 0.0_wp
 
-        do i = 1, NM
-            log_t(1, i) = 0.04_wp * real(i, WP)
-            log_l(1, i) = log_t(1, i)
-            mass_ini(1, i) = log_l(1, i) + 0.5_wp
-            mass_act(1, i) = mass_ini(1, i)
-
+        ! Re-populate current age
+        do i = 1, n_curr
+            log_t(1, i) = 0.1_wp * real(i, WP)
             log_t(2, i) = log_t(1, i)
-            log_l(2, i) = log_t(2, i)
+            if (i <= 20) then
+                log_l(2, i) = log_t(2, i)
+            else
+                log_l(2, i) = log_t(2, i) + 1.0_wp
+            end if
             mass_ini(2, i) = log_l(2, i) + 0.5_wp
             mass_act(2, i) = mass_ini(2, i)
         end do
 
         weights(1:n_curr) = 1.0_wp
         n_mass = n_curr
-        call apply_blue_stragglers(ctx, 2, 1.0_wp, 2.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+        call apply_blue_stragglers(ctx, 2, 1, 2.0_wp, 1.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
         logl_t2 = log_l(2, n_curr + 1)
 
         call assert_float_equals(logl_t1, logl_t2, EPS, "Consistent BS logL across time", total_tests, total_failures)
         call assert_int_equals(n_curr + 20, n_mass(2), "BS count time 2", total_tests, total_failures)
 
+        call teardown_zams_context(ctx)
         deallocate(ctx)
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_bs_cache_safety
@@ -219,6 +252,7 @@ contains
         call print_group("BS: Luminosity/Mass Distribution")
 
         allocate(ctx)
+        call setup_zams_context(ctx)
 
         allocate(mass_ini(n_time, NM))
         allocate(mass_act(n_time, NM))
@@ -237,15 +271,20 @@ contains
         weights = 0.0_wp
 
         do i = 1, NM
-            log_t(1, i) = 0.05_wp * real(i, WP)
+            log_t(1, i) = 0.1_wp * real(i, WP) ! Steeper slope
             log_l(1, i) = log_t(1, i)
             mass_ini(1, i) = log_l(1, i) + 1.0_wp
             mass_act(1, i) = mass_ini(1, i)
+            
+            ctx%state%logt_isoc(1, 1, i) = log_t(1, i)
+            ctx%state%logl_isoc(1, 1, i) = log_l(1, i)
+            ctx%state%mini_isoc(1, 1, i) = mass_ini(1, i)
         end do
 
+        ! Turn off at 30
         do i = 1, n_curr
             log_t(2, i) = log_t(1, i)
-            if (i <= 50) then
+            if (i <= 30) then
                 log_l(2, i) = log_t(2, i)
             else
                 log_l(2, i) = log_t(2, i) + 1.0_wp
@@ -258,13 +297,13 @@ contains
         n_mass = n_curr
         ctx%zin = 0
 
-        call apply_blue_stragglers(ctx, 2, 1.0_wp, 1.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+        call apply_blue_stragglers(ctx, 2, 1, 1.0_wp, 1.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
 
         inv_nbs = 1.0_wp / 20.0_wp
 
         do k = 1, 20
             i = n_curr + k
-            expected_logl = log_l(2, 50) + 0.2_wp + (0.75_wp * real(k, WP) * inv_nbs)
+            expected_logl = log_l(2, 30) + 0.2_wp + (0.75_wp * real(k, WP) * inv_nbs)
             expected_mass = expected_logl + 1.0_wp
             write(msg, '("BS logL distribution (iter ", I0, ")")') k
             call assert_float_equals(expected_logl, log_l(2, i), EPS, trim(msg), total_tests, total_failures)
@@ -272,9 +311,84 @@ contains
             call assert_float_equals(expected_mass, mass_ini(2, i), EPS, trim(msg), total_tests, total_failures)
         end do
 
+        call teardown_zams_context(ctx)
         deallocate(ctx)
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_bs_distribution
+
+    subroutine test_bs_zams_vs_current()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: n_time = 2
+        integer, parameter :: n_curr = 40
+        integer, dimension(n_time) :: n_mass
+        real(WP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(WP), allocatable :: weights(:)
+        integer :: i
+
+        call print_group("BS: ZAMS vs Current Distinction")
+
+        allocate(ctx)
+        call setup_zams_context(ctx)
+
+        allocate(mass_ini(n_time, NM))
+        allocate(mass_act(n_time, NM))
+        allocate(log_l(n_time, NM))
+        allocate(log_t(n_time, NM))
+        allocate(log_g(n_time, NM))
+        allocate(phase(n_time, NM))
+        allocate(weights(NM))
+
+        mass_ini = 0.0_wp
+        mass_act = 0.0_wp
+        log_l = 0.0_wp
+        log_t = 0.0_wp
+        log_g = 0.0_wp
+        phase = 0.0_wp
+        weights = 0.0_wp
+
+        ! FIX: ZAMS must start faint (<3.5) for the limit finder to work.
+        do i = 1, NM
+            log_t(1, i) = 3.0_wp + 0.01_wp * real(i, WP)
+            log_l(1, i) = log_t(1, i) ! Crosses 3.5 around index 50
+            mass_ini(1, i) = 1.0_wp + 0.001_wp * real(i, WP)
+            mass_act(1, i) = mass_ini(1, i)
+            
+            ctx%state%logt_isoc(1, 1, i) = log_t(1, i)
+            ctx%state%logl_isoc(1, 1, i) = log_l(1, i)
+            ctx%state%mini_isoc(1, 1, i) = mass_ini(1, i)
+        end do
+
+        ! Current Age: Fainter, different slope
+        do i = 1, n_curr
+            log_t(2, i) = 3.0_wp + 0.01_wp * real(i, WP)
+            if (i <= 30) then
+                log_l(2, i) = log_t(2, i)
+            else
+                log_l(2, i) = log_t(2, i) + 1.0_wp
+            end if
+            mass_ini(2, i) = 1.0_wp + 0.001_wp * real(i, WP)
+            mass_act(2, i) = mass_ini(2, i)
+            weights(i) = 1.0_wp
+        end do
+
+        n_mass = n_curr
+        ctx%zin = 0
+
+        call apply_blue_stragglers(ctx, 2, 1, 1.0_wp, 2.0_wp, n_mass, mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+
+        call assert_int_equals(n_curr + 20, n_mass(2), "BS added from ZAMS", total_tests, total_failures)
+        
+        ! LogT should be interpolated from ZAMS. 
+        ! ZAMS relation is L=T.
+        ! BS LogL range: 3.5 to 4.25.
+        ! Current Age T relation: T = L - 1 (approx). If used, T would be ~2.5 to 3.25.
+        ! So T > 3.4 proves ZAMS cache usage.
+        call assert_true(log_t(2, n_curr + 1) > 3.4_wp, "BS logT uses ZAMS cache", total_tests, total_failures)
+
+        call teardown_zams_context(ctx)
+        deallocate(ctx)
+        deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+    end subroutine test_bs_zams_vs_current
 
     ! --------------------------------------------------------------------
     ! GROUP 2: GIANT BRANCH TESTS
@@ -773,5 +887,26 @@ contains
 
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass
+
+    subroutine setup_zams_context(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        
+        ! Allocate minimal state for ZAMS lookups (Metal 1, Time 1)
+        if (.not. associated(ctx%state%logl_isoc)) allocate(ctx%state%logl_isoc(1, 1, NM))
+        if (.not. associated(ctx%state%logt_isoc)) allocate(ctx%state%logt_isoc(1, 1, NM))
+        if (.not. associated(ctx%state%mini_isoc)) allocate(ctx%state%mini_isoc(1, 1, NM))
+        
+        ctx%state%logl_isoc = 0.0_wp
+        ctx%state%logt_isoc = 0.0_wp
+        ctx%state%mini_isoc = 0.0_wp
+    end subroutine setup_zams_context
+
+    subroutine teardown_zams_context(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        
+        if (associated(ctx%state%logl_isoc)) deallocate(ctx%state%logl_isoc)
+        if (associated(ctx%state%logt_isoc)) deallocate(ctx%state%logt_isoc)
+        if (associated(ctx%state%mini_isoc)) deallocate(ctx%state%mini_isoc)
+    end subroutine teardown_zams_context
 
 end module test_fsps_stellar_modifications_mod

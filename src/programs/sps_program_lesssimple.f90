@@ -3,7 +3,8 @@ PROGRAM LESSSIMPLE
   !set up modules
       USE fsps_precision, ONLY: WP
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-      USE sps_utils
+    USE sps_utils
+    USE fsps_ssp, ONLY: generate_ssp_grid
       USE fsps_cosmology, ONLY: convolve_with_mdf
         USE fsps_context, ONLY: fsps_context_create
         USE fsps_context_types, ONLY: fsps_context_t
@@ -57,7 +58,7 @@ PROGRAM LESSSIMPLE
   !in the common block set up in sps_vars.f90
   DO i=1,ctx%state%nz
      pset%zmet = i
-        CALL SSP_GEN(ctx, pset, ctx%state%mass_ssp_zz(:,i),&
+          CALL generate_ssp_grid(ctx, pset, ctx%state%mass_ssp_zz(:,i),&
               ctx%state%lbol_ssp_zz(:,i),ctx%state%spec_ssp_zz(:,:,i))
   ENDDO
 

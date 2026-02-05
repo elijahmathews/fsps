@@ -3,6 +3,7 @@ PROGRAM AUTOSPS
    USE fsps_precision, ONLY: WP
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
+   USE fsps_ssp, ONLY: generate_ssp_grid
    USE fsps_context, ONLY: fsps_context_create
    USE fsps_context_types, ONLY: fsps_context_t
   
@@ -170,12 +171,12 @@ PROGRAM AUTOSPS
      ! We already called SPS_SETUP(-1) at the top, so variables are ready.
      DO z=1,ctx%state%nz
         pset%zmet=z
-      CALL SSP_GEN(ctx, pset, mass_ssp(:,z), lbol_ssp(:,z), spec_ssp(:,:,z))
+      CALL generate_ssp_grid(ctx, pset, mass_ssp(:,z), lbol_ssp(:,z), spec_ssp(:,:,z))
      ENDDO
      CALL COMPSP(ctx, 3, ctx%state%nz, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
   ELSE
      ! We already called SPS_SETUP(-1), so speclib is populated.
-   CALL SSP_GEN(ctx, pset, mass_ssp(:,pset%zmet), lbol_ssp(:,pset%zmet), spec_ssp(:,:,pset%zmet))
+   CALL generate_ssp_grid(ctx, pset, mass_ssp(:,pset%zmet), lbol_ssp(:,pset%zmet), spec_ssp(:,:,pset%zmet))
    CALL COMPSP(ctx, 3, 1, file1, mass_ssp(:,pset%zmet:pset%zmet), lbol_ssp(:,pset%zmet:pset%zmet), &
         spec_ssp(:,:,pset%zmet:pset%zmet), pset, ocompsp)
   ENDIF

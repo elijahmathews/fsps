@@ -47,7 +47,6 @@ lib_sources = files(
     'src/core/fsps_types.f90',
     'src/core/sps_setup.f90',
     'src/core/sps_utils.f90',
-    'src/core/ssp_gen.f90',
 
     # IMF Module
     'src/imf/fsps_imf.f90',
@@ -66,6 +65,7 @@ lib_sources = files(
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
+    'src/physics/fsps_ssp.f90',
     'src/physics/fsps_stellar_modifications.f90',
 
     # SFH Modules
@@ -133,6 +133,7 @@ unit_test_sources = files(
     'tests/physics/test_fsps_cosmology.f90',
     'tests/physics/test_fsps_dust.f90',
     'tests/physics/test_fsps_gas.f90',
+    'tests/physics/test_fsps_ssp.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
     'tests/spectra/test_fsps_smoothing.f90',
     'tests/spectra/test_fsps_spectral_library.f90',

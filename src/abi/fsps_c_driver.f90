@@ -4,6 +4,7 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_ssp, ONLY: generate_ssp_grid
       USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
@@ -932,7 +933,7 @@ CONTAINS
    ALLOCATE(ssp_lbol(n_time))
    ALLOCATE(ssp_spec(n_spec, n_time))
     
-   CALL SSP_GEN(fsps_default_ctx, global_pset, ssp_mass, ssp_lbol, ssp_spec)
+   CALL generate_ssp_grid(fsps_default_ctx, global_pset, ssp_mass, ssp_lbol, ssp_spec)
 
     IF (global_pset%sfh .EQ. 0) THEN
        ! --- SSP Mode ---
@@ -1010,8 +1011,8 @@ CONTAINS
 
     old_z = global_pset%zmet
     global_pset%zmet = zidx
-   CALL SSP_GEN(fsps_default_ctx, global_pset, fsps_default_ctx%state%mass_ssp_zz(:,zidx), &
-                fsps_default_ctx%state%lbol_ssp_zz(:,zidx), fsps_default_ctx%state%spec_ssp_zz(:,:,zidx))
+   CALL generate_ssp_grid(fsps_default_ctx, global_pset, fsps_default_ctx%state%mass_ssp_zz(:,zidx), &
+                          fsps_default_ctx%state%lbol_ssp_zz(:,zidx), fsps_default_ctx%state%spec_ssp_zz(:,:,zidx))
     has_ssp(zidx) = 1
     has_ssp_age(zidx,:) = global_pset%ssp_gen_age
     global_pset%zmet = old_z

@@ -80,6 +80,7 @@ contains
     !>
     !> @param[inout] ctx          Simulation context.
     !> @param[in]    time_idx     Index of the current time step.
+    !> @param[in]    metal_idx    Metallicity index
     !> @param[in]    s_bs         Specific frequency of Blue Stragglers relative to HB.
     !> @param[in]    hb_weight    Total weight of the Horizontal Branch population.
     !> @param[inout] n_mass       Number of mass points in the isochrone (updated).
@@ -90,11 +91,11 @@ contains
     !> @param[inout] log_g        Array of Log Gravity (modified).
     !> @param[inout] phase        Array of evolutionary phases (modified).
     !> @param[inout] weights      Array of weights (modified).
-    subroutine apply_blue_stragglers(ctx, time_idx, s_bs, hb_weight, n_mass, &
-                                     mass_ini, mass_act, log_l, log_t, log_g, &
-                                     phase, weights)
+    subroutine apply_blue_stragglers(ctx, time_idx, metal_idx, s_bs, hb_weight, n_mass, &
+                                     mass_ini, mass_act, log_l, log_t, log_g, phase, &
+                                     weights)
         type(fsps_context_t), intent(inout) :: ctx
-        integer, intent(in) :: time_idx
+        integer, intent(in) :: time_idx, metal_idx
         real(WP), intent(in) :: s_bs
         real(WP), intent(in) :: hb_weight
         integer, dimension(:), intent(inout) :: n_mass
@@ -104,7 +105,8 @@ contains
         real(WP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
-        real(WP), dimension(:), allocatable :: zams_t_cache, zams_l_cache
+        ! FIX 1: zams_m_cache added to allocatable array list
+        real(WP), dimension(:), allocatable :: zams_t_cache, zams_l_cache, zams_m_cache
         integer :: idx_zams_limit, idx_msto
         integer :: i, k, n_curr
         real(WP) :: bs_total_weight
@@ -118,44 +120,33 @@ contains
         bs_total_weight = s_bs * hb_weight
         n_curr = n_mass(time_idx)
 
-        ! 2. Define the extent of the T~0 Main Sequence (ZAMS)
-        !    We look at time index 1 (ZAMS) and find where LogL exceeds 3.5.
-        !    This range (1:idx_zams_limit) defines the "stable" MS relation.
+        ! 2. DEFINE ZAMS FROM GLOBAL CONTEXT
         idx_zams_limit = 1
-        do while (log_l(1, idx_zams_limit) < ZAMS_LUM_LIMIT)
+        do while (ctx%state%logl_isoc(metal_idx, 1, idx_zams_limit) < ZAMS_LUM_LIMIT)
             idx_zams_limit = idx_zams_limit + 1
-            if (idx_zams_limit >= size(log_l, 2)) exit
+            if (idx_zams_limit >= NM) exit
         end do
         
-        ! Clamp to array size
-        idx_zams_limit = min(idx_zams_limit, size(log_l, 2))
-        
-        ! Need at least 2 points to interpolate
+        idx_zams_limit = min(idx_zams_limit, NM)
         if (idx_zams_limit < 2) return
 
-        ! Explicitly copy the ZAMS relation to contiguous cache arrays.
-        ! Since log_t(1, :) is strided in memory (column-major), passing it directly 
-        ! to interpolate_linear (which expects CONTIGUOUS input) forces the compiler 
-        ! to create a temporary copy on *every* loop iteration.
-        ! We do this copy ONCE here.
         allocate(zams_t_cache(idx_zams_limit))
         allocate(zams_l_cache(idx_zams_limit))
+        allocate(zams_m_cache(idx_zams_limit))
 
-        zams_t_cache = log_t(1, 1:idx_zams_limit)
-        zams_l_cache = log_l(1, 1:idx_zams_limit)
+        ! FIX 2: Copy ALL ZAMS data from Global Context (Time Step 1)
+        ! Accessing 'log_t(1,:)' here would be WRONG (that is the current age).
+        zams_t_cache = ctx%state%logt_isoc(metal_idx, 1, 1:idx_zams_limit)
+        zams_l_cache = ctx%state%logl_isoc(metal_idx, 1, 1:idx_zams_limit)
+        zams_m_cache = ctx%state%mini_isoc(metal_idx, 1, 1:idx_zams_limit)
 
-        ! 3. Find the Main Sequence Turn-Off (MSTO) at the current age (time_idx)
-        !    We iterate through the current isochrone. For each star, we ask:
-        !    "If this star were on the ZAMS at this LogT, what would its LogL be?"
-        !    If the actual LogL differs significantly, the star has evolved off the MS.
+        ! 3. Find MSTO
         idx_msto = 0
         diff_from_zams = 0.0_wp
         
         do while (diff_from_zams < MSTO_TOLERANCE .and. idx_msto < n_curr)
             idx_msto = idx_msto + 1
             
-            ! Interpolate: Given current LogT, find ZAMS LogL
-            ! X = ZAMS LogT(1:limit), Y = ZAMS LogL(1:limit), Target = Current LogT
             lum_expected_on_zams = interpolate_linear(zams_t_cache, &
                                                       zams_l_cache, &
                                                       log_t(time_idx, idx_msto))
@@ -165,71 +156,59 @@ contains
             diff_from_zams = abs(lum_expected_on_zams - log_l(time_idx, idx_msto))
         end do
 
-        ! Clean up
-        if (allocated(zams_t_cache)) deallocate(zams_t_cache)
-        if (allocated(zams_l_cache)) deallocate(zams_l_cache)
-
-        ! If we didn't find a valid turn-off point, exit
         if (idx_msto < 2) return
 
         ! 4. Add Blue Straggler Stars
-        !    We add N_BS_STARS starting from the MSTO luminosity
         if (n_curr + N_BS_STARS > NM) then
             write(*,*) '[FSPS-STELLAR] Error: Arrays full in apply_blue_stragglers.'
             stop
         end if
 
-        ! We step back one index to capture the point just *before* divergence
         idx_msto = idx_msto - 1
-
         inv_nbs = 1.0_wp / real(N_BS_STARS, WP)
 
         do k = 1, N_BS_STARS
             
             i = n_curr + k
 
-            ! Distribute uniformly in Luminosity
-            ! Range: [L_TO + Offset, L_TO + Offset + Extent]
-            ! Legacy: logl(t,i-1) + 0.2 + k*0.75/nbs
             new_logl = log_l(time_idx, idx_msto) + BS_LUM_OFFSET + &
                        (BS_LUM_EXTENT * real(k,WP) * inv_nbs)
 
             log_l(time_idx, i) = new_logl
 
-            ! Interpolate Mass from ZAMS using new LogL
-            ! X = ZAMS LogL, Y = ZAMS Mass, Target = New LogL
-            new_mass = interpolate_linear(log_l(1, 1:idx_zams_limit), &
-                                          mass_ini(1, 1:idx_zams_limit), &
+            ! FIX 3: Interpolate using the CACHED ZAMS arrays
+            ! Previously you used log_l(1, ...), which was incorrect.
+            new_mass = interpolate_linear(zams_l_cache, &
+                                          zams_m_cache, &
                                           new_logl)
             
-            ! Fallback if interpolation fails (e.g. extrapolating beyond ZAMS)
             if (ieee_is_nan(new_mass)) new_mass = mass_ini(time_idx, idx_msto)
             
             mass_ini(time_idx, i) = new_mass
-            mass_act(time_idx, i) = new_mass ! BS stars haven't lost mass yet (simplified)
+            mass_act(time_idx, i) = new_mass 
 
-            ! Interpolate Temperature from ZAMS using new LogL
-            ! X = ZAMS LogL, Y = ZAMS LogT, Target = New LogL
-            new_logt = interpolate_linear(log_l(1, 1:idx_zams_limit), &
-                                          log_t(1, 1:idx_zams_limit), &
+            ! FIX 4: Interpolate Temperature from CACHED ZAMS arrays
+            new_logt = interpolate_linear(zams_l_cache, &
+                                          zams_t_cache, &
                                           new_logl)
             
             if (ieee_is_nan(new_logt)) new_logt = log_t(time_idx, idx_msto)
             
             log_t(time_idx, i) = new_logt
 
-            ! Calculate Gravity
             log_g(time_idx, i) = log10(GRAVITY_L_M_T_COEFF * mass_act(time_idx, i)) - &
                                  log_l(time_idx, i) + 4.0_wp * log_t(time_idx, i)
 
-            ! Set Phase and Weight
             phase(time_idx, i) = BS_PHASE_ID
             weights(i)         = inv_nbs * bs_total_weight
 
         end do
 
-        ! Update total star count
         n_mass(time_idx) = n_mass(time_idx) + N_BS_STARS
+
+        if (allocated(zams_t_cache)) deallocate(zams_t_cache)
+        if (allocated(zams_l_cache)) deallocate(zams_l_cache)
+        if (allocated(zams_m_cache)) deallocate(zams_m_cache)
 
     end subroutine apply_blue_stragglers
 

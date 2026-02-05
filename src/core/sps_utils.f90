@@ -123,18 +123,6 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-     SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
-       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_precision, ONLY: WP
-       USE fsps_types, ONLY: PARAMS
-       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       TYPE(PARAMS), INTENT(in) :: pset
-      REAL(WP), INTENT(inout), DIMENSION(:) :: mass_ssp, lbol_ssp
-      REAL(WP), INTENT(inout), DIMENSION(:,:) :: spec_ssp
-     END SUBROUTINE SSP_GEN
-  END INTERFACE
-
-  INTERFACE
      SUBROUTINE GETZMET(smass,pos)
       USE fsps_precision, ONLY: WP
        USE fsps_types, ONLY: PARAMS

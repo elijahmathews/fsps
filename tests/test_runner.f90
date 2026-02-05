@@ -11,6 +11,7 @@ PROGRAM TEST_RUNNER
       USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
          USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
+      USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
   ! Exit codes
@@ -263,9 +264,9 @@ PROGRAM TEST_RUNNER
   pset%dust2 = 0.0
    ctx%add_neb_emission_val = 1
    CALL fsps_context_set_pset(ctx, pset)
-   IF (verbose_output) CALL DUMP_STATE('BEFORE SSP_GEN (SSP)', ctx, pset)
-   CALL SSP_GEN(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER SSP_GEN (SSP)', ctx, new_mass_ssp, new_lbol_ssp)
+   IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (SSP)', ctx, pset)
+   CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (SSP)', ctx, new_mass_ssp, new_lbol_ssp)
    new_spec_ssp_cmp = new_spec_ssp_ctx
 
   WRITE(*,*) 'Generating new CSP data...'
@@ -274,9 +275,9 @@ PROGRAM TEST_RUNNER
   pset%dust1 = 1.0   
   pset%dust2 = 0.3
    CALL fsps_context_set_pset(ctx, pset)
-   IF (verbose_output) CALL DUMP_STATE('BEFORE SSP_GEN (CSP)', ctx, pset)
-   CALL SSP_GEN(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER SSP_GEN (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
+   IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (CSP)', ctx, pset)
+   CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
 
   DO i = 1, ntfull_ctx
      IF (.NOT. ALLOCATED(new_ocompsp(i)%mags)) ALLOCATE(new_ocompsp(i)%mags(nbands_ctx))
