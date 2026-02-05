@@ -77,7 +77,7 @@ lib_sources = files(
 
     # Spectra Modules
     'src/spectra/fsps_smoothing.f90',
-    'src/spectra/spec_get.f90',
+    'src/spectra/fsps_spectral_library.f90',
     'src/spectra/spec_indices.f90',
     'src/spectra/spec_mags.f90',
     'src/spectra/spec_sbf.f90',
@@ -135,6 +135,7 @@ unit_test_sources = files(
     'tests/physics/test_fsps_gas.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
     'tests/spectra/test_fsps_smoothing.f90',
+    'tests/spectra/test_fsps_spectral_library.f90',
     'tests/test_fsps.f90' # Main driver
 )
 

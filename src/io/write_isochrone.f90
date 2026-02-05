@@ -8,7 +8,8 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
      USE fsps_precision, ONLY: WP
      USE fsps_constants, ONLY: NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
      USE fsps_types, ONLY: PARAMS
-     USE sps_utils, ONLY : getmags,getspec
+     USE sps_utils, ONLY : getmags
+     USE fsps_spectral_library, ONLY: get_stellar_spectrum
      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
           modify_horizontal_branch
      USE fsps_imf, ONLY: compute_imf_weights
@@ -94,8 +95,8 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
      DO i=1,nmass(tt)
         
         !get the spectrum
-        CALL GETSPEC(ctx, pset, mact(tt,i), logt(tt,i), 10**logl(tt,i), &
-             logg(tt,i), phase(tt,i), ffco(tt,i), lmdot(tt,i), wght(i), spec)
+        CALL get_stellar_spectrum(ctx, pset, mact(tt,i), logt(tt,i), 10**logl(tt,i), &
+             logg(tt,i), phase(tt,i), ffco(tt,i), lmdot(tt,i), spec)
         !calculate magnitudes
      CALL GETMAGS(ctx, dz, spec, mags)
 

@@ -32,6 +32,9 @@ program test_fsps
     use test_fsps_smoothing_mod, only: run_fsps_smoothing_tests, &
                                   failures_smoothing => total_failures, &
                                   tests_smoothing => total_tests
+    use test_fsps_spectral_library_mod, only: run_fsps_spectral_library_tests, &
+                                  failures_spectral_library => total_failures, &
+                                  tests_spectral_library => total_tests
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
@@ -51,6 +54,7 @@ program test_fsps
     call run_fsps_stellar_modifications_tests()
     call run_fsps_cosmology_tests()
     call run_fsps_smoothing_tests()
+    call run_fsps_spectral_library_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -99,6 +103,11 @@ program test_fsps
         (tests_smoothing - failures_smoothing), &
         tests_smoothing &
     )
+    call print_summary_line( &
+        "fsps_spectral_library", &
+        (tests_spectral_library - failures_spectral_library), &
+        tests_spectral_library &
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
@@ -108,7 +117,8 @@ program test_fsps
                            failures_gas + &
                            failures_stellar_modifications + &
                            failures_cosmology + &
-                           failures_smoothing
+                           failures_smoothing + &
+                           failures_spectral_library
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
@@ -118,7 +128,8 @@ program test_fsps
                         tests_gas + &
                         tests_stellar_modifications + &
                         tests_cosmology + &
-                        tests_smoothing
+                        tests_smoothing + &
+                        tests_spectral_library
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

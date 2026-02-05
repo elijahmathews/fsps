@@ -19,7 +19,7 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: NM, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR
    USE fsps_types, ONLY: PARAMS
-   USE sps_utils, ONLY: getspec
+   USE fsps_spectral_library, ONLY: get_stellar_spectrum
    USE fsps_smoothing, ONLY: apply_smoothing
   USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
      modify_horizontal_branch, add_remnant_mass, add_xray_binaries
@@ -235,9 +235,8 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
               !IF (1.0.GE.pset%fcstar) tco = 1.0
            ENDIF
 
-          CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), &
-             10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),&
-             wght(j)/MAXVAL(wght(1:nmass(i))*10**logl(i,1:nmass(i))),tspec)
+          CALL get_stellar_spectrum(ctx, pset, mact(i,j), logt(i,j), &
+             10**logl(i,j),logg(i,j),phase(i,j),tco,lmdot(i,j),tspec)
 
            !only construct SSPs for particular evolutionary
            !phases if evtype NE -1

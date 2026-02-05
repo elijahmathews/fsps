@@ -4,6 +4,7 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
       USE fsps_interpolation, ONLY: find_interval
@@ -1319,9 +1320,8 @@ CONTAINS
 
    CALL fsps_ensure_default_ctx()
    CALL C_F_POINTER(c_spec, f_spec, [fsps_default_ctx%state%nspec])
-   CALL GETSPEC(fsps_default_ctx, global_pset, REAL(mact, WP), REAL(logt, WP), REAL(lbol, WP), &
-             REAL(logg, WP), REAL(phase, WP), REAL(ffco, WP), &
-             REAL(lmdot, WP), REAL(wght, WP), f_spec)
+   CALL get_stellar_spectrum(fsps_default_ctx, global_pset, REAL(mact, WP), REAL(logt, WP), REAL(lbol, WP), &
+             REAL(logg, WP), REAL(phase, WP), REAL(ffco, WP), REAL(lmdot, WP), f_spec)
   END SUBROUTINE fsps_stellar_spectrum
 
   ! -------------------------------------------------------------------------

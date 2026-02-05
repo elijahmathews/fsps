@@ -8,7 +8,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
       USE fsps_precision, ONLY: WP
       USE fsps_constants, ONLY: NM, BHB_SBS_TIME
       USE fsps_types, ONLY: PARAMS
-      USE sps_utils, ONLY : getmags,getspec
+      USE sps_utils, ONLY : getmags
+      USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
          modify_horizontal_branch
    USE fsps_imf, ONLY: compute_imf_weights
@@ -96,8 +97,8 @@ SUBROUTINE SBF(ctx, pset, outfile)
      DO j=1,nmass(i)
            
         !get spectrum of ith star
-        CALL GETSPEC(ctx, pset, mact(i,j), logt(i,j), 10**logl(i,j), logg(i,j), &
-             phase(i,j), ffco(i,j), lmdot(i,j), wght(j), tspec)
+         CALL get_stellar_spectrum(ctx, pset, mact(i,j), logt(i,j), 10**logl(i,j), logg(i,j), &
+            phase(i,j), ffco(i,j), lmdot(i,j), tspec)
 
         !compute first and second moments of flux for
         !all stars and also by evolutionary phase
