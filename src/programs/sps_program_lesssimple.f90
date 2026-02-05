@@ -3,7 +3,8 @@ PROGRAM LESSSIMPLE
   !set up modules
       USE fsps_precision, ONLY: WP
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-        USE sps_utils
+      USE sps_utils
+      USE fsps_cosmology, ONLY: convolve_with_mdf
         USE fsps_context, ONLY: fsps_context_create
         USE fsps_context_types, ONLY: fsps_context_t
   
@@ -63,7 +64,7 @@ PROGRAM LESSSIMPLE
   !define the yield for a closed box distribution
   pset%pmetals = 0.02
   !compute SSP convolved with a closed box  
-        CALL PZ_CONVOL(ctx, pset%pmetals, zave, spec_pz, lbol_pz, mass_pz)
+      CALL convolve_with_mdf(ctx, pset%pmetals, zave, spec_pz, lbol_pz, mass_pz)
   spec_pz_zz(:,:,1) = spec_pz
   mass_pz_zz(:,1) = mass_pz
   lbol_pz_zz(:,1) = lbol_pz

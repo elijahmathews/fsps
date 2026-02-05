@@ -53,12 +53,12 @@ PROGS = simple lesssimple autosps spec_bin
 # The common object files required by the programs
 # We wrap them in addprefix to place them inside the build directory
 COMMON_NAMES = fsps_types.o fsps_cache.o sps_utils.o fsps_context_types.o compsp.o csp_gen.o \
-	ssp_gen.o fsps_context.o spec_mags.o sps_setup.o cosmo_pz_convol.o cosmo_tuniv.o \
+	ssp_gen.o fsps_context.o spec_mags.o sps_setup.o fsps_cosmology.o \
 	integrate_sfhw.o fsps_integration.o fsps_interpolation.o fsps_special_functions.o \
 	fsps_imf.o fsps_dust.o spec_get.o spec_sbf.o blue_stragglers.o hb_mod.o \
 	remnants_add.o spec_indices.o spec_smooth.o gb_mod.o nebular_add.o xrb_add.o \
-	write_isochrone.o sfh_stats.o interp_zt.o vacair_conv.o igm_absorb.o \
-	cosmo_lumdist.o sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o fsps_c_driver.o
+	write_isochrone.o sfh_stats.o interp_zt.o \
+	sfh_weight.o sfh_limit.o sfh_info.o sfh_tabular.o fsps_c_driver.o
 
 COMMON_OBJS = $(addprefix $(BUILD_DIR)/, $(COMMON_NAMES))
 
@@ -71,7 +71,8 @@ TEST_MOD_OBJS = \
 	$(TEST_BUILD_DIR)/test_fsps_integration.o \
     $(TEST_BUILD_DIR)/test_fsps_interpolation.o \
 	$(TEST_BUILD_DIR)/test_fsps_special_functions.o \
-	$(TEST_BUILD_DIR)/test_fsps_dust.o
+	$(TEST_BUILD_DIR)/test_fsps_dust.o \
+	$(TEST_BUILD_DIR)/test_fsps_cosmology.o
 
 # Main unit test driver
 TEST_DRIVER_OBJ = $(TEST_BUILD_DIR)/test_fsps.o

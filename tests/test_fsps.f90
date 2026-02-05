@@ -26,6 +26,9 @@ program test_fsps
     use test_fsps_stellar_modifications_mod, only: run_fsps_stellar_modifications_tests, &
                                  failures_stellar_modifications => total_failures, &
                                  tests_stellar_modifications => total_tests
+    use test_fsps_cosmology_mod, only: run_fsps_cosmology_tests, &
+                                  failures_cosmology => total_failures, &
+                                  tests_cosmology => total_tests
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
@@ -43,6 +46,7 @@ program test_fsps
     call run_fsps_dust_tests()
     call run_fsps_gas_tests()
     call run_fsps_stellar_modifications_tests()
+    call run_fsps_cosmology_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -81,6 +85,11 @@ program test_fsps
         (tests_stellar_modifications - failures_stellar_modifications), &
         tests_stellar_modifications &
     )
+    call print_summary_line( &
+        "fsps_cosmology", &
+        (tests_cosmology - failures_cosmology), &
+        tests_cosmology &
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
@@ -88,7 +97,8 @@ program test_fsps
                            failures_special_functions + &
                            failures_dust + &
                            failures_gas + &
-                           failures_stellar_modifications
+                           failures_stellar_modifications + &
+                           failures_cosmology
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
@@ -96,7 +106,8 @@ program test_fsps
                         tests_special_functions + &
                         tests_dust + &
                         tests_gas + &
-                        tests_stellar_modifications
+                        tests_stellar_modifications + &
+                        tests_cosmology
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

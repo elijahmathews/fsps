@@ -10,7 +10,8 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    use fsps_types, ONLY: PARAMS, COMPSPOUT
    use sps_utils, only: write_isochrone, setup_tabular_sfh, &
                                   csp_gen, sfhinfo, &
-                                  smoothspec, igm_absorb, getindx, getmags
+                                  smoothspec, getindx, getmags
+   use fsps_cosmology, only: get_igm_transmission, vacuum_to_air
    use fsps_gas, only: apply_nebular_emission
    use fsps_dust, only: apply_agn_dust_emission
    use fsps_interpolation, only: interpolate_linear
@@ -182,8 +183,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      endif
      ! Add IGM absorption
      if (add_igm_absorption.EQ.1.AND.pset%zred.GT.SAFE_FLOOR) then
-        spec_csp = igm_absorb(spec_lambda,spec_csp, pset%zred,&
-                              pset%igm_factor)
+      spec_csp = spec_csp * get_igm_transmission(spec_lambda, pset%zred, pset%igm_factor)
      endif
      !add AGN dust
    IF (add_agn_dust.EQ.1.AND.pset%fagn.GT.SAFE_FLOOR) THEN
@@ -359,7 +359,7 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: SAFE_FLOOR, VERBOSE
    USE fsps_types, ONLY: PARAMS
-   USE sps_utils, ONLY : vactoair
+   USE fsps_cosmology, ONLY: vacuum_to_air
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
    TYPE(fsps_context_t), INTENT(IN) :: ctx
@@ -415,7 +415,7 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
         IF (vactoair_flag.EQ.0) THEN
            WRITE(20,'(50000(F15.4))') spec_lambda
         ELSE
-           WRITE(20,'(50000(F15.4))') vactoair(spec_lambda)
+           WRITE(20,'(50000(F15.4))') vacuum_to_air(spec_lambda)
         ENDIF
      ENDIF
      IF (write_compsp.EQ.4) THEN
@@ -459,7 +459,7 @@ SUBROUTINE COMPSP_SETUP_OUTPUT(ctx, write_compsp, pset, outfile, imin, imax)
         IF (vactoair_flag.EQ.0) THEN
            WRITE(20,'(50000(F15.4))') spec_lambda
         ELSE
-           WRITE(20,'(50000(F15.4))') vactoair(spec_lambda)
+           WRITE(20,'(50000(F15.4))') vacuum_to_air(spec_lambda)
         ENDIF
        ENDIF
        IF (write_compsp.EQ.4) THEN

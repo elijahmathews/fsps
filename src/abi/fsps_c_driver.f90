@@ -4,6 +4,7 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_cosmology, ONLY: vacuum_to_air
       USE fsps_interpolation, ONLY: find_interval
      USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
         fsps_context_destroy, fsps_context_set_param_int, fsps_context_set_param_float, &
@@ -1236,7 +1237,7 @@ CONTAINS
         DO j = 1, n_time
            DO i = 1, n_spec
               IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
-                 lamarr = vactoair(fsps_default_ctx%state%spec_lambda(i:i))
+                 lamarr = vacuum_to_air(fsps_default_ctx%state%spec_lambda(i:i))
               lam = lamarr(1)
            ELSE
                  lam = fsps_default_ctx%state%spec_lambda(i)
@@ -1294,7 +1295,7 @@ CONTAINS
      CALL C_F_POINTER(c_indices, f_indices, [n_indx])
 
      IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
-        lamarr = vactoair(fsps_default_ctx%state%spec_lambda)
+        lamarr = vacuum_to_air(fsps_default_ctx%state%spec_lambda)
      ELSE
         lamarr = fsps_default_ctx%state%spec_lambda
      END IF
@@ -1466,7 +1467,7 @@ CONTAINS
         CALL fsps_ensure_default_ctx()
         CALL C_F_POINTER(c_lambda, f_lambda, [fsps_default_ctx%state%nspec])
         IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
-           f_lambda = vactoair(fsps_default_ctx%state%spec_lambda)
+           f_lambda = vacuum_to_air(fsps_default_ctx%state%spec_lambda)
       ELSE
            f_lambda = fsps_default_ctx%state%spec_lambda
       END IF
@@ -1478,7 +1479,7 @@ CONTAINS
       CALL C_F_POINTER(c_emlambda, f_emlambda, [NEMLINE])
         CALL fsps_ensure_default_ctx()
         IF (fsps_default_ctx%vactoair_flag_val == 1) THEN
-           f_emlambda = vactoair(fsps_default_ctx%state%nebem_line_pos)
+           f_emlambda = vacuum_to_air(fsps_default_ctx%state%nebem_line_pos)
       ELSE
            f_emlambda = fsps_default_ctx%state%nebem_line_pos
       END IF

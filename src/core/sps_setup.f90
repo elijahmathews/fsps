@@ -15,8 +15,9 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
             NTAU_DAGB, NTEFF_DAGB, NEMLINE, NLAM_NEBCONT, NEBNZ, NEBNAGE, NEBNIP, &
             NAGNDUST, NAGNDUST_SPEC, SAFE_FLOOR, C_LIGHT, PI, L_SOL
    USE fsps_cache, ONLY: fsps_setup_cache_t, fsps_cache_get_setup
-  USE fsps_context_types, ONLY: fsps_context_t
-   USE sps_utils, ONLY: get_tuniv, get_lumdist, airtovac, sps_takedown, fsps_resolve_paths
+   USE fsps_context_types, ONLY: fsps_context_t
+    USE sps_utils, ONLY: sps_takedown, fsps_resolve_paths
+    USE fsps_cosmology, ONLY: get_universe_age, get_luminosity_distance, air_to_vacuum
    USE fsps_interpolation, ONLY: find_interval, interpolate_linear
    USE fsps_integration, ONLY: integrate_trapezoid_array
    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -1848,12 +1849,12 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
   DO i=1,500
      a = (i-1)/499.*(1-1/1001.)+1/1001.
      cosmospl(i,1) = 1/a-1  !redshift
-   cosmospl(i,2) = get_tuniv(ctx, cosmospl(i,1))   ! Tuniv in Gyr
-   cosmospl(i,3) = get_lumdist(ctx, cosmospl(i,1)) ! Lum Dist in pc
+   cosmospl(i,2) = get_universe_age(ctx, cosmospl(i,1))   ! Tuniv in Gyr
+   cosmospl(i,3) = get_luminosity_distance(ctx, cosmospl(i,1)) ! Lum Dist in pc
   ENDDO
 
   !set Tuniv
-   tuniv = get_tuniv(ctx, zero)
+   tuniv = get_universe_age(ctx, zero)
 
   !----------------------------------------------------------------!
   !-----------------read in index definitions----------------------!
@@ -1873,7 +1874,7 @@ SUBROUTINE SPS_SETUP(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
         ENDIF
         !convert the Lick indices from air to vacuum wavelengths
         IF (i.LE.25) THEN
-           indexdefined(1:6,i) = airtovac(indexdefined(1:6,i))
+           indexdefined(1:6,i) = air_to_vacuum(indexdefined(1:6,i))
         ENDIF
      ENDDO
      CLOSE(99)

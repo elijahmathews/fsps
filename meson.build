@@ -49,12 +49,6 @@ lib_sources = files(
     'src/core/sps_utils.f90',
     'src/core/ssp_gen.f90',
 
-    # Cosmology Modules
-    'src/cosmology/cosmo_lumdist.f90',
-    'src/cosmology/cosmo_pz_convol.f90',
-    'src/cosmology/cosmo_tuniv.f90',
-    'src/cosmology/vacair_conv.f90',
-
     # IMF Module
     'src/imf/fsps_imf.f90',
 
@@ -69,10 +63,10 @@ lib_sources = files(
     'src/math/interp_zt.f90',
 
     # Physics Modules
+    'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_stellar_modifications.f90',
-    'src/physics/igm_absorb.f90',
 
     # SFH Modules
     'src/sfh/sfh_info.f90',
@@ -136,6 +130,7 @@ unit_test_sources = files(
     'tests/math/test_fsps_integration.f90',
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',
+    'tests/physics/test_fsps_cosmology.f90',
     'tests/physics/test_fsps_dust.f90',
     'tests/physics/test_fsps_gas.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
