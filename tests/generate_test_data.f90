@@ -9,6 +9,7 @@ PROGRAM GENERATE_TEST_DATA
    USE sps_utils
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_context, ONLY: fsps_context_create
+   USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
   ! Variables for SSP generation (allocatable)
@@ -159,7 +160,7 @@ PROGRAM GENERATE_TEST_DATA
   pset%ssp_gen_age = 1
 
   ! Compute SSP
-   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+   CALL generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Write SSP Data
   WRITE(*,*) 'Saving SSP results...'
@@ -175,8 +176,8 @@ PROGRAM GENERATE_TEST_DATA
   pset%dust1 = 1.0   
   pset%dust2 = 0.3
   
-  ! Re-run SSP_GEN
-   CALL SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+  ! Re-run generate_ssp_grid
+   CALL generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Manually allocate components of ocompsp array elements
   DO i = 1, ntfull_ctx
