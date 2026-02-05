@@ -29,6 +29,9 @@ program test_fsps
     use test_fsps_cosmology_mod, only: run_fsps_cosmology_tests, &
                                   failures_cosmology => total_failures, &
                                   tests_cosmology => total_tests
+    use test_fsps_smoothing_mod, only: run_fsps_smoothing_tests, &
+                                  failures_smoothing => total_failures, &
+                                  tests_smoothing => total_tests
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
@@ -47,6 +50,7 @@ program test_fsps
     call run_fsps_gas_tests()
     call run_fsps_stellar_modifications_tests()
     call run_fsps_cosmology_tests()
+    call run_fsps_smoothing_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -90,6 +94,11 @@ program test_fsps
         (tests_cosmology - failures_cosmology), &
         tests_cosmology &
     )
+    call print_summary_line( &
+        "fsps_smoothing", &
+        (tests_smoothing - failures_smoothing), &
+        tests_smoothing &
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
@@ -98,7 +107,8 @@ program test_fsps
                            failures_dust + &
                            failures_gas + &
                            failures_stellar_modifications + &
-                           failures_cosmology
+                           failures_cosmology + &
+                           failures_smoothing
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
@@ -107,7 +117,8 @@ program test_fsps
                         tests_dust + &
                         tests_gas + &
                         tests_stellar_modifications + &
-                        tests_cosmology
+                        tests_cosmology + &
+                        tests_smoothing
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

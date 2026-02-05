@@ -11,7 +11,7 @@ module test_utils_mod
     character(len=7), parameter :: C_RED_BOLD = char(27)//'[1;31m' ! Bold Red
 
     public :: assert_float_equals, assert_int_equals, assert_true
-    public :: assert_is_nan, assert_is_neg_inf
+    public :: assert_is_nan, assert_is_neg_inf, assert_relative_error
     public :: print_major_header, print_minor_header, print_group, print_summary_line
     public :: C_RESET, C_BOLD, C_RED, C_GREEN, C_RED_BOLD
 

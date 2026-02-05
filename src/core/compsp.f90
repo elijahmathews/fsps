@@ -10,7 +10,8 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    use fsps_types, ONLY: PARAMS, COMPSPOUT
    use sps_utils, only: write_isochrone, setup_tabular_sfh, &
                                   csp_gen, sfhinfo, &
-                                  smoothspec, getindx, getmags
+                                  getindx, getmags
+   use fsps_smoothing, only: apply_smoothing
    use fsps_cosmology, only: get_igm_transmission, vacuum_to_air
    use fsps_gas, only: apply_nebular_emission
    use fsps_dust, only: apply_agn_dust_emission
@@ -178,8 +179,8 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      ! Now do a bunch of stuff with the spectrum
      ! Smooth the spectrum
      if (pset%sigma_smooth.GT.0.0) then
-      call smoothspec(ctx, spec_lambda, spec_csp, pset%sigma_smooth,&
-                        pset%min_wave_smooth, pset%max_wave_smooth)
+      call apply_smoothing(ctx, spec_lambda, spec_csp, pset%sigma_smooth,&
+                  pset%min_wave_smooth, pset%max_wave_smooth)
      endif
      ! Add IGM absorption
      if (add_igm_absorption.EQ.1.AND.pset%zred.GT.SAFE_FLOOR) then

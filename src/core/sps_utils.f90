@@ -298,18 +298,6 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-       SUBROUTINE SMOOTHSPEC(ctx, lambda, spec, sigma, minl, maxl, ires)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_precision, ONLY: WP
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(WP), INTENT(inout), DIMENSION(:) :: spec
-      REAL(WP), INTENT(in), DIMENSION(:) :: lambda
-      REAL(WP), INTENT(in), DIMENSION(:), OPTIONAL :: ires
-      REAL(WP), INTENT(in) :: sigma,minl,maxl
-     END SUBROUTINE SMOOTHSPEC
-  END INTERFACE
-
-  INTERFACE
      FUNCTION VACTOAIR(lam)
           USE fsps_precision, ONLY: WP
        REAL(WP), DIMENSION(:), INTENT(in) :: lam

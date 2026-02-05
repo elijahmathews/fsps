@@ -19,7 +19,8 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: NM, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR
    USE fsps_types, ONLY: PARAMS
-  USE sps_utils, ONLY: getspec, smoothspec
+   USE sps_utils, ONLY: getspec
+   USE fsps_smoothing, ONLY: apply_smoothing
   USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
      modify_horizontal_branch, add_remnant_mass, add_xray_binaries
   USE fsps_gas, only: apply_nebular_emission
@@ -292,8 +293,8 @@ SUBROUTINE SSP_GEN(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   IF (smooth_lsf.EQ.1) THEN
      DO j=1,ntfull
-        CALL SMOOTHSPEC(ctx, spec_lambda, spec_ssp(:,j), 99.d0, lsfinfo%minlam, &
-             lsfinfo%maxlam,lsfinfo%lsf)
+         CALL apply_smoothing(ctx, spec_lambda, spec_ssp(:,j), 99.d0, lsfinfo%minlam, &
+            lsfinfo%maxlam, lsfinfo%lsf)
      ENDDO
   ENDIF
 

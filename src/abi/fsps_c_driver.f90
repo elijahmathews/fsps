@@ -4,6 +4,7 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
       USE fsps_interpolation, ONLY: find_interval
      USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
@@ -1634,8 +1635,8 @@ CONTAINS
       CALL C_F_POINTER(c_wave, f_wave, [fsps_default_ctx%state%nspec])
       CALL C_F_POINTER(c_spec, f_spec, [fsps_default_ctx%state%nspec])
 
-      CALL SMOOTHSPEC(fsps_default_ctx, f_wave, f_spec, REAL(sigma_broad, WP), &
-            REAL(minw, WP), REAL(maxw, WP))
+      CALL apply_smoothing(fsps_default_ctx, f_wave, f_spec, REAL(sigma_broad, WP), &
+         REAL(minw, WP), REAL(maxw, WP))
    END SUBROUTINE fsps_smooth_spectrum
 
    ! Write isochrone data to a .cmd file.
