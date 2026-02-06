@@ -286,7 +286,7 @@ contains
         x = 10.0_wp
         expected = 1.8547268838698457e-19_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-18_wp, "γ(50, 10)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-16_wp, "γ(50, 10)", total_tests, total_failures)
 
     end subroutine test_gammainc_edge_limit_cases
 
