@@ -10,14 +10,14 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    use fsps_types, ONLY: PARAMS, COMPSPOUT
    use fsps_sfh, only: get_sfh_properties_at_age
    use fsps_tabular, only: load_tabular_sfh
-   use sps_utils, only: write_isochrone, &
-                                  csp_gen, &
-                                  getindx, getmags
+   use sps_utils, only: write_isochrone, csp_gen
    use fsps_smoothing, only: apply_smoothing
    use fsps_cosmology, only: get_igm_transmission, vacuum_to_air
    use fsps_gas, only: apply_nebular_emission
    use fsps_dust, only: apply_agn_dust_emission
    use fsps_interpolation, only: interpolate_linear
+   use fsps_spectral_indices, only: compute_spectral_indices
+   use fsps_photometry, only: compute_magnitudes
      IMPLICIT NONE
 
      INTERFACE
@@ -194,19 +194,19 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    ENDIF
      ! Compute spectral indices
      if (write_compsp.EQ.4) then
-      call getindx(ctx, spec_lambda, spec_csp, indx)
+      call compute_spectral_indices(ctx, spec_lambda, spec_csp, indx)
      else
         indx = 0.0
      endif
      ! Compute mags
      if (redshift_colors.EQ.0) then
-      call getmags(ctx, pset%zred, spec_csp, mags, pset%mag_compute)
+      call compute_magnitudes(ctx, pset%zred, spec_csp, mags, pset%mag_compute)
      else
         ! here we compute the redshift at the corresponding age
       zred = min(max(interpolate_linear(cosmospl(:,2), cosmospl(:,1), age),&
                        0.0), 20.0)
         write(33,*) zred
-      call getmags(ctx, zred, spec_csp, mags, pset%mag_compute)
+      call compute_magnitudes(ctx, zred, spec_csp, mags, pset%mag_compute)
      endif
 
      ! ---------

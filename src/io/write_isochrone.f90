@@ -8,7 +8,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
      USE fsps_precision, ONLY: WP
      USE fsps_constants, ONLY: NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
      USE fsps_types, ONLY: PARAMS
-     USE sps_utils, ONLY : getmags
+     USE fsps_photometry, ONLY : compute_magnitudes
      USE fsps_spectral_library, ONLY: get_stellar_spectrum
      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
           modify_horizontal_branch
@@ -98,7 +98,7 @@ SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
         CALL get_stellar_spectrum(ctx, pset, mact(tt,i), logt(tt,i), 10**logl(tt,i), &
              logg(tt,i), phase(tt,i), ffco(tt,i), lmdot(tt,i), spec)
         !calculate magnitudes
-     CALL GETMAGS(ctx, dz, spec, mags)
+     CALL compute_magnitudes(ctx, dz, spec, mags)
 
         IF (isoc_type.EQ.'bsti') THEN
            loggi = LOG10( GRAVITY_L_M_T_COEFF*mact_isoc_full(zz,tt,i)/&

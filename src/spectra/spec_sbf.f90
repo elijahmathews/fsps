@@ -8,7 +8,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
       USE fsps_precision, ONLY: WP
       USE fsps_constants, ONLY: NM, BHB_SBS_TIME
       USE fsps_types, ONLY: PARAMS
-      USE sps_utils, ONLY : getmags
+      use fsps_photometry, only : compute_magnitudes
       USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
          modify_horizontal_branch
@@ -110,7 +110,7 @@ SUBROUTINE SBF(ctx, pset, outfile)
      !compute the SBF
      tspec2 = spec2/spec1
 
-   CALL GETMAGS(ctx, zero, tspec2, mags)
+   CALL compute_magnitudes(ctx, zero, tspec2, mags)
      WRITE(56,fmt) time(i),0.0,0.0,0.0,mags
 
   ENDDO

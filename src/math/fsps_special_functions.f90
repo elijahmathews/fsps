@@ -3,10 +3,12 @@ module fsps_special_functions
     !> Provides mathematical special functions needed for FSPS physics.
     
     use fsps_precision, only: WP
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan, ieee_negative_inf
     implicit none
 
     private
 
+    public :: mag_from_flux
     public :: expi
     public :: gammainc
 
@@ -17,8 +19,30 @@ module fsps_special_functions
     ! Euler-Mascheroni constant
     real(WP), parameter :: GAMMA = 0.57721566490153286060651209008240243104215933593992_wp
     real(WP), parameter :: EPS = 1.0e-20_wp
+    real(WP), parameter :: LOG10_FACTOR = 2.5_wp
 
 contains
+
+    !> @brief
+    !> Computes the astronomical magnitude from a given flux.
+    !>
+    !> @details
+    !> Returns NaN if flux <= 0.
+    !>
+    !> @param[in] flux The input flux.
+    !> @return    The magnitude, or NaN if undefined.
+    elemental function mag_from_flux(flux) result(mag)
+        real(WP), intent(in) :: flux
+        real(WP) :: mag
+
+        ! Branchless-friendly logic (better for AD/GPU)
+        if (flux > 0.0_wp) then
+            mag = -LOG10_FACTOR * log10(flux)
+        else
+            ! Return a signal, don't crash the car
+            mag = get_quiet_nan()
+        end if
+    end function mag_from_flux
 
     !> @brief
     !> Computes the Exponential Integral Ei(x).
@@ -170,14 +194,12 @@ contains
 
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(val)
-        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
         real(WP) :: val
         val = ieee_value(0.0_wp, ieee_quiet_nan)
     end function get_quiet_nan
 
     !> @brief Helper to generate Negative Infinity
     pure function get_neg_infinity() result(val)
-        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_negative_inf
         real(WP) :: val
         val = ieee_value(0.0_wp, ieee_negative_inf)
     end function get_neg_infinity

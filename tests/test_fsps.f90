@@ -32,9 +32,15 @@ program test_fsps
     use test_fsps_smoothing_mod, only: run_fsps_smoothing_tests, &
                                   failures_smoothing => total_failures, &
                                   tests_smoothing => total_tests
+    use test_fsps_spectral_indices_mod, only: run_fsps_spectral_indices_tests, &
+                                  failures_spectral_indices => total_failures, &
+                                  tests_spectral_indices => total_tests
     use test_fsps_spectral_library_mod, only: run_fsps_spectral_library_tests, &
                                   failures_spectral_library => total_failures, &
                                   tests_spectral_library => total_tests
+    use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
+                                  failures_photometry => total_failures, &
+                                  tests_photometry => total_tests
     use test_fsps_ssp_mod, only: run_fsps_ssp_tests, &
                                  failures_ssp => total_failures, &
                                  tests_ssp => total_tests
@@ -60,7 +66,9 @@ program test_fsps
     call run_fsps_stellar_modifications_tests()
     call run_fsps_cosmology_tests()
     call run_fsps_smoothing_tests()
+    call run_fsps_spectral_indices_tests()
     call run_fsps_spectral_library_tests()
+    call run_fsps_photometry_tests()
     call run_fsps_ssp_tests()
     call run_fsps_sfh_tests()
 
@@ -122,9 +130,19 @@ program test_fsps
         tests_smoothing &
     )
     call print_summary_line( &
+        "fsps_spectral_indices", &
+        (tests_spectral_indices - failures_spectral_indices), &
+        tests_spectral_indices &
+    )
+    call print_summary_line( &
         "fsps_spectral_library", &
         (tests_spectral_library - failures_spectral_library), &
         tests_spectral_library &
+    )
+    call print_summary_line( &
+        "fsps_photometry", &
+        (tests_photometry - failures_photometry), &
+        tests_photometry &
     )
     
     grand_total_failures = failures_imf + &
@@ -136,7 +154,9 @@ program test_fsps
                            failures_stellar_modifications + &
                            failures_cosmology + &
                            failures_smoothing + &
+                           failures_spectral_indices + &
                            failures_spectral_library + &
+                           failures_photometry + &
                            failures_ssp + &
                            failures_sfh
     
@@ -149,7 +169,9 @@ program test_fsps
                         tests_stellar_modifications + &
                         tests_cosmology + &
                         tests_smoothing + &
+                        tests_spectral_indices + &
                         tests_spectral_library + &
+                        tests_photometry + &
                         tests_ssp + &
                         tests_sfh
 

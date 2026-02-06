@@ -9,6 +9,8 @@ MODULE FSPS_C_DRIVER
       USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
       USE fsps_interpolation, ONLY: find_interval
+      use fsps_spectral_indices, ONLY: compute_spectral_indices
+      use fsps_photometry, ONLY: compute_magnitudes
      USE fsps_context, ONLY: fsps_context_t, fsps_context_create, fsps_context_setup, &
         fsps_context_destroy, fsps_context_set_param_int, fsps_context_set_param_float, &
         fsps_context_set_param_str, fsps_context_compute_ssp, fsps_context_get_paths, &
@@ -1168,7 +1170,7 @@ CONTAINS
      
         DO i = 1, n_time
         tspec = global_ocompsp(i)%spec
-      CALL GETMAGS(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), all_bands)
+      CALL compute_magnitudes(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), all_bands)
      END DO
 
         DEALLOCATE(tspec)
@@ -1199,7 +1201,7 @@ CONTAINS
 
        DO i = 1, n_time
         tspec = global_ocompsp(i)%spec
-      CALL GETMAGS(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), f_mc)
+      CALL compute_magnitudes(fsps_default_ctx, REAL(zred, WP), tspec, f_mags(:,i), f_mc)
      END DO
 
        DEALLOCATE(tspec)
@@ -1303,7 +1305,7 @@ CONTAINS
         lamarr = fsps_default_ctx%state%spec_lambda
      END IF
 
-   CALL GETINDX(fsps_default_ctx, lamarr, f_spec, f_indices)
+   CALL compute_spectral_indices(fsps_default_ctx, lamarr, f_spec, f_indices)
     DEALLOCATE(lamarr)
   END SUBROUTINE fsps_get_indices
 

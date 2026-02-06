@@ -50,37 +50,6 @@ MODULE SPS_UTILS
   END INTERFACE
 
   INTERFACE
-       SUBROUTINE GETINDX(ctx, lambda, spec, indices)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_precision, ONLY: WP
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(WP), INTENT(in), DIMENSION(:) :: spec,lambda
-      REAL(WP), INTENT(inout), DIMENSION(:) :: indices
-     END SUBROUTINE GETINDX
-  END INTERFACE
-  
-  INTERFACE
-       SUBROUTINE GETMAGS(ctx, zred, spec, mags, mag_compute)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_precision, ONLY: WP
-          TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(WP), INTENT(in) :: zred
-      REAL(WP), INTENT(inout), DIMENSION(:) :: spec
-      REAL(WP), DIMENSION(:) :: mags
-       INTEGER, DIMENSION(:), INTENT(in), OPTIONAL  :: mag_compute
-     END SUBROUTINE GETMAGS
-  END INTERFACE
-
-  INTERFACE
-     FUNCTION INTIND(lam,func,lo,hi)
-      USE fsps_precision, ONLY: WP
-      REAL(WP), INTENT(in), DIMENSION(:) :: lam,func
-      REAL(WP), INTENT(in) :: lo,hi
-      REAL(WP) :: intind
-     END FUNCTION INTIND
-  END INTERFACE
-
-  INTERFACE
        SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)
           USE fsps_context_types, ONLY: fsps_context_t
           USE fsps_types, ONLY: PARAMS
