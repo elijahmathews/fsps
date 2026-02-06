@@ -56,7 +56,6 @@ lib_sources = files(
     'src/math/fsps_interpolation.f90',
     'src/math/fsps_special_functions.f90',
     'src/math/integrate_sfhw.f90',
-    'src/math/interp_zt.f90',
 
     # Physics Modules
     'src/physics/fsps_cosmology.f90',
