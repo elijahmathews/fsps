@@ -38,6 +38,9 @@ module fsps_ssp
     use fsps_smoothing, only: apply_smoothing
     use fsps_spectral_library, only: get_stellar_spectrum
 
+    !> Math Modules
+    use fsps_interpolation, only: find_interval
+
     implicit none
     private
 
@@ -49,6 +52,7 @@ module fsps_ssp
     public :: compute_integrated_properties, accumulate_spectrum
     public :: interpolate_time_grid
     public :: configure_imf_parameters
+    public :: compute_interpolated_ssp
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS
@@ -159,10 +163,11 @@ contains
             
             ! Copy pre-computed data for the requested metallicity
             spec_grid = ctx%state%bpass_spec_ssp(:, :, pset%zmet)
+            lbol_grid = 0.0_wp
             mass_grid = ctx%state%bpass_mass_ssp(:, pset%zmet)
             
             ! BPASS usually doesn't provide separate Lbol history in the same way,
-            ! or it's handled differently, but we leave it 0 or computed elsewhere.
+            ! or it's handled differently, but we leave it 0.
             ! (Legacy code implies simple copy for spec/mass)
             
             return ! Exit immediately
@@ -273,6 +278,8 @@ contains
     !> @brief Allocates the recyclable isochrone buffer.
     subroutine init_isochrone_buffer(buf)
         type(isochrone_buffer_t), intent(out) :: buf
+
+        if (associated(buf%initial_mass)) return ! Already initialized
         
         ! Allocate to maximum size NM defined in fsps_constants.
         ! We do this once per SSP generation run.
@@ -643,7 +650,7 @@ contains
     !> @param[in,out] lbol_grid Integrated luminosity history (modified in place).
     !> @param[in,out] spec_grid Spectral grid (modified in place).
     subroutine interpolate_time_grid(ctx, z_idx, mass_grid, lbol_grid, spec_grid)
-        type(fsps_context_t), intent(in)    :: ctx
+        type(fsps_context_t), intent(in), target :: ctx
         integer, intent(in)                 :: z_idx
         real(WP), intent(inout), contiguous :: mass_grid(:)
         real(WP), intent(inout), contiguous :: lbol_grid(:)
@@ -862,5 +869,185 @@ contains
         end do
 
     end subroutine apply_lsf_smoothing_grid
+
+    ! ------------------------------------------------------------------------
+    ! INTERPOLATION & QUERY UTILITIES
+    ! ------------------------------------------------------------------------
+
+    !> @brief Interpolates or integrates the SSP grid over Metallicity (Z) and Age (T).
+    !>
+    !> @details
+    !> Performs one of three operations based on arguments:
+    !> 1. **Point Interpolation:** Returns SSP properties at specific `z_pos` and `t_pos`.
+    !> 2. **Isochrone Interpolation:** Returns full time-grid for a specific `z_pos`.
+    !> 3. **MDF Integration:** Integrates over a Metallicity Distribution Function (MDF) 
+    !>    defined by `z_pos` (mean) and `z_width_or_power` (width or power law).
+    !>
+    !> @param[in]  ctx       FSPS Context containing the `_ssp_zz` grids.
+    !> @param[in]  z_pos     Target log(Z/Zsol).
+    !> @param[out] mass_out  Output integrated mass.
+    !> @param[out] lbol_out  Output integrated bolometric luminosity.
+    !> @param[out] spec_out  Output spectrum.
+    !> @param[in]  t_pos     (Optional) Target Age in log(years). If present, output is scalar (time dimension collapsed).
+    !> @param[in]  z_param   (Optional) If < 0, treats as smoothing sigma. If > 0, treats as power-law index for MDF.
+    subroutine compute_interpolated_ssp(ctx, z_pos, mass_out, lbol_out, spec_out, t_pos, z_param)
+        type(fsps_context_t), intent(in), target :: ctx
+        real(WP), intent(in)             :: z_pos
+        real(WP), intent(out)            :: mass_out(:), lbol_out(:)
+        real(WP), intent(out)            :: spec_out(:,:)
+        real(WP), intent(in), optional   :: t_pos
+        real(WP), intent(in), optional   :: z_param
+
+        ! Local variables
+        integer :: nz, nt, nspec
+        integer :: z_lo, z_hi, t_lo
+        integer :: i
+        real(WP) :: dt, dz, z0
+        real(WP) :: weight_lo, weight_hi
+        real(WP), allocatable :: mdf_weights(:)
+        
+        ! Pointers to context arrays for readability
+        real(WP), pointer :: grid_mass(:,:), grid_lbol(:,:), grid_spec(:,:,:)
+        real(WP), pointer :: z_legend(:), t_full(:)
+        real(WP) :: z_sol
+
+        ! Validate Context
+        if (.not. allocated(ctx%state%mass_ssp_zz)) then
+             error stop "compute_interpolated_ssp: SSP Grid not generated yet."
+        end if
+
+        ! Bind pointers
+        nz        = ctx%state%nz
+        nt        = ctx%state%ntfull
+        nspec     = ctx%state%nspec
+        z_legend  => ctx%state%zlegend
+        z_sol     = ctx%state%zsol
+        t_full    => ctx%state%time_full
+        grid_mass => ctx%state%mass_ssp_zz
+        grid_lbol => ctx%state%lbol_ssp_zz
+        grid_spec => ctx%state%spec_ssp_zz
+
+        ! --------------------------------------------------------------------
+        ! CASE 1: POINT INTERPOLATION (Specific Z, Specific T)
+        ! --------------------------------------------------------------------
+        if (present(t_pos)) then
+            
+            ! Validation
+            if (present(z_param)) then
+                error stop "compute_interpolated_ssp: Cannot specify both Age (t_pos) and MDF (z_param)."
+            end if
+            if (size(mass_out) > 1) then
+                error stop "compute_interpolated_ssp: t_pos specified, but output arrays are arrays, not scalars."
+            end if
+
+            ! 1. Find Time Interval
+            t_lo = max(1, min(find_interval(t_full, t_pos), nt - 1))
+            dt   = (t_pos - t_full(t_lo)) / (t_full(t_lo+1) - t_full(t_lo))
+
+            ! 2. Find Z Interval
+            z_lo = max(1, min(find_interval(log10(z_legend/z_sol), z_pos), nz - 1))
+            dz   = (z_pos - log10(z_legend(z_lo)/z_sol)) / &
+                   (log10(z_legend(z_lo+1)/z_sol) - log10(z_legend(z_lo)/z_sol))
+
+            ! 3. Bilinear Interpolation
+            !    f(z,t) = (1-dz)(1-dt)*00 + dz(1-dt)*10 + (1-dz)dt*01 + dz*dt*11
+            
+            ! Precompute weights
+            weight_lo = 1.0_wp - dz
+            weight_hi = dz
+
+            ! Interpolate Mass
+            mass_out(1) = (1.0_wp - dt) * (weight_lo * grid_mass(t_lo, z_lo)   + weight_hi * grid_mass(t_lo, z_lo+1)) + &
+                          (dt)          * (weight_lo * grid_mass(t_lo+1, z_lo) + weight_hi * grid_mass(t_lo+1, z_lo+1))
+
+            ! Interpolate Lbol
+            lbol_out(1) = (1.0_wp - dt) * (weight_lo * grid_lbol(t_lo, z_lo)   + weight_hi * grid_lbol(t_lo, z_lo+1)) + &
+                          (dt)          * (weight_lo * grid_lbol(t_lo+1, z_lo) + weight_hi * grid_lbol(t_lo+1, z_lo+1))
+
+            ! Interpolate Spectrum (Vectorized)
+            spec_out(:,1) = (1.0_wp - dt) * (weight_lo * grid_spec(:, t_lo, z_lo)   + weight_hi * grid_spec(:, t_lo, z_lo+1)) + &
+                            (dt)          * (weight_lo * grid_spec(:, t_lo+1, z_lo) + weight_hi * grid_spec(:, t_lo+1, z_lo+1))
+
+            return
+        end if
+
+        ! --------------------------------------------------------------------
+        ! CASE 2 & 3: GRID OUTPUT (Full Time History)
+        ! --------------------------------------------------------------------
+        
+        if (present(z_param)) then
+            ! --- MDF INTEGRATION ---
+            allocate(mdf_weights(nz))
+            mdf_weights = 0.0_wp
+
+            z_lo = max(1, min(find_interval(log10(z_legend/z_sol), z_pos), nz - 1))
+            dz   = (z_pos - log10(z_legend(z_lo)/z_sol)) / &
+                   (log10(z_legend(z_lo+1)/z_sol) - log10(z_legend(z_lo)/z_sol))
+
+            if (z_param < 0.0_wp) then
+                ! Triangular Smoothing Kernel (Legacy Logic)
+                ! w1=0.25, w2=0.5, w3=0.25 implicit in logic below
+                ! This smooths neighboring metallicity points.
+                
+                ! Center weights
+                mdf_weights(z_lo)   = mdf_weights(z_lo)   + 0.5_wp*(1.0_wp - dz) + 0.25_wp*dz
+                mdf_weights(z_lo+1) = mdf_weights(z_lo+1) + 0.25_wp*(1.0_wp - dz) + 0.5_wp*dz
+                
+                ! Wings (handling boundaries)
+                if (z_lo > 1)  mdf_weights(z_lo-1) = 0.25_wp * (1.0_wp - dz)
+                if (z_lo+2 <= nz) mdf_weights(z_lo+2) = 0.25_wp * dz
+                
+                ! Set Loop bounds for optimization
+                z_lo = max(1, z_lo - 1)
+                z_hi = min(nz, z_lo + 3) ! Just scan the local area
+
+            else
+                ! Power Law MDF: dN/dZ ~ (Z/Z0)^pow * exp(-Z/Z0)
+                z0  = (10.0_wp**z_pos) * z_sol
+                
+                ! Calculate weights for all Z
+                mdf_weights = (z_legend / z0 * exp(-z_legend / z0))**z_param
+                
+                z_lo = 1
+                z_hi = nz
+            end if
+
+            if (sum(mdf_weights) > tiny(0.0_wp)) then
+                mdf_weights = mdf_weights / sum(mdf_weights) ! Normalize
+            end if
+
+            ! Perform Integration
+            mass_out = 0.0_wp
+            lbol_out = 0.0_wp
+            spec_out = 0.0_wp
+
+            do i = z_lo, z_hi
+                if (mdf_weights(i) <= tiny(0.0_wp)) cycle
+                
+                ! Vectorized accumulation
+                mass_out = mass_out + mdf_weights(i) * grid_mass(:, i)
+                lbol_out = lbol_out + mdf_weights(i) * grid_lbol(:, i)
+                
+                ! Loop order for spectrum: Spectrum is (Lambda, Time, Z)
+                ! We are summing over Z, so we add (Lambda, Time) slices.
+                spec_out = spec_out + mdf_weights(i) * grid_spec(:, :, i)
+            end do
+
+        else
+            ! --- SIMPLE Z INTERPOLATION (No Age Interpolation) ---
+            z_lo = max(1, min(find_interval(log10(z_legend/z_sol), z_pos), nz - 1))
+            dz   = (z_pos - log10(z_legend(z_lo)/z_sol)) / &
+                   (log10(z_legend(z_lo+1)/z_sol) - log10(z_legend(z_lo)/z_sol))
+
+            weight_lo = 1.0_wp - dz
+            weight_hi = dz
+
+            ! Linear Interpolation between two Z planes
+            mass_out = weight_lo * grid_mass(:, z_lo)   + weight_hi * grid_mass(:, z_lo+1)
+            lbol_out = weight_lo * grid_lbol(:, z_lo)   + weight_hi * grid_lbol(:, z_lo+1)
+            spec_out = weight_lo * grid_spec(:, :, z_lo) + weight_hi * grid_spec(:, :, z_lo+1)
+        end if
+
+    end subroutine compute_interpolated_ssp
 
 end module fsps_ssp

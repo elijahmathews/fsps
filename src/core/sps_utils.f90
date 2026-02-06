@@ -303,18 +303,6 @@ MODULE SPS_UTILS
      END SUBROUTINE WRITE_ISOCHRONE
   END INTERFACE
 
-  INTERFACE
-       SUBROUTINE ZTINTERP(ctx, zpos, spec, lbol, mass, tpos, zpow)
-          USE fsps_context_types, ONLY: fsps_context_t
-          USE fsps_precision, ONLY: WP
-          TYPE(fsps_context_t), INTENT(IN) :: ctx
-      REAL(WP),INTENT(in) :: zpos
-      REAL(WP),INTENT(in), OPTIONAL :: tpos,zpow
-      REAL(WP),INTENT(inout),DIMENSION(:) :: mass, lbol
-      REAL(WP),INTENT(inout),DIMENSION(:,:) :: spec
-     END SUBROUTINE ZTINTERP
-  END INTERFACE
-
 CONTAINS
 
   LOGICAL FUNCTION fsps_data_exists(path)

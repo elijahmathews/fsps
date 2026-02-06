@@ -6,7 +6,7 @@ module test_fsps_ssp_mod
     use fsps_ssp, only: generate_ssp_grid, isochrone_buffer_t, init_isochrone_buffer, reset_buffer, &
                         free_isochrone_buffer, load_timestep_data, apply_isochrone_physics, &
                         compute_integrated_properties, accumulate_spectrum, interpolate_time_grid, &
-                        configure_imf_parameters
+                        configure_imf_parameters, compute_interpolated_ssp
     use fsps_spectral_library, only: get_stellar_spectrum
     use fsps_imf, only: compute_imf_weights
     use fsps_stellar_modifications, only: add_remnant_mass, modify_giant_branch
@@ -40,6 +40,11 @@ contains
         call test_bpass_short_circuit()
         call test_user_imf_file_parsing()
 
+        call test_interp_point_bilinear()
+        call test_interp_grid_z_only()
+        call test_mdf_smoothing_kernel()
+        call test_mdf_power_law()
+
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_ssp_tests
 
@@ -61,6 +66,10 @@ contains
         allocate(ctx%state%nmass_isoc(n_z, n_t))
         allocate(ctx%state%timestep_isoc(n_z, n_t))
         allocate(ctx%state%zlegend(n_z))
+        allocate(ctx%state%mass_ssp_zz(n_t, n_z))
+        allocate(ctx%state%lbol_ssp_zz(n_t, n_z))
+        allocate(ctx%state%spec_ssp_zz(1, n_t, n_z)) ! 1 wavelength for simplicity in tests
+        allocate(ctx%state%time_full(n_t))
 
         ctx%state%mini_isoc = 0.0_wp
         ctx%state%mact_isoc = 0.0_wp
@@ -73,6 +82,12 @@ contains
         ctx%state%nmass_isoc = 0
         ctx%state%timestep_isoc = 0.0_wp
         ctx%state%zlegend = 0.019_wp
+        ctx%state%mass_ssp_zz = 0.0_wp
+        ctx%state%lbol_ssp_zz = 0.0_wp
+        ctx%state%spec_ssp_zz = 0.0_wp
+        ctx%state%time_full = 0.0_wp
+        ctx%state%ntfull = n_t
+        ctx%state%nspec = 1
 
         ctx%state%nt = n_t
         ctx%state%nz = n_z
@@ -92,6 +107,10 @@ contains
         if (associated(ctx%state%nmass_isoc)) deallocate(ctx%state%nmass_isoc)
         if (associated(ctx%state%timestep_isoc)) deallocate(ctx%state%timestep_isoc)
         if (associated(ctx%state%zlegend)) deallocate(ctx%state%zlegend)
+        if (allocated(ctx%state%mass_ssp_zz)) deallocate(ctx%state%mass_ssp_zz)
+        if (allocated(ctx%state%lbol_ssp_zz)) deallocate(ctx%state%lbol_ssp_zz)
+        if (allocated(ctx%state%spec_ssp_zz)) deallocate(ctx%state%spec_ssp_zz)
+        if (associated(ctx%state%time_full)) deallocate(ctx%state%time_full)
     end subroutine teardown_isochrone_context
 
     ! --------------------------------------------------------------------
@@ -533,6 +552,153 @@ contains
         call assert_float_equals(2.3_wp, ctx%state%imf_user_alpha(3, 2), EPS, "IMF seg2 slope", total_tests, total_failures)
         deallocate(ctx)
     end subroutine test_user_imf_file_parsing
+
+    ! --------------------------------------------------------------------
+    ! GROUP 5: Interpolated SSP Queries (compute_interpolated_ssp)
+    ! --------------------------------------------------------------------
+
+    subroutine test_interp_point_bilinear()
+        !> Case 1: Specific Z and Specific T
+        type(fsps_context_t), allocatable, target :: ctx
+        real(WP) :: mass_out(1), lbol_out(1), spec_out(1,1)
+        real(WP) :: z_target, t_target
+        
+        call print_group("Interp SSP: Point Bilinear")
+
+        allocate(ctx)
+        ! Setup 2x2 grid for manual verification
+        ! Z = [-1.0, 0.0] (log solar)
+        ! T = [6.0, 7.0] (log yr)
+        call setup_isochrone_context(ctx, 2, 2)
+        
+        ! Mock Data: Mass = t_idx + 10 * z_idx
+        ! (1,1)=11, (1,2)=12
+        ! (2,1)=21, (2,2)=22
+        ctx%state%mass_ssp_zz(1,1) = 11.0_wp; ctx%state%mass_ssp_zz(2,1) = 12.0_wp
+        ctx%state%mass_ssp_zz(1,2) = 21.0_wp; ctx%state%mass_ssp_zz(2,2) = 22.0_wp
+        
+        ctx%state%time_full(1) = 6.0_wp; ctx%state%time_full(2) = 7.0_wp
+        ctx%state%zlegend(1) = 0.019_wp * 0.1_wp; ctx%state%zlegend(2) = 0.019_wp * 1.0_wp
+        ctx%state%zsol = 0.019_wp
+
+        ! Target: Dead center (Z log=-0.5, T=6.5)
+        ! Expected: Average of all 4 corners = (11+12+21+22)/4 = 16.5
+        z_target = -0.5_wp
+        t_target = 6.5_wp
+
+        call compute_interpolated_ssp(ctx, z_target, mass_out, lbol_out, spec_out, t_pos=t_target)
+
+        call assert_float_equals(16.5_wp, mass_out(1), EPS, &
+                                 "Bilinear Mass Center", total_tests, total_failures)
+
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_interp_point_bilinear
+
+    subroutine test_interp_grid_z_only()
+        !> Case 2: Specific Z, Full Time Grid
+        type(fsps_context_t), allocatable, target :: ctx
+        real(WP), allocatable :: mass_out(:), lbol_out(:), spec_out(:,:)
+        real(WP) :: z_target
+        integer :: nt
+        
+        call print_group("Interp SSP: Grid Z-Only")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 3, 2) ! 3 Metallicities, 2 Times
+        nt = 2
+        
+        allocate(mass_out(nt), lbol_out(nt), spec_out(1, nt))
+
+        ! Grid Z-values: -1.0, 0.0, +1.0
+        ctx%state%zlegend(1) = 0.0019_wp
+        ctx%state%zlegend(2) = 0.019_wp
+        ctx%state%zlegend(3) = 0.19_wp
+        ctx%state%zsol = 0.019_wp
+
+        ! Set Mass to be purely Z-dependent
+        ctx%state%mass_ssp_zz(:, 1) = 10.0_wp
+        ctx%state%mass_ssp_zz(:, 2) = 20.0_wp
+        ctx%state%mass_ssp_zz(:, 3) = 30.0_wp
+
+        ! Target: Halfway between Z1 and Z2 (log Z = -0.5)
+        z_target = -0.5_wp 
+        
+        call compute_interpolated_ssp(ctx, z_target, mass_out, lbol_out, spec_out)
+
+        ! Expected: 0.5 * 10 + 0.5 * 20 = 15.0
+        call assert_float_equals(15.0_wp, mass_out(1), EPS, "Z-Interp T1", total_tests, total_failures)
+        call assert_float_equals(15.0_wp, mass_out(2), EPS, "Z-Interp T2", total_tests, total_failures)
+
+        deallocate(mass_out, lbol_out, spec_out)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_interp_grid_z_only
+
+    subroutine test_mdf_smoothing_kernel()
+        !> Case 3b: MDF Smoothing (Triangular Kernel)
+        type(fsps_context_t), allocatable, target :: ctx
+        real(WP), allocatable :: mass_out(:), lbol_out(:), spec_out(:,:)
+        real(WP) :: z_target, z_param_smooth
+        integer :: nt
+        
+        call print_group("Interp SSP: MDF Smoothing")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 3, 1) ! 3 Metallicities
+        nt = 1
+        allocate(mass_out(nt), lbol_out(nt), spec_out(1, nt))
+        
+        ! Grid: Exactly aligned with Z values
+        ctx%state%zlegend = [0.0019_wp, 0.019_wp, 0.19_wp]
+        ctx%state%zsol = 0.019_wp
+        
+        ! Mass is a delta function at the center
+        ctx%state%mass_ssp_zz(1, 1) = 0.0_wp
+        ctx%state%mass_ssp_zz(1, 2) = 100.0_wp ! Center
+        ctx%state%mass_ssp_zz(1, 3) = 0.0_wp
+
+        ! Target exactly at center Z (idx 2)
+        z_target = 0.0_wp 
+        z_param_smooth = -1.0_wp ! Triggers smoothing
+
+        call compute_interpolated_ssp(ctx, z_target, mass_out, lbol_out, spec_out, z_param=z_param_smooth)
+
+        call assert_float_equals(50.0_wp, mass_out(1), EPS, "Smoothed Center Weight", total_tests, total_failures)
+
+        deallocate(mass_out, lbol_out, spec_out)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_mdf_smoothing_kernel
+
+    subroutine test_mdf_power_law()
+        !> Case 3a: MDF Power Law Integration
+        type(fsps_context_t), allocatable, target :: ctx
+        real(WP), allocatable :: mass_out(:), lbol_out(:), spec_out(:,:)
+        integer :: nt
+        
+        call print_group("Interp SSP: MDF Power Law")
+
+        allocate(ctx)
+        call setup_isochrone_context(ctx, 2, 1) 
+        nt = 1
+        allocate(mass_out(nt), lbol_out(nt), spec_out(1, nt))
+
+        ctx%state%zlegend = [0.019_wp, 0.038_wp] ! Z and 2Z
+        ctx%state%zsol = 0.019_wp
+        ctx%state%mass_ssp_zz(1, :) = 1.0_wp ! Mass constant 1.0
+
+        ! If Mass is constant 1.0, the integrated mass MUST be 1.0
+        ! because the MDF weights are normalized to sum to 1.
+        
+        call compute_interpolated_ssp(ctx, 0.0_wp, mass_out, lbol_out, spec_out, z_param=1.0_wp)
+
+        call assert_float_equals(1.0_wp, mass_out(1), EPS, "MDF Normalization", total_tests, total_failures)
+
+        deallocate(mass_out, lbol_out, spec_out)
+        call teardown_isochrone_context(ctx)
+        deallocate(ctx)
+    end subroutine test_mdf_power_law
 
     ! --------------------------------------------------------------------
     ! Utility: int to string

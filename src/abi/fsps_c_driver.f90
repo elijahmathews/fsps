@@ -4,7 +4,7 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
-      USE fsps_ssp, ONLY: generate_ssp_grid
+      USE fsps_ssp, ONLY: generate_ssp_grid, compute_interpolated_ssp
       USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
@@ -1068,7 +1068,7 @@ CONTAINS
        DO zmet = zlo, zlo+1
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
-      CALL ztinterp(fsps_default_ctx, zpos, spec, lbol, mass)
+      CALL compute_interpolated_ssp(fsps_default_ctx, zpos, spec, lbol, mass)
       mass_zz(:,1) = mass
       lbol_zz(:,1) = lbol
       spec_zz(:,:,1) = spec
@@ -1078,7 +1078,7 @@ CONTAINS
        DO zmet = 1, fsps_default_ctx%state%nz
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
-      CALL ztinterp(fsps_default_ctx, zpos, spec, lbol, mass, zpow=global_pset%pmetals)
+      CALL compute_interpolated_ssp(fsps_default_ctx, zpos, spec, lbol, mass, zpow=global_pset%pmetals)
       mass_zz(:,1) = mass
       lbol_zz(:,1) = lbol
       spec_zz(:,:,1) = spec
@@ -1137,7 +1137,7 @@ CONTAINS
    CALL C_F_POINTER(c_spec, f_spec, [n_spec, 1])
     CALL C_F_POINTER(c_mass, f_mass, [1])
     CALL C_F_POINTER(c_lbol, f_lbol, [1])
-   CALL ztinterp(fsps_default_ctx, REAL(zpos, WP), f_spec, f_lbol, f_mass, tpos=REAL(tpos, WP))
+   CALL compute_interpolated_ssp(fsps_default_ctx, REAL(zpos, WP), f_spec, f_lbol, f_mass, tpos=REAL(tpos, WP))
    DEALLOCATE(time)
   END SUBROUTINE fsps_interp_ssp
 
