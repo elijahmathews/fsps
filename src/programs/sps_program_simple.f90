@@ -6,6 +6,7 @@
   USE sps_utils
   USE fsps_ssp, ONLY: generate_ssp_grid
   USE fsps_context, ONLY: fsps_context_create
+  use fsps_sfh, only: compute_sfh_statistics
   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
 
@@ -22,7 +23,7 @@
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
   TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
-  REAL(WP) :: ssfr6,ssfr7,ssfr8,ave_age
+  REAL(WP) :: ssfr_stats(3), ave_age
 
   !---------------------------------------------------------------!
   !---------------------------------------------------------------!
@@ -97,8 +98,8 @@
   CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
 
   !compute basic SFH statistics for the last entry in the ocompsp array
-  !results are returned in the variables ssfr6,...,ave_age
-  CALL SFHSTAT(pset,ocompsp(1),ssfr6,ssfr7,ssfr8,ave_age)
+  !results are returned in the variable ssfr_stats (array) and ave_age
+  CALL compute_sfh_statistics(ctx, pset, ocompsp(1), ssfr_stats, ave_age)
 
   ! Clean up memory before exiting
   IF (ALLOCATED(spec_ssp)) DEALLOCATE(spec_ssp)

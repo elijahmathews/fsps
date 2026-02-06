@@ -49,28 +49,22 @@ lib_sources = files(
     'src/core/sps_utils.f90',
 
     # IO Module
+    'src/io/fsps_tabular.f90',
     'src/io/write_isochrone.f90',
 
     # Math Modules
     'src/math/fsps_integration.f90',
     'src/math/fsps_interpolation.f90',
     'src/math/fsps_special_functions.f90',
-    'src/math/integrate_sfhw.f90',
 
     # Physics Modules
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
+    'src/physics/fsps_sfh.f90',
     'src/physics/fsps_ssp.f90',
     'src/physics/fsps_stellar_modifications.f90',
-
-    # SFH Modules
-    'src/sfh/sfh_info.f90',
-    'src/sfh/sfh_limit.f90',
-    'src/sfh/sfh_stats.f90',
-    'src/sfh/sfh_tabular.f90',
-    'src/sfh/sfh_weight.f90',
 
     # Spectra Modules
     'src/spectra/fsps_smoothing.f90',
@@ -130,6 +124,7 @@ unit_test_sources = files(
     'tests/physics/test_fsps_dust.f90',
     'tests/physics/test_fsps_gas.f90',
     'tests/physics/test_fsps_imf.f90',
+    'tests/physics/test_fsps_sfh.f90',
     'tests/physics/test_fsps_ssp.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
     'tests/spectra/test_fsps_smoothing.f90',

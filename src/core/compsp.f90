@@ -8,8 +8,10 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
    use fsps_context_types, ONLY: fsps_context_t
    use fsps_constants, ONLY: NEMLINE, SAFE_FLOOR
    use fsps_types, ONLY: PARAMS, COMPSPOUT
-   use sps_utils, only: write_isochrone, setup_tabular_sfh, &
-                                  csp_gen, sfhinfo, &
+   use fsps_sfh, only: get_sfh_properties_at_age
+   use fsps_tabular, only: load_tabular_sfh
+   use sps_utils, only: write_isochrone, &
+                                  csp_gen, &
                                   getindx, getmags
    use fsps_smoothing, only: apply_smoothing
    use fsps_cosmology, only: get_igm_transmission, vacuum_to_air
@@ -85,7 +87,7 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      STOP
   ENDIF
 
-   call setup_tabular_sfh(ctx, pset, nzin)
+   call load_tabular_sfh(ctx, pset, nzin)
 
   ! Make sure various variables are set correctly
   IF (pset%tage.GT.SAFE_FLOOR) THEN
@@ -153,12 +155,12 @@ SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile,&
      ! -----
      ! Get the spectrum for this age.  Note this is always normalized to one
      ! solar mass formed, so we actually need to renormalize if computing all
-     ! ages, which is done using info from `sfhinfo`
+     ! ages, which is done using info from `get_sfh_properties_at_age`
    call csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
           pset, age, nzin, mass_csp, lbol_csp, spec_csp,&
           mdust_csp,emlin_ssp,emlin_csp)
 
-   call sfhinfo(ctx, pset, age, mass_frac, tsfr, frac_linear)
+   call get_sfh_properties_at_age(ctx, pset, age, mass_frac, tsfr, frac_linear)
      if (pset%tage.le.0) then
         mass_csp  = mass_csp * mass_frac
         lbol_csp  = log10(10**lbol_csp * mass_frac)

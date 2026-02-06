@@ -38,7 +38,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
    use fsps_constants, only: NEMLINE, SAFE_FLOOR
    use fsps_types, only: SFHPARAMS, PARAMS
    use fsps_context_types, only: fsps_context_t
-   use sps_utils, only: sfh_weight, sfhinfo
+   use fsps_sfh, only: compute_ssp_weights, get_sfh_properties_at_age
    use fsps_dust, only: apply_dust_attenuation_and_emission
    use fsps_interpolation, only: find_interval
   implicit none
@@ -109,19 +109,19 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! Use tage as the burst lookback time, instead of tage-tburst.
      sfhpars%tb = sfhpars%tage
      ! Only need weights at two SSP points. Though in practice this doesn't
-     ! matter, as the appropriate ages are located within sfh_weight.
+     ! matter, as the appropriate ages are located within compute_ssp_weights.
      ! But it speeds up the matrix multiply later
      imin = max(imax - 2, 1)
      ! These come pre-normalized to 1 Msun
-   total_weights(:, 1) = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, total_weights(:, 1))
    endif
 
   ! Tau and delayed-tau.
   if ((pset%sfh.eq.1).or.(pset%sfh.eq.4)) then
      imin = 0
      sfhpars%type = pset%sfh
-   total_weights(:, 1) = sfh_weight(ctx, sfhpars, imin, imax)
-     ! Could save some loops by having proper normalization analytically from sfh_weight
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, total_weights(:, 1))
+     ! Could save some loops by having proper normalization analytically from compute_ssp_weights
      m1 = sum(total_weights(1:imax, 1))
      if (m1.lt.SAFE_FLOOR) m1 = 1.0
      total_weights(:, 1) = total_weights(:, 1) / m1
@@ -134,7 +134,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      imin = 0
      ! Constant
      sfhpars%type = 0
-   w1 = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, w1)
      m1 = sum(w1(1:imax))
      ! Burst.  These weights come pre-normalized to 1 Msun.
      ! If burst happens after age of system then we kill it entirely.
@@ -143,7 +143,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
         w2 = 0.
         fburst = 0.
      else
-      w2 = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, w2)
         fburst = pset%fburst
         ! We'll need to add any early bursts when summing later
       imax = max(imax, min(max(find_interval(time_full, log10(sfhpars%tb)) + 2, 1), ntfull))
@@ -163,7 +163,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! sfhpars%tq, for small speed increase.
      ! imin = min(max(locate(time_full, log10(sfhpars%tq)), 0), ntfull-1)
      sfhpars%type = 4
-   w1 = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, w1)
      m1 = sum(w1(1:imax))
      ! Linear portion.  Need to set `use_simha_limits` flag to get correct
      ! integration limits. Could set imax here to be just after sfhpars%tq,
@@ -172,7 +172,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      ! imin = 0
      sfhpars%type = 5
      sfhpars%use_simha_limits = 1
-   w2 = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, w2)
      sfhpars%use_simha_limits = 0
      m2 = sum(w2(1:imax))
      ! Normalize and sum.  need to be careful of divide by zero here, if all
@@ -180,7 +180,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
      if (m1.lt.SAFE_FLOOR) m1 = 1.0
      if (m2.lt.SAFE_FLOOR) m2 = 1.0
      ! need to get the fraction of the mass formed in the linear portion
-   call sfhinfo(ctx, pset, tage, mfrac, sfr, frac_linear)
+   call get_sfh_properties_at_age(ctx, pset, tage, mfrac, sfr, frac_linear)
      total_weights(:, 1) = (w1 / m1) * (1 - frac_linear) + frac_linear * (w2 / m2)
      ! imax = min(max(locate(time_full, log10(sfhpars%tage)) + 2, 1), ntfull)
   endif
@@ -225,7 +225,7 @@ subroutine csp_gen(ctx, mass_ssp, lbol_ssp, spec_ssp, &
 
         ! Get the weights for this bin in the tabulated sfh and add to the
         ! total weight, after normalizing.
-      w1 = sfh_weight(ctx, sfhpars, imin, imax)
+      call compute_ssp_weights(ctx, sfhpars, imin, imax, w1)
         m1 = sum(w1)
         if (m1.lt.SAFE_FLOOR) m1 = 1.0
         ! This is where we'd assign to specific metallicities, if taking that
