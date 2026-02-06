@@ -82,7 +82,7 @@ function sfwght_log(ctx, sspind, logt, sfh)
    use fsps_precision, only: WP
    use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: SFHPARAMS
-   use fsps_special_functions, only: exponential_integral
+   use fsps_special_functions, only: expi
    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
    type(fsps_context_t), intent(in) :: ctx
@@ -119,7 +119,7 @@ function sfwght_log(ctx, sspind, logt, sfh)
      endif
      tprime = 10**logt / sfh%tau
      if (tprime.le.SAFE_FLOOR) tprime = SAFE_FLOOR
-     ei = exponential_integral(tprime)
+     ei = expi(tprime)
      if (.not. ieee_is_finite(ei)) ei = 0.0
    sfwght_log = (logage - logt) * exp(tprime) + loge * ei
 
@@ -134,7 +134,7 @@ function sfwght_log(ctx, sspind, logt, sfh)
      a = (10**logt - sfh%tage - sfh%tau) * (logt - logage)
      b = sfh%tau * loge
      c = (sfh%tage + sfh%tau) * loge
-     ei = exponential_integral(tprime)
+     ei = expi(tprime)
      if (.not. ieee_is_finite(ei)) ei = 0.0
    sfwght_log = (a - b) * exp(tprime) + c * ei
      

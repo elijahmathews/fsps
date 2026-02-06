@@ -1,16 +1,22 @@
 module fsps_special_functions
     !> @brief
     !> Provides mathematical special functions needed for FSPS physics.
-    !>
-    !> @details
-    !> Currently contains the Exponential Integral Ei(x).
     
     use fsps_precision, only: WP
     implicit none
 
     private
 
-    public :: exponential_integral
+    public :: expi
+    public :: gammainc
+
+    ! ------------------------------------------------------------------------
+    ! CONSTANTS
+    ! ------------------------------------------------------------------------
+
+    ! Euler-Mascheroni constant
+    real(WP), parameter :: GAMMA = 0.57721566490153286060651209008240243104215933593992_wp
+    real(WP), parameter :: EPS = 1.0e-20_wp
 
 contains
 
@@ -26,17 +32,13 @@ contains
     !> @return    res The value of Ei(x). 
     !>                Returns -Infinity at x=0.
     !>                Returns NaN for x < 0.
-    pure function exponential_integral(x) result(res)
+    elemental function expi(x) result(res)
         real(WP), intent(in) :: x
         real(WP) :: res
 
         integer :: k
         integer, parameter :: MAXIT = 1000
-        real(WP) :: r
-        
-        ! Euler-Mascheroni constant
-        real(WP), parameter :: GAMMA = 0.5772156649015328_wp
-        real(WP), parameter :: EPS = 1.0e-20_wp
+        real(WP) :: r, inv_x, term_denom
         
         if (x == 0.0_wp) then
             ! Return negative infinity
@@ -55,11 +57,13 @@ contains
             r = 1.0_wp
             
             do k = 1, MAXIT
-                r = r * k * x / (real(k, WP) + 1.0_wp)**2
+                term_denom = real(k, WP) + 1.0_wp
+                r = (r * real(k, WP) * x) / (term_denom * term_denom)
+
                 res = res + r
                 
                 ! Convergence check
-                if (abs(r/res) <= EPS) exit
+                if (abs(r) <= EPS * abs(res)) exit
                 
                 ! Check for non-convergence
                 if (k == MAXIT) then
@@ -75,20 +79,94 @@ contains
             ! Ei(x) ~ exp(x)/x * (1 + 1!/x + 2!/x^2 + ...)
             res = 1.0_wp
             r = 1.0_wp
+            inv_x = 1.0_wp / x
             
             do k = 1, 20
-                r = r * real(k, WP) / x
+                r = r * real(k, WP) * inv_x
                 res = res + r
             end do
             
-            res = exp(x) / x * res
+            res = exp(x) * inv_x * res
         end if
 
-    end function exponential_integral
+    end function expi
+
+    !> @brief
+    !> Computes the Regularized Lower Incomplete Gamma Function P(a, x) for integer 'a'.
+    !>
+    !> @details
+    !> The regularized lower incomplete gamma function is defined as:
+    !> P(a, x) = (1 / Gamma(a)) * Integral(t^(a-1) * exp(-t) dt) from 0 to x.
+    !>
+    !> For integer a, this has the closed form:
+    !> P(a, x) = 1 - exp(-x) * Sum(x^k / k!) for k=0 to a-1.
+    !>
+    !> This implementation includes specific optimizations for a=1 (Exponential CDF)
+    !> and a=2 to avoid loop overhead and minimize floating point operations.
+    !> It uses a helper function (fsps_expm1) to preserve numerical precision 
+    !> when x is very small.
+    !>
+    !> @param[in] power  The shape parameter 'a'. Must be a positive integer >= 1.
+    !> @param[in] arg    The upper limit of integration 'x'. Must be >= 0.
+    !> @return    res    The value of P(a, x). Returns 0.0 if arg < 0.
+    elemental function gammainc(power, arg) result(res)
+        integer, intent(in) :: power
+        real(WP), intent(in) :: arg
+        real(WP) :: res
+        
+        real(WP) :: sum_term, term
+        integer :: k
+
+        if (arg < 0.0_WP) then
+            res = 0.0_WP
+            return
+        endif
+
+        if (power == 1) then
+            ! P(1, x) = 1 - e^(-x)
+            ! Use helper to avoid cancellation when arg is small
+            res = -fsps_expm1(-arg)
+            
+        else if (power == 2) then
+            ! P(2, x) = 1 - e^(-x) - x*e^(-x)
+            !         = (1 - e^(-x)) - x*e^(-x)
+            !         = -expm1(-arg) - arg * exp(-arg)
+            res = -fsps_expm1(-arg) - arg * exp(-arg)
+            
+        else 
+            ! General case
+            sum_term = 1.0_WP
+            term = 1.0_WP
+            
+            do k = 1, power - 1
+                term = term * (arg / k)
+                sum_term = sum_term + term
+            end do
+            
+            res = 1.0_WP - exp(-arg) * sum_term
+        endif
+
+    end function gammainc
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPER ROUTINES
     ! ------------------------------------------------------------------------
+
+    !> @brief Portable implementation of exp(x) - 1
+    !> Handles small x via Taylor series to avoid precision loss.
+    elemental function fsps_expm1(x) result(val)
+        real(WP), intent(in) :: x
+        real(WP) :: val
+        
+        ! Threshold: if |x| < 1e-5, standard exp(x)-1 loses bits
+        ! but Taylor series converges very rapidly.
+        if (abs(x) < 1.0e-5_wp) then
+            ! Series: x + x^2/2! + x^3/3! + ...
+            val = x * (1.0_wp + x * (0.5_wp + x * (1.0_wp/6.0_wp)))
+        else
+            val = exp(x) - 1.0_wp
+        end if
+    end function fsps_expm1
 
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(val)

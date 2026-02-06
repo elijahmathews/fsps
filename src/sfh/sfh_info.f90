@@ -32,6 +32,7 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
    use fsps_constants, only: SAFE_FLOOR
    use fsps_types, only: PARAMS
    use fsps_interpolation, only: find_interval
+   use fsps_special_functions, only: gammainc
   implicit none
 
   type(fsps_context_t), intent(in) :: ctx
@@ -42,7 +43,6 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
 
    real(WP) :: Tmax, Tprime, Tz, Ttrunc, Thi
     real(WP) :: m
-    real(WP), external :: gammainc
    real(WP) :: mass_tau, mass_linear, mfrac_burst
    real(WP) :: total_mass_tau, total_mass_linear
    real(WP) :: sfr_tau, sfr_trunc, sfr_const
@@ -194,25 +194,3 @@ subroutine sfhinfo(ctx, pset, age, mfrac, sfr, frac_linear)
   sfr = sfr / 1e9
 
 end subroutine sfhinfo
-
-function gammainc(power, arg)
-  !
-  ! Calculate incomplete gamma for a = 1 or 2
-
-   use fsps_precision, only: WP
-  implicit none
-  integer, intent(in) :: power
-   real(WP), intent(in) :: arg
-
-   real(WP) :: gammainc
-
-  if (power.eq.2) then
-     gammainc = 1.0 - exp(-arg) - arg * exp(-arg)
-  else if (power.eq.1) then
-     gammainc = 1.0 - exp(-arg)
-  else
-     write(*,*) "gammainc: power must be 1 or 2"
-     STOP
-  endif
-
-end function gammainc
