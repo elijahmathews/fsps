@@ -63,11 +63,6 @@ program test_fsps
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
     call print_summary_line( &
-        "fsps_imf", &
-        (tests_imf - failures_imf), &
-        tests_imf &
-    )
-    call print_summary_line( &
         "fsps_integration", &
         (tests_integration - failures_integration), &
         tests_integration &
@@ -83,6 +78,11 @@ program test_fsps
         tests_special_functions &
     )
     call print_summary_line( &
+        "fsps_cosmology", &
+        (tests_cosmology - failures_cosmology), &
+        tests_cosmology &
+    )
+    call print_summary_line( &
         "fsps_dust", &
         (tests_dust - failures_dust), &
         tests_dust &
@@ -93,14 +93,19 @@ program test_fsps
         tests_gas &
     )
     call print_summary_line( &
+        "fsps_imf", &
+        (tests_imf - failures_imf), &
+        tests_imf &
+    )
+    call print_summary_line( &
+        "fsps_ssp", &
+        (tests_ssp - failures_ssp), &
+        tests_ssp &
+    )
+    call print_summary_line( &
         "fsps_stellar_modifications", &
         (tests_stellar_modifications - failures_stellar_modifications), &
         tests_stellar_modifications &
-    )
-    call print_summary_line( &
-        "fsps_cosmology", &
-        (tests_cosmology - failures_cosmology), &
-        tests_cosmology &
     )
     call print_summary_line( &
         "fsps_smoothing", &
@@ -111,11 +116,6 @@ program test_fsps
         "fsps_spectral_library", &
         (tests_spectral_library - failures_spectral_library), &
         tests_spectral_library &
-    )
-    call print_summary_line( &
-        "fsps_ssp", &
-        (tests_ssp - failures_ssp), &
-        tests_ssp &
     )
     
     grand_total_failures = failures_imf + &

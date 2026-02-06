@@ -48,9 +48,6 @@ lib_sources = files(
     'src/core/sps_setup.f90',
     'src/core/sps_utils.f90',
 
-    # IMF Module
-    'src/imf/fsps_imf.f90',
-
     # IO Module
     'src/io/write_isochrone.f90',
 
@@ -65,6 +62,7 @@ lib_sources = files(
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
+    'src/physics/fsps_imf.f90',
     'src/physics/fsps_ssp.f90',
     'src/physics/fsps_stellar_modifications.f90',
 
@@ -126,13 +124,13 @@ test_utils_dep = declare_dependency(link_with : test_utils_lib)
 
 # 2. Unit Tests
 unit_test_sources = files(
-    'tests/imf/test_fsps_imf.f90',
     'tests/math/test_fsps_integration.f90',
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',
     'tests/physics/test_fsps_cosmology.f90',
     'tests/physics/test_fsps_dust.f90',
     'tests/physics/test_fsps_gas.f90',
+    'tests/physics/test_fsps_imf.f90',
     'tests/physics/test_fsps_ssp.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
     'tests/spectra/test_fsps_smoothing.f90',
