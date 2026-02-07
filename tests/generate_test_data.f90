@@ -7,6 +7,7 @@ PROGRAM GENERATE_TEST_DATA
    USE fsps_constants, ONLY: NEMLINE
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
+   USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_context, ONLY: fsps_context_create
    USE fsps_ssp, ONLY: generate_ssp_grid
@@ -19,7 +20,7 @@ PROGRAM GENERATE_TEST_DATA
    REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: mass_ssp2, lbol_ssp2
   
   ! Variables for CSP generation (allocatable)
-  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ocompsp
+   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: results
   
    ! Control variables
    TYPE(fsps_context_t) :: ctx
@@ -27,7 +28,6 @@ PROGRAM GENERATE_TEST_DATA
    INTEGER :: i, unit_out, status, arg_count
    INTEGER :: nspec_ctx, ntfull_ctx, nbands_ctx, nt_ctx, nindx_ctx
   CHARACTER(LEN=50) :: filename_out
-  CHARACTER(LEN=100) :: csp_dummy_file
   CHARACTER(LEN=255) :: arg_val
    CHARACTER(LEN=20) :: isoc_arg, spec_arg, dust_arg
   LOGICAL :: isoc_set, spec_set, dust_set
@@ -41,7 +41,6 @@ PROGRAM GENERATE_TEST_DATA
   filename_out = 'sps_test_output.bin'
   unit_out = 40
 
-  csp_dummy_file = 'dummy_csp.out'
    isoc_set = .FALSE.
    spec_set = .FALSE.
    dust_set = .FALSE.
@@ -124,7 +123,7 @@ PROGRAM GENERATE_TEST_DATA
   ALLOCATE(spec_ssp(nspec_ctx,ntfull_ctx))
   ALLOCATE(mass_ssp(ntfull_ctx))
   ALLOCATE(lbol_ssp(ntfull_ctx))
-   ALLOCATE(ocompsp(ntfull_ctx))
+   ! results is allocated by compute_csp_scenario
    ALLOCATE(spec_ssp3(nspec_ctx, ntfull_ctx, 1))
    ALLOCATE(mass_ssp2(ntfull_ctx, 1))
    ALLOCATE(lbol_ssp2(ntfull_ctx, 1))
@@ -179,38 +178,31 @@ PROGRAM GENERATE_TEST_DATA
   ! Re-run generate_ssp_grid
    CALL generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
-  ! Manually allocate components of ocompsp array elements
-  DO i = 1, ntfull_ctx
-     IF (.NOT. ALLOCATED(ocompsp(i)%mags)) ALLOCATE(ocompsp(i)%mags(nbands_ctx))
-     IF (.NOT. ALLOCATED(ocompsp(i)%spec)) ALLOCATE(ocompsp(i)%spec(nspec_ctx))
-     IF (.NOT. ALLOCATED(ocompsp(i)%indx)) ALLOCATE(ocompsp(i)%indx(nindx_ctx))
-     IF (.NOT. ALLOCATED(ocompsp(i)%emlines)) ALLOCATE(ocompsp(i)%emlines(NEMLINE))
-  END DO
-
   ! Compute CSP
    mass_ssp2(:,1) = mass_ssp
    lbol_ssp2(:,1) = lbol_ssp
    spec_ssp3(:,:,1) = spec_ssp
-   CALL COMPSP(ctx, 3, 1, csp_dummy_file, mass_ssp2, lbol_ssp2, spec_ssp3, pset, ocompsp)
+   CALL compute_csp_scenario(ctx, pset, 1, spec_ssp3, mass_ssp2, lbol_ssp2, results)
 
   ! Write CSP Data
   WRITE(*,*) 'Saving CSP results...'
    DO i = 1, ntfull_ctx
-     WRITE(unit_out) ocompsp(i)%age
-     WRITE(unit_out) ocompsp(i)%mass_csp
-     WRITE(unit_out) ocompsp(i)%lbol_csp
-     WRITE(unit_out) ocompsp(i)%sfr
-     WRITE(unit_out) ocompsp(i)%mdust
-     WRITE(unit_out) ocompsp(i)%mformed
-     WRITE(unit_out) ocompsp(i)%mags      
-     WRITE(unit_out) ocompsp(i)%spec      
-     WRITE(unit_out) ocompsp(i)%indx      
-     WRITE(unit_out) ocompsp(i)%emlines   
+     WRITE(unit_out) results(i)%age
+     WRITE(unit_out) results(i)%mass_csp
+     WRITE(unit_out) results(i)%lbol_csp
+     WRITE(unit_out) results(i)%sfr
+     WRITE(unit_out) results(i)%mdust
+     WRITE(unit_out) results(i)%mformed
+     WRITE(unit_out) results(i)%mags      
+     WRITE(unit_out) results(i)%spec      
+     WRITE(unit_out) results(i)%indx      
+     WRITE(unit_out) results(i)%emlines   
   END DO
 
   ! Cleanup
   CLOSE(unit_out)
-  DEALLOCATE(spec_ssp, mass_ssp, lbol_ssp, ocompsp)
+   DEALLOCATE(spec_ssp, mass_ssp, lbol_ssp)
+   IF (ALLOCATED(results)) DEALLOCATE(results)
   IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
   IF (ALLOCATED(pset%ssp_gen_age)) DEALLOCATE(pset%ssp_gen_age)
   

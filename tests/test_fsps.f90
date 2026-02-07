@@ -47,6 +47,9 @@ program test_fsps
     use test_fsps_sfh_mod, only: run_fsps_sfh_tests, &
                                  failures_sfh => total_failures, &
                                  tests_sfh => total_tests
+    use test_fsps_csp_mod, only: run_fsps_csp_tests, &
+                                 failures_csp => total_failures, &
+                                 tests_csp => total_tests
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
@@ -71,6 +74,7 @@ program test_fsps
     call run_fsps_photometry_tests()
     call run_fsps_ssp_tests()
     call run_fsps_sfh_tests()
+    call run_fsps_csp_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -120,6 +124,11 @@ program test_fsps
         tests_sfh &
     )
     call print_summary_line( &
+        "fsps_csp", &
+        (tests_csp - failures_csp), &
+        tests_csp &
+    )
+    call print_summary_line( &
         "fsps_stellar_modifications", &
         (tests_stellar_modifications - failures_stellar_modifications), &
         tests_stellar_modifications &
@@ -158,7 +167,8 @@ program test_fsps
                            failures_spectral_library + &
                            failures_photometry + &
                            failures_ssp + &
-                           failures_sfh
+                           failures_sfh + &
+                           failures_csp
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
@@ -173,7 +183,8 @@ program test_fsps
                         tests_spectral_library + &
                         tests_photometry + &
                         tests_ssp + &
-                        tests_sfh
+                        tests_sfh + &
+                        tests_csp
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

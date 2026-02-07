@@ -13,41 +13,7 @@ MODULE SPS_UTILS
      END SUBROUTINE SPS_SETUP
   END INTERFACE
 
-  INTERFACE
-     SUBROUTINE COMPSP(ctx, write_compsp, nzin, outfile, mass_ssp, &
-          lbol_ssp, spec_ssp, pset, ocompsp)
-       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_precision, ONLY: WP
-       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-       INTEGER, INTENT(in) :: write_compsp,nzin
-      REAL(WP), INTENT(in), DIMENSION(:,:) :: lbol_ssp,mass_ssp
-      REAL(WP), INTENT(in), DIMENSION(:,:,:) :: spec_ssp
-       CHARACTER(100), INTENT(in) :: outfile
-       TYPE(PARAMS), INTENT(in)   :: pset
-       TYPE(COMPSPOUT), INTENT(inout), DIMENSION(:) :: ocompsp
-     END SUBROUTINE COMPSP
-  END INTERFACE
-
-  INTERFACE
-     SUBROUTINE CSP_GEN(ctx, mass_ssp, lbol_ssp, spec_ssp, pset, tage, nzin,&
-                        mass_csp, lbol_csp, spec_csp, mdust_csp, emlin_ssp, emlin_csp)
-       USE fsps_context_types, ONLY: fsps_context_t
-      USE fsps_precision, ONLY: WP
-      USE fsps_constants, ONLY: NEMLINE
-       USE fsps_types, ONLY: PARAMS
-       TYPE(fsps_context_t), INTENT(INOUT) :: ctx
-      REAL(WP), DIMENSION(:,:), INTENT(in) :: mass_ssp, lbol_ssp
-      REAL(WP), DIMENSION(:,:,:), INTENT(in) :: spec_ssp
-       TYPE(PARAMS), intent(in) :: pset
-      REAL(WP), INTENT(in)  :: tage
-       INTEGER, INTENT(IN) :: nzin
-      REAL(WP), INTENT(out) :: mass_csp, lbol_csp, mdust_csp
-      REAL(WP), INTENT(out), DIMENSION(:) :: spec_csp
-      REAL(WP), DIMENSION(:,:,:), intent(in) :: emlin_ssp
-      REAL(WP), DIMENSION(NEMLINE), intent(out) :: emlin_csp
-     END SUBROUTINE CSP_GEN
-  END INTERFACE
+  ! Legacy COMPSP/CSP_GEN interfaces removed.
 
   INTERFACE
        SUBROUTINE WRITE_ISOCHRONE(ctx, outfile, pset)

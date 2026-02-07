@@ -3,6 +3,8 @@ PROGRAM AUTOSPS
    USE fsps_precision, ONLY: WP
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE sps_utils
+   USE fsps_csp, ONLY: compute_csp_scenario
+   USE fsps_io, ONLY: write_csp_output_files, load_tabular_sfh
    USE fsps_ssp, ONLY: generate_ssp_grid
    USE fsps_context, ONLY: fsps_context_create
    USE fsps_context_types, ONLY: fsps_context_t
@@ -14,7 +16,7 @@ PROGRAM AUTOSPS
 
    REAL(WP), ALLOCATABLE :: spec_ssp(:,:,:)
    REAL(WP), ALLOCATABLE :: mass_ssp(:,:),lbol_ssp(:,:)
-  TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
+   TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
 
   CHARACTER(100) :: file1='',aux
   CHARACTER(3)  :: str
@@ -61,7 +63,7 @@ PROGRAM AUTOSPS
      ALLOCATE(spec_ssp(ctx%state%nspec, ctx%state%ntfull, ctx%state%nz))
      ALLOCATE(mass_ssp(ctx%state%ntfull, ctx%state%nz))
      ALLOCATE(lbol_ssp(ctx%state%ntfull, ctx%state%nz))
-     ALLOCATE(ocompsp(ctx%state%ntfull))
+   ! results is allocated by compute_csp_scenario
   END IF
 
   !set IMF
@@ -173,18 +175,23 @@ PROGRAM AUTOSPS
         pset%zmet=z
       CALL generate_ssp_grid(ctx, pset, mass_ssp(:,z), lbol_ssp(:,z), spec_ssp(:,:,z))
      ENDDO
-     CALL COMPSP(ctx, 3, ctx%state%nz, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+   CALL load_tabular_sfh(ctx, pset, ctx%state%nz)
+   CALL compute_csp_scenario(ctx, pset, ctx%state%nz, spec_ssp, mass_ssp, lbol_ssp, results)
+   CALL write_csp_output_files(ctx, pset, results, file1, 3)
+   DEALLOCATE(results)
   ELSE
      ! We already called SPS_SETUP(-1), so speclib is populated.
    CALL generate_ssp_grid(ctx, pset, mass_ssp(:,pset%zmet), lbol_ssp(:,pset%zmet), spec_ssp(:,:,pset%zmet))
-   CALL COMPSP(ctx, 3, 1, file1, mass_ssp(:,pset%zmet:pset%zmet), lbol_ssp(:,pset%zmet:pset%zmet), &
-        spec_ssp(:,:,pset%zmet:pset%zmet), pset, ocompsp)
+      CALL compute_csp_scenario(ctx, pset, 1, spec_ssp(:,:,pset%zmet:pset%zmet), &
+         mass_ssp(:,pset%zmet:pset%zmet), lbol_ssp(:,pset%zmet:pset%zmet), results)
+      CALL write_csp_output_files(ctx, pset, results, file1, 3)
+      DEALLOCATE(results)
   ENDIF
 
   ! Clean up
   IF (ALLOCATED(spec_ssp)) DEALLOCATE(spec_ssp)
   IF (ALLOCATED(mass_ssp)) DEALLOCATE(mass_ssp)
   IF (ALLOCATED(lbol_ssp)) DEALLOCATE(lbol_ssp)
-  IF (ALLOCATED(ocompsp))  DEALLOCATE(ocompsp)
+   IF (ALLOCATED(results))  DEALLOCATE(results)
 
 END PROGRAM AUTOSPS

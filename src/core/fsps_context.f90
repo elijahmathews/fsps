@@ -1,9 +1,11 @@
 MODULE FSPS_CONTEXT
    USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
-  USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
-   USE sps_utils
-   USE fsps_ssp, ONLY: generate_ssp_grid
+   USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
+    USE sps_utils
+    USE fsps_ssp, ONLY: generate_ssp_grid
+    USE fsps_csp, ONLY: compute_csp_scenario
+    USE fsps_io, ONLY: load_tabular_sfh, write_csp_output_files
   IMPLICIT NONE
 
    INTEGER, PARAMETER :: FSPS_ERR_UNKNOWN_INT_PARAM = 101
@@ -428,10 +430,30 @@ CONTAINS
       REAL(WP), DIMENSION(:,:), INTENT(IN) :: mass_ssp, lbol_ssp
       REAL(WP), DIMENSION(:,:,:), INTENT(IN) :: spec_ssp
       TYPE(COMPSPOUT), DIMENSION(:), INTENT(INOUT) :: ocompsp
+      TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+      INTEGER :: i, n_out, status
 
         CALL fsps_context_ensure_setup(ctx)
-      CALL fsps_context_prepare_pset(ctx)
-      CALL COMPSP(ctx, write_compsp, nzin, outfile, mass_ssp, lbol_ssp, spec_ssp, ctx%pset, ocompsp)
+       CALL fsps_context_prepare_pset(ctx)
+
+       IF (ctx%pset%sfh == 2 .OR. ctx%pset%sfh == 3) THEN
+          CALL load_tabular_sfh(ctx, ctx%pset, nzin)
+       END IF
+
+       CALL compute_csp_scenario(ctx, ctx%pset, nzin, spec_ssp, mass_ssp, lbol_ssp, results, status)
+       IF (status /= 0) THEN
+          RETURN
+       END IF
+
+       IF (write_compsp > 0) THEN
+          CALL write_csp_output_files(ctx, ctx%pset, results, outfile, write_compsp)
+       END IF
+
+       n_out = min(size(ocompsp), size(results))
+       DO i = 1, n_out
+          ocompsp(i) = results(i)
+       END DO
+       DEALLOCATE(results)
    END SUBROUTINE fsps_context_compute_csp
 
    SUBROUTINE fsps_context_prepare_pset(ctx)

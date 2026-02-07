@@ -37,8 +37,6 @@ lib_sources = files(
     'src/abi/fsps_c_driver.f90',
 
     # Core FSPS Modules
-    'src/core/compsp.f90',
-    'src/core/csp_gen.f90',
     'src/core/fsps_cache.f90',
     'src/core/fsps_constants.f90',
     'src/core/fsps_context_types.f90',
@@ -49,7 +47,7 @@ lib_sources = files(
     'src/core/sps_utils.f90',
 
     # IO Module
-    'src/io/fsps_tabular.f90',
+    'src/io/fsps_io.f90',
     'src/io/write_isochrone.f90',
 
     # Math Modules
@@ -59,6 +57,7 @@ lib_sources = files(
 
     # Physics Modules
     'src/physics/fsps_cosmology.f90',
+    'src/physics/fsps_csp.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
@@ -121,6 +120,7 @@ unit_test_sources = files(
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',
     'tests/physics/test_fsps_cosmology.f90',
+    'tests/physics/test_fsps_csp.f90',
     'tests/physics/test_fsps_dust.f90',
     'tests/physics/test_fsps_gas.f90',
     'tests/physics/test_fsps_imf.f90',

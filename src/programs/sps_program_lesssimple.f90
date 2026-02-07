@@ -2,8 +2,10 @@ PROGRAM LESSSIMPLE
 
   !set up modules
       USE fsps_precision, ONLY: WP
-      USE fsps_types, ONLY: PARAMS, COMPSPOUT
-    USE sps_utils
+            USE fsps_types, ONLY: PARAMS, COMPSPOUT
+        USE sps_utils
+        USE fsps_csp, ONLY: compute_csp_scenario
+        USE fsps_io, ONLY: write_csp_output_files, load_tabular_sfh
     USE fsps_ssp, ONLY: generate_ssp_grid
       USE fsps_cosmology, ONLY: convolve_with_mdf
         USE fsps_context, ONLY: fsps_context_create
@@ -25,7 +27,7 @@ PROGRAM LESSSIMPLE
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
-  TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
+    TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
       REAL(WP) :: zave
 
   !---------------------------------------------------------------!
@@ -50,7 +52,7 @@ PROGRAM LESSSIMPLE
         ALLOCATE(lbol_pz(ctx%state%ntfull))
         ALLOCATE(mass_pz_zz(ctx%state%ntfull, 1))
         ALLOCATE(lbol_pz_zz(ctx%state%ntfull, 1))
-        ALLOCATE(ocompsp(ctx%state%ntfull))
+        ! results is allocated by compute_csp_scenario
   END IF
 
   !compute all SSPs (i.e. at all Zs)
@@ -71,14 +73,19 @@ PROGRAM LESSSIMPLE
   lbol_pz_zz(:,1) = lbol_pz
   file2    = 'SSP_pz.out'
   !now compute magnitudes for this SSP
-        CALL COMPSP(ctx, 1, 1, file2, mass_pz_zz, lbol_pz_zz, spec_pz_zz, pset, ocompsp)
+        CALL compute_csp_scenario(ctx, pset, 1, spec_pz_zz, mass_pz_zz, lbol_pz_zz, results)
+        CALL write_csp_output_files(ctx, pset, results, file2, 1)
+        DEALLOCATE(results)
 
   !run compsp for a tabulated sfh with a metallicity history
   !NB: one must have setup all the SSPs, as was done in the DO-loop above
   pset%sfh = 2
   file2    = 'CSP_tabsfh.out'
-  CALL COMPSP(ctx, 1, ctx%state%nz, file2, ctx%state%mass_ssp_zz, ctx%state%lbol_ssp_zz, &
-        ctx%state%spec_ssp_zz, pset, ocompsp)
+  CALL load_tabular_sfh(ctx, pset, ctx%state%nz)
+  CALL compute_csp_scenario(ctx, pset, ctx%state%nz, ctx%state%spec_ssp_zz, ctx%state%mass_ssp_zz, &
+      ctx%state%lbol_ssp_zz, results)
+  CALL write_csp_output_files(ctx, pset, results, file2, 1)
+  DEALLOCATE(results)
 
   ! Clean up memory before exiting
       IF (ALLOCATED(spec_pz)) DEALLOCATE(spec_pz)
@@ -87,6 +94,6 @@ PROGRAM LESSSIMPLE
   IF (ALLOCATED(lbol_pz)) DEALLOCATE(lbol_pz)
       IF (ALLOCATED(mass_pz_zz)) DEALLOCATE(mass_pz_zz)
       IF (ALLOCATED(lbol_pz_zz)) DEALLOCATE(lbol_pz_zz)
-  IF (ALLOCATED(ocompsp))  DEALLOCATE(ocompsp)
+    IF (ALLOCATED(results))  DEALLOCATE(results)
 
 END PROGRAM LESSSIMPLE

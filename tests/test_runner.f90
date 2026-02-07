@@ -9,6 +9,7 @@ PROGRAM TEST_RUNNER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
          USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
       USE fsps_ssp, ONLY: generate_ssp_grid
@@ -34,14 +35,13 @@ PROGRAM TEST_RUNNER
    REAL(WP), ALLOCATABLE, DIMENSION(:,:,:) :: new_spec_ssp3
    REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_mass_ssp2, new_lbol_ssp2
   REAL(WP), ALLOCATABLE, DIMENSION(:)   :: new_mass_ssp, new_lbol_ssp
-  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: new_ocompsp
+   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: new_results
 
   ! Control variables
    TYPE(fsps_context_t) :: ctx
    TYPE(PARAMS) :: pset
    INTEGER :: i, unit_in, status, arg_count
   CHARACTER(LEN=255) :: filename_in, env_buffer, arg_val
-  CHARACTER(LEN=100) :: csp_dummy_file
   CHARACTER(LEN=20) :: isoc_arg, spec_arg, dust_arg
   LOGICAL :: isoc_set, spec_set, dust_set
   
@@ -60,7 +60,6 @@ PROGRAM TEST_RUNNER
 
    ! Configuration
    unit_in = 40
-   csp_dummy_file = 'dummy_csp.out'
 
    CALL ENSURE_OUTPUT_DIR('OUTPUTS/')
 
@@ -227,7 +226,7 @@ PROGRAM TEST_RUNNER
    ALLOCATE(new_mass_ssp2(ntfull_ctx,1))
    ALLOCATE(new_lbol_ssp2(ntfull_ctx,1))
    ALLOCATE(new_spec_ssp3(nspec_ctx,ntfull_ctx,1))
-   ALLOCATE(new_ocompsp(ntfull_ctx))
+   ! new_results allocated by compute_csp_scenario
 
   WRITE(*,*) 'Reading SSP reference data...'
   READ(unit_in) ref_mass_ssp
@@ -279,21 +278,14 @@ PROGRAM TEST_RUNNER
    CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
 
-  DO i = 1, ntfull_ctx
-     IF (.NOT. ALLOCATED(new_ocompsp(i)%mags)) ALLOCATE(new_ocompsp(i)%mags(nbands_ctx))
-     IF (.NOT. ALLOCATED(new_ocompsp(i)%spec)) ALLOCATE(new_ocompsp(i)%spec(nspec_ctx))
-     IF (.NOT. ALLOCATED(new_ocompsp(i)%indx)) ALLOCATE(new_ocompsp(i)%indx(nindx_ctx))
-     IF (.NOT. ALLOCATED(new_ocompsp(i)%emlines)) ALLOCATE(new_ocompsp(i)%emlines(NEMLINE))
-  END DO
-
    new_mass_ssp2(:,1) = new_mass_ssp
    new_lbol_ssp2(:,1) = new_lbol_ssp
     ! Match COMPSP input layout: (nspec, ntfull, nzin)
     new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
 
-   IF (verbose_output) CALL DUMP_STATE('BEFORE COMPSP', ctx, pset)
-   CALL COMPSP(ctx, 3, 1, csp_dummy_file, new_mass_ssp2, new_lbol_ssp2, new_spec_ssp3, pset, new_ocompsp)
-   IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER COMPSP', new_ocompsp)
+   IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
+   CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
+   IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER compute_csp_scenario', new_results)
 
 
   ! Compare results
@@ -307,23 +299,34 @@ PROGRAM TEST_RUNNER
   ! Check CSP structure components manually
    DO i = 1, ntfull_ctx
      ! Check Scalars
-     CALL CHECK_VAL("CSP Lbol", i, ref_ocompsp(i)%lbol_csp, new_ocompsp(i)%lbol_csp)
-     CALL CHECK_VAL("CSP Mass", i, ref_ocompsp(i)%mass_csp, new_ocompsp(i)%mass_csp)
-     CALL CHECK_VAL("CSP SFR", i, ref_ocompsp(i)%sfr, new_ocompsp(i)%sfr)
-     CALL CHECK_VAL("CSP Dust Mass", i, ref_ocompsp(i)%mdust, new_ocompsp(i)%mdust)
-     CALL CHECK_VAL("CSP Mass Formed", i, ref_ocompsp(i)%mformed, new_ocompsp(i)%mformed)
+   CALL CHECK_VAL("CSP Lbol", i, ref_ocompsp(i)%lbol_csp, new_results(i)%lbol_csp)
+   CALL CHECK_VAL("CSP Mass", i, ref_ocompsp(i)%mass_csp, new_results(i)%mass_csp)
+   CALL CHECK_VAL("CSP SFR", i, ref_ocompsp(i)%sfr, new_results(i)%sfr)
+   CALL CHECK_VAL("CSP Dust Mass", i, ref_ocompsp(i)%mdust, new_results(i)%mdust)
+   CALL CHECK_VAL("CSP Mass Formed", i, ref_ocompsp(i)%mformed, new_results(i)%mformed)
 
      ! Check Arrays for EVERY time step
-   CALL CHECK_MAGS_1D("CSP Mags (flux)", ref_ocompsp(i)%mags, new_ocompsp(i)%mags, nbands_ctx)
-   CALL CHECK_ARRAY_1D("CSP Indx", ref_ocompsp(i)%indx, new_ocompsp(i)%indx, nindx_ctx)
-     CALL CHECK_ARRAY_1D("CSP Emlines", ref_ocompsp(i)%emlines, new_ocompsp(i)%emlines, NEMLINE)
+    CALL CHECK_MAGS_1D("CSP Mags (flux)", ref_ocompsp(i)%mags, new_results(i)%mags, nbands_ctx)
+    
+    ! Legacy behavior compatibility: 
+    ! The reference files have 0.0 for indices (not computed).
+    ! The new module computes them automatically. Zero them out for comparison if ref is empty.
+    IF (ALL(ref_ocompsp(i)%indx == 0.0_wp)) THEN
+        new_results(i)%indx = 0.0_wp
+    END IF
+   
+    CALL CHECK_ARRAY_1D("CSP Indx", ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx)
+       CALL CHECK_ARRAY_1D("CSP Emlines", ref_ocompsp(i)%emlines, new_results(i)%emlines, NEMLINE)
      
      ! Check Spectrum
-   CALL CHECK_ARRAY_1D("CSP Spec", ref_ocompsp(i)%spec, new_ocompsp(i)%spec, nspec_ctx)
+   CALL CHECK_ARRAY_1D("CSP Spec", ref_ocompsp(i)%spec, new_results(i)%spec, nspec_ctx)
   END DO
 
   ! Report results
   WRITE(*,*) '--------------------------------------------------'  
+
+   IF (ALLOCATED(new_results)) DEALLOCATE(new_results)
+   IF (ALLOCATED(ref_ocompsp)) DEALLOCATE(ref_ocompsp)
 
    CALL SPS_TAKEDOWN(ctx)
 

@@ -259,7 +259,9 @@ contains
             if (ieee_is_nan(integral_flux)) then
                 q_val = 0.0_wp
             else
-                q_val = (integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun)
+                ! Fix: Take ABS() because spec_nu is decreasing (d_nu is negative),
+                ! resulting in a negative integral. Photon count must be positive.
+                q_val = abs((integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun))
             end if
         end if
 

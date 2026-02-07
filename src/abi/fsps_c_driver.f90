@@ -4,6 +4,8 @@ MODULE FSPS_C_DRIVER
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
       USE sps_utils
+      USE fsps_csp, ONLY: compute_csp_scenario
+      USE fsps_io, ONLY: load_tabular_sfh
       USE fsps_ssp, ONLY: generate_ssp_grid, compute_interpolated_ssp
       USE fsps_spectral_library, ONLY: get_stellar_spectrum
       USE fsps_smoothing, ONLY: apply_smoothing
@@ -155,6 +157,42 @@ CONTAINS
           WRITE(*,*) TRIM(message)
       END IF
    END SUBROUTINE fsps_set_error
+
+     ! Copy CSP results into global_ocompsp and (optionally) an output buffer.
+     SUBROUTINE fsps_store_results(results, f_spec)
+       TYPE(COMPSPOUT), INTENT(IN) :: results(:)
+       REAL(WP), INTENT(INOUT), OPTIONAL :: f_spec(:,:)
+       INTEGER :: i, n_out, n_spec, n_time
+
+       n_out = SIZE(results)
+       n_spec = SIZE(results(1)%spec)
+
+       IF (PRESENT(f_spec)) THEN
+          n_time = SIZE(f_spec, 2)
+          f_spec = 0.0_wp
+       ELSE
+          n_time = n_out
+       END IF
+
+       DO i = 1, n_out
+          global_ocompsp(i)%age = results(i)%age
+          global_ocompsp(i)%mass_csp = results(i)%mass_csp
+          global_ocompsp(i)%lbol_csp = results(i)%lbol_csp
+          global_ocompsp(i)%sfr = results(i)%sfr
+          global_ocompsp(i)%mdust = results(i)%mdust
+          global_ocompsp(i)%mformed = results(i)%mformed
+          global_ocompsp(i)%mags = results(i)%mags
+          global_ocompsp(i)%spec = results(i)%spec
+          global_ocompsp(i)%indx = results(i)%indx
+          global_ocompsp(i)%emlines = results(i)%emlines
+
+          IF (PRESENT(f_spec)) THEN
+             IF (i <= n_time .AND. n_spec == SIZE(f_spec, 1)) THEN
+                f_spec(:, i) = results(i)%spec
+             END IF
+          END IF
+       END DO
+     END SUBROUTINE fsps_store_results
 
    ! Clear error state.
    SUBROUTINE fsps_clear_error() BIND(C, name="fsps_clear_error")
@@ -916,7 +954,6 @@ CONTAINS
     
     INTEGER :: i
       INTEGER :: n_spec, n_time
-    CHARACTER(LEN=128) :: junk_file = 'fsps.out'
 
     IF (.NOT. ASSOCIATED(global_pset)) THEN
        CALL fsps_set_error(301, "[FSPS-C] Error: fsps_compute called before initialize!")
@@ -924,6 +961,7 @@ CONTAINS
     END IF
 
    CALL fsps_ensure_default_ctx()
+   CALL fsps_ensure_legacy_state()
    n_spec = fsps_default_ctx%state%nspec
    n_time = fsps_default_ctx%state%ntfull
 
@@ -937,7 +975,7 @@ CONTAINS
     
    CALL generate_ssp_grid(fsps_default_ctx, global_pset, ssp_mass, ssp_lbol, ssp_spec)
 
-    IF (global_pset%sfh .EQ. 0) THEN
+   IF (global_pset%sfh .EQ. 0) THEN
        ! --- SSP Mode ---
        ! Copy directly to output buffer
        f_spec = ssp_spec
@@ -949,23 +987,31 @@ CONTAINS
        END DO
     ELSE
        ! --- CSP Mode ---
-       ! Use COMPSP to handle the complex CSP generation.
-       ! This avoids guessing the changing signature of CSP_GEN.
-       ! args: (ztype, n_z, outfile, mass_in, lbol_in, spec_in, pset, ocompsp_out)
-       ! ztype=0 (Single Z), n_z=1
-            ALLOCATE(ssp_mass_zz(n_time, 1))
-            ALLOCATE(ssp_lbol_zz(n_time, 1))
-            ALLOCATE(ssp_spec_zz(n_spec, n_time, 1))
-            ssp_mass_zz(:,1) = ssp_mass
-            ssp_lbol_zz(:,1) = ssp_lbol
-            ssp_spec_zz(:,:,1) = ssp_spec
-            CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, ssp_mass_zz, ssp_lbol_zz, ssp_spec_zz, &
-               global_pset, global_ocompsp)
-       
-       ! Copy result to output buffer
-       DO i=1, n_time
-           f_spec(:,i) = global_ocompsp(i)%spec
-       END DO
+       ! Use fsps_csp to handle CSP generation.
+       ALLOCATE(ssp_mass_zz(n_time, 1))
+       ALLOCATE(ssp_lbol_zz(n_time, 1))
+       ALLOCATE(ssp_spec_zz(n_spec, n_time, 1))
+       ssp_mass_zz(:,1) = ssp_mass
+       ssp_lbol_zz(:,1) = ssp_lbol
+       ssp_spec_zz(:,:,1) = ssp_spec
+
+       IF (global_pset%sfh == 2 .OR. global_pset%sfh == 3) THEN
+          CALL load_tabular_sfh(fsps_default_ctx, global_pset, 1)
+       END IF
+
+       BLOCK
+          TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+          INTEGER :: status
+          CALL compute_csp_scenario(fsps_default_ctx, global_pset, 1, ssp_spec_zz, ssp_mass_zz, ssp_lbol_zz, &
+                                    results, status)
+          IF (status /= 0) THEN
+             CALL fsps_set_error(311, "[FSPS-C] Error: compute_csp_scenario failed")
+             DEALLOCATE(results)
+             RETURN
+          END IF
+          CALL fsps_store_results(results, f_spec)
+          DEALLOCATE(results)
+       END BLOCK
     END IF
 
     DEALLOCATE(ssp_mass)
@@ -1038,7 +1084,6 @@ CONTAINS
     REAL(WP) :: zpos
       INTEGER :: zlo, zmet
       INTEGER :: n_spec, n_time
-    CHARACTER(LEN=128) :: junk_file = 'fsps.out'
 
     IF (.NOT. ASSOCIATED(global_pset)) THEN
        CALL fsps_set_error(305, "[FSPS-C] Error: fsps_compute_zdep called before initialize!")
@@ -1046,6 +1091,7 @@ CONTAINS
     END IF
 
    CALL fsps_ensure_default_ctx()
+   CALL fsps_ensure_legacy_state()
    n_spec = fsps_default_ctx%state%nspec
    n_time = fsps_default_ctx%state%ntfull
    ALLOCATE(mass(n_time))
@@ -1059,10 +1105,24 @@ CONTAINS
     CASE (0)
        zmet = global_pset%zmet
        IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
-      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, &
-              fsps_default_ctx%state%mass_ssp_zz(:,zmet:zmet), &
-              fsps_default_ctx%state%lbol_ssp_zz(:,zmet:zmet), &
-              fsps_default_ctx%state%spec_ssp_zz(:,:,zmet:zmet), global_pset, global_ocompsp)
+      IF (global_pset%sfh == 2 .OR. global_pset%sfh == 3) THEN
+         CALL load_tabular_sfh(fsps_default_ctx, global_pset, 1)
+      END IF
+      BLOCK
+         TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+         INTEGER :: status
+         CALL compute_csp_scenario(fsps_default_ctx, global_pset, 1, &
+                                   fsps_default_ctx%state%spec_ssp_zz(:,:,zmet:zmet), &
+                                   fsps_default_ctx%state%mass_ssp_zz(:,zmet:zmet), &
+                                   fsps_default_ctx%state%lbol_ssp_zz(:,zmet:zmet), results, status)
+         IF (status /= 0) THEN
+            CALL fsps_set_error(312, "[FSPS-C] Error: compute_csp_scenario failed")
+            DEALLOCATE(results)
+            RETURN
+         END IF
+         CALL fsps_store_results(results)
+         DEALLOCATE(results)
+      END BLOCK
     CASE (1)
        zpos = global_pset%logzsol
         zlo = MAX(MIN(find_interval(LOG10(fsps_default_ctx%state%zlegend/fsps_default_ctx%state%zsol), zpos), &
@@ -1074,7 +1134,21 @@ CONTAINS
       mass_zz(:,1) = mass
       lbol_zz(:,1) = lbol
       spec_zz(:,:,1) = spec
-      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, mass_zz, lbol_zz, spec_zz, global_pset, global_ocompsp)
+      IF (global_pset%sfh == 2 .OR. global_pset%sfh == 3) THEN
+         CALL load_tabular_sfh(fsps_default_ctx, global_pset, 1)
+      END IF
+      BLOCK
+         TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+         INTEGER :: status
+         CALL compute_csp_scenario(fsps_default_ctx, global_pset, 1, spec_zz, mass_zz, lbol_zz, results, status)
+         IF (status /= 0) THEN
+            CALL fsps_set_error(313, "[FSPS-C] Error: compute_csp_scenario failed")
+            DEALLOCATE(results)
+            RETURN
+         END IF
+         CALL fsps_store_results(results)
+         DEALLOCATE(results)
+      END BLOCK
     CASE (2)
        zpos = global_pset%logzsol
        DO zmet = 1, fsps_default_ctx%state%nz
@@ -1084,14 +1158,42 @@ CONTAINS
       mass_zz(:,1) = mass
       lbol_zz(:,1) = lbol
       spec_zz(:,:,1) = spec
-      CALL COMPSP(fsps_default_ctx, 0, 1, junk_file, mass_zz, lbol_zz, spec_zz, global_pset, global_ocompsp)
+      IF (global_pset%sfh == 2 .OR. global_pset%sfh == 3) THEN
+         CALL load_tabular_sfh(fsps_default_ctx, global_pset, 1)
+      END IF
+      BLOCK
+         TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+         INTEGER :: status
+         CALL compute_csp_scenario(fsps_default_ctx, global_pset, 1, spec_zz, mass_zz, lbol_zz, results, status)
+         IF (status /= 0) THEN
+            CALL fsps_set_error(314, "[FSPS-C] Error: compute_csp_scenario failed")
+            DEALLOCATE(results)
+            RETURN
+         END IF
+         CALL fsps_store_results(results)
+         DEALLOCATE(results)
+      END BLOCK
     CASE (3)
        DO zmet = 1, fsps_default_ctx%state%nz
           IF (has_ssp(zmet) == 0) CALL fsps_compute_ssp(zmet)
        END DO
-      CALL COMPSP(fsps_default_ctx, 0, fsps_default_ctx%state%nz, junk_file, &
-              fsps_default_ctx%state%mass_ssp_zz, fsps_default_ctx%state%lbol_ssp_zz, &
-              fsps_default_ctx%state%spec_ssp_zz, global_pset, global_ocompsp)
+      IF (global_pset%sfh == 2 .OR. global_pset%sfh == 3) THEN
+         CALL load_tabular_sfh(fsps_default_ctx, global_pset, fsps_default_ctx%state%nz)
+      END IF
+      BLOCK
+         TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
+         INTEGER :: status
+         CALL compute_csp_scenario(fsps_default_ctx, global_pset, fsps_default_ctx%state%nz, &
+                                   fsps_default_ctx%state%spec_ssp_zz, fsps_default_ctx%state%mass_ssp_zz, &
+                                   fsps_default_ctx%state%lbol_ssp_zz, results, status)
+         IF (status /= 0) THEN
+            CALL fsps_set_error(315, "[FSPS-C] Error: compute_csp_scenario failed")
+            DEALLOCATE(results)
+            RETURN
+         END IF
+         CALL fsps_store_results(results)
+         DEALLOCATE(results)
+      END BLOCK
     CASE DEFAULT
        CALL fsps_set_error(306, "[FSPS-C] Error: Unknown ztype in fsps_compute_zdep")
     END SELECT

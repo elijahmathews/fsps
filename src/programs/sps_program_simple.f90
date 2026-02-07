@@ -4,6 +4,8 @@
   USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
   USE sps_utils
+  USE fsps_csp, ONLY: compute_csp_scenario
+  USE fsps_io, ONLY: write_csp_output_files
   USE fsps_ssp, ONLY: generate_ssp_grid
   USE fsps_context, ONLY: fsps_context_create
   use fsps_sfh, only: compute_sfh_statistics
@@ -22,7 +24,7 @@
   !structure containing all necessary parameters
   TYPE(PARAMS) :: pset
   !define structure for CSP spectrum
-  TYPE(COMPSPOUT), ALLOCATABLE :: ocompsp(:)
+  TYPE(COMPSPOUT), ALLOCATABLE :: results(:)
   REAL(WP) :: ssfr_stats(3), ave_age
 
   !---------------------------------------------------------------!
@@ -46,7 +48,7 @@
         ALLOCATE(spec_ssp(ctx%state%nspec, ctx%state%ntfull, 1))
         ALLOCATE(mass_ssp(ctx%state%ntfull, 1))
         ALLOCATE(lbol_ssp(ctx%state%ntfull, 1))
-        ALLOCATE(ocompsp(ctx%state%ntfull))
+          ! results is allocated by compute_csp_scenario
   END IF
 
   !define the parameter set.  These are the default values, specified 
@@ -68,7 +70,9 @@
   CALL generate_ssp_grid(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags and write out mags and spec for SSP
   file1 = 'SSP_BPASS.out'
-  CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+  CALL compute_csp_scenario(ctx, pset, 1, spec_ssp, mass_ssp, lbol_ssp, results)
+  CALL write_csp_output_files(ctx, pset, results, file1, 3)
+  DEALLOCATE(results)
 
 
 
@@ -95,17 +99,18 @@
   CALL generate_ssp_grid(ctx, pset, mass_ssp(:,1), lbol_ssp(:,1), spec_ssp(:,:,1))
   !compute mags, and write out mags and spec for CSP
   file1 = 'CSP.out'
-  CALL COMPSP(ctx, 3, 1, file1, mass_ssp, lbol_ssp, spec_ssp, pset, ocompsp)
+  CALL compute_csp_scenario(ctx, pset, 1, spec_ssp, mass_ssp, lbol_ssp, results)
+  CALL write_csp_output_files(ctx, pset, results, file1, 3)
 
   !compute basic SFH statistics for the last entry in the ocompsp array
   !results are returned in the variable ssfr_stats (array) and ave_age
-  CALL compute_sfh_statistics(ctx, pset, ocompsp(1), ssfr_stats, ave_age)
+  CALL compute_sfh_statistics(ctx, pset, results(1), ssfr_stats, ave_age)
 
   ! Clean up memory before exiting
   IF (ALLOCATED(spec_ssp)) DEALLOCATE(spec_ssp)
   IF (ALLOCATED(mass_ssp)) DEALLOCATE(mass_ssp)
   IF (ALLOCATED(lbol_ssp)) DEALLOCATE(lbol_ssp)
-  IF (ALLOCATED(ocompsp))  DEALLOCATE(ocompsp)
+  IF (ALLOCATED(results))  DEALLOCATE(results)
 
 
 END PROGRAM SIMPLE
