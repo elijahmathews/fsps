@@ -6,7 +6,7 @@ PROGRAM GENERATE_TEST_DATA
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: NEMLINE
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
-   USE sps_utils
+   USE sps_setup_utils
    USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_context, ONLY: fsps_context_create

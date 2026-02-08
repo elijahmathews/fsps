@@ -5,7 +5,7 @@ PROGRAM SPEC_BIN
 
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: BASEL_STR, NDIM_LOGT, NDIM_LOGG
-   USE sps_utils, ONLY: fsps_resolve_paths
+   USE sps_setup_utils, ONLY: fsps_resolve_paths
    USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
   INTEGER  :: z,dumi1,i,j,status

@@ -2,7 +2,7 @@ MODULE FSPS_CONTEXT
    USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
    USE fsps_context_types, ONLY: fsps_context_t, fsps_context_state_destroy
-    USE sps_utils
+   USE sps_setup_utils
     USE fsps_ssp, ONLY: generate_ssp_grid
     USE fsps_csp, ONLY: compute_csp_scenario
     USE fsps_io, ONLY: load_tabular_sfh, write_csp_output_files

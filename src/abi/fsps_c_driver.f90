@@ -1,13 +1,16 @@
 MODULE FSPS_C_DRIVER
     USE ISO_C_BINDING
       USE fsps_precision, ONLY: WP
-      USE fsps_constants, ONLY: NEMLINE
+      USE fsps_constants, ONLY: NEMLINE, NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-      USE sps_utils
+      USE sps_setup_utils
       USE fsps_csp, ONLY: compute_csp_scenario
-      USE fsps_io, ONLY: load_tabular_sfh
+      USE fsps_io, ONLY: load_tabular_sfh, write_isochrone_cmd
       USE fsps_ssp, ONLY: generate_ssp_grid, compute_interpolated_ssp
       USE fsps_spectral_library, ONLY: get_stellar_spectrum
+      USE fsps_stellar_modifications, ONLY: apply_blue_stragglers, modify_giant_branch, &
+         modify_horizontal_branch
+      USE fsps_imf, ONLY: compute_imf_weights
       USE fsps_smoothing, ONLY: apply_smoothing
       USE fsps_cosmology, ONLY: vacuum_to_air
       USE fsps_interpolation, ONLY: find_interval
@@ -1748,8 +1751,101 @@ CONTAINS
    SUBROUTINE fsps_write_isochrone(c_outfile) BIND(C, name="fsps_write_isochrone")
       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: c_outfile
       CHARACTER(LEN=100) :: outfile
+      INTEGER :: i, tt, zz
+      REAL(WP) :: dz, loggi, hb_wght
+      REAL(WP), DIMENSION(NM) :: wght
+      REAL(WP), ALLOCATABLE :: spec(:)
+      REAL(WP), ALLOCATABLE :: mags_tmp(:)
+      REAL(WP), ALLOCATABLE :: time_grid(:)
+      REAL(WP), ALLOCATABLE :: mini(:,:), mact(:,:), logl(:,:), logt(:,:), logg(:,:), &
+         ffco(:,:), phase(:,:), lmdot(:,:), weights(:,:)
+      REAL(WP), ALLOCATABLE :: mags(:,:,:)
+      INTEGER, ALLOCATABLE :: nmass(:)
+
+      CALL fsps_ensure_default_ctx()
       CALL c_to_f_string(c_outfile, outfile)
-      CALL WRITE_ISOCHRONE(fsps_default_ctx, TRIM(outfile), global_pset)
+
+      ASSOCIATE( &
+           nbands => fsps_default_ctx%state%nbands, nspec => fsps_default_ctx%state%nspec, &
+           nt => fsps_default_ctx%state%nt, &
+           isoc_type => fsps_default_ctx%state%isoc_type, &
+           mini_isoc => fsps_default_ctx%state%mini_isoc, &
+           mact_isoc => fsps_default_ctx%state%mact_isoc, &
+           logl_isoc => fsps_default_ctx%state%logl_isoc, &
+           logt_isoc => fsps_default_ctx%state%logt_isoc, &
+           logg_isoc => fsps_default_ctx%state%logg_isoc, &
+           ffco_isoc => fsps_default_ctx%state%ffco_isoc, &
+           lmdot_isoc => fsps_default_ctx%state%lmdot_isoc, &
+           phase_isoc => fsps_default_ctx%state%phase_isoc, &
+           nmass_isoc => fsps_default_ctx%state%nmass_isoc, &
+           timestep_isoc => fsps_default_ctx%state%timestep_isoc, &
+           mact_isoc_full => fsps_default_ctx%state%mact_isoc )
+
+      ALLOCATE(spec(nspec))
+      ALLOCATE(mags_tmp(nbands))
+      ALLOCATE(mini(nt, NM), mact(nt, NM), logl(nt, NM), logt(nt, NM), logg(nt, NM))
+      ALLOCATE(ffco(nt, NM), phase(nt, NM), lmdot(nt, NM))
+      ALLOCATE(nmass(nt))
+      ALLOCATE(time_grid(nt))
+      ALLOCATE(weights(nt, NM))
+      ALLOCATE(mags(nt, NM, nbands))
+
+      dz = 0.0_wp
+      hb_wght = 0.0_wp
+      weights = 0.0_wp
+      mags = 0.0_wp
+      wght = 0.0_wp
+      zz = global_pset%zmet
+
+      mini = mini_isoc(zz, :, :)
+      mact = mact_isoc(zz, :, :)
+      logl = logl_isoc(zz, :, :)
+      logt = logt_isoc(zz, :, :)
+      logg = logg_isoc(zz, :, :)
+      ffco = ffco_isoc(zz, :, :)
+      lmdot = lmdot_isoc(zz, :, :)
+      phase = phase_isoc(zz, :, :)
+      nmass = nmass_isoc(zz, :)
+      time_grid = timestep_isoc(zz, :)
+
+      DO tt = 1, nt
+         wght = 0.0_wp
+         CALL compute_imf_weights(fsps_default_ctx, mini(tt, :), wght, nmass(tt))
+
+         IF (global_pset%fbhb.GT.0.0.OR.global_pset%sbss.GT.1E-3) &
+            CALL modify_horizontal_branch(fsps_default_ctx, tt, global_pset%fbhb, timestep_isoc(zz, tt), hb_wght, nmass, &
+               mini, mact, logl, logt, logg, phase, wght)
+
+         IF (timestep_isoc(zz, tt).GE.BHB_SBS_TIME.AND.global_pset%sbss.GT.1E-3) &
+            CALL apply_blue_stragglers(fsps_default_ctx, tt, zz, global_pset%sbss, hb_wght, nmass, &
+               mini, mact, logl, logt, logg, phase, wght)
+
+         CALL modify_giant_branch(fsps_default_ctx, tt, zz, timestep_isoc(zz, tt), nmass(tt), global_pset%delt, &
+            global_pset%dell, global_pset%pagb, global_pset%redgb, global_pset%agb, logl, logt, phase, wght)
+
+         DO i = 1, nmass(tt)
+            CALL get_stellar_spectrum(fsps_default_ctx, global_pset, mact(tt, i), logt(tt, i), 10**logl(tt, i), &
+               logg(tt, i), phase(tt, i), ffco(tt, i), lmdot(tt, i), spec)
+            CALL compute_magnitudes(fsps_default_ctx, dz, spec, mags_tmp)
+
+            IF (isoc_type.EQ.'bsti') THEN
+               loggi = LOG10(GRAVITY_L_M_T_COEFF * mact_isoc_full(zz, tt, i) / logl(tt, i)) + 4 * logt(tt, i)
+            ELSE
+               loggi = logg(tt, i)
+            ENDIF
+
+            logg(tt, i) = loggi
+            weights(tt, i) = wght(i)
+            mags(tt, i, :) = mags_tmp
+         END DO
+      END DO
+
+      CALL write_isochrone_cmd(fsps_default_ctx, global_pset, TRIM(outfile), time_grid, nmass, &
+         mini, mact, logl, logt, logg, phase, ffco, lmdot, weights, mags)
+
+      DEALLOCATE(spec, mags_tmp, mini, mact, logl, logt, logg, ffco, phase, lmdot, nmass, time_grid, weights, mags)
+
+      END ASSOCIATE
    END SUBROUTINE fsps_write_isochrone
 
    SUBROUTINE fsps_get_setup_vars(cvms, vta_flag) BIND(C, name="fsps_get_setup_vars")

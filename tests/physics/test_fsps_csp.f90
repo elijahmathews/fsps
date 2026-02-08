@@ -912,14 +912,7 @@ contains
         call compute_csp_scenario(ctx_yes, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, res_yes)
 
         line_idx = nearest_index(spec_lambda, 6563.0_wp)
-        ! --- DEBUG START ---
-        print *, "DEBUG INFO:"
-        print *, "  Line Index: ", line_idx
-        print *, "  Wavelength: ", spec_lambda(line_idx)
-        print *, "  Flux (No Neb): ", res_no(1)%spec(line_idx)
-        print *, "  Flux (Yes Neb): ", res_yes(1)%spec(line_idx)
-        print *, "  whlylim (ctx_yes): ", ctx_yes%state%whlylim
-        ! --- DEBUG END ---
+        
         call assert_true(res_yes(1)%spec(line_idx) > res_no(1)%spec(line_idx), &
                          "Nebular lines increase flux", total_tests, total_failures)
 

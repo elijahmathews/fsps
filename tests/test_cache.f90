@@ -1,7 +1,7 @@
 PROGRAM TEST_CACHE
   USE fsps_context_types, ONLY: fsps_context_t
   USE fsps_context, ONLY: fsps_context_create, fsps_context_destroy
-  USE sps_utils, ONLY: SPS_SETUP
+  USE sps_setup_utils, ONLY: SPS_SETUP
   IMPLICIT NONE
 
   TYPE(fsps_context_t) :: ctx1, ctx2, ctx3

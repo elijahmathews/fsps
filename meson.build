@@ -44,11 +44,9 @@ lib_sources = files(
     'src/core/fsps_precision.f90',
     'src/core/fsps_types.f90',
     'src/core/sps_setup.f90',
-    'src/core/sps_utils.f90',
 
     # IO Module
     'src/io/fsps_io.f90',
-    'src/io/write_isochrone.f90',
 
     # Math Modules
     'src/math/fsps_integration.f90',
@@ -116,6 +114,7 @@ test_utils_dep = declare_dependency(link_with : test_utils_lib)
 
 # 2. Unit Tests
 unit_test_sources = files(
+    'tests/io/test_fsps_io.f90',
     'tests/math/test_fsps_integration.f90',
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',

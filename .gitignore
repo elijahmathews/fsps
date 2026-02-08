@@ -17,6 +17,9 @@ build/
 *.exe
 compile_commands.json
 
+# Ignore test outputs
+tmp/
+
 # Main executables produced by Makefile
 autosps
 simple

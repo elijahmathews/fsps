@@ -2,7 +2,7 @@ PROGRAM AUTOSPS
 
    USE fsps_precision, ONLY: WP
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
-   USE sps_utils
+   USE sps_setup_utils
    USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_io, ONLY: write_csp_output_files, load_tabular_sfh
    USE fsps_ssp, ONLY: generate_ssp_grid

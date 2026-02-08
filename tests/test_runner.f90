@@ -8,7 +8,7 @@ PROGRAM TEST_RUNNER
       USE fsps_precision, ONLY: WP
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-      USE sps_utils
+      USE sps_setup_utils
       USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
          USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
@@ -397,11 +397,12 @@ CONTAINS
     INTEGER, INTENT(IN) :: d1
     REAL(WP), DIMENSION(d1), INTENT(IN) :: ref, new
    REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
-   INTEGER :: j, mj
+   INTEGER :: j, mj, mrj
 
    max_delta = 0.0
    max_rel = 0.0
    mj = 1
+   mrj = 1
 
     DO j = 1, d1
        IF (IEEE_IS_NAN(ref(j)) .OR. IEEE_IS_NAN(new(j))) THEN
@@ -413,7 +414,10 @@ CONTAINS
        ref_val = ref(j)
        delta = ABS(ref_val - new(j))
        if (ABS(ref_val) > 0.0_wp) then
-          max_rel = MAX(max_rel, delta / ABS(ref_val))
+          if (delta / ABS(ref_val) > max_rel) then
+             max_rel = delta / ABS(ref_val)
+             mrj = j
+          end if
        end if
        IF (delta > max_delta) THEN
           max_delta = delta
@@ -434,7 +438,7 @@ CONTAINS
        END IF
     END DO
     WRITE(*,*) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ')', &
-         ' max rel diff=', max_rel
+         ' max rel diff=', max_rel, ' at (', mrj, ')'
   END SUBROUTINE CHECK_ARRAY_1D
 
   SUBROUTINE CHECK_MAGS_1D(label, ref_mag, new_mag, d1)

@@ -41,6 +41,9 @@ program test_fsps
     use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
                                   failures_photometry => total_failures, &
                                   tests_photometry => total_tests
+    use test_fsps_io_mod, only: run_fsps_io_tests, &
+                                  failures_io => total_failures, &
+                                  tests_io => total_tests
     use test_fsps_ssp_mod, only: run_fsps_ssp_tests, &
                                  failures_ssp => total_failures, &
                                  tests_ssp => total_tests
@@ -72,6 +75,7 @@ program test_fsps
     call run_fsps_spectral_indices_tests()
     call run_fsps_spectral_library_tests()
     call run_fsps_photometry_tests()
+    call run_fsps_io_tests()
     call run_fsps_ssp_tests()
     call run_fsps_sfh_tests()
     call run_fsps_csp_tests()
@@ -153,6 +157,11 @@ program test_fsps
         (tests_photometry - failures_photometry), &
         tests_photometry &
     )
+    call print_summary_line( &
+        "fsps_io", &
+        (tests_io - failures_io), &
+        tests_io &
+    )
     
     grand_total_failures = failures_imf + &
                            failures_integration + &
@@ -168,7 +177,8 @@ program test_fsps
                            failures_photometry + &
                            failures_ssp + &
                            failures_sfh + &
-                           failures_csp
+                           failures_csp + &
+                           failures_io
     
     grand_total_tests = tests_imf + &
                         tests_integration + &
@@ -184,7 +194,8 @@ program test_fsps
                         tests_photometry + &
                         tests_ssp + &
                         tests_sfh + &
-                        tests_csp
+                        tests_csp + &
+                        tests_io
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)
