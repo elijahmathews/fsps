@@ -6,7 +6,6 @@ module fsps_precision
     !> This module serves as the root dependency for precision definitions (WP)
     !> and is used by almost all other modules.
 
-    ! Use the modern ISO standard for precision definitions
     use, intrinsic :: iso_fortran_env, only: real32, real64
 
     implicit none
@@ -14,7 +13,7 @@ module fsps_precision
 
     public :: WP
 
-! Default to Double (64-bit) unless the flag is set
+! Default to double (64-bit) unless the flag is set.
 #ifdef FORCE_SINGLE_PRECISION
     integer, parameter :: WP = real32
 #else

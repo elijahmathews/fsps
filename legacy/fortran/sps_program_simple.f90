@@ -1,13 +1,12 @@
- PROGRAM SIMPLE
+PROGRAM SIMPLE
 
   !set up modules
   USE fsps_precision, ONLY: WP
   USE fsps_types, ONLY: PARAMS, COMPSPOUT
-  USE sps_setup_utils
+  use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
   USE fsps_csp, ONLY: compute_csp_scenario
   USE fsps_io, ONLY: write_csp_output_files
   USE fsps_ssp, ONLY: generate_ssp_grid
-  USE fsps_context, ONLY: fsps_context_create
   use fsps_sfh, only: compute_sfh_statistics
   USE fsps_context_types, ONLY: fsps_context_t
   IMPLICIT NONE
@@ -34,16 +33,16 @@
   ! with no dust, and the 'default' assumptions regarding the 
   ! locations of the isochrones
 
-  CALL fsps_context_create(ctx)
+  call fsps_create(ctx)
 
   ctx%imf_type_val  = 0             !define the IMF (1=Chabrier 2003)
                             !see sps_vars.f90 for details of this var
   pset%zmet = 10            !define the metallicity (see the manual)
                             !20 = solar metallacity
 
-  CALL SPS_SETUP(ctx, pset%zmet) !read in the isochrones and spectral libraries
+  call fsps_setup(ctx, pset%zmet) !read in the isochrones and spectral libraries
 
-  ! Allocate memory now that SPS_SETUP has defined ntfull/nspec
+  ! Allocate memory now that fsps_setup has defined ntfull/nspec
       IF (.NOT. ALLOCATED(spec_ssp)) THEN
         ALLOCATE(spec_ssp(ctx%state%nspec, ctx%state%ntfull, 1))
         ALLOCATE(mass_ssp(ctx%state%ntfull, 1))
@@ -83,10 +82,10 @@
   ctx%imf_type_val  = 0                !define the IMF (0=Salpeter)
                                !see sps_vars.f90 for details of this var
 
-  !NB: you only need to re-run SPS_SETUP if you have changed the metallicity
-  !    or, even better (but slower), you can call SPS_SETUP(-1) and this will
+  !NB: you only need to re-run fsps_setup if you have changed the metallicity
+  !    or, even better (but slower), you can call fsps_setup(-1) and this will
   !    set up all the metallicities at once.
-  CALL SPS_SETUP(ctx, pset%zmet)    !read in the isochrones and spectral libraries
+  call fsps_setup(ctx, pset%zmet)    !read in the isochrones and spectral libraries
 
   !define the parameter set. 
   pset%sfh   = 1     !set SFH to "CSP"; sfh=1 means a normal tau model
@@ -111,6 +110,8 @@
   IF (ALLOCATED(mass_ssp)) DEALLOCATE(mass_ssp)
   IF (ALLOCATED(lbol_ssp)) DEALLOCATE(lbol_ssp)
   IF (ALLOCATED(results))  DEALLOCATE(results)
+
+  call fsps_destroy(ctx)
 
 
 END PROGRAM SIMPLE

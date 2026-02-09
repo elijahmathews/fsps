@@ -6,10 +6,9 @@ PROGRAM GENERATE_TEST_DATA
    USE fsps_precision, ONLY: WP
    USE fsps_constants, ONLY: NEMLINE
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
-   USE sps_setup_utils
+   use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
    USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
-   USE fsps_context, ONLY: fsps_context_create
    USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
@@ -97,12 +96,12 @@ PROGRAM GENERATE_TEST_DATA
    ! Initialize FSPS parameters (MIST/MILES defaults)
   ! We call this FIRST so we can be sure parameters like ntfull/nspec are set
   ! before we allocate (though they are static in the current codebase).
-   CALL fsps_context_create(ctx)
+   call fsps_create(ctx)
    ctx%imf_type_val = 1          
   pset%zmet = 10        
   
   ! Use defaults unless overridden by arguments
-  CALL SPS_SETUP(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), &
+  call fsps_setup(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), &
      spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
 
   ! Cache context dimensions for local allocations
@@ -113,7 +112,7 @@ PROGRAM GENERATE_TEST_DATA
   nindx_ctx = ctx%state%nindx
 
   IF (nspec_ctx <= 0 .OR. ntfull_ctx <= 0) THEN
-     WRITE(*,*) 'ERROR: SPS_SETUP did not initialize dimensions.'
+   WRITE(*,*) 'ERROR: fsps_setup did not initialize dimensions.'
      WRITE(*,*) 'nspec=', nspec_ctx, ' ntfull=', ntfull_ctx
      STOP EXIT_FAILURE
   END IF
@@ -206,7 +205,7 @@ PROGRAM GENERATE_TEST_DATA
   IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
   IF (ALLOCATED(pset%ssp_gen_age)) DEALLOCATE(pset%ssp_gen_age)
   
-   CALL SPS_TAKEDOWN(ctx)
+   call fsps_destroy(ctx)
 
   WRITE(*,*) 'Complete. Data saved.'
 

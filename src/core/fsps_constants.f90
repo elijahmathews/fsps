@@ -6,25 +6,24 @@ module fsps_constants
     !> This module consolidates all physical constants, array limits, and configuration
     !> parameters used throughout the FSPS codebase.
 
-    ! Use the modern ISO standard for precision definitions
     use fsps_precision, only: WP
 
     implicit none
     public
 
     ! ------------------------------------------------------------------------
-    ! PRECISION & CONFIGURATION
+    ! Precision & configuration
     ! ------------------------------------------------------------------------
 
-    !> @brief Verbosity Flags
+    !> @brief Verbosity flags.
     integer, parameter :: VERBOSE_MINIMAL = 0
-    integer, parameter :: VERBOSE_DEBUG   = 1
+    integer, parameter :: VERBOSE_DEBUG = 1
 
     !> @brief Controls the level of output to screen.
     integer, parameter :: VERBOSE = VERBOSE_MINIMAL
 
     ! ------------------------------------------------------------------------
-    ! PHYSICAL CONSTANTS (FUNDAMENTAL)
+    ! Physical constants (fundamental)
     ! ------------------------------------------------------------------------
     ! Defined first so they can be used to calculate derived constants below.
 
@@ -56,35 +55,35 @@ module fsps_constants
     real(WP), parameter :: A_U = 1.495978707e13_wp
 
     ! ------------------------------------------------------------------------
-    ! PHYSICAL CONSTANTS (DERIVED)
+    ! Physical constants (derived)
     ! ------------------------------------------------------------------------
 
     !> @brief Parsec [cm].
-    real(WP), parameter :: PARSEC = (648000.0_wp / PI) * A_U
+    real(WP), parameter :: PARSEC = (648000.0_wp/PI)*A_U
 
     !> @brief Solar mass [g].
-    real(WP), parameter :: M_SOL = M_SOL_PAR / G_NEWTON
+    real(WP), parameter :: M_SOL = M_SOL_PAR/G_NEWTON
 
     !> @brief Stefan-Boltzmann constant [erg cm⁻² s⁻¹ K⁻⁴].
-    real(WP), parameter :: SIGMA_SB = (2.0_wp * PI**5 * K_BOLTZMANN**4) / &
-                                      (15.0_wp * (C_LIGHT * 1.0e-8_wp)**2 * H_PLANCK**3)
+    real(WP), parameter :: SIGMA_SB = (2.0_wp*PI**5*K_BOLTZMANN**4)/ &
+                           (15.0_wp*(C_LIGHT*1.0e-8_wp)**2*H_PLANCK**3)
 
-    !> @brief Coefficient to calculate Surface Gravity (g) from L, M, and Teff.
+    !> @brief Coefficient to calculate surface gravity (g) from L, M, and Teff.
     !> Derivation: From g = GM/R² and L = 4πR²σT⁴, we substitute R² to get:
-    !>             g = (4π * G * σ_SB) * (M * T⁴ / L)
-    !> This constant contains the (4π * G * σ_SB) term, adjusted for Solar units.
-    real(WP), parameter :: GRAVITY_L_M_T_COEFF = 4.0_wp * PI * SIGMA_SB * G_NEWTON * (M_SOL / L_SOL)
+    !>             g = (4π * G * σ_sb) * (M * T⁴ / L)
+    !> This constant contains the (4π * G * σ_sb) term, adjusted for solar units.
+    real(WP), parameter :: GRAVITY_L_M_T_COEFF = 4.0_wp*PI*SIGMA_SB*G_NEWTON*(M_SOL/L_SOL)
 
-    !> @brief Reference log-flux for Absolute Bolometric Magnitude [log10(erg s⁻¹ cm⁻²)].
-    !> Represents the log10 flux of 1.0 Solar Luminosity at a distance of 10 parsecs.
-    !> Used to convert theoretical Luminosity to Absolute Magnitude (M_bol).
-    real(WP), parameter :: ABS_MAG_ZEROPOINT_LOG = log10(L_SOL / (4.0_wp * PI * (10.0_wp * PARSEC)**2))
+    !> @brief Reference log-flux for absolute bolometric magnitude [log10(erg s⁻¹ cm⁻²)].
+    !> Represents the log10 flux of 1.0 solar luminosity at a distance of 10 parsecs.
+    !> Used to convert theoretical luminosity to absolute magnitude (M_bol).
+    real(WP), parameter :: ABS_MAG_ZEROPOINT_LOG = log10(L_SOL/(4.0_wp*PI*(10.0_wp*PARSEC)**2))
 
     !> @brief Julian year [s].
     real(WP), parameter :: YEAR_TO_SECOND = 3.15576e7_wp
 
     ! ------------------------------------------------------------------------
-    ! FSPS SPECIFIC PARAMETERS
+    ! FSPS specific parameters
     ! ------------------------------------------------------------------------
 
     !> @brief Turn-on time for BHB and SBS phases, time is in log(yrs).
@@ -100,50 +99,77 @@ module fsps_constants
     character(4), parameter :: BASEL_STR = 'wlbc'
 
     ! ------------------------------------------------------------------------
-    ! ARRAY DIMENSIONS
+    ! Array dimensions
     ! ------------------------------------------------------------------------
 
+    !> @brief Wavelength dimension of each library.
+    integer, parameter :: NSPEC_MILES = 5994
+    integer, parameter :: NSPEC_BASEL = 1963
+    integer, parameter :: NSPEC_C3K = 11149
+    integer, parameter :: NSPEC_BPASS = 15000
+
+    !> @brief Number of metallicity points in the isochrone grid.
+    integer, parameter :: NZ_MIST = 12
+    integer, parameter :: NZ_PADOVA = 22
+    integer, parameter :: NZ_PARSEC = 15
+    integer, parameter :: NZ_BASTI = 10
+    integer, parameter :: NZ_GENEVA = 5
+    integer, parameter :: NZ_BPASS = 12
+
+    !> @brief Number of age points in the isochrone grid.
+    integer, parameter :: NT_MIST = 107
+    integer, parameter :: NT_PADOVA = 94
+    integer, parameter :: NT_PARSEC = 93
+    integer, parameter :: NT_BASTI = 94
+    integer, parameter :: NT_GENEVA = 51
+    integer, parameter :: NT_BPASS = 43
+
+    !> @brief Dimensions for XRB spectral library.
+    integer, parameter :: NT_XRB = 10
+    integer, parameter :: NZ_XRB = 11
+    integer, parameter :: NSPEC_XRB = 15000
+
     !> @brief Max dimension of array for each isochrone.
-    integer, parameter :: NM            = 2000
+    integer, parameter :: NM = 2000
 
     !> @brief Max number of lines to read in.
-    integer, parameter :: NLINES        = 1000000
+    integer, parameter :: NLINES = 1000000
 
     !> @brief Max number of lines in tabulated SFH, LSF.
-    integer, parameter :: NTABMAX       = 20000
+    integer, parameter :: NTABMAX = 20000
 
-    !> @brief Dimensions of BaSeL library (Log T and Log g).
-    integer, parameter :: NDIM_LOGT     = 68
-    integer, parameter :: NDIM_LOGG     = 19
+    !> @brief Dimensions of BaSeL library (log T and log g).
+    integer, parameter :: NDIM_LOGT = 68
+    integer, parameter :: NDIM_LOGG = 19
 
     !> @brief Number of O-rich, C-rich AGB spectra, and Aringer C-rich spectra.
-    integer, parameter :: N_AGB_O       = 9
-    integer, parameter :: N_AGB_C       = 5
-    integer, parameter :: N_AGB_CAR     = 9
+    integer, parameter :: N_AGB_O = 9
+    integer, parameter :: N_AGB_C = 5
+    integer, parameter :: N_AGB_CAR = 9
 
     !> @brief Number of post-AGB spectra.
-    integer, parameter :: NDIM_PAGB     = 14
+    integer, parameter :: NDIM_PAGB = 14
 
     !> @brief Number of WR spectra.
-    integer, parameter :: NDIM_WR       = 12
+    integer, parameter :: NDIM_WR = 12
 
     !> @brief Dimensions of WMBasic grid.
     integer, parameter :: NDIM_WMB_LOGT = 11
     integer, parameter :: NDIM_WMB_LOGG = 3
 
     !> @brief Parameters for circumstellar dust models (tau and Teff points).
-    integer, parameter :: NTAU_DAGB     = 50
-    integer, parameter :: NTEFF_DAGB    = 6
+    integer, parameter :: NTAU_DAGB = 50
+    integer, parameter :: NTEFF_DAGB = 6
 
     !> @brief Number of emission lines and continuum emission points.
-    integer, parameter :: NEMLINE       = 166
-    integer, parameter :: NLAM_NEBCONT  = 1963
-    integer, parameter :: NEBNZ         = 11
+    integer, parameter :: NEMLINE = 166
+    integer, parameter :: NLAM_NEBCONT = 1963
+    integer, parameter :: NEBNZ = 11
 
     !> @brief Number of metallicity, age, and ionization parameter points (nebular).
-    integer, parameter :: NEBNAGE       = 10
-    integer, parameter :: NEBNIP        = 7
-    integer, parameter :: NAGNDUST      = 9
+    integer, parameter :: NEBNAGE = 10
+    integer, parameter :: NEBNIP = 7
+    integer, parameter :: NAGNDUST = 9
 
     !> @brief Number of spectral points in the input library (AGN).
     integer, parameter :: NAGNDUST_SPEC = 125
@@ -152,9 +178,9 @@ module fsps_constants
     integer, parameter :: NPZPHOT = 200
 
     ! ------------------------------------------------------------------------
-    ! NUMERICAL LIMITS
+    ! Numerical limits
     ! ------------------------------------------------------------------------
 
-    real(WP), parameter :: SAFE_FLOOR   = tiny(1.0_wp)
+    real(WP), parameter :: SAFE_FLOOR = tiny(1.0_wp)
 
 end module fsps_constants

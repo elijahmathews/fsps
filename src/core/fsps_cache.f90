@@ -1,224 +1,246 @@
-MODULE FSPS_CACHE
-   USE fsps_precision, ONLY: WP
-   USE fsps_constants, ONLY: NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
-       N_AGB_O, N_AGB_C, N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
-       NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NM
-  IMPLICIT NONE
+module fsps_cache
+    !> @brief
+    !> Shared setup cache for FSPS contexts.
+    !>
+    !> @details
+    !> Manages shared, read-only arrays (spectral libraries, filters, etc.) that
+    !> can be reused across contexts to reduce I/O and allocation costs.
 
-  PRIVATE
-  PUBLIC :: fsps_setup_cache_t, fsps_cache_get_setup, fsps_cache_release_setup
+    use fsps_precision, only: WP
+    use fsps_constants, only: ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
+                              n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
+                              nemline, nebnz, nebnage, nebnip, nagndust, nm
 
-  TYPE :: fsps_setup_cache_t
-     CHARACTER(LEN=512) :: key = ''
-     INTEGER :: refcount = 0
-     INTEGER :: nz = 0
-     INTEGER :: nt = 0
-     INTEGER :: nspec = 0
-     INTEGER :: nzinit = 0
-     INTEGER :: nbands = 0
-     INTEGER :: nindx = 0
-     INTEGER :: ntfull = 0
-     INTEGER :: nspec_xrb = 0
-     INTEGER :: nt_xrb = 0
-     INTEGER :: nz_xrb = 0
-     CHARACTER(30) :: alt_filter_file = ''
-     CHARACTER(LEN=64) :: isoc_type = ''
-     CHARACTER(LEN=64) :: spec_type = ''
-     CHARACTER(LEN=64) :: dust_type = ''
-     INTEGER :: setup_nebular_gaussians = 0
-     INTEGER :: smooth_velocity = 0
-     INTEGER :: add_neb_emission = 0
-     INTEGER :: add_neb_continuum = 0
-     INTEGER :: add_dust_emission = 0
-     INTEGER :: add_agn_dust = 0
-     INTEGER :: add_xrb_emission = 0
-     INTEGER :: add_agb_dust_model = 0
-     INTEGER :: use_wr_spectra = 0
+    implicit none
+    private
 
-   REAL(WP), POINTER :: indexdefined(:,:) => NULL()
-   REAL(WP), POINTER :: wgdust(:,:,:,:) => NULL()
-   REAL(WP), POINTER :: g03smcextn(:) => NULL()
-   REAL(WP), POINTER :: bands(:,:) => NULL()
-   REAL(WP), POINTER :: magsun(:) => NULL()
-   REAL(WP), POINTER :: magvega(:) => NULL()
-   REAL(WP), POINTER :: filter_leff(:) => NULL()
-   REAL(WP), POINTER :: vega_spec(:) => NULL()
-   REAL(WP), POINTER :: sun_spec(:) => NULL()
-   REAL(WP), POINTER :: spec_lambda(:) => NULL()
-   REAL(WP), POINTER :: spec_nu(:) => NULL()
-   REAL(WP), POINTER :: spec_res(:) => NULL()
-   REAL(KIND(1.0)), POINTER :: speclib(:,:,:,:) => NULL()
-   REAL(KIND(1.0)), POINTER :: wmb_spec(:,:,:,:) => NULL()
-   REAL(WP), POINTER :: agb_spec_o(:,:) => NULL()
-   REAL(WP), POINTER :: agb_logt_o(:,:) => NULL()
-   REAL(WP), POINTER :: agb_spec_c(:,:) => NULL()
-   REAL(WP), POINTER :: agb_logt_c(:) => NULL()
-   REAL(WP), POINTER :: agb_spec_car(:,:) => NULL()
-   REAL(WP), POINTER :: pagb_spec(:,:,:) => NULL()
-   REAL(WP), POINTER :: wrn_spec(:,:,:) => NULL()
-   REAL(WP), POINTER :: wrc_spec(:,:,:) => NULL()
-   REAL(WP), POINTER :: qpaharr(:) => NULL()
-   REAL(WP), POINTER :: uminarr(:) => NULL()
-   REAL(WP), POINTER :: lambda_dustem(:) => NULL()
-   REAL(WP), POINTER :: dustem_dustem(:,:) => NULL()
-   REAL(WP), POINTER :: dustem2_dustem(:,:,:) => NULL()
-   REAL(WP), POINTER :: flux_dagb(:,:,:,:) => NULL()
-   REAL(WP), POINTER :: nebem_cont(:,:,:,:) => NULL()
-   REAL(WP), POINTER :: xnebem_cont(:,:,:,:) => NULL()
-   REAL(WP), POINTER :: neb_res_min(:) => NULL()
-   REAL(WP), POINTER :: gaussnebarr(:,:) => NULL()
-   REAL(WP), POINTER :: agndust_spec(:,:) => NULL()
-   REAL(WP), POINTER :: mact_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: logl_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: logt_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: logg_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: ffco_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: phase_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: mini_isoc(:,:,:) => NULL()
-   REAL(WP), POINTER :: lmdot_isoc(:,:,:) => NULL()
-   INTEGER, POINTER :: nmass_isoc(:,:) => NULL()
-   REAL(WP), POINTER :: timestep_isoc(:,:) => NULL()
-   REAL(WP), POINTER :: zlegend(:) => NULL()
-   REAL(WP), POINTER :: zlegendinit(:) => NULL()
-   REAL(WP), POINTER :: bpass_spec_ssp(:,:,:) => NULL()
-   REAL(WP), POINTER :: bpass_mass_ssp(:,:) => NULL()
-   REAL(WP), POINTER :: lam_xrb(:) => NULL()
-   REAL(WP), POINTER :: spec_xrb(:,:,:) => NULL()
-   REAL(WP), POINTER :: ages_xrb(:) => NULL()
-   REAL(WP), POINTER :: zmet_xrb(:) => NULL()
-   REAL(WP), POINTER :: time_full(:) => NULL()
-  END TYPE fsps_setup_cache_t
+    public :: fsps_setup_cache_t
+    public :: fsps_cache_get_setup
+    public :: fsps_cache_release_setup
 
-  TYPE(fsps_setup_cache_t), TARGET, ALLOCATABLE :: setup_cache(:)
+    ! ---------------------------------------------------------------------
+    ! Module constants
+    ! ---------------------------------------------------------------------
 
-CONTAINS
+    type :: fsps_setup_cache_t
+        character(len=512) :: key = ''
+        integer :: refcount = 0
+        integer :: nz = 0
+        integer :: nt = 0
+        integer :: nspec = 0
+        integer :: nzinit = 0
+        integer :: nbands = 0
+        integer :: nindx = 0
+        integer :: ntfull = 0
+        integer :: nspec_xrb = 0
+        integer :: nt_xrb = 0
+        integer :: nz_xrb = 0
+        character(len=30) :: alt_filter_file = ''
+        character(len=64) :: isoc_type = ''
+        character(len=64) :: spec_type = ''
+        character(len=64) :: dust_type = ''
+        integer :: setup_nebular_gaussians = 0
+        integer :: smooth_velocity = 0
+        integer :: add_neb_emission = 0
+        integer :: add_neb_continuum = 0
+        integer :: add_dust_emission = 0
+        integer :: add_agn_dust = 0
+        integer :: add_xrb_emission = 0
+        integer :: add_agb_dust_model = 0
+        integer :: use_wr_spectra = 0
 
-  SUBROUTINE fsps_cache_get_setup(key, entry, is_new)
-    CHARACTER(LEN=*), INTENT(IN) :: key
-    TYPE(fsps_setup_cache_t), POINTER :: entry
-    LOGICAL, INTENT(OUT) :: is_new
+        real(WP), pointer :: indexdefined(:, :) => null()
+        real(WP), pointer :: wgdust(:, :, :, :) => null()
+        real(WP), pointer :: g03smcextn(:) => null()
+        real(WP), pointer :: bands(:, :) => null()
+        real(WP), pointer :: magsun(:) => null()
+        real(WP), pointer :: magvega(:) => null()
+        real(WP), pointer :: filter_leff(:) => null()
+        real(WP), pointer :: vega_spec(:) => null()
+        real(WP), pointer :: sun_spec(:) => null()
+        real(WP), pointer :: spec_lambda(:) => null()
+        real(WP), pointer :: spec_nu(:) => null()
+        real(WP), pointer :: spec_res(:) => null()
+        real(kind(1.0)), pointer :: speclib(:, :, :, :) => null()
+        real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
+        real(WP), pointer :: agb_spec_o(:, :) => null()
+        real(WP), pointer :: agb_logt_o(:, :) => null()
+        real(WP), pointer :: agb_spec_c(:, :) => null()
+        real(WP), pointer :: agb_logt_c(:) => null()
+        real(WP), pointer :: agb_spec_car(:, :) => null()
+        real(WP), pointer :: pagb_spec(:, :, :) => null()
+        real(WP), pointer :: wrn_spec(:, :, :) => null()
+        real(WP), pointer :: wrc_spec(:, :, :) => null()
+        real(WP), pointer :: qpaharr(:) => null()
+        real(WP), pointer :: uminarr(:) => null()
+        real(WP), pointer :: lambda_dustem(:) => null()
+        real(WP), pointer :: dustem_dustem(:, :) => null()
+        real(WP), pointer :: dustem2_dustem(:, :, :) => null()
+        real(WP), pointer :: flux_dagb(:, :, :, :) => null()
+        real(WP), pointer :: nebem_cont(:, :, :, :) => null()
+        real(WP), pointer :: xnebem_cont(:, :, :, :) => null()
+        real(WP), pointer :: neb_res_min(:) => null()
+        real(WP), pointer :: gaussnebarr(:, :) => null()
+        real(WP), pointer :: agndust_spec(:, :) => null()
+        real(WP), pointer :: mact_isoc(:, :, :) => null()
+        real(WP), pointer :: logl_isoc(:, :, :) => null()
+        real(WP), pointer :: logt_isoc(:, :, :) => null()
+        real(WP), pointer :: logg_isoc(:, :, :) => null()
+        real(WP), pointer :: ffco_isoc(:, :, :) => null()
+        real(WP), pointer :: phase_isoc(:, :, :) => null()
+        real(WP), pointer :: mini_isoc(:, :, :) => null()
+        real(WP), pointer :: lmdot_isoc(:, :, :) => null()
+        integer, pointer :: nmass_isoc(:, :) => null()
+        real(WP), pointer :: timestep_isoc(:, :) => null()
+        real(WP), pointer :: zlegend(:) => null()
+        real(WP), pointer :: zlegendinit(:) => null()
+        real(WP), pointer :: bpass_spec_ssp(:, :, :) => null()
+        real(WP), pointer :: bpass_mass_ssp(:, :) => null()
+        real(WP), pointer :: lam_xrb(:) => null()
+        real(WP), pointer :: spec_xrb(:, :, :) => null()
+        real(WP), pointer :: ages_xrb(:) => null()
+        real(WP), pointer :: zmet_xrb(:) => null()
+        real(WP), pointer :: time_full(:) => null()
+    end type fsps_setup_cache_t
 
-    INTEGER :: i, empty_slot
-    TYPE(fsps_setup_cache_t), ALLOCATABLE :: tmp(:)
+    type(fsps_setup_cache_t), target, allocatable :: setup_cache(:)
 
-    is_new = .FALSE.
-    empty_slot = 0
-    NULLIFY(entry)
+contains
 
-    IF (ALLOCATED(setup_cache)) THEN
-       DO i=1,SIZE(setup_cache)
-          IF (LEN_TRIM(setup_cache(i)%key) == 0) THEN
-             IF (empty_slot == 0) empty_slot = i
-          ELSE IF (TRIM(setup_cache(i)%key) == TRIM(key)) THEN
-             setup_cache(i)%refcount = setup_cache(i)%refcount + 1
-             entry => setup_cache(i)
-             RETURN
-          ENDIF
-       ENDDO
-    ENDIF
+    !> @brief Acquire or create a shared setup cache entry.
+    !> @param[in] key Cache key string.
+    !> @param[out] entry Cache entry pointer.
+    !> @param[out] is_new True if a new cache entry was created.
+    subroutine fsps_cache_get_setup(key, entry, is_new)
+        character(len=*), intent(in) :: key
+        type(fsps_setup_cache_t), pointer :: entry
+        logical, intent(out) :: is_new
 
-    is_new = .TRUE.
+        integer :: i, empty_slot
+        type(fsps_setup_cache_t), allocatable :: tmp(:)
 
-    IF (ALLOCATED(setup_cache)) THEN
-       IF (empty_slot > 0) THEN
-          setup_cache(empty_slot)%key = TRIM(key)
-          setup_cache(empty_slot)%refcount = 1
-          entry => setup_cache(empty_slot)
-          RETURN
-       ENDIF
-       ALLOCATE(tmp(SIZE(setup_cache)+1))
-       tmp(1:SIZE(setup_cache)) = setup_cache
-       CALL MOVE_ALLOC(tmp, setup_cache)
-    ELSE
-       ALLOCATE(setup_cache(1))
-    ENDIF
+        is_new = .false.
+        empty_slot = 0
+        nullify (entry)
 
-    setup_cache(SIZE(setup_cache))%key = TRIM(key)
-    setup_cache(SIZE(setup_cache))%refcount = 1
-    entry => setup_cache(SIZE(setup_cache))
-  END SUBROUTINE fsps_cache_get_setup
+        if (allocated(setup_cache)) then
+            do i = 1, size(setup_cache)
+                if (len_trim(setup_cache(i)%key) == 0) then
+                    if (empty_slot == 0) empty_slot = i
+                else if (trim(setup_cache(i)%key) == trim(key)) then
+                    setup_cache(i)%refcount = setup_cache(i)%refcount + 1
+                    entry => setup_cache(i)
+                    return
+                end if
+            end do
+        end if
 
-  SUBROUTINE fsps_cache_release_setup(entry)
-    TYPE(fsps_setup_cache_t), POINTER :: entry
+        is_new = .true.
 
-    IF (.NOT.ASSOCIATED(entry)) RETURN
+        if (allocated(setup_cache)) then
+            if (empty_slot > 0) then
+                setup_cache(empty_slot)%key = trim(key)
+                setup_cache(empty_slot)%refcount = 1
+                entry => setup_cache(empty_slot)
+                return
+            end if
+            allocate (tmp(size(setup_cache) + 1))
+            tmp(1:size(setup_cache)) = setup_cache
+            call move_alloc(tmp, setup_cache)
+        else
+            allocate (setup_cache(1))
+        end if
 
-    entry%refcount = entry%refcount - 1
-    IF (entry%refcount <= 0) THEN
-       CALL fsps_cache_setup_clear(entry)
-    ENDIF
+        setup_cache(size(setup_cache))%key = trim(key)
+        setup_cache(size(setup_cache))%refcount = 1
+        entry => setup_cache(size(setup_cache))
+    end subroutine fsps_cache_get_setup
 
-    NULLIFY(entry)
-  END SUBROUTINE fsps_cache_release_setup
+    !> @brief Release a setup cache entry and free it when refcount hits zero.
+    !> @param[inout] entry Cache entry pointer.
+    subroutine fsps_cache_release_setup(entry)
+        type(fsps_setup_cache_t), pointer :: entry
 
-  SUBROUTINE fsps_cache_setup_clear(entry)
-    TYPE(fsps_setup_cache_t), INTENT(INOUT) :: entry
+        if (.not. associated(entry)) return
 
-   IF (ASSOCIATED(entry%indexdefined)) DEALLOCATE(entry%indexdefined)
-   IF (ASSOCIATED(entry%wgdust)) DEALLOCATE(entry%wgdust)
-   IF (ASSOCIATED(entry%g03smcextn)) DEALLOCATE(entry%g03smcextn)
-   IF (ASSOCIATED(entry%bands)) DEALLOCATE(entry%bands)
-   IF (ASSOCIATED(entry%magsun)) DEALLOCATE(entry%magsun)
-   IF (ASSOCIATED(entry%magvega)) DEALLOCATE(entry%magvega)
-   IF (ASSOCIATED(entry%filter_leff)) DEALLOCATE(entry%filter_leff)
-   IF (ASSOCIATED(entry%vega_spec)) DEALLOCATE(entry%vega_spec)
-   IF (ASSOCIATED(entry%sun_spec)) DEALLOCATE(entry%sun_spec)
-   IF (ASSOCIATED(entry%spec_lambda)) DEALLOCATE(entry%spec_lambda)
-   IF (ASSOCIATED(entry%spec_nu)) DEALLOCATE(entry%spec_nu)
-   IF (ASSOCIATED(entry%spec_res)) DEALLOCATE(entry%spec_res)
-   IF (ASSOCIATED(entry%speclib)) DEALLOCATE(entry%speclib)
-   IF (ASSOCIATED(entry%wmb_spec)) DEALLOCATE(entry%wmb_spec)
-   IF (ASSOCIATED(entry%agb_spec_o)) DEALLOCATE(entry%agb_spec_o)
-   IF (ASSOCIATED(entry%agb_logt_o)) DEALLOCATE(entry%agb_logt_o)
-   IF (ASSOCIATED(entry%agb_spec_c)) DEALLOCATE(entry%agb_spec_c)
-   IF (ASSOCIATED(entry%agb_logt_c)) DEALLOCATE(entry%agb_logt_c)
-   IF (ASSOCIATED(entry%agb_spec_car)) DEALLOCATE(entry%agb_spec_car)
-   IF (ASSOCIATED(entry%pagb_spec)) DEALLOCATE(entry%pagb_spec)
-   IF (ASSOCIATED(entry%wrn_spec)) DEALLOCATE(entry%wrn_spec)
-   IF (ASSOCIATED(entry%wrc_spec)) DEALLOCATE(entry%wrc_spec)
-   IF (ASSOCIATED(entry%qpaharr)) DEALLOCATE(entry%qpaharr)
-   IF (ASSOCIATED(entry%uminarr)) DEALLOCATE(entry%uminarr)
-   IF (ASSOCIATED(entry%lambda_dustem)) DEALLOCATE(entry%lambda_dustem)
-   IF (ASSOCIATED(entry%dustem_dustem)) DEALLOCATE(entry%dustem_dustem)
-   IF (ASSOCIATED(entry%dustem2_dustem)) DEALLOCATE(entry%dustem2_dustem)
-   IF (ASSOCIATED(entry%flux_dagb)) DEALLOCATE(entry%flux_dagb)
-   IF (ASSOCIATED(entry%nebem_cont)) DEALLOCATE(entry%nebem_cont)
-   IF (ASSOCIATED(entry%xnebem_cont)) DEALLOCATE(entry%xnebem_cont)
-   IF (ASSOCIATED(entry%neb_res_min)) DEALLOCATE(entry%neb_res_min)
-   IF (ASSOCIATED(entry%gaussnebarr)) DEALLOCATE(entry%gaussnebarr)
-   IF (ASSOCIATED(entry%agndust_spec)) DEALLOCATE(entry%agndust_spec)
-   IF (ASSOCIATED(entry%mact_isoc)) DEALLOCATE(entry%mact_isoc)
-   IF (ASSOCIATED(entry%logl_isoc)) DEALLOCATE(entry%logl_isoc)
-   IF (ASSOCIATED(entry%logt_isoc)) DEALLOCATE(entry%logt_isoc)
-   IF (ASSOCIATED(entry%logg_isoc)) DEALLOCATE(entry%logg_isoc)
-   IF (ASSOCIATED(entry%ffco_isoc)) DEALLOCATE(entry%ffco_isoc)
-   IF (ASSOCIATED(entry%phase_isoc)) DEALLOCATE(entry%phase_isoc)
-   IF (ASSOCIATED(entry%mini_isoc)) DEALLOCATE(entry%mini_isoc)
-   IF (ASSOCIATED(entry%lmdot_isoc)) DEALLOCATE(entry%lmdot_isoc)
-   IF (ASSOCIATED(entry%nmass_isoc)) DEALLOCATE(entry%nmass_isoc)
-   IF (ASSOCIATED(entry%timestep_isoc)) DEALLOCATE(entry%timestep_isoc)
-   IF (ASSOCIATED(entry%zlegend)) DEALLOCATE(entry%zlegend)
-   IF (ASSOCIATED(entry%zlegendinit)) DEALLOCATE(entry%zlegendinit)
-   IF (ASSOCIATED(entry%bpass_spec_ssp)) DEALLOCATE(entry%bpass_spec_ssp)
-   IF (ASSOCIATED(entry%bpass_mass_ssp)) DEALLOCATE(entry%bpass_mass_ssp)
-   IF (ASSOCIATED(entry%lam_xrb)) DEALLOCATE(entry%lam_xrb)
-   IF (ASSOCIATED(entry%spec_xrb)) DEALLOCATE(entry%spec_xrb)
-   IF (ASSOCIATED(entry%ages_xrb)) DEALLOCATE(entry%ages_xrb)
-   IF (ASSOCIATED(entry%zmet_xrb)) DEALLOCATE(entry%zmet_xrb)
-   IF (ASSOCIATED(entry%time_full)) DEALLOCATE(entry%time_full)
+        entry%refcount = entry%refcount - 1
+        if (entry%refcount <= 0) then
+            call fsps_cache_setup_clear(entry)
+        end if
 
-    entry%key = ''
-    entry%refcount = 0
-    entry%nz = 0
-    entry%nt = 0
-    entry%nspec = 0
-    entry%nzinit = 0
-    entry%nbands = 0
-    entry%nindx = 0
-    entry%ntfull = 0
-    entry%nspec_xrb = 0
-    entry%nt_xrb = 0
-    entry%nz_xrb = 0
-  END SUBROUTINE fsps_cache_setup_clear
+        nullify (entry)
+    end subroutine fsps_cache_release_setup
 
-END MODULE FSPS_CACHE
+    !> @brief Clear and deallocate all arrays in a cache entry.
+    !> @param[inout] entry Cache entry to clear.
+    subroutine fsps_cache_setup_clear(entry)
+        type(fsps_setup_cache_t), intent(inout) :: entry
+
+        if (associated(entry%indexdefined)) deallocate (entry%indexdefined)
+        if (associated(entry%wgdust)) deallocate (entry%wgdust)
+        if (associated(entry%g03smcextn)) deallocate (entry%g03smcextn)
+        if (associated(entry%bands)) deallocate (entry%bands)
+        if (associated(entry%magsun)) deallocate (entry%magsun)
+        if (associated(entry%magvega)) deallocate (entry%magvega)
+        if (associated(entry%filter_leff)) deallocate (entry%filter_leff)
+        if (associated(entry%vega_spec)) deallocate (entry%vega_spec)
+        if (associated(entry%sun_spec)) deallocate (entry%sun_spec)
+        if (associated(entry%spec_lambda)) deallocate (entry%spec_lambda)
+        if (associated(entry%spec_nu)) deallocate (entry%spec_nu)
+        if (associated(entry%spec_res)) deallocate (entry%spec_res)
+        if (associated(entry%speclib)) deallocate (entry%speclib)
+        if (associated(entry%wmb_spec)) deallocate (entry%wmb_spec)
+        if (associated(entry%agb_spec_o)) deallocate (entry%agb_spec_o)
+        if (associated(entry%agb_logt_o)) deallocate (entry%agb_logt_o)
+        if (associated(entry%agb_spec_c)) deallocate (entry%agb_spec_c)
+        if (associated(entry%agb_logt_c)) deallocate (entry%agb_logt_c)
+        if (associated(entry%agb_spec_car)) deallocate (entry%agb_spec_car)
+        if (associated(entry%pagb_spec)) deallocate (entry%pagb_spec)
+        if (associated(entry%wrn_spec)) deallocate (entry%wrn_spec)
+        if (associated(entry%wrc_spec)) deallocate (entry%wrc_spec)
+        if (associated(entry%qpaharr)) deallocate (entry%qpaharr)
+        if (associated(entry%uminarr)) deallocate (entry%uminarr)
+        if (associated(entry%lambda_dustem)) deallocate (entry%lambda_dustem)
+        if (associated(entry%dustem_dustem)) deallocate (entry%dustem_dustem)
+        if (associated(entry%dustem2_dustem)) deallocate (entry%dustem2_dustem)
+        if (associated(entry%flux_dagb)) deallocate (entry%flux_dagb)
+        if (associated(entry%nebem_cont)) deallocate (entry%nebem_cont)
+        if (associated(entry%xnebem_cont)) deallocate (entry%xnebem_cont)
+        if (associated(entry%neb_res_min)) deallocate (entry%neb_res_min)
+        if (associated(entry%gaussnebarr)) deallocate (entry%gaussnebarr)
+        if (associated(entry%agndust_spec)) deallocate (entry%agndust_spec)
+        if (associated(entry%mact_isoc)) deallocate (entry%mact_isoc)
+        if (associated(entry%logl_isoc)) deallocate (entry%logl_isoc)
+        if (associated(entry%logt_isoc)) deallocate (entry%logt_isoc)
+        if (associated(entry%logg_isoc)) deallocate (entry%logg_isoc)
+        if (associated(entry%ffco_isoc)) deallocate (entry%ffco_isoc)
+        if (associated(entry%phase_isoc)) deallocate (entry%phase_isoc)
+        if (associated(entry%mini_isoc)) deallocate (entry%mini_isoc)
+        if (associated(entry%lmdot_isoc)) deallocate (entry%lmdot_isoc)
+        if (associated(entry%nmass_isoc)) deallocate (entry%nmass_isoc)
+        if (associated(entry%timestep_isoc)) deallocate (entry%timestep_isoc)
+        if (associated(entry%zlegend)) deallocate (entry%zlegend)
+        if (associated(entry%zlegendinit)) deallocate (entry%zlegendinit)
+        if (associated(entry%bpass_spec_ssp)) deallocate (entry%bpass_spec_ssp)
+        if (associated(entry%bpass_mass_ssp)) deallocate (entry%bpass_mass_ssp)
+        if (associated(entry%lam_xrb)) deallocate (entry%lam_xrb)
+        if (associated(entry%spec_xrb)) deallocate (entry%spec_xrb)
+        if (associated(entry%ages_xrb)) deallocate (entry%ages_xrb)
+        if (associated(entry%zmet_xrb)) deallocate (entry%zmet_xrb)
+        if (associated(entry%time_full)) deallocate (entry%time_full)
+
+        entry%key = ''
+        entry%refcount = 0
+        entry%nz = 0
+        entry%nt = 0
+        entry%nspec = 0
+        entry%nzinit = 0
+        entry%nbands = 0
+        entry%nindx = 0
+        entry%ntfull = 0
+        entry%nspec_xrb = 0
+        entry%nt_xrb = 0
+        entry%nz_xrb = 0
+    end subroutine fsps_cache_setup_clear
+
+end module fsps_cache

@@ -8,10 +8,10 @@ PROGRAM TEST_RUNNER
       USE fsps_precision, ONLY: WP
       USE fsps_constants, ONLY: NEMLINE
       USE fsps_types, ONLY: PARAMS, COMPSPOUT
-      USE sps_setup_utils
+      USE fsps_api, ONLY: fsps_create, fsps_setup, fsps_destroy
       USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
-         USE fsps_context, ONLY: fsps_context_create, fsps_context_set_pset
+         USE fsps_context, ONLY: fsps_context_set_pset
       USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
@@ -163,14 +163,14 @@ PROGRAM TEST_RUNNER
   ! Note: We must initialize FSPS before allocating, but we must read the 
   ! file header before we know if dimensions match.
   
-   CALL fsps_context_create(ctx)
+   CALL fsps_create(ctx)
    ctx%imf_type_val = 1
    pset%zmet = 10
   
   WRITE(*,*) 'Initializing FSPS...'
   ! Always provide defaults that match the reference generator unless overridden
-   CALL SPS_SETUP(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
-   IF (verbose_output) CALL DUMP_STATE('AFTER SPS_SETUP', ctx, pset)
+   CALL fsps_setup(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
+   IF (verbose_output) CALL DUMP_STATE('AFTER fsps_setup', ctx, pset)
 
   nspec_ctx = ctx%state%nspec
   ntfull_ctx = ctx%state%ntfull
@@ -328,7 +328,7 @@ PROGRAM TEST_RUNNER
    IF (ALLOCATED(new_results)) DEALLOCATE(new_results)
    IF (ALLOCATED(ref_ocompsp)) DEALLOCATE(ref_ocompsp)
 
-   CALL SPS_TAKEDOWN(ctx)
+   CALL fsps_destroy(ctx)
 
    WRITE(*,*) 'Total failures:', nfail
    IF (test_passed) THEN

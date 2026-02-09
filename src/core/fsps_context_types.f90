@@ -1,290 +1,309 @@
-MODULE FSPS_CONTEXT_TYPES
-  USE fsps_precision, ONLY: WP
-  USE fsps_constants, ONLY: &
-       NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
-       N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
-       NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
-  USE fsps_types, ONLY: PARAMS, COMPSPOUT, TLSF, OBSDAT
-  USE fsps_cache, ONLY: fsps_setup_cache_t
-  IMPLICIT NONE
+module fsps_context_types
+    !> @brief
+    !> Core derived types that define FSPS contexts and shared state.
+    !>
+    !> @details
+    !> Provides the `fsps_context_t` and `fsps_context_state_t` structures along
+    !> with lifecycle helpers for releasing associated memory.
 
-    TYPE :: fsps_context_state_t
-      REAL(WP) :: zsol = 0.0
-      REAL(WP) :: zsol_spec = 0.0
-    CHARACTER(LEN=64) :: isoc_type = ''
-    CHARACTER(LEN=64) :: spec_type = ''
-     INTEGER :: nt = 0
-     INTEGER :: nz = 0
-     INTEGER :: nspec = 0
-     INTEGER :: nzinit = 0
-     INTEGER :: nbands = 0
-     INTEGER :: nindx = 0
-     INTEGER :: ntfull = 0
-     INTEGER :: nspec_xrb = 0
-     INTEGER :: nt_xrb = 0
-     INTEGER :: nz_xrb = 0
-     INTEGER :: check_sps_setup = 0
-    REAL(WP) :: tuniv = 0.0
-     INTEGER :: whlam5000 = 0
-     INTEGER :: whlylim = 0
-    REAL(WP) :: zpow2 = 1.0
-     INTEGER, DIMENSION(6) :: mwdindex = 0
-    REAL(WP), DIMENSION(500,3) :: cosmospl = 0.0
-     INTEGER :: ntabsfh = 0
-    REAL(WP), DIMENSION(3,NTABMAX) :: sfh_tab = 0.0
-    REAL(WP), DIMENSION(3) :: imf_alpha = 1.3
-    REAL(WP) :: imf_vdmc = 0.08
-    REAL(WP) :: imf_mdave = 0.5
-     INTEGER :: n_user_imf = 0
-    REAL(WP), DIMENSION(3,100) :: imf_user_alpha = 0.0
-    REAL(WP) :: salp_ind = 2.35
-    REAL(WP) :: imf_lower_limit = 0.08
-    REAL(WP) :: imf_upper_limit = 120.0
-    REAL(WP) :: imf_lower_bound = 0.0
-    REAL(WP) :: mlim_bh = 40.0
-    REAL(WP) :: mlim_ns = 8.5
-     CHARACTER(30) :: alt_filter_file = ''
-    REAL(WP), POINTER :: indexdefined(:,:) => NULL()
-    REAL(WP), POINTER :: wgdust(:,:,:,:) => NULL()
-    REAL(WP), POINTER :: g03smcextn(:) => NULL()
-    REAL(WP), POINTER :: bands(:,:) => NULL()
-    REAL(WP), POINTER :: magsun(:) => NULL()
-    REAL(WP), POINTER :: magvega(:) => NULL()
-    REAL(WP), POINTER :: filter_leff(:) => NULL()
-    REAL(WP), POINTER :: vega_spec(:) => NULL()
-    REAL(WP), POINTER :: sun_spec(:) => NULL()
-    REAL(WP), POINTER :: spec_lambda(:) => NULL()
-    REAL(WP), POINTER :: spec_nu(:) => NULL()
-    REAL(WP), POINTER :: spec_res(:) => NULL()
-     REAL(WP), DIMENSION(NDIM_LOGT) :: speclib_logt = 0.0
-     REAL(WP), DIMENSION(NDIM_LOGG) :: speclib_logg = 0.0
-    REAL(KIND(1.0)), POINTER :: speclib(:,:,:,:) => NULL()
-    REAL(WP), DIMENSION(NDIM_WMB_LOGT) :: wmb_logt = 0.0
-    REAL(WP), DIMENSION(NDIM_WMB_LOGG) :: wmb_logg = 0.0
-    REAL(KIND(1.0)), POINTER :: wmb_spec(:,:,:,:) => NULL()
-    REAL(WP), POINTER :: agb_spec_o(:,:) => NULL()
-    REAL(WP), POINTER :: agb_logt_o(:,:) => NULL()
-    REAL(WP), POINTER :: agb_spec_c(:,:) => NULL()
-    REAL(WP), POINTER :: agb_logt_c(:) => NULL()
-     REAL(WP), DIMENSION(N_AGB_CAR) :: agb_logt_car = 0.0
-    REAL(WP), POINTER :: agb_spec_car(:,:) => NULL()
-    REAL(WP), POINTER :: pagb_spec(:,:,:) => NULL()
-     REAL(WP), DIMENSION(NDIM_PAGB) :: pagb_logt = 0.0
-    REAL(WP), POINTER :: wrn_spec(:,:,:) => NULL()
-    REAL(WP), POINTER :: wrc_spec(:,:,:) => NULL()
-     REAL(WP), DIMENSION(NDIM_WR) :: wrn_logt = 0.0
-     REAL(WP), DIMENSION(NDIM_WR) :: wrc_logt = 0.0
-     INTEGER :: ndim_dustem = 0
-     INTEGER :: numin_dustem = 0
-     INTEGER :: nqpah_dustem = 0
-     CHARACTER(6) :: str_dustem = 'DL07'
-    REAL(WP), POINTER :: qpaharr(:) => NULL()
-    REAL(WP), POINTER :: uminarr(:) => NULL()
-    REAL(WP), POINTER :: lambda_dustem(:) => NULL()
-    REAL(WP), POINTER :: dustem_dustem(:,:) => NULL()
-    REAL(WP), POINTER :: dustem2_dustem(:,:,:) => NULL()
-    REAL(WP), POINTER :: flux_dagb(:,:,:,:) => NULL()
-     REAL(WP), DIMENSION(2,NTAU_DAGB) :: tau1_dagb = 0.0
-     REAL(WP), DIMENSION(2,NTEFF_DAGB) :: teff_dagb = 0.0
-     REAL(WP), DIMENSION(NEMLINE) :: nebem_line_pos = 0.0
-     REAL(WP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: nebem_line = 0.0
-     REAL(WP), DIMENSION(NEMLINE,NEBNZ,NEBNAGE,NEBNIP) :: xnebem_line = 0.0
-    REAL(WP), POINTER :: nebem_cont(:,:,:,:) => NULL()
-    REAL(WP), POINTER :: xnebem_cont(:,:,:,:) => NULL()
-     REAL(WP), DIMENSION(NEBNZ) :: nebem_logz = 0.0
-     REAL(WP), DIMENSION(NEBNAGE) :: nebem_age = 0.0
-     REAL(WP), DIMENSION(NEBNIP) :: nebem_logu = 0.0
-    REAL(WP), POINTER :: neb_res_min(:) => NULL()
-    REAL(WP), POINTER :: gaussnebarr(:,:) => NULL()
-     REAL(WP), DIMENSION(NAGNDUST) :: agndust_tau = 0.0
-    REAL(WP), POINTER :: agndust_spec(:,:) => NULL()
-    REAL(WP), POINTER :: mact_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: logl_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: logt_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: logg_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: ffco_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: phase_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: mini_isoc(:,:,:) => NULL()
-    REAL(WP), POINTER :: lmdot_isoc(:,:,:) => NULL()
-    INTEGER, POINTER :: nmass_isoc(:,:) => NULL()
-    REAL(WP), POINTER :: timestep_isoc(:,:) => NULL()
-    REAL(WP), POINTER :: zlegend(:) => NULL()
-    REAL(WP), POINTER :: zlegendinit(:) => NULL()
-     REAL(WP), ALLOCATABLE :: spec_ssp_zz(:,:,:)
-     REAL(WP), ALLOCATABLE :: mass_ssp_zz(:,:)
-     REAL(WP), ALLOCATABLE :: lbol_ssp_zz(:,:)
-    REAL(WP), POINTER :: time_full(:) => NULL()
-     REAL(WP), ALLOCATABLE :: weight_ssp(:,:)
-     REAL(WP), ALLOCATABLE :: spec_young(:)
-     REAL(WP), ALLOCATABLE :: spec_old(:)
-    REAL(WP), POINTER :: bpass_spec_ssp(:,:,:) => NULL()
-    REAL(WP), POINTER :: bpass_mass_ssp(:,:) => NULL()
-    REAL(WP), POINTER :: lam_xrb(:) => NULL()
-    REAL(WP), POINTER :: spec_xrb(:,:,:) => NULL()
-    REAL(WP), POINTER :: ages_xrb(:) => NULL()
-    REAL(WP), POINTER :: zmet_xrb(:) => NULL()
-     TYPE(TLSF) :: lsfinfo
-     TYPE(OBSDAT) :: powell_data
-     TYPE(OBSDAT) :: sedfit_data
-  END TYPE fsps_context_state_t
+    use fsps_precision, only: WP
+    use fsps_constants, only: &
+        NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
+        N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
+        NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
+    use fsps_types, only: PARAMS, COMPSPOUT, TLSF, OBSDAT
+    use fsps_cache, only: fsps_setup_cache_t
 
-  TYPE :: fsps_context_t
-     LOGICAL :: initialized = .FALSE.
-     INTEGER :: zin = 0
-     CHARACTER(LEN=64) :: isoc_type_name = ''
-     CHARACTER(LEN=64) :: spec_type_name = ''
-     CHARACTER(LEN=64) :: dust_type_name = ''
-     CHARACTER(LEN=250) :: sps_home = ''
-     CHARACTER(LEN=250) :: data_home = ''
-     CHARACTER(LEN=250) :: output_home = ''
-      TYPE(fsps_setup_cache_t), POINTER :: setup_cache => NULL()
-     TYPE(fsps_context_state_t) :: state
-    REAL(WP) :: om0_val = 0.0
-    REAL(WP) :: ol0_val = 0.0
-    REAL(WP) :: H0_val = 0.0
-    REAL(WP) :: tiny_logt_val = 0.0
-    REAL(WP) :: imf_upper_limit_val = 0.0
-    REAL(WP) :: imf_lower_limit_val = 0.0
-    REAL(WP) :: logt_wmb_hot_val = 0.0
-    REAL(WP) :: nebular_smooth_init_val = 0.0
-     INTEGER :: imf_type_val = 0
-     INTEGER :: tpagb_norm_type_val = 0
-     INTEGER :: pzcon_val = 0
-     INTEGER :: interpolation_type_val = 0
-     INTEGER :: add_agb_dust_model_val = 0
-     INTEGER :: dust_type_val = 0
-     INTEGER :: add_dust_emission_val = 0
-     INTEGER :: compute_vega_mags_val = 0
-     INTEGER :: vactoair_flag_val = 0
-     INTEGER :: add_agn_dust_val = 0
-     INTEGER :: use_wr_spectra_val = 0
-     INTEGER :: add_neb_emission_val = 0
-     INTEGER :: add_neb_continuum_val = 0
-     INTEGER :: cloudy_dust_val = 0
-     INTEGER :: add_igm_absorption_val = 0
-     INTEGER :: nebemlineinspec_val = 0
-     INTEGER :: add_xrb_emission_val = 0
-     INTEGER :: add_stellar_remnants_val = 0
-     INTEGER :: smooth_velocity_val = 0
-     INTEGER :: smooth_lsf_val = 0
-     INTEGER :: smoothspec_fast_val = 0
-     INTEGER :: redshift_colors_val = 0
-     INTEGER :: compute_light_ages_val = 0
-     INTEGER :: use_isoc_mdot_val = 0
-     INTEGER :: setup_nebular_gaussians_val = 0
-     TYPE(PARAMS) :: pset
-  END TYPE fsps_context_t
+    implicit none
+    private
 
-CONTAINS
+    public :: fsps_context_state_t
+    public :: fsps_context_t
+    public :: fsps_context_state_destroy
 
-  SUBROUTINE fsps_context_state_destroy(state)
-    TYPE(fsps_context_state_t), INTENT(INOUT) :: state
+    ! ---------------------------------------------------------------------
+    ! Module constants
+    ! ---------------------------------------------------------------------
 
-    IF (ASSOCIATED(state%indexdefined)) NULLIFY(state%indexdefined)
-    IF (ASSOCIATED(state%wgdust)) NULLIFY(state%wgdust)
-    IF (ASSOCIATED(state%g03smcextn)) NULLIFY(state%g03smcextn)
-    IF (ASSOCIATED(state%bands)) NULLIFY(state%bands)
-    IF (ASSOCIATED(state%magsun)) NULLIFY(state%magsun)
-    IF (ASSOCIATED(state%magvega)) NULLIFY(state%magvega)
-    IF (ASSOCIATED(state%filter_leff)) NULLIFY(state%filter_leff)
-    IF (ASSOCIATED(state%vega_spec)) NULLIFY(state%vega_spec)
-    IF (ASSOCIATED(state%sun_spec)) NULLIFY(state%sun_spec)
-    IF (ASSOCIATED(state%spec_lambda)) NULLIFY(state%spec_lambda)
-    IF (ASSOCIATED(state%spec_nu)) NULLIFY(state%spec_nu)
-    IF (ASSOCIATED(state%spec_res)) NULLIFY(state%spec_res)
-    IF (ASSOCIATED(state%speclib)) NULLIFY(state%speclib)
-    IF (ASSOCIATED(state%wmb_spec)) NULLIFY(state%wmb_spec)
-    IF (ASSOCIATED(state%agb_spec_o)) NULLIFY(state%agb_spec_o)
-    IF (ASSOCIATED(state%agb_logt_o)) NULLIFY(state%agb_logt_o)
-    IF (ASSOCIATED(state%agb_spec_c)) NULLIFY(state%agb_spec_c)
-    IF (ASSOCIATED(state%agb_logt_c)) NULLIFY(state%agb_logt_c)
-    IF (ASSOCIATED(state%agb_spec_car)) NULLIFY(state%agb_spec_car)
-    IF (ASSOCIATED(state%pagb_spec)) NULLIFY(state%pagb_spec)
-    IF (ASSOCIATED(state%wrn_spec)) NULLIFY(state%wrn_spec)
-    IF (ASSOCIATED(state%wrc_spec)) NULLIFY(state%wrc_spec)
-    IF (ASSOCIATED(state%qpaharr)) NULLIFY(state%qpaharr)
-    IF (ASSOCIATED(state%uminarr)) NULLIFY(state%uminarr)
-    IF (ASSOCIATED(state%lambda_dustem)) NULLIFY(state%lambda_dustem)
-    IF (ASSOCIATED(state%dustem_dustem)) NULLIFY(state%dustem_dustem)
-    IF (ASSOCIATED(state%dustem2_dustem)) NULLIFY(state%dustem2_dustem)
-    IF (ASSOCIATED(state%flux_dagb)) NULLIFY(state%flux_dagb)
-    IF (ASSOCIATED(state%nebem_cont)) NULLIFY(state%nebem_cont)
-    IF (ASSOCIATED(state%xnebem_cont)) NULLIFY(state%xnebem_cont)
-    IF (ASSOCIATED(state%neb_res_min)) NULLIFY(state%neb_res_min)
-    IF (ASSOCIATED(state%gaussnebarr)) NULLIFY(state%gaussnebarr)
-    IF (ASSOCIATED(state%agndust_spec)) NULLIFY(state%agndust_spec)
-    IF (ASSOCIATED(state%mact_isoc)) NULLIFY(state%mact_isoc)
-    IF (ASSOCIATED(state%logl_isoc)) NULLIFY(state%logl_isoc)
-    IF (ASSOCIATED(state%logt_isoc)) NULLIFY(state%logt_isoc)
-    IF (ASSOCIATED(state%logg_isoc)) NULLIFY(state%logg_isoc)
-    IF (ASSOCIATED(state%ffco_isoc)) NULLIFY(state%ffco_isoc)
-    IF (ASSOCIATED(state%phase_isoc)) NULLIFY(state%phase_isoc)
-    IF (ASSOCIATED(state%mini_isoc)) NULLIFY(state%mini_isoc)
-    IF (ASSOCIATED(state%lmdot_isoc)) NULLIFY(state%lmdot_isoc)
-    IF (ASSOCIATED(state%nmass_isoc)) NULLIFY(state%nmass_isoc)
-    IF (ASSOCIATED(state%timestep_isoc)) NULLIFY(state%timestep_isoc)
-    IF (ASSOCIATED(state%zlegend)) NULLIFY(state%zlegend)
-    IF (ASSOCIATED(state%zlegendinit)) NULLIFY(state%zlegendinit)
-    IF (ALLOCATED(state%spec_ssp_zz)) DEALLOCATE(state%spec_ssp_zz)
-    IF (ALLOCATED(state%mass_ssp_zz)) DEALLOCATE(state%mass_ssp_zz)
-    IF (ALLOCATED(state%lbol_ssp_zz)) DEALLOCATE(state%lbol_ssp_zz)
-    IF (ASSOCIATED(state%time_full)) NULLIFY(state%time_full)
-    IF (ALLOCATED(state%weight_ssp)) DEALLOCATE(state%weight_ssp)
-    IF (ALLOCATED(state%spec_young)) DEALLOCATE(state%spec_young)
-    IF (ALLOCATED(state%spec_old)) DEALLOCATE(state%spec_old)
-    IF (ASSOCIATED(state%bpass_spec_ssp)) NULLIFY(state%bpass_spec_ssp)
-    IF (ASSOCIATED(state%bpass_mass_ssp)) NULLIFY(state%bpass_mass_ssp)
-    IF (ASSOCIATED(state%lam_xrb)) NULLIFY(state%lam_xrb)
-    IF (ASSOCIATED(state%spec_xrb)) NULLIFY(state%spec_xrb)
-    IF (ASSOCIATED(state%ages_xrb)) NULLIFY(state%ages_xrb)
-    IF (ASSOCIATED(state%zmet_xrb)) NULLIFY(state%zmet_xrb)
-    IF (ALLOCATED(state%lsfinfo%lsf)) DEALLOCATE(state%lsfinfo%lsf)
-    IF (ALLOCATED(state%powell_data%mags)) DEALLOCATE(state%powell_data%mags)
-    IF (ALLOCATED(state%powell_data%magerr)) DEALLOCATE(state%powell_data%magerr)
-    IF (ALLOCATED(state%powell_data%spec)) DEALLOCATE(state%powell_data%spec)
-    IF (ALLOCATED(state%powell_data%specerr)) DEALLOCATE(state%powell_data%specerr)
-    IF (ALLOCATED(state%sedfit_data%mags)) DEALLOCATE(state%sedfit_data%mags)
-    IF (ALLOCATED(state%sedfit_data%magerr)) DEALLOCATE(state%sedfit_data%magerr)
-    IF (ALLOCATED(state%sedfit_data%spec)) DEALLOCATE(state%sedfit_data%spec)
-    IF (ALLOCATED(state%sedfit_data%specerr)) DEALLOCATE(state%sedfit_data%specerr)
+    type :: fsps_context_state_t
+        real(WP) :: zsol = 0.0
+        real(WP) :: zsol_spec = 0.0
+        character(len=64) :: isoc_type = ''
+        character(len=64) :: spec_type = ''
+        integer :: nt = 0
+        integer :: nz = 0
+        integer :: nspec = 0
+        integer :: nzinit = 0
+        integer :: nbands = 0
+        integer :: nindx = 0
+        integer :: ntfull = 0
+        integer :: nspec_xrb = 0
+        integer :: nt_xrb = 0
+        integer :: nz_xrb = 0
+        integer :: check_sps_setup = 0
+        real(WP) :: tuniv = 0.0
+        integer :: whlam5000 = 0
+        integer :: whlylim = 0
+        real(WP) :: zpow2 = 1.0
+        integer, dimension(6) :: mwdindex = 0
+        real(WP), dimension(500, 3) :: cosmospl = 0.0
+        integer :: ntabsfh = 0
+        real(WP), dimension(3, NTABMAX) :: sfh_tab = 0.0
+        real(WP), dimension(3) :: imf_alpha = 1.3
+        real(WP) :: imf_vdmc = 0.08
+        real(WP) :: imf_mdave = 0.5
+        integer :: n_user_imf = 0
+        real(WP), dimension(3, 100) :: imf_user_alpha = 0.0
+        real(WP) :: salp_ind = 2.35
+        real(WP) :: imf_lower_limit = 0.08
+        real(WP) :: imf_upper_limit = 120.0
+        real(WP) :: imf_lower_bound = 0.0
+        real(WP) :: mlim_bh = 40.0
+        real(WP) :: mlim_ns = 8.5
+        character(len=30) :: alt_filter_file = ''
+        real(WP), pointer :: indexdefined(:, :) => null()
+        real(WP), pointer :: wgdust(:, :, :, :) => null()
+        real(WP), pointer :: g03smcextn(:) => null()
+        real(WP), pointer :: bands(:, :) => null()
+        real(WP), pointer :: magsun(:) => null()
+        real(WP), pointer :: magvega(:) => null()
+        real(WP), pointer :: filter_leff(:) => null()
+        real(WP), pointer :: vega_spec(:) => null()
+        real(WP), pointer :: sun_spec(:) => null()
+        real(WP), pointer :: spec_lambda(:) => null()
+        real(WP), pointer :: spec_nu(:) => null()
+        real(WP), pointer :: spec_res(:) => null()
+        real(WP), dimension(NDIM_LOGT) :: speclib_logt = 0.0
+        real(WP), dimension(NDIM_LOGG) :: speclib_logg = 0.0
+        real(kind(1.0)), pointer :: speclib(:, :, :, :) => null()
+        real(WP), dimension(NDIM_WMB_LOGT) :: wmb_logt = 0.0
+        real(WP), dimension(NDIM_WMB_LOGG) :: wmb_logg = 0.0
+        real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
+        real(WP), pointer :: agb_spec_o(:, :) => null()
+        real(WP), pointer :: agb_logt_o(:, :) => null()
+        real(WP), pointer :: agb_spec_c(:, :) => null()
+        real(WP), pointer :: agb_logt_c(:) => null()
+        real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0
+        real(WP), pointer :: agb_spec_car(:, :) => null()
+        real(WP), pointer :: pagb_spec(:, :, :) => null()
+        real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0
+        real(WP), pointer :: wrn_spec(:, :, :) => null()
+        real(WP), pointer :: wrc_spec(:, :, :) => null()
+        real(WP), dimension(NDIM_WR) :: wrn_logt = 0.0
+        real(WP), dimension(NDIM_WR) :: wrc_logt = 0.0
+        integer :: ndim_dustem = 0
+        integer :: numin_dustem = 0
+        integer :: nqpah_dustem = 0
+        character(len=6) :: str_dustem = 'DL07'
+        real(WP), pointer :: qpaharr(:) => null()
+        real(WP), pointer :: uminarr(:) => null()
+        real(WP), pointer :: lambda_dustem(:) => null()
+        real(WP), pointer :: dustem_dustem(:, :) => null()
+        real(WP), pointer :: dustem2_dustem(:, :, :) => null()
+        real(WP), pointer :: flux_dagb(:, :, :, :) => null()
+        real(WP), dimension(2, NTAU_DAGB) :: tau1_dagb = 0.0
+        real(WP), dimension(2, NTEFF_DAGB) :: teff_dagb = 0.0
+        real(WP), dimension(NEMLINE) :: nebem_line_pos = 0.0
+        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: nebem_line = 0.0
+        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: xnebem_line = 0.0
+        real(WP), pointer :: nebem_cont(:, :, :, :) => null()
+        real(WP), pointer :: xnebem_cont(:, :, :, :) => null()
+        real(WP), dimension(NEBNZ) :: nebem_logz = 0.0
+        real(WP), dimension(NEBNAGE) :: nebem_age = 0.0
+        real(WP), dimension(NEBNIP) :: nebem_logu = 0.0
+        real(WP), pointer :: neb_res_min(:) => null()
+        real(WP), pointer :: gaussnebarr(:, :) => null()
+        real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0
+        real(WP), pointer :: agndust_spec(:, :) => null()
+        real(WP), pointer :: mact_isoc(:, :, :) => null()
+        real(WP), pointer :: logl_isoc(:, :, :) => null()
+        real(WP), pointer :: logt_isoc(:, :, :) => null()
+        real(WP), pointer :: logg_isoc(:, :, :) => null()
+        real(WP), pointer :: ffco_isoc(:, :, :) => null()
+        real(WP), pointer :: phase_isoc(:, :, :) => null()
+        real(WP), pointer :: mini_isoc(:, :, :) => null()
+        real(WP), pointer :: lmdot_isoc(:, :, :) => null()
+        integer, pointer :: nmass_isoc(:, :) => null()
+        real(WP), pointer :: timestep_isoc(:, :) => null()
+        real(WP), pointer :: zlegend(:) => null()
+        real(WP), pointer :: zlegendinit(:) => null()
+        real(WP), allocatable :: spec_ssp_zz(:, :, :)
+        real(WP), allocatable :: mass_ssp_zz(:, :)
+        real(WP), allocatable :: lbol_ssp_zz(:, :)
+        real(WP), pointer :: time_full(:) => null()
+        real(WP), allocatable :: weight_ssp(:, :)
+        real(WP), allocatable :: spec_young(:)
+        real(WP), allocatable :: spec_old(:)
+        real(WP), pointer :: bpass_spec_ssp(:, :, :) => null()
+        real(WP), pointer :: bpass_mass_ssp(:, :) => null()
+        real(WP), pointer :: lam_xrb(:) => null()
+        real(WP), pointer :: spec_xrb(:, :, :) => null()
+        real(WP), pointer :: ages_xrb(:) => null()
+        real(WP), pointer :: zmet_xrb(:) => null()
+        type(TLSF) :: lsfinfo
+        type(OBSDAT) :: powell_data
+        type(OBSDAT) :: sedfit_data
+    end type fsps_context_state_t
 
-    state%nt = 0
-    state%nz = 0
-    state%nspec = 0
-    state%nzinit = 0
-    state%nbands = 0
-    state%nindx = 0
-    state%ntfull = 0
-    state%nspec_xrb = 0
-    state%nt_xrb = 0
-    state%nz_xrb = 0
-    state%check_sps_setup = 0
-    state%tuniv = 0.0
-    state%whlam5000 = 0
-    state%whlylim = 0
-    state%zsol = 0.0
-    state%zsol_spec = 0.0
-    state%zpow2 = 1.0
-    state%ntabsfh = 0
-    state%lsfinfo%minlam = 0.0
-    state%lsfinfo%maxlam = 0.0
-    state%str_dustem = 'DL07'
-    state%imf_alpha = 1.3
-    state%imf_vdmc = 0.08
-    state%imf_mdave = 0.5
-    state%n_user_imf = 0
-    state%imf_user_alpha = 0.0
-    state%salp_ind = 2.35
-    state%imf_lower_limit = 0.08
-    state%imf_upper_limit = 120.0
-    state%imf_lower_bound = 0.0
-    state%mlim_bh = 40.0
-    state%mlim_ns = 8.5
-    state%alt_filter_file = ''
-    state%powell_data%zred = 0.0
-    state%powell_data%logsmass = 0.0
-    state%sedfit_data%zred = 0.0
-    state%sedfit_data%logsmass = 0.0
-  END SUBROUTINE fsps_context_state_destroy
+    type :: fsps_context_t
+        logical :: initialized = .false.
+        integer :: zin = 0
+        character(len=64) :: isoc_type_name = ''
+        character(len=64) :: spec_type_name = ''
+        character(len=64) :: dust_type_name = ''
+        character(len=250) :: sps_home = ''
+        character(len=250) :: data_home = ''
+        character(len=250) :: output_home = ''
+        type(fsps_setup_cache_t), pointer :: setup_cache => null()
+        type(fsps_context_state_t) :: state
+        real(WP) :: om0_val = 0.0
+        real(WP) :: ol0_val = 0.0
+        real(WP) :: H0_val = 0.0
+        real(WP) :: tiny_logt_val = 0.0
+        real(WP) :: imf_upper_limit_val = 0.0
+        real(WP) :: imf_lower_limit_val = 0.0
+        real(WP) :: logt_wmb_hot_val = 0.0
+        real(WP) :: nebular_smooth_init_val = 0.0
+        integer :: imf_type_val = 0
+        integer :: tpagb_norm_type_val = 0
+        integer :: pzcon_val = 0
+        integer :: interpolation_type_val = 0
+        integer :: add_agb_dust_model_val = 0
+        integer :: dust_type_val = 0
+        integer :: add_dust_emission_val = 0
+        integer :: compute_vega_mags_val = 0
+        integer :: vactoair_flag_val = 0
+        integer :: add_agn_dust_val = 0
+        integer :: use_wr_spectra_val = 0
+        integer :: add_neb_emission_val = 0
+        integer :: add_neb_continuum_val = 0
+        integer :: cloudy_dust_val = 0
+        integer :: add_igm_absorption_val = 0
+        integer :: nebemlineinspec_val = 0
+        integer :: add_xrb_emission_val = 0
+        integer :: add_stellar_remnants_val = 0
+        integer :: smooth_velocity_val = 0
+        integer :: smooth_lsf_val = 0
+        integer :: smoothspec_fast_val = 0
+        integer :: redshift_colors_val = 0
+        integer :: compute_light_ages_val = 0
+        integer :: use_isoc_mdot_val = 0
+        integer :: setup_nebular_gaussians_val = 0
+        type(PARAMS) :: pset
+    end type fsps_context_t
 
-END MODULE FSPS_CONTEXT_TYPES
+contains
+
+    !> @brief Release pointer members in a context state object.
+    !> @param[inout] state State to detach from shared cache arrays.
+    subroutine fsps_context_state_destroy(state)
+        type(fsps_context_state_t), intent(inout) :: state
+
+        if (associated(state%indexdefined)) nullify (state%indexdefined)
+        if (associated(state%wgdust)) nullify (state%wgdust)
+        if (associated(state%g03smcextn)) nullify (state%g03smcextn)
+        if (associated(state%bands)) nullify (state%bands)
+        if (associated(state%magsun)) nullify (state%magsun)
+        if (associated(state%magvega)) nullify (state%magvega)
+        if (associated(state%filter_leff)) nullify (state%filter_leff)
+        if (associated(state%vega_spec)) nullify (state%vega_spec)
+        if (associated(state%sun_spec)) nullify (state%sun_spec)
+        if (associated(state%spec_lambda)) nullify (state%spec_lambda)
+        if (associated(state%spec_nu)) nullify (state%spec_nu)
+        if (associated(state%spec_res)) nullify (state%spec_res)
+        if (associated(state%speclib)) nullify (state%speclib)
+        if (associated(state%wmb_spec)) nullify (state%wmb_spec)
+        if (associated(state%agb_spec_o)) nullify (state%agb_spec_o)
+        if (associated(state%agb_logt_o)) nullify (state%agb_logt_o)
+        if (associated(state%agb_spec_c)) nullify (state%agb_spec_c)
+        if (associated(state%agb_logt_c)) nullify (state%agb_logt_c)
+        if (associated(state%agb_spec_car)) nullify (state%agb_spec_car)
+        if (associated(state%pagb_spec)) nullify (state%pagb_spec)
+        if (associated(state%wrn_spec)) nullify (state%wrn_spec)
+        if (associated(state%wrc_spec)) nullify (state%wrc_spec)
+        if (associated(state%qpaharr)) nullify (state%qpaharr)
+        if (associated(state%uminarr)) nullify (state%uminarr)
+        if (associated(state%lambda_dustem)) nullify (state%lambda_dustem)
+        if (associated(state%dustem_dustem)) nullify (state%dustem_dustem)
+        if (associated(state%dustem2_dustem)) nullify (state%dustem2_dustem)
+        if (associated(state%flux_dagb)) nullify (state%flux_dagb)
+        if (associated(state%nebem_cont)) nullify (state%nebem_cont)
+        if (associated(state%xnebem_cont)) nullify (state%xnebem_cont)
+        if (associated(state%neb_res_min)) nullify (state%neb_res_min)
+        if (associated(state%gaussnebarr)) nullify (state%gaussnebarr)
+        if (associated(state%agndust_spec)) nullify (state%agndust_spec)
+        if (associated(state%mact_isoc)) nullify (state%mact_isoc)
+        if (associated(state%logl_isoc)) nullify (state%logl_isoc)
+        if (associated(state%logt_isoc)) nullify (state%logt_isoc)
+        if (associated(state%logg_isoc)) nullify (state%logg_isoc)
+        if (associated(state%ffco_isoc)) nullify (state%ffco_isoc)
+        if (associated(state%phase_isoc)) nullify (state%phase_isoc)
+        if (associated(state%mini_isoc)) nullify (state%mini_isoc)
+        if (associated(state%lmdot_isoc)) nullify (state%lmdot_isoc)
+        if (associated(state%nmass_isoc)) nullify (state%nmass_isoc)
+        if (associated(state%timestep_isoc)) nullify (state%timestep_isoc)
+        if (associated(state%zlegend)) nullify (state%zlegend)
+        if (associated(state%zlegendinit)) nullify (state%zlegendinit)
+        if (allocated(state%spec_ssp_zz)) deallocate (state%spec_ssp_zz)
+        if (allocated(state%mass_ssp_zz)) deallocate (state%mass_ssp_zz)
+        if (allocated(state%lbol_ssp_zz)) deallocate (state%lbol_ssp_zz)
+        if (associated(state%time_full)) nullify (state%time_full)
+        if (allocated(state%weight_ssp)) deallocate (state%weight_ssp)
+        if (allocated(state%spec_young)) deallocate (state%spec_young)
+        if (allocated(state%spec_old)) deallocate (state%spec_old)
+        if (associated(state%bpass_spec_ssp)) nullify (state%bpass_spec_ssp)
+        if (associated(state%bpass_mass_ssp)) nullify (state%bpass_mass_ssp)
+        if (associated(state%lam_xrb)) nullify (state%lam_xrb)
+        if (associated(state%spec_xrb)) nullify (state%spec_xrb)
+        if (associated(state%ages_xrb)) nullify (state%ages_xrb)
+        if (associated(state%zmet_xrb)) nullify (state%zmet_xrb)
+        if (allocated(state%lsfinfo%lsf)) deallocate (state%lsfinfo%lsf)
+        if (allocated(state%powell_data%mags)) deallocate (state%powell_data%mags)
+        if (allocated(state%powell_data%magerr)) deallocate (state%powell_data%magerr)
+        if (allocated(state%powell_data%spec)) deallocate (state%powell_data%spec)
+        if (allocated(state%powell_data%specerr)) deallocate (state%powell_data%specerr)
+        if (allocated(state%sedfit_data%mags)) deallocate (state%sedfit_data%mags)
+        if (allocated(state%sedfit_data%magerr)) deallocate (state%sedfit_data%magerr)
+        if (allocated(state%sedfit_data%spec)) deallocate (state%sedfit_data%spec)
+        if (allocated(state%sedfit_data%specerr)) deallocate (state%sedfit_data%specerr)
+
+        state%nt = 0
+        state%nz = 0
+        state%nspec = 0
+        state%nzinit = 0
+        state%nbands = 0
+        state%nindx = 0
+        state%ntfull = 0
+        state%nspec_xrb = 0
+        state%nt_xrb = 0
+        state%nz_xrb = 0
+        state%check_sps_setup = 0
+        state%tuniv = 0.0
+        state%whlam5000 = 0
+        state%whlylim = 0
+        state%zsol = 0.0
+        state%zsol_spec = 0.0
+        state%zpow2 = 1.0
+        state%ntabsfh = 0
+        state%lsfinfo%minlam = 0.0
+        state%lsfinfo%maxlam = 0.0
+        state%str_dustem = 'DL07'
+        state%imf_alpha = 1.3
+        state%imf_vdmc = 0.08
+        state%imf_mdave = 0.5
+        state%n_user_imf = 0
+        state%imf_user_alpha = 0.0
+        state%salp_ind = 2.35
+        state%imf_lower_limit = 0.08
+        state%imf_upper_limit = 120.0
+        state%imf_lower_bound = 0.0
+        state%mlim_bh = 40.0
+        state%mlim_ns = 8.5
+        state%alt_filter_file = ''
+        state%powell_data%zred = 0.0
+        state%powell_data%logsmass = 0.0
+        state%sedfit_data%zred = 0.0
+        state%sedfit_data%logsmass = 0.0
+    end subroutine fsps_context_state_destroy
+
+end module fsps_context_types

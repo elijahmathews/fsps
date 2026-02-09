@@ -1,92 +1,98 @@
 FSPS: Flexible Stellar Population Synthesis
 =====
-![Version Badge](https://img.shields.io/badge/version-v3.2-blue) [![codecov](https://img.shields.io/codecov/c/github/elijahmathews/fsps)](https://codecov.io/github/elijahmathews/fsps)
+![Version Badge](https://img.shields.io/badge/version-v3.2-blue) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/elijahmathews/fsps/test.yml)
+ [![codecov](https://img.shields.io/codecov/c/github/elijahmathews/fsps)](https://codecov.io/github/elijahmathews/fsps)
 
 > [!WARNING]
-> This fork of FSPS is currently under active development and should not be considered stable.
+> This is a major refactor of the standard FSPS codebase. It introduces breaking API changes to support thread safety and C-interoperability. For the stable, single-threaded legacy version, please visit the [original repository](https://github.com/cconroy20/fsps).
 
-References
----------
-When using this code please cite the papers found in [`CITATION.bib`](CITATION.bib).
+## Overview
 
-Installation
-----------
-If you have Git installed, FSPS can be obtained with the following commands:
+This repository contains a modernized, thread-safe implementation of the **Flexible Stellar Population Synthesis (FSPS)** code. While maintaining scientific accuracy with the original Fortran implementation, this fork overhauls the internal architecture to support:
 
-```sh
-cd /path/to/desired/location/
-git clone https://github.com/cconroy20/fsps
-```
-Otherwise download a gzipped tarball from [here](https://github.com/cconroy20/fsps/releases). Then follow the instructions at [`doc/INSTALL`](doc/INSTALL).
+1. **No Global State:** All simulation state is encapsulated in `fsps_context_t` handles.
+2. **Thread Safety:** Multiple FSPS contexts can run simultaneously on different threads (OpenMP/pthreads compatible).
+3. **Stable C ABI:** A standardized C driver (`fsps_c_driver`) allows direct linking from C, C++, Rust, Julia, and Python (via `ctypes`/`cffi`) without relying on `f2py`.
+4. **Modern Build System:** Streamlined Meson build system supporting shared libraries, `pkg-config`, and standard installation paths.
 
-You should not need to update the Git repository until an update is announced (which is why you need to be on the mailing list - see [`doc/INSTALL`](doc/INSTALL)).  If you've obtained FSPS using Git then when an update is announced you will need to simply type `cd $SPS_HOME; git pull` and then recompile (just type `make`).  If you have made your own edits to the FSPS files, Git will attempt to gracefully merge your local version with the repository version.
+## Installation
 
-Documentation
-------
-See the [Manual](doc/MANUAL.pdf)
+### Prerequisites
 
-Environment
------------
-- `SPS_HOME`: Legacy FSPS install root (contains `src/` and `data/`).
-- `FSPS_DATA_HOME`: Preferred install root (must contain `data/`), overrides `SPS_HOME` for data resolution.
-- `FSPS_OUTPUT_HOME`: Override output root (writes to `$FSPS_OUTPUT_HOME/OUTPUTS`).
+* A modern Fortran compiler (`gfortran` or `flang`).
+* The FSPS data files (see below).
 
-### System install
-
-To install the shared library, header, data files, and command-line drivers:
+### Clone and Build
 
 ```sh
-make shared
-make install PREFIX=/usr
+git clone https://github.com/elijahmathews/fsps
+cd fsps
+
+# Setup Meson
+meson setup build
+
+# Compile FSPS
+meson compile -C build
+
+# Run unit tests
+meson test -v -C build
 ```
 
-This installs data to `/usr/share/fsps/data` and the shared library to `/usr/lib`
-(or your distro’s libdir if you override `LIBDIR`). When using a system install,
-set `FSPS_DATA_HOME=/usr/share/fsps` if `SPS_HOME` is not set.
+## C Driver API (New)
 
-## C Driver API
+This refactor exposes the entire FSPS physical model through a clean C interface. This is the recommended way to interface with FSPS for external applications.
 
-FSPS ships a C driver intended for use by language bindings (e.g., Python-FSPS refactor or a Julia wrapper).
+### Basic Usage Example (C)
 
-- Header: include/fsps.h
-- Shared library: build/libfsps.so.* (build via `make shared`)
-- C driver test: `make test_c`
+```c
+#include <stdio.h>
+#include "fsps.h"
 
-For pkg-config users, `make install` installs fsps.pc to the pkg-config directory.
+int main() {
+    int status;
+    int handle;
+    
+    // 1. Create a context (thread-safe independent instance)
+    fsps_context_create(&handle, &status);
+    
+    // 2. Setup physics (MIST isochrones, MILES spectra)
+    fsps_context_setup(handle, "MIST", "MILES", "DL07", &status);
+    
+    // 3. Configure parameters (e.g., Solar Metallicity, 1 Gyr old)
+    fsps_set_param_float(handle, "logzsol", 0.0, &status);
+    fsps_set_param_float(handle, "tage", 1.0, &status);
+    
+    // 4. Compute Spectrum
+    // (Buffers would be allocated here, pointers passed to compute)
+    // fsps_compute(handle, ...);
+    
+    // 5. Cleanup
+    fsps_context_destroy(handle, &status);
+    return 0;
+}
 
-See [doc/FSPS_C_API.md](doc/FSPS_C_API.md) for the API reference, array layout, and error handling.
-Migration notes for wrappers are in [doc/DEGLOBALIFY_MIGRATION.md](doc/DEGLOBALIFY_MIGRATION.md).
+```
 
-Contents
----------
-Below is a brief description of the contents of the directories in the
-fsps root directory:
+Detailed documentation on the C API, array layouts, and error codes can be found in [`doc/FSPS_C_API.md`](doc/FSPS_C_API.md).
 
- * [`OUTPUTS`](OUTPUTS): Contains the outputs of a few example calls of the routines
-autosps and simple.  You may wish to use this directory for all
-outputs of the fsps routines.
+## Directory Structure
 
-* `build`: Contains the compiled object files (`.o`) and Fortran modules (`.mod`).
-	Test objects are placed in `build/tests`. This directory is automatically created when you run `make`.
+* **`src/`**: Modern Fortran source code. Organized by subsystem (physics, spectra, cosmology, C-driver).
+* **`include/`**: C header files (`fsps.h`).
+* **`data/`**: Location for physics tables (isochrones, dust models, etc).
+* **`build/`**: Build artifacts, object files, and compiled modules.
+* **`tests/`**: Regression suite comparing new C-driver outputs against legacy Fortran baselines.
 
- * [`data`](data): Contains model inputs and lookup tables. Subdirectories include:
-	 - `data/isochrones`: isochrone libraries (BaSTI, Padova, MIST, etc.)
-	 - `data/spectra`: spectral libraries and reference spectra (A0V, Sun, Hot_spectra)
-	 - `data/nebular`: nebular emission tables (continuum + lines)
-	 - `data/dust`: dust attenuation/emission and AGN torus models
-	 - `data/`: filter lists, indices, IMFs, SFHs, and other small tables
+## Citations and Acknowledgments
 
- * [`doc`](doc): Contains the manual, revision history, and installation
-instructions.
+If you use this code in your research, you **must** cite the original FSPS papers describing the physical models:
 
-* [`legacy/idl`](legacy/idl): Legacy IDL scripts for reading .mag/.indx/.spec
-output files (not actively maintained).
+* Conroy, Gunn, & White (2009, ApJ, 699, 486)
+* Conroy & Gunn (2010, ApJ, 712, 833)
 
-* [`src`](src): Contains the Fortran sources organized by subsystem (core, physics,
-spectra, SFH, math, cosmology, ABI, and program entry points).
+Please also refer to [`CITATION.bib`](CITATION.bib) for specific citations regarding the MIST isochrones and MILES spectral libraries if you utilize the default settings.
 
-* [`tests`](tests): Contains the regression test suite and scripts for generating
-reference comparison data. Test build artifacts are placed under `build/tests`.
+## License
 
-
-## 
+This code is released under the MIT License. See [license file](LICENSE.md) for details.
+This refactor is based on the original work by Charlie Conroy and contributors.

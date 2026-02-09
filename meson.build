@@ -41,9 +41,12 @@ lib_sources = files(
     'src/core/fsps_constants.f90',
     'src/core/fsps_context_types.f90',
     'src/core/fsps_context.f90',
+    'src/core/fsps_environment.f90',
+    'src/core/fsps_initialization.f90',
+    'src/core/fsps_strings.f90',
+    'src/core/fsps_api.f90',
     'src/core/fsps_precision.f90',
     'src/core/fsps_types.f90',
-    'src/core/sps_setup.f90',
 
     # IO Module
     'src/io/fsps_io.f90',
@@ -68,7 +71,6 @@ lib_sources = files(
     'src/spectra/fsps_smoothing.f90',
     'src/spectra/fsps_spectral_indices.f90',
     'src/spectra/fsps_spectral_library.f90',
-    'src/spectra/spec_sbf.f90',
 )
 
 # ===================================
@@ -94,10 +96,7 @@ fsps_dep = declare_dependency(
 # Program Executables
 # ===================================
 
-executable('autosps', 'src/programs/sps_program_autosps.f90', dependencies : fsps_dep, install : true)
-executable('lesssimple', 'src/programs/sps_program_lesssimple.f90', dependencies : fsps_dep, install : true)
-executable('simple', 'src/programs/sps_program_simple.f90', dependencies : fsps_dep, install : true)
-executable('spec_bin', 'src/programs/sps_program_spec_bin.f90', dependencies : fsps_dep, install : true)
+ 
 
 # ===================================
 # Tests
@@ -115,9 +114,11 @@ test_utils_dep = declare_dependency(link_with : test_utils_lib)
 # 2. Unit Tests
 unit_test_sources = files(
     'tests/io/test_fsps_io.f90',
+
     'tests/math/test_fsps_integration.f90',
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',
+
     'tests/physics/test_fsps_cosmology.f90',
     'tests/physics/test_fsps_csp.f90',
     'tests/physics/test_fsps_dust.f90',
@@ -126,10 +127,12 @@ unit_test_sources = files(
     'tests/physics/test_fsps_sfh.f90',
     'tests/physics/test_fsps_ssp.f90',
     'tests/physics/test_fsps_stellar_modifications.f90',
+
     'tests/spectra/test_fsps_photometry.f90',
     'tests/spectra/test_fsps_smoothing.f90',
     'tests/spectra/test_fsps_spectral_indices.f90',
     'tests/spectra/test_fsps_spectral_library.f90',
+    
     'tests/test_fsps.f90' # Main driver
 )
 

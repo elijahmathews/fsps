@@ -3,12 +3,11 @@ PROGRAM LESSSIMPLE
   !set up modules
       USE fsps_precision, ONLY: WP
             USE fsps_types, ONLY: PARAMS, COMPSPOUT
-        USE sps_setup_utils
+        use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
         USE fsps_csp, ONLY: compute_csp_scenario
         USE fsps_io, ONLY: write_csp_output_files, load_tabular_sfh
     USE fsps_ssp, ONLY: generate_ssp_grid
       USE fsps_cosmology, ONLY: convolve_with_mdf
-        USE fsps_context, ONLY: fsps_context_create
         USE fsps_context_types, ONLY: fsps_context_t
   
   IMPLICIT NONE
@@ -36,15 +35,15 @@ PROGRAM LESSSIMPLE
   ! Now we're going to show you how to use full  
   ! metallicity-dependent info                   
   
-        CALL fsps_context_create(ctx)
+        call fsps_create(ctx)
 
       ctx%imf_type_val = 0    ! Salpeter IMF
   pset%sfh = 0    ! compute SSP
 
   !here we have to read in all the librarries
-        CALL SPS_SETUP(ctx, -1)
+        call fsps_setup(ctx, -1)
 
-  ! Allocate memory now that SPS_SETUP has defined ntfull/nspec
+    ! Allocate memory now that fsps_setup has defined ntfull/nspec
   IF (.NOT. ALLOCATED(spec_pz)) THEN
         ALLOCATE(spec_pz(ctx%state%nspec, ctx%state%ntfull))
         ALLOCATE(spec_pz_zz(ctx%state%nspec, ctx%state%ntfull, 1))
@@ -95,5 +94,7 @@ PROGRAM LESSSIMPLE
       IF (ALLOCATED(mass_pz_zz)) DEALLOCATE(mass_pz_zz)
       IF (ALLOCATED(lbol_pz_zz)) DEALLOCATE(lbol_pz_zz)
     IF (ALLOCATED(results))  DEALLOCATE(results)
+
+    call fsps_destroy(ctx)
 
 END PROGRAM LESSSIMPLE

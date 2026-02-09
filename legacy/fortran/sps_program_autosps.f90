@@ -2,11 +2,10 @@ PROGRAM AUTOSPS
 
    USE fsps_precision, ONLY: WP
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
-   USE sps_setup_utils
+   use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
    USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_io, ONLY: write_csp_output_files, load_tabular_sfh
    USE fsps_ssp, ONLY: generate_ssp_grid
-   USE fsps_context, ONLY: fsps_context_create
    USE fsps_context_types, ONLY: fsps_context_t
   
   IMPLICIT NONE
@@ -54,9 +53,9 @@ PROGRAM AUTOSPS
 
   ! --- Initialize Environment Immediately ---
    WRITE(6,*) 'Initializing libraries...'
-   CALL fsps_context_create(ctx)
+   call fsps_create(ctx)
   ! We load ALL metallicities (-1) so we can query nz and zlegend
-   CALL SPS_SETUP(ctx, -1, TRIM(iso_in), TRIM(spec_in))
+   call fsps_setup(ctx, -1, TRIM(iso_in), TRIM(spec_in))
 
   ! --- Allocate Memory ---
   IF (.NOT. ALLOCATED(spec_ssp)) THEN
@@ -170,7 +169,7 @@ PROGRAM AUTOSPS
   WRITE(6,'(" ---> Running model.......")')
   
   IF (pset%sfh.EQ.2) THEN
-     ! We already called SPS_SETUP(-1) at the top, so variables are ready.
+   ! We already called fsps_setup(-1) at the top, so variables are ready.
      DO z=1,ctx%state%nz
         pset%zmet=z
       CALL generate_ssp_grid(ctx, pset, mass_ssp(:,z), lbol_ssp(:,z), spec_ssp(:,:,z))
@@ -180,7 +179,7 @@ PROGRAM AUTOSPS
    CALL write_csp_output_files(ctx, pset, results, file1, 3)
    DEALLOCATE(results)
   ELSE
-     ! We already called SPS_SETUP(-1), so speclib is populated.
+   ! We already called fsps_setup(-1), so speclib is populated.
    CALL generate_ssp_grid(ctx, pset, mass_ssp(:,pset%zmet), lbol_ssp(:,pset%zmet), spec_ssp(:,:,pset%zmet))
       CALL compute_csp_scenario(ctx, pset, 1, spec_ssp(:,:,pset%zmet:pset%zmet), &
          mass_ssp(:,pset%zmet:pset%zmet), lbol_ssp(:,pset%zmet:pset%zmet), results)
@@ -193,5 +192,7 @@ PROGRAM AUTOSPS
   IF (ALLOCATED(mass_ssp)) DEALLOCATE(mass_ssp)
   IF (ALLOCATED(lbol_ssp)) DEALLOCATE(lbol_ssp)
    IF (ALLOCATED(results))  DEALLOCATE(results)
+
+   call fsps_destroy(ctx)
 
 END PROGRAM AUTOSPS

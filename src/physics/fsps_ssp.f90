@@ -37,6 +37,7 @@ module fsps_ssp
     use fsps_gas, only: apply_nebular_emission
     use fsps_smoothing, only: apply_smoothing
     use fsps_spectral_library, only: get_stellar_spectrum
+    use fsps_photometry, only: compute_magnitudes
 
     !> Math Modules
     use fsps_interpolation, only: find_interval
@@ -53,6 +54,7 @@ module fsps_ssp
     public :: interpolate_time_grid
     public :: configure_imf_parameters
     public :: compute_interpolated_ssp
+    public :: compute_surface_brightness_fluctuations
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS
@@ -1049,5 +1051,107 @@ contains
         end if
 
     end subroutine compute_interpolated_ssp
+
+    !> @brief Compute surface brightness fluctuation (SBF) magnitudes.
+    !>
+    !> @details
+    !> Computes SBF magnitudes by summing the first and second moments of the
+    !> stellar luminosity function for each isochrone time step.
+    !>
+    !> @param[inout] ctx     The FSPS context (must be initialized).
+    !> @param[in]    pset    Parameter set (uses `zmet`, `fbhb`, `sbss`, etc.).
+    !> @param[in]    outfile Output filename stem (written to OUTPUTS/<name>.mags).
+    subroutine compute_surface_brightness_fluctuations(ctx, pset, outfile)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in) :: pset
+        character(len=*), intent(in) :: outfile
+
+        integer :: i, j
+        character(34) :: fmt
+        real(WP) :: zero, hb_wght
+        real(WP), dimension(NM) :: wght
+        real(WP), allocatable :: tspec(:), tspec2(:), spec1(:), spec2(:)
+        real(WP), allocatable :: mags(:)
+        real(WP), allocatable :: mini(:, :), mact(:, :), logl(:, :), logt(:, :), logg(:, :)
+        real(WP), allocatable :: ffco(:, :), phase(:, :), lmdot(:, :)
+        integer, allocatable :: nmass(:)
+        real(WP), allocatable :: time(:)
+
+        zero = 0.0_wp
+
+        associate( &
+            nbands => ctx%state%nbands, nspec => ctx%state%nspec, nt => ctx%state%nt, &
+            output_home => ctx%output_home, &
+            mini_isoc => ctx%state%mini_isoc, mact_isoc => ctx%state%mact_isoc, &
+            logl_isoc => ctx%state%logl_isoc, logt_isoc => ctx%state%logt_isoc, &
+            logg_isoc => ctx%state%logg_isoc, ffco_isoc => ctx%state%ffco_isoc, &
+            lmdot_isoc => ctx%state%lmdot_isoc, phase_isoc => ctx%state%phase_isoc, &
+            nmass_isoc => ctx%state%nmass_isoc, timestep_isoc => ctx%state%timestep_isoc )
+
+            allocate (tspec(nspec), tspec2(nspec), spec1(nspec), spec2(nspec))
+            allocate (mags(nbands))
+            allocate (mini(nt, NM), mact(nt, NM), logl(nt, NM), logt(nt, NM), logg(nt, NM))
+            allocate (ffco(nt, NM), phase(nt, NM), lmdot(nt, NM))
+            allocate (nmass(nt), time(nt))
+
+            fmt = '(F7.4,1x,3(F8.4,1x),000(F7.3,1x))'
+            write (fmt(21:23), '(I3,1x,I4)') nbands
+
+            hb_wght = 0.0_wp
+            wght = 0.0_wp
+
+            open (56, file=trim(output_home)//'/OUTPUTS/'//trim(outfile)//'.mags', status='replace')
+            do i = 1, 8
+                write (56, *) '#'
+            end do
+
+            mini = mini_isoc(pset%zmet, :, :)
+            mact = mact_isoc(pset%zmet, :, :)
+            logl = logl_isoc(pset%zmet, :, :)
+            logt = logt_isoc(pset%zmet, :, :)
+            logg = logg_isoc(pset%zmet, :, :)
+            ffco = ffco_isoc(pset%zmet, :, :)
+            lmdot = lmdot_isoc(pset%zmet, :, :)
+            phase = phase_isoc(pset%zmet, :, :)
+            nmass = nmass_isoc(pset%zmet, :)
+            time = timestep_isoc(pset%zmet, :)
+
+            do i = 1, nt
+                call compute_imf_weights(ctx, mini(i, :), wght, nmass(i))
+
+                if (pset%fbhb > 0.0_wp .or. pset%sbss > 1.0e-3_wp) then
+                    call modify_horizontal_branch(ctx, i, pset%fbhb, time(i), hb_wght, nmass, &
+                        mini, mact, logl, logt, logg, phase, wght)
+                end if
+
+                if (time(i) >= BHB_SBS_TIME .and. pset%sbss > 1.0e-3_wp) then
+                    call apply_blue_stragglers(ctx, i, pset%zmet, pset%sbss, hb_wght, nmass, &
+                        mini, mact, logl, logt, logg, phase, wght)
+                end if
+
+                call modify_giant_branch(ctx, i, pset%zmet, time(i), nmass(i), pset%delt, pset%dell, pset%pagb, &
+                    pset%redgb, pset%agb, logl, logt, phase, wght)
+
+                spec1 = 0.0_wp
+                spec2 = 0.0_wp
+                do j = 1, nmass(i)
+                    call get_stellar_spectrum(ctx, pset, mact(i, j), logt(i, j), 10.0_wp**logl(i, j), logg(i, j), &
+                        phase(i, j), ffco(i, j), lmdot(i, j), tspec)
+                    spec2 = spec2 + wght(j)*tspec**2
+                    spec1 = spec1 + wght(j)*tspec
+                end do
+
+                tspec2 = spec2/spec1
+                call compute_magnitudes(ctx, zero, tspec2, mags)
+                write (56, fmt) time(i), 0.0_wp, 0.0_wp, 0.0_wp, mags
+            end do
+
+            close (56)
+
+            deallocate (tspec, tspec2, spec1, spec2, mags)
+            deallocate (mini, mact, logl, logt, logg, ffco, phase, lmdot)
+            deallocate (nmass, time)
+        end associate
+    end subroutine compute_surface_brightness_fluctuations
 
 end module fsps_ssp

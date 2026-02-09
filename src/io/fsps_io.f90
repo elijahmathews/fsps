@@ -31,7 +31,7 @@ module fsps_io
     !>
     !> ### Design Philosophy
     !> - **Separation of Concerns:** This module handles *how* data is read (file formats, parsing, 
-    !>   precision promotion, byte-swapping), while the physics modules (`sps_setup`, `fsps_ssp`) 
+    !>   precision promotion, byte-swapping), while the physics modules (`fsps_initialization`, `fsps_ssp`) 
     !>   determine *what* the data represents physically (e.g. applying gravity corrections or 
     !>   interpolating weights).
     !> - **Legacy Compatibility:** Strictly adheres to the binary and ASCII file formats established 
@@ -811,7 +811,7 @@ contains
         end do
         close(u_file)
 
-        ! Post-processing (matches legacy SPS_SETUP)
+        ! Post-processing (matches legacy setup)
         ! Convert Age array to Log10
         ctx%state%nebem_age = log10(ctx%state%nebem_age)
         ! Convert Line Luminosities to Log10
@@ -850,7 +850,7 @@ contains
         integer :: ndim_dust, numin_dust, nqpah
         integer :: start_idx
 
-        ! Setup Dimensions based on type (Logic moved from sps_setup)
+        ! Setup dimensions based on type (logic moved to fsps_initialization)
         if (trim(dust_type) == 'THEMIS') then
             ndim_dust  = 576
             numin_dust = 37
