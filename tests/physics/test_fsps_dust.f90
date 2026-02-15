@@ -4,6 +4,7 @@ module test_fsps_dust_mod
                               NAGNDUST, M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, SAFE_FLOOR, PI
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
     use fsps_dust
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: find_interval
@@ -63,6 +64,29 @@ module test_fsps_dust_mod
 
 contains
 
+    !> @brief Wrapper for compute_attenuation_curve (replaced by point version in core)
+    function compute_attenuation_curve(wavelengths, dust_type_id, settings, ctx) result(attenuation_curve)
+        real(WP), dimension(:), intent(in) :: wavelengths
+        integer, intent(in)                :: dust_type_id
+        type(params), intent(in)           :: settings
+        type(fsps_context_t), intent(in)   :: ctx
+        real(WP), dimension(size(wavelengths)) :: attenuation_curve
+        integer :: i
+        
+        if (dust_type_id == 3) then
+             attenuation_curve = ctx%state%wgdust(:, settings%wgp1, settings%wgp2, settings%wgp3)
+             return
+        end if
+        if (dust_type_id == 5) then
+             attenuation_curve = ctx%state%g03smcextn
+             return
+        end if
+        
+        do i = 1, size(wavelengths)
+            attenuation_curve(i) = compute_attenuation_curve_point(wavelengths(i), i, dust_type_id, settings, ctx)
+        end do
+    end function compute_attenuation_curve
+
     !> @brief
     !> Unit test suite for fsps_dust module.
     subroutine run_fsps_dust_tests()
@@ -104,6 +128,7 @@ contains
         call print_group("Power Law (Type 0)")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         ! Test 1.1: V-band normalization
         settings%dust_index = -0.7_wp
@@ -123,6 +148,7 @@ contains
         res2 = compute_attenuation_curve(w2, 0, settings, ctx)
         call assert_float_equals(2.0_wp, res2(1), EPS, "Blue-tilted slope (2750A)", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_power_law
@@ -145,6 +171,7 @@ contains
         call print_group("CCM89 Milky Way (Type 1)")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         settings%mwr = 3.1_wp
         settings%uvb = 1.0_wp
@@ -175,6 +202,7 @@ contains
         res_uvb1 = compute_attenuation_curve(w_bump, 1, settings, ctx)
         call assert_true(res_uvb1(1) > res_uvb0(1), "UV bump scaling (uvb 0 -> 1)", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_ccm89
@@ -193,6 +221,7 @@ contains
         call print_group("Calzetti (Type 2)")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         ! Test 3.1: 0.63um junction continuity
         w_break = [6300.000_wp, 6300.001_wp]
@@ -206,6 +235,7 @@ contains
         call assert_float_equals(1.0_wp, res_v(1), 1.0e-3_wp, &
                                  "Calzetti V-band normalization", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_calzetti
@@ -255,6 +285,7 @@ contains
         call print_group("Kriek & Conroy (Type 4)")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         wavelengths = [1500.0_wp, 2175.0_wp, 5500.0_wp]
 
@@ -281,6 +312,7 @@ contains
         res_uvb5 = compute_attenuation_curve(wavelengths, 4, settings, ctx)
         call assert_true(all(res_uvb0 == res_uvb5), "UVB independence", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_kriek_conroy
@@ -299,6 +331,7 @@ contains
         call print_group("Reddy et al. (Type 6)")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         ! Test 6.1: UV extrapolation (lambda < 1500A constant)
         w_uv = [1400.0_wp, 1500.0_wp]
@@ -310,6 +343,7 @@ contains
         res_break = compute_attenuation_curve(w_break, 6, settings, ctx)
         call assert_true(abs(res_break(1) - res_break(2)) <= SMALL_DELTA, "6000A continuity", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_reddy
@@ -397,6 +431,7 @@ contains
         call print_group("Circumstellar Optical Depth")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
         ctx%use_isoc_mdot_val = 1
 
         m_act = 1.0_wp
@@ -464,6 +499,7 @@ contains
         tau_expected_o = calc_tau_expected_superwind(0, m_act, log_l, log_g)
         call assert_float_equals(tau_expected_o, tau_o, 1.0e-8_wp, "Superwind branch", total_tests, total_failures)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
     end subroutine test_circumstellar_optical_depth
@@ -765,6 +801,7 @@ contains
         call print_group("Robustness")
 
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
 
         ! Test 7.1: Invalid ID returns NaN
         allocate(w(3))
@@ -773,6 +810,7 @@ contains
         call assert_true(all(ieee_is_nan(res)), "Invalid ID returns NaN", total_tests, total_failures)
         deallocate(w, res)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
 
         ! Test 8.1: No dust (output equals input, dust mass ~ 0)
@@ -806,6 +844,7 @@ contains
 
         ! Test 7.2: Array shape conformance
         allocate(ctx)
+        call fsps_context_move_to_device(ctx)
         n = 1
         allocate(w(n), res(n))
         w = [5500.0_wp]
@@ -820,6 +859,7 @@ contains
         call assert_int_equals(size(w), size(res), "Array shape (size=10)", total_tests, total_failures)
         deallocate(w, res)
 
+        call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
         allocate(w(n), res(n))
         w = [(real(i, WP), i=1, n)]
@@ -855,10 +895,14 @@ contains
             ctx%state%g03smcextn(i) = real(i, WP)
         end do
 
+        call fsps_context_move_to_device(ctx)
     end subroutine setup_mock_context
 
     subroutine teardown_mock_context(ctx)
         type(fsps_context_t), allocatable, intent(inout) :: ctx
+        
+        call fsps_context_remove_from_device(ctx)
+        
         if (associated(ctx%state%wgdust)) deallocate(ctx%state%wgdust)
         if (associated(ctx%state%g03smcextn)) deallocate(ctx%state%g03smcextn)
         deallocate(ctx)
@@ -931,10 +975,13 @@ contains
 
         ctx%state%flux_dagb(:, :, :, :) = 1.0_wp
 
+        call fsps_context_move_to_device(ctx)
     end subroutine setup_physics_context
 
     subroutine teardown_physics_context(ctx)
         type(fsps_context_t), allocatable, intent(inout) :: ctx
+
+        call fsps_context_remove_from_device(ctx)
 
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
         if (associated(ctx%state%wgdust)) deallocate(ctx%state%wgdust)

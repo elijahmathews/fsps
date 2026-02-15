@@ -32,7 +32,7 @@ module fsps_initialization
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
+    
 
     implicit none
     private
@@ -960,7 +960,7 @@ contains
             ctx%state%filter_leff(i) = integrate_trapezoid_array(ctx%state%spec_lambda, &
                                                                  ctx%state%spec_lambda*ctx%state%bands(:, i))
             d = integrate_trapezoid_array(ctx%state%spec_lambda, ctx%state%bands(:, i)/ctx%state%spec_lambda)
-            if (ieee_is_nan(ctx%state%filter_leff(i)) .or. ieee_is_nan(d) .or. d <= SAFE_FLOOR) then
+            if (ctx%state%filter_leff(i) /= ctx%state%filter_leff(i) .or. d /= d .or. d <= SAFE_FLOOR) then
                 ctx%state%filter_leff(i) = 0.0_wp
             else
                 ctx%state%filter_leff(i) = sqrt(ctx%state%filter_leff(i)/d)

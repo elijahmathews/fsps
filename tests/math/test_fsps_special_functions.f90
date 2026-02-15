@@ -125,7 +125,7 @@ contains
     subroutine test_expi_transition()
         real(WP) :: x, expected, res
         
-        call print_group("Transition Behavior (x ≈ 40)")
+        call print_group("Transition Behavior (x ~ 40)")
 
         ! Case 1: x = 39.8
         ! Reference: scipy.special.expi(39.8) = 4970429108552322.0
@@ -175,14 +175,14 @@ contains
         x = -1.0_wp
         expected = 0.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(1, -1)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(1, -1)", total_tests, total_failures)
 
         ! Case 2: P(3, -5.0)
         s = 3
         x = -5.0_wp
         expected = 0.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(3, -5)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(3, -5)", total_tests, total_failures)
 
     end subroutine test_gammainc_negative_boundary
 
@@ -197,21 +197,21 @@ contains
         x = 0.0_wp
         expected = 0.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(1, 0)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(1, 0)", total_tests, total_failures)
 
         ! Case 2: P(1, 1e-10)
         s = 1
         x = 1.0e-10_wp
         expected = 1.0e-10_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-15_wp, "γ(1, 1e-10)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-15_wp, "P(1, 1e-10)", total_tests, total_failures)
 
         ! Case 3: P(1, 1)
         s = 1
         x = 1.0_wp
         expected = 0.6321205588285577_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(1, 1)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(1, 1)", total_tests, total_failures)
 
     end subroutine test_gammainc_n1
 
@@ -226,14 +226,14 @@ contains
         x = 1.0_wp
         expected = 0.2642411176571153_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(2, 1)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(2, 1)", total_tests, total_failures)
 
         ! Case 2: P(2, 50)
         s = 2
         x = 50.0_wp
         expected = 1.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(2, 50)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(2, 50)", total_tests, total_failures)
 
     end subroutine test_gammainc_n2
 
@@ -249,21 +249,21 @@ contains
         x = 2.0_wp
         expected = 0.32332358381693654_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(3, 2)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(3, 2)", total_tests, total_failures)
 
         ! Case 2: P(5, 3)
         s = 5
         x = 3.0_wp
         expected = 0.18473675547622787_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(5, 3)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(5, 3)", total_tests, total_failures)
 
         ! Case 3: P(10, 100)
         s = 10
         x = 100.0_wp
         expected = 1.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(10, 100)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(10, 100)", total_tests, total_failures)
 
     end subroutine test_gammainc_general_case
 
@@ -279,14 +279,14 @@ contains
         x = 0.0_wp
         expected = 0.0_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-10_wp, "γ(3, 0)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-10_wp, "P(3, 0)", total_tests, total_failures)
 
         ! Case 2: P(5, 1e-10)
         s = 50
         x = 10.0_wp
         expected = 1.8547268838698457e-19_wp
         res = gammainc(s, x)
-        call assert_float_equals(expected, res, 1.0e-16_wp, "γ(50, 10)", total_tests, total_failures)
+        call assert_float_equals(expected, res, 1.0e-16_wp, "P(50, 10)", total_tests, total_failures)
 
     end subroutine test_gammainc_edge_limit_cases
 

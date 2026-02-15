@@ -22,14 +22,14 @@ module fsps_dust
     use fsps_context_types, only: fsps_context_t
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: interpolate_linear, find_interval
-    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan, ieee_is_nan
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 
     implicit none
     private
 
     ! Public Interface
     public :: apply_dust_attenuation_and_emission
-    public :: compute_attenuation_curve
+    public :: compute_attenuation_curve_point
     public :: apply_agb_dust_screen
     public :: apply_agn_dust_emission
     public :: interpolate_draine_li_dust_model
@@ -237,6 +237,13 @@ contains
         real(WP), dimension(:), intent(out)    :: neb_flux_out
 
         ! Local Variables
+        ! We use automatic arrays. If sizes are large, we might need create.
+        ! But here we are inside a kernel-like routine (called from csp).
+        ! We assume data is present.
+        ! Note: Automatic arrays on device stack might be limited.
+        ! However, these are nspec sized.
+        ! We can use data create if needed, or rely on compiler.
+        ! For resident device, explicit data clauses are safer.
         real(WP), dimension(size(spec_young)) :: attenuation_curve_diffuse
         real(WP), dimension(size(spec_young)) :: transmission_diffuse
         real(WP), dimension(size(spec_young)) :: transmission_birth_cloud
@@ -247,6 +254,15 @@ contains
         real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
         real(WP), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
         real(WP) :: emission_norm_factor
+        
+        integer :: nspec, i
+        real(WP) :: y1, y2
+
+        !$acc enter data create(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
+        !$acc enter data create(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+        !$acc enter data create(dust_emission_shape, dust_emission_final)
+
+        nspec = size(spec_young)
 
         ! 0. Input Validation
         ! -------------------
@@ -255,60 +271,65 @@ contains
 
         ! 1. Calculate Attenuation Curves & Transmissivities
         ! --------------------------------------------------
+        ! We parallelize the array operations. compute_attenuation_curve needs to be !acc routine seq/vector.
         
         ! A. Diffuse ISM (affects all stars)
-        attenuation_curve_diffuse = compute_attenuation_curve(ctx%state%spec_lambda, &
-                                                              ctx%dust_type_val, settings, ctx)
-        
-        if (ctx%dust_type_val == 3) then
-            ! Witt & Gordon models are self-normalized
-            transmission_diffuse = exp(-attenuation_curve_diffuse)
-        else
-            transmission_diffuse = exp(-settings%dust2 * attenuation_curve_diffuse)
-        end if
-
         ! B. Birth Clouds (affects young stars only)
-        ! Standard power-law attenuation centered at 5500A
-        transmission_birth_cloud = exp(-settings%dust1 * &
-                                   (ctx%state%spec_lambda / V_BAND_ANGSTROMS)**settings%dust1_index)
-
-
         ! 2. Apply Attenuation to Stellar Spectra
-        ! ---------------------------------------
-        ! Young Stars: Part obscured by birth cloud (1-frac_obrun), part runaways (frac_obrun).
-        !              ALL young stars see diffuse dust (in standard model).
-        ! Old Stars:   Only see diffuse dust (optionally multiplied by dust3 factor).
         
-        spec_attenuated_sum = &
-            (spec_young * transmission_birth_cloud * (1.0_wp - settings%frac_obrun) + &
-             spec_young * settings%frac_obrun) + &
-            (spec_old * exp(-settings%dust3 * attenuation_curve_diffuse))
+        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_out) &
+        !$acc               present(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud) &
+        !$acc               present(spec_attenuated_sum)
+        do i = 1, nspec
+            ! A. Diffuse Curve (Inline call or routine seq)
+            attenuation_curve_diffuse(i) = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
+                                                                           ctx%dust_type_val, settings, ctx)
+            
+            if (ctx%dust_type_val == 3) then
+                transmission_diffuse(i) = exp(-attenuation_curve_diffuse(i))
+            else
+                transmission_diffuse(i) = exp(-settings%dust2 * attenuation_curve_diffuse(i))
+            end if
 
-        ! Apply final diffuse screen (allowing for 'frac_nodust' holes in the ISM)
-        spec_total_out = spec_attenuated_sum * transmission_diffuse * (1.0_wp - settings%frac_nodust) + &
-                         spec_attenuated_sum * settings%frac_nodust
+            ! B. Birth Clouds
+            transmission_birth_cloud(i) = exp(-settings%dust1 * &
+                                       (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**settings%dust1_index)
+                                       
+            ! 2. Apply Attenuation
+            spec_attenuated_sum(i) = &
+                (spec_young(i) * transmission_birth_cloud(i) * (1.0_wp - settings%frac_obrun) + &
+                 spec_young(i) * settings%frac_obrun) + &
+                (spec_old(i) * exp(-settings%dust3 * attenuation_curve_diffuse(i)))
+
+            ! Final diffuse screen
+            spec_total_out(i) = spec_attenuated_sum(i) * transmission_diffuse(i) * (1.0_wp - settings%frac_nodust) + &
+                                spec_attenuated_sum(i) * settings%frac_nodust
+        end do
 
 
         ! 3. Apply Attenuation to Nebular Lines
         ! -------------------------------------
         ! Note: We must interpolate the diffuse transmission to the line wavelengths
-        transmission_diffuse_neb = interpolate_linear(ctx%state%spec_lambda, &
-                                                      transmission_diffuse, &
-                                                      ctx%state%nebem_line_pos)
+        ! interpolate_linear is now !acc routine seq
         
-        ! Handle extrapolation/NaNs safely
-        where (ieee_is_nan(transmission_diffuse_neb)) transmission_diffuse_neb = 1.0_wp
-
-        ! Apply birth cloud attenuation to young nebular lines
-        neb_flux_out = (neb_flux_young * &
-                        exp(-settings%dust1 * (ctx%state%nebem_line_pos / V_BAND_ANGSTROMS)**settings%dust1_index) * &
+        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out) &
+        !$acc               present(transmission_diffuse, transmission_diffuse_neb)
+        do i = 1, size(neb_flux_young)
+             transmission_diffuse_neb(i) = interpolate_linear(ctx%state%spec_lambda, &
+                                                              transmission_diffuse, &
+                                                              ctx%state%nebem_line_pos(i))
+                                                              
+             if (transmission_diffuse_neb(i) /= transmission_diffuse_neb(i)) transmission_diffuse_neb(i) = 1.0_wp
+             
+             neb_flux_out(i) = (neb_flux_young(i) * &
+                        exp(-settings%dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**settings%dust1_index) * &
                         (1.0_wp - settings%frac_obrun) + &
-                        neb_flux_young * settings%frac_obrun + &
-                        neb_flux_old) 
-        
-        ! Apply diffuse screen to total nebular flux
-        neb_flux_out = neb_flux_out * transmission_diffuse_neb * (1.0_wp - settings%frac_nodust) + &
-                       neb_flux_out * settings%frac_nodust
+                        neb_flux_young(i) * settings%frac_obrun + &
+                        neb_flux_old(i))
+                        
+             neb_flux_out(i) = neb_flux_out(i) * transmission_diffuse_neb(i) * (1.0_wp - settings%frac_nodust) + &
+                               neb_flux_out(i) * settings%frac_nodust
+        end do
 
 
         ! 4. Add Dust Emission (Energy Balance)
@@ -316,20 +337,46 @@ contains
         if (ctx%add_dust_emission_val == 1 .and. &
             (settings%dust1 > SAFE_FLOOR .or. settings%dust2 > SAFE_FLOOR)) then
             
-            frequencies = C_LIGHT / ctx%state%spec_lambda
+            !$acc parallel loop present(ctx, frequencies)
+            do i = 1, nspec
+                frequencies(i) = C_LIGHT / ctx%state%spec_lambda(i)
+            end do
 
             ! Calculate Bolometric Luminosities (L_bol)
-            ! -----------------------------------------
+            ! Assumes integrate_trapezoid_array is modified to take raw arrays?
+            ! No, it takes assumed-shape. This is hard on device if we want to avoid array creation.
+            ! But we can compute array expressions? spec_young + spec_old.
+            ! This creates temp array.
+            ! We should write a specialized kernel or loop for integration.
+            
             ! Intrinsic (Pre-Dust)
-            lum_bol_intrinsic = integrate_trapezoid_array(frequencies, spec_young + spec_old)
+            lum_bol_intrinsic = 0.0_wp
+            !$acc parallel loop reduction(+:lum_bol_intrinsic) present(frequencies, spec_young, spec_old)
+            do i = 1, nspec-1
+                y1 = spec_young(i) + spec_old(i)
+                y2 = spec_young(i+1) + spec_old(i+1)
+                lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+            end do
+            
             if (ctx%nebemlineinspec_val == 0) then
+                 !$acc kernels present(neb_flux_young, neb_flux_old)
                  lum_bol_intrinsic = lum_bol_intrinsic + sum(neb_flux_young) + sum(neb_flux_old)
+                 !$acc end kernels
             end if
 
             ! Attenuated (Post-Dust)
-            lum_bol_attenuated = integrate_trapezoid_array(frequencies, spec_total_out)
+            lum_bol_attenuated = 0.0_wp
+            !$acc parallel loop reduction(+:lum_bol_attenuated) present(frequencies, spec_total_out)
+            do i = 1, nspec-1
+                y1 = spec_total_out(i)
+                y2 = spec_total_out(i+1)
+                lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+            end do
+            
             if (ctx%nebemlineinspec_val == 0) then
+                 !$acc kernels present(neb_flux_out)
                  lum_bol_attenuated = lum_bol_attenuated + sum(neb_flux_out)
+                 !$acc end kernels
             end if
             
             ! Total Energy Absorbed by Dust
@@ -340,10 +387,20 @@ contains
             call interpolate_draine_li_dust_model(ctx, settings, dust_emission_shape)
             
             ! Normalize template area
-            emission_norm_factor = integrate_trapezoid_array(frequencies, dust_emission_shape)
+            emission_norm_factor = 0.0_wp
+            !$acc parallel loop reduction(+:emission_norm_factor) present(frequencies, dust_emission_shape)
+            do i = 1, nspec-1
+                y1 = dust_emission_shape(i)
+                y2 = dust_emission_shape(i+1)
+                emission_norm_factor = emission_norm_factor + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+            end do
             
             if (emission_norm_factor <= SAFE_FLOOR) then
                 dust_mass = SAFE_FLOOR
+                ! Cleanup
+                !$acc exit data delete(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
+                !$acc exit data delete(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+                !$acc exit data delete(dust_emission_shape, dust_emission_final)
                 return
             end if
 
@@ -353,7 +410,10 @@ contains
                                                 lum_absorbed_total, dust_emission_final)
 
             ! Add to total spectrum
-            spec_total_out = spec_total_out + dust_emission_final
+            !$acc parallel loop present(spec_total_out, dust_emission_final)
+            do i = 1, nspec
+                spec_total_out(i) = spec_total_out(i) + dust_emission_final(i)
+            end do
 
             ! Estimate Dust Mass (Factor from Draine & Li MW3.1 model)
             ! 3.21e-3 converts Luminosity/Norm to Mass (Solar Units) roughly
@@ -362,6 +422,11 @@ contains
         else
             dust_mass = SAFE_FLOOR
         end if
+        
+        ! Cleanup
+        !$acc exit data delete(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
+        !$acc exit data delete(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+        !$acc exit data delete(dust_emission_shape, dust_emission_final)
 
     end subroutine apply_dust_attenuation_and_emission
 
@@ -386,58 +451,40 @@ contains
     !> @param[in] settings       FSPS parameter structure (containing indexes, UV bump strengths, etc).
     !> @param[in] ctx            FSPS context (containing pre-loaded tables for WG00 and SMC).
     !>
-    !> @return attenuation_curve Vector of optical depths (dimension matching wavelengths).
-    pure function compute_attenuation_curve(wavelengths, dust_type_id, settings, ctx) result(attenuation_curve)
-        real(WP), dimension(:), intent(in) :: wavelengths
-        integer, intent(in)                :: dust_type_id
+    !> @brief Computes attenuation at a single point (Device Compatible).
+    !> We refactor the array function into an elemental/scalar one for the parallel loop.
+    !> @return attenuation_val
+    pure function compute_attenuation_curve_point(wavelength, idx, dust_type_id, settings, ctx) result(attenuation_val)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
+        integer, intent(in)                :: idx, dust_type_id
         type(params), intent(in)           :: settings
         type(fsps_context_t), intent(in)   :: ctx
-        real(WP), dimension(size(wavelengths)) :: attenuation_curve
-
-        ! Initialize to zero
-        attenuation_curve = 0.0_wp
+        real(WP) :: attenuation_val
+        
+        attenuation_val = 0.0_wp
 
         select case (dust_type_id)
-        
-        ! --- Power Law Attenuation ---
         case (0)
-            attenuation_curve = (wavelengths / V_BAND_ANGSTROMS)**settings%dust_index
-
-        ! --- Cardelli, Clayton, & Mathis (1989) Milky Way Curve ---
+            attenuation_val = (wavelength / V_BAND_ANGSTROMS)**settings%dust_index
         case (1)
-            attenuation_curve = get_ccm89_curve(wavelengths, settings%mwr, settings%uvb)
-
-        ! --- Calzetti et al. (2000) ---
+            attenuation_val = get_ccm89_curve_point(wavelength, settings%mwr, settings%uvb)
         case (2)
-            attenuation_curve = get_calzetti_curve(wavelengths)
-
-        ! --- Witt & Gordon (2000) [Table Lookup] ---
+            attenuation_val = get_calzetti_curve_point(wavelength)
         case (3)
-            ! Direct table lookup from context. 
-            ! Note: The original code implies the table matches the input wavelength grid.
-            ! This dependency is retained here.
-            attenuation_curve = ctx%state%wgdust(:, settings%wgp1, settings%wgp2, settings%wgp3)
-
-        ! --- Kriek & Conroy (2013) ---
+            ! Table lookup using index
+            attenuation_val = ctx%state%wgdust(idx, settings%wgp1, settings%wgp2, settings%wgp3)
         case (4)
-            attenuation_curve = get_kriek_conroy_curve(wavelengths, settings%dust_index)
-
-        ! --- Gordon et al. (2003) SMC [Table Lookup] ---
+            attenuation_val = get_kriek_conroy_curve_point(wavelength, settings%dust_index)
         case (5)
-            ! Direct table lookup
-            attenuation_curve = ctx%state%g03smcextn
-
-        ! --- Reddy et al. (2015) ---
+            ! Table lookup using index
+            attenuation_val = ctx%state%g03smcextn(idx)
         case (6)
-            attenuation_curve = get_reddy_curve(wavelengths)
-
+            attenuation_val = get_reddy_curve_point(wavelength)
         case default
-            ! Return NaN to signal invalid configuration in a pure context.
-            ! This ensures the error propagates rather than failing silently with 0.0.
-            attenuation_curve = ieee_value(1.0_wp, ieee_quiet_nan)
+            attenuation_val = ieee_value(1.0_wp, ieee_quiet_nan)
         end select
-
-    end function compute_attenuation_curve
+    end function compute_attenuation_curve_point
 
     !> @brief
     !> Applies a circumstellar dust screen to AGB stars (DUSTY models).
@@ -568,65 +615,53 @@ contains
         real(WP), dimension(:), intent(inout)  :: spectrum_inout
 
         ! Local variables
-        real(WP), dimension(size(wavelengths)) :: agn_template_interpolated
-        real(WP), dimension(size(wavelengths)) :: galaxy_attenuation_curve
+        ! Use max size for stack alloc if needed, or assume kernel mode
+        real(WP) :: agn_template_interpolated(size(wavelengths))
+        real(WP) :: galaxy_attenuation_curve(size(wavelengths))
         real(WP) :: tau_agn_param, interpolation_weight
         real(WP) :: luminosity_agn_bolometric
         integer  :: idx_tau_grid, n_agn_grid
+        integer :: i
 
         ! 0. Early exit if no AGN contribution is specified
         if (settings%fagn <= tiny(0.0_wp)) return
         
         ! 1. Interpolate AGN Template based on Torus Optical Depth (agn_tau)
-        ! ------------------------------------------------------------------
-        ! The context stores a grid of AGN spectra varying by torus optical depth.
-        ! Grid: ctx%state%agndust_spec(:, i_tau)
-        ! Axis: ctx%state%agndust_tau(:)
-        
         tau_agn_param = settings%agn_tau
         n_agn_grid    = size(ctx%state%agndust_tau)
 
         ! Use binary search to find the interval
         idx_tau_grid = find_interval(ctx%state%agndust_tau, tau_agn_param)
-        
-        ! Clamp index to valid range [1, N-1] for interpolation
         idx_tau_grid = max(1, min(idx_tau_grid, n_agn_grid - 1))
 
         ! Calculate linear interpolation weight
         interpolation_weight = (tau_agn_param - ctx%state%agndust_tau(idx_tau_grid)) / &
                                (ctx%state%agndust_tau(idx_tau_grid + 1) - ctx%state%agndust_tau(idx_tau_grid))
-        
-        ! Clamp weight to [0, 1] to prevent extrapolation beyond grid bounds
         interpolation_weight = max(0.0_wp, min(interpolation_weight, 1.0_wp))
 
-        ! Interpolate the template
-        agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(:, idx_tau_grid) + &
-                                    interpolation_weight * ctx%state%agndust_spec(:, idx_tau_grid + 1)
-
-
-        ! 2. Attenuate AGN by Host Galaxy Diffuse Dust
-        ! --------------------------------------------
-        ! Calculate the shape of the galaxy's attenuation curve
-        galaxy_attenuation_curve = compute_attenuation_curve(wavelengths, ctx%dust_type_val, settings, ctx)
-
-        ! Apply the optical depth scalar (dust2)
-        ! Note: Witt & Gordon models (Type 3) are self-normalized and do not use dust2.
-        if (ctx%dust_type_val == 3) then
-            agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
-        else
-            agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
-        end if
-
-
-        ! 3. Normalize and Add to Spectrum
-        ! --------------------------------
-        ! L_AGN = f_agn * L_bol_stellar
-        ! The AGN templates in FSPS are likely pre-normalized, but we scale by the 
-        ! bolometric luminosity of the current CSP generation.
-        
+        ! Interpolate the template AND calculate attenuation
+        ! Combined loop for performance
         luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar) * settings%fagn
-
-        spectrum_inout = spectrum_inout + (luminosity_agn_bolometric * agn_template_interpolated)
+        
+        !$acc parallel loop present(ctx, wavelengths, spectrum_inout) private(agn_template_interpolated, galaxy_attenuation_curve)
+        do i = 1, size(wavelengths)
+            ! Interpolate Template
+            agn_template_interpolated(i) = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
+                                           interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
+            
+            ! Calculate Attenuation
+            galaxy_attenuation_curve(i) = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
+            
+            ! Apply Attenuation
+            if (ctx%dust_type_val == 3) then
+                agn_template_interpolated(i) = agn_template_interpolated(i) * exp(-galaxy_attenuation_curve(i))
+            else
+                agn_template_interpolated(i) = agn_template_interpolated(i) * exp(-settings%dust2 * galaxy_attenuation_curve(i))
+            end if
+            
+            ! Add to Spectrum
+            spectrum_inout(i) = spectrum_inout(i) + (luminosity_agn_bolometric * agn_template_interpolated(i))
+        end do
 
     end subroutine apply_agn_dust_emission
 
@@ -741,14 +776,15 @@ contains
 
     !> Implementation of Cardelli, Clayton, & Mathis (1989) extinction curve.
     !> Includes the "hack" for smooth transitions used in the original FSPS.
-    pure function get_ccm89_curve(wavelengths, r_v, uv_bump_strength) result(curve)
-        real(WP), dimension(:), intent(in) :: wavelengths
+    elemental function get_ccm89_curve_point(wavelength, r_v, uv_bump_strength) result(curve)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: r_v, uv_bump_strength
-        real(WP), dimension(size(wavelengths)) :: curve
+        real(WP) :: curve
 
         ! Array variables for the main calculation
-        real(WP), dimension(size(wavelengths)) :: wavenumbers, wavenumber_term, poly_a, poly_b
-        real(WP), dimension(size(wavelengths)) :: temp_curve, wavenumbers_clamped
+        real(WP) :: wavenumber, wavenumber_term, poly_a, poly_b
+        real(WP) :: temp_curve, wavenumber_clamped
 
         ! Scalar variables for calculating the Smoothing Hack (at x=3.3)
         real(WP) :: y_anchor, a_scalar, b_scalar
@@ -785,23 +821,22 @@ contains
         ! C. Define the offset
         continuity_correction = opt_val_at_break - nuv_val_at_break
 
-        ! 2. ARRAY CALCULATION
+        ! 2. SCALAR CALCULATION
         ! --------------------
-        wavenumbers = get_wavenumber(wavelengths)
+        wavenumber = get_wavenumber_point(wavelength)
         
         poly_a = 0.0_wp
         poly_b = 0.0_wp
         temp_curve = 0.0_wp
 
         ! Region 1: Infrared (0.3 < x < 1.1)
-        where (wavenumbers >= CCM_X_IR_MIN .and. wavenumbers < CCM_X_OPT_MIN)
-            temp_curve = (CCM_IR_A_SCALE * wavenumbers**CCM_IR_EXP) + &
-                         (CCM_IR_B_SCALE * wavenumbers**CCM_IR_EXP) / r_v
-        end where
-
+        if (wavenumber >= CCM_X_IR_MIN .and. wavenumber < CCM_X_OPT_MIN) then
+            temp_curve = (CCM_IR_A_SCALE * wavenumber**CCM_IR_EXP) + &
+                         (CCM_IR_B_SCALE * wavenumber**CCM_IR_EXP) / r_v
+        
         ! Region 2: Optical / Near-IR (1.1 <= x < 3.3)
-        where (wavenumbers >= CCM_X_OPT_MIN .and. wavenumbers < CCM_X_NUV_MIN)
-            wavenumber_term = wavenumbers - CCM_OPT_Y_SHIFT
+        else if (wavenumber >= CCM_X_OPT_MIN .and. wavenumber < CCM_X_NUV_MIN) then
+            wavenumber_term = wavenumber - CCM_OPT_Y_SHIFT
             
             poly_a = CCM_OPT_A_COEFFS(0) + &
                 wavenumber_term * (CCM_OPT_A_COEFFS(1) + &
@@ -822,44 +857,44 @@ contains
                 wavenumber_term * CCM_OPT_B_COEFFS(7)))))))
             
             temp_curve = poly_a + poly_b / r_v
-        end where
+        end if
 
         ! --- Regions 3 & 4: UV Base (3.3 <= x < 8.0) ---
         ! Both NUV and Mid-UV share the same base linear term and Drude profile.
-        where (wavenumbers >= CCM_X_NUV_MIN .and. wavenumbers < CCM_X_FUV_MIN)
+        if (wavenumber >= CCM_X_NUV_MIN .and. wavenumber < CCM_X_FUV_MIN) then
             ! Base Linear Component
-            poly_a = CCM_NUV_A_BASE(1) + CCM_NUV_A_BASE(2)*wavenumbers
-            poly_b = CCM_NUV_B_BASE(1) + CCM_NUV_B_BASE(2)*wavenumbers
+            poly_a = CCM_NUV_A_BASE(1) + CCM_NUV_A_BASE(2)*wavenumber
+            poly_b = CCM_NUV_B_BASE(1) + CCM_NUV_B_BASE(2)*wavenumber
             
             ! Add UV Bump (Drude Profile)
             poly_a = poly_a + CCM_NUV_A_BUMP(1) / &
-                     ((wavenumbers - CCM_NUV_A_BUMP(2))**2 + CCM_NUV_A_BUMP(3)) * uv_bump_strength
+                     ((wavenumber - CCM_NUV_A_BUMP(2))**2 + CCM_NUV_A_BUMP(3)) * uv_bump_strength
                      
             poly_b = poly_b + CCM_NUV_B_BUMP(1) / &
-                     ((wavenumbers - CCM_NUV_B_BUMP(2))**2 + CCM_NUV_B_BUMP(3)) * uv_bump_strength
-        end where
+                     ((wavenumber - CCM_NUV_B_BUMP(2))**2 + CCM_NUV_B_BUMP(3)) * uv_bump_strength
+        end if
 
         ! Specific NUV Modifier (3.3 <= x < 5.9): Apply Continuity Correction
-        where (wavenumbers >= CCM_X_NUV_MIN .and. wavenumbers < CCM_X_MUV_MIN)
-             temp_curve = poly_a + poly_b / r_v + continuity_correction * (CCM_X_NUV_MIN / wavenumbers)**6
-        end where
+        if (wavenumber >= CCM_X_NUV_MIN .and. wavenumber < CCM_X_MUV_MIN) then
+             temp_curve = poly_a + poly_b / r_v + continuity_correction * (CCM_X_NUV_MIN / wavenumber)**6
+        end if
 
         ! Specific Mid-UV Modifier (5.9 <= x < 8.0): Apply Curvature Polynomials
-        where (wavenumbers >= CCM_X_MUV_MIN .and. wavenumbers < CCM_X_FUV_MIN)
-            wavenumber_term = wavenumbers - CCM_X_MUV_MIN
+        if (wavenumber >= CCM_X_MUV_MIN .and. wavenumber < CCM_X_FUV_MIN) then
+            wavenumber_term = wavenumber - CCM_X_MUV_MIN
             
             poly_a = poly_a + CCM_MUV_A_POLY(1) * wavenumber_term**2 + CCM_MUV_A_POLY(2) * wavenumber_term**3
             poly_b = poly_b + CCM_MUV_B_POLY(1) * wavenumber_term**2 + CCM_MUV_B_POLY(2) * wavenumber_term**3
                 
             temp_curve = poly_a + poly_b / r_v
-        end where
+        end if
 
         ! Region 5: Far-UV (x >= 8.0)
         ! Clamps input x to 12.0 (lambda = 833 A) to prevent divergence
-        where (wavenumbers >= CCM_X_FUV_MIN)
-            wavenumbers_clamped = min(wavenumbers, CCM_X_CUTOFF)
+        if (wavenumber >= CCM_X_FUV_MIN) then
+            wavenumber_clamped = min(wavenumber, CCM_X_CUTOFF)
             
-            wavenumber_term = wavenumbers_clamped - CCM_X_FUV_MIN
+            wavenumber_term = wavenumber_clamped - CCM_X_FUV_MIN
             
             poly_a = CCM_FUV_A_COEFFS(0) + wavenumber_term*(CCM_FUV_A_COEFFS(1) + &
                 wavenumber_term*(CCM_FUV_A_COEFFS(2) + wavenumber_term*CCM_FUV_A_COEFFS(3)))
@@ -868,124 +903,119 @@ contains
                 wavenumber_term*(CCM_FUV_B_COEFFS(2) + wavenumber_term*CCM_FUV_B_COEFFS(3)))
             
             temp_curve = poly_a + poly_b / r_v
-        end where
+        end if
 
         curve = temp_curve
-    end function get_ccm89_curve
+    end function get_ccm89_curve_point
 
 
     !> Implementation of Calzetti et al. (2000) starburst attenuation curve.
-    pure function get_calzetti_curve(wavelengths) result(curve)
-        real(WP), dimension(:), intent(in) :: wavelengths
-        real(WP), dimension(size(wavelengths)) :: curve
-        real(WP), dimension(size(wavelengths)) :: wavenumbers, extinction_k
+    elemental function get_calzetti_curve_point(wavelength) result(curve)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
+        real(WP) :: curve
+        real(WP) :: wavenumber, extinction_k
 
         ! Convert to inverse microns (x = 1/lambda_um)
-        wavenumbers = get_wavenumber(wavelengths)
+        wavenumber = get_wavenumber_point(wavelength)
         
         extinction_k = 0.0_wp
         
         ! Optical / NIR (0.63um < lambda <= 2.2um)
-        where (wavelengths > CALZ_LAM_BREAK .and. wavelengths <= CALZ_LAM_IR_MAX)
-            extinction_k = CALZ_SCALE * (CALZ_OPT_COEFFS(0) + CALZ_OPT_COEFFS(1) * wavenumbers) + CALZ_R_V
-        end where
+        if (wavelength > CALZ_LAM_BREAK .and. wavelength <= CALZ_LAM_IR_MAX) then
+            extinction_k = CALZ_SCALE * (CALZ_OPT_COEFFS(0) + CALZ_OPT_COEFFS(1) * wavenumber) + CALZ_R_V
+        end if
         
         ! UV / Optical (0.12um <= lambda <= 0.63um)
-        where (wavelengths >= CALZ_LAM_UV_MIN .and. wavelengths <= CALZ_LAM_BREAK)
+        if (wavelength >= CALZ_LAM_UV_MIN .and. wavelength <= CALZ_LAM_BREAK) then
             ! Use nested multiplication (Horner's method) for clarity and efficiency
             extinction_k = CALZ_R_V + CALZ_SCALE * ( &
-                CALZ_UV_COEFFS(0) + wavenumbers * ( &
-                    CALZ_UV_COEFFS(1) + wavenumbers * ( &
-                        CALZ_UV_COEFFS(2) + wavenumbers * CALZ_UV_COEFFS(3) &
+                CALZ_UV_COEFFS(0) + wavenumber * ( &
+                    CALZ_UV_COEFFS(1) + wavenumber * ( &
+                        CALZ_UV_COEFFS(2) + wavenumber * CALZ_UV_COEFFS(3) &
                     ) &
                 ) &
             )
-        end where
+        end if
 
         ! Result is A_lambda / A_V = k_lambda / R_V
         curve = extinction_k / CALZ_R_V
-    end function get_calzetti_curve
+    end function get_calzetti_curve_point
 
 
     !> Implementation of Kriek & Conroy (2013): Calzetti + UV Bump + Tilt.
-    pure function get_kriek_conroy_curve(wavelengths, tilt_index) result(curve)
-        real(WP), dimension(:), intent(in) :: wavelengths
+    elemental function get_kriek_conroy_curve_point(wavelength, tilt_index) result(curve)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: tilt_index
-        real(WP), dimension(size(wavelengths)) :: curve
+        real(WP) :: curve
 
-        real(WP), dimension(size(wavelengths)) :: base_calzetti, drude_profile
+        real(WP) :: base_calzetti, drude_profile
         real(WP) :: bump_amplitude ! E_b in paper
 
         ! 1. Base Calzetti (normalized to E(B-V), i.e., k_lambda scale)
         ! Note: Our helper `get_calzetti_curve` returns A_lambda/A_V.
         ! We must multiply by R_V to get back to k_lambda.
-        base_calzetti = get_calzetti_curve(wavelengths) * KC13_R_V_BASE
+        base_calzetti = get_calzetti_curve_point(wavelength) * KC13_R_V_BASE
 
         ! 2. UV Bump (Drude Profile)
         ! Kriek & Conroy (2013) Eq 3: E_b = 0.85 - 1.9 * delta
-        ! (Note: The `uv_bump_strength` parameter is technically not in the standard 
-        !  KC13 definition, but FSPS likely passes it to allow modulating the bump 
-        !  further. We apply it here to match original logic if intended, 
-        !  though the original snippet didn't use `uv_bump_strength` in the Drude calculation.
-        !  Based on your provided snippet, `uv_bump_strength` was unused! 
-        !  I will stick strictly to your snippet's logic which calculated amplitude solely from tilt.)
-        
         bump_amplitude = KC13_AMPL_INTERCEPT - KC13_AMPL_SLOPE * tilt_index
         
-        drude_profile = bump_amplitude * (wavelengths * KC13_BUMP_WIDTH)**2 / &
-                        ( (wavelengths**2 - UV_BUMP_CENTER**2)**2 + (wavelengths * KC13_BUMP_WIDTH)**2 )
+        drude_profile = bump_amplitude * (wavelength * KC13_BUMP_WIDTH)**2 / &
+                        ( (wavelength**2 - UV_BUMP_CENTER**2)**2 + (wavelength * KC13_BUMP_WIDTH)**2 )
 
         ! 3. Combine with Tilt
         ! A_lambda = (k_calz + D_bump) / R_V * (lambda / 5500)^delta
         curve = (base_calzetti + drude_profile) / KC13_R_V_BASE * &
-                (wavelengths / V_BAND_ANGSTROMS)**tilt_index
+                (wavelength / V_BAND_ANGSTROMS)**tilt_index
 
-    end function get_kriek_conroy_curve
+    end function get_kriek_conroy_curve_point
 
 
 !> Implementation of Reddy et al. (2015) MOSDEF curve.
-    pure function get_reddy_curve(wavelengths) result(curve)
-        real(WP), dimension(:), intent(in) :: wavelengths
-        real(WP), dimension(size(wavelengths)) :: curve
-        real(WP), dimension(size(wavelengths)) :: wavenumbers, extinction_k, wavenumbers_clamped
+    elemental function get_reddy_curve_point(wavelength) result(curve)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
+        real(WP) :: curve
+        real(WP) :: wavenumber, extinction_k, wavenumber_clamped
         
-        wavenumbers = get_wavenumber(wavelengths)
+        wavenumber = get_wavenumber_point(wavelength)
         extinction_k = 0.0_wp
         
         ! 1. UV Range (Lambda < 6000 A)
-        !    For Lambda < 1500, we clamp the wavenumber to the value at 1500,
-        !    effectively extrapolating the curve as a constant value blueward.
-        where (wavelengths < REDDY_LAM_BREAK)
-            wavenumbers_clamped = min(wavenumbers, REDDY_X_UV_MAX)
+        if (wavelength < REDDY_LAM_BREAK) then
+            wavenumber_clamped = min(wavenumber, REDDY_X_UV_MAX)
             
             extinction_k = REDDY_UV_COEFFS(0) + &
-                           wavenumbers_clamped * (REDDY_UV_COEFFS(1) + &
-                           wavenumbers_clamped * (REDDY_UV_COEFFS(2) + &
-                           wavenumbers_clamped * REDDY_UV_COEFFS(3))) + REDDY_OFFSET
-        end where
+                           wavenumber_clamped * (REDDY_UV_COEFFS(1) + &
+                           wavenumber_clamped * (REDDY_UV_COEFFS(2) + &
+                           wavenumber_clamped * REDDY_UV_COEFFS(3))) + REDDY_OFFSET
+        end if
 
         ! 2. Optical/NIR Range (0.60um <= lambda < 2.85um)
-        where (wavelengths >= REDDY_LAM_BREAK .and. wavelengths < REDDY_LAM_IR_MAX)
+        if (wavelength >= REDDY_LAM_BREAK .and. wavelength < REDDY_LAM_IR_MAX) then
              extinction_k = REDDY_OPT_COEFFS(0) + &
-                            wavenumbers * (REDDY_OPT_COEFFS(1) + &
-                            wavenumbers * (REDDY_OPT_COEFFS(2) + &
-                            wavenumbers * REDDY_OPT_COEFFS(3))) + &
+                            wavenumber * (REDDY_OPT_COEFFS(1) + &
+                            wavenumber * (REDDY_OPT_COEFFS(2) + &
+                            wavenumber * REDDY_OPT_COEFFS(3))) + &
                             REDDY_OFFSET + REDDY_OPT_CORRECTION
-        end where
+        end if
 
         ! Convert k_lambda to A_lambda / A_V assuming R_V = 2.505
         curve = extinction_k / REDDY_R_V
-    end function get_reddy_curve
+    end function get_reddy_curve_point
 
     !> Converts wavelength (Angstroms) to wavenumber (inverse microns).
     !> Used frequently for dust curve parameterizations (CCM89, Calzetti, etc.).
-    pure function get_wavenumber(wavelengths) result(wavenumbers)
-        real(WP), dimension(:), intent(in) :: wavelengths
-        real(WP), dimension(size(wavelengths)) :: wavenumbers
+    elemental function get_wavenumber_point(wavelength) result(wavenumber)
+        !$acc routine seq
+        real(WP), intent(in) :: wavelength
+        real(WP) :: wavenumber
         
         ! x = 1 / lambda_microns = 10000 / lambda_angstroms
-        wavenumbers = 1.0e4_wp / wavelengths
-    end function get_wavenumber
+        wavenumber = 1.0e4_wp / wavelength
+    end function get_wavenumber_point
 
     !> Computes the circumstellar optical depth (tau_1um) from physical parameters.
     !> See Villaume et al. (2015).

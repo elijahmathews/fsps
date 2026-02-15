@@ -59,7 +59,7 @@ module fsps_ssp
     ! ------------------------------------------------------------------------
     ! CONSTANTS
     ! ------------------------------------------------------------------------
-    real(WP), parameter :: MIN_WEIGHT_CUTOFF = 1.0e-8_wp  ! Skip stars with negligible weight
+    real(WP), parameter :: MIN_WEIGHT_CUTOFF = 0.0_wp     ! Skip stars with negligible weight
     real(WP), parameter :: SMOOTHING_SIGMA_FLAG = 99.0_wp ! Flag to use variable sigma from LSF
     real(WP), parameter :: LN10 = log(10.0_wp)            ! Natural log of 10
     integer, parameter :: BATCH_SIZE = 32                 ! Process stars in chunks for L1 cache locality
@@ -132,9 +132,6 @@ contains
         integer :: n_times, i_time, out_idx
         real(WP) :: time_log_yr
 
-        ! Workspace for spectral generation (allocated on heap to prevent stack overflow)
-        real(WP), allocatable :: work_spec(:)
-        
         ! --------------------------------------------------------------------
         ! 1. INITIALIZATION
         ! --------------------------------------------------------------------
@@ -185,15 +182,27 @@ contains
 
         ! Initialize the reusable memory buffer
         call init_isochrone_buffer(buf)
-
-        ! Allocation of workspace (Size of wavelength grid)
-        allocate(work_spec(size(spec_grid, 1)))
+        
+        ! Move buffer to device
+        !$acc enter data create(buf)
+        !$acc enter data create(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+        !$acc enter data create(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+        !$acc enter data attach(buf%initial_mass)
+        !$acc enter data attach(buf%current_mass)
+        !$acc enter data attach(buf%log_lum)
+        !$acc enter data attach(buf%log_teff)
+        !$acc enter data attach(buf%log_g)
+        !$acc enter data attach(buf%phase)
+        !$acc enter data attach(buf%co_ratio)
+        !$acc enter data attach(buf%log_mdot)
+        !$acc enter data attach(buf%weights)
 
         ! --------------------------------------------------------------------
         ! 4. EVOLUTION LOOP
         ! --------------------------------------------------------------------
         n_times = ctx%state%nt
 
+        !$acc data present(ctx, buf)
         do i_time = 1, n_times
             
             ! Optimization: Skip ages not requested by the user
@@ -214,21 +223,30 @@ contains
             !    IMF, Horizontal Branch, Blue Stragglers, Giant Branch modifications
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
+            ! Sync buffer to device for integration and spectral accumulation
+            !$acc update device(buf%n_stars)
+            !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+            !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+
             ! C. COMPUTE INTEGRATED PROPERTIES
             !    Mass and Bolometric Luminosity
             call compute_integrated_properties(ctx, buf, &
                                                mass_grid(out_idx), &
                                                lbol_grid(out_idx))
 
-            ! D. ACCUMULATE SPECTRA (Pass workspace)
+            ! D. ACCUMULATE SPECTRA
             !    Sum individual stellar spectra into the grid
-            call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx), work_spec)
+            call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx))
 
         end do
+        !$acc end data
 
-        ! Release buffer memory
+        ! Release buffer memory from device
+        !$acc exit data delete(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+        !$acc exit data delete(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+        !$acc exit data delete(buf)
+
         call free_isochrone_buffer(buf)
-        if (allocated(work_spec)) deallocate(work_spec)
 
         ! --------------------------------------------------------------------
         ! 5. POST-PROCESSING
@@ -342,7 +360,7 @@ contains
         integer, intent(in)              :: z_idx, t_idx
         type(isochrone_buffer_t), intent(inout) :: buf
         
-        integer :: n
+        integer :: n, i
         
         ! Get number of mass points, clamped to max NM
         ! Inside load_timestep_data
@@ -355,17 +373,20 @@ contains
 
         ! Vectorized Copy: Global(z, t, 1:n) -> Buffer(1:n)
         ! This pays the "stride tax" exactly once per timestep.
-        buf%initial_mass(1:n) = ctx%state%mini_isoc(z_idx, t_idx, 1:n)
-        buf%current_mass(1:n) = ctx%state%mact_isoc(z_idx, t_idx, 1:n)
-        buf%log_lum(1:n)      = ctx%state%logl_isoc(z_idx, t_idx, 1:n)
-        buf%log_teff(1:n)     = ctx%state%logt_isoc(z_idx, t_idx, 1:n)
-        buf%log_g(1:n)        = ctx%state%logg_isoc(z_idx, t_idx, 1:n)
-        buf%phase(1:n)        = ctx%state%phase_isoc(z_idx, t_idx, 1:n)
-        buf%co_ratio(1:n)     = ctx%state%ffco_isoc(z_idx, t_idx, 1:n)
-        buf%log_mdot(1:n)     = ctx%state%lmdot_isoc(z_idx, t_idx, 1:n)
-        
-        ! Weights are calculated fresh every step, but zeroing is safe
-        buf%weights(1:n)      = 0.0_wp
+        ! Executed on HOST to prepare for apply_isochrone_physics (also HOST).
+        do i = 1, n
+            buf%initial_mass(i) = ctx%state%mini_isoc(z_idx, t_idx, i)
+            buf%current_mass(i) = ctx%state%mact_isoc(z_idx, t_idx, i)
+            buf%log_lum(i)      = ctx%state%logl_isoc(z_idx, t_idx, i)
+            buf%log_teff(i)     = ctx%state%logt_isoc(z_idx, t_idx, i)
+            buf%log_g(i)        = ctx%state%logg_isoc(z_idx, t_idx, i)
+            buf%phase(i)        = ctx%state%phase_isoc(z_idx, t_idx, i)
+            buf%co_ratio(i)     = ctx%state%ffco_isoc(z_idx, t_idx, i)
+            buf%log_mdot(i)     = ctx%state%lmdot_isoc(z_idx, t_idx, i)
+            
+            ! Weights are calculated fresh every step, but zeroing is safe
+            buf%weights(i)      = 0.0_wp
+        end do
 
     end subroutine load_timestep_data
 
@@ -489,7 +510,7 @@ contains
         type(isochrone_buffer_t), intent(in) :: buf
         real(WP), intent(out) :: tot_mass, tot_lbol
 
-        integer :: n
+        integer :: n, i
         real(WP) :: max_living_mass, linear_lum
 
         n = buf%n_stars
@@ -503,24 +524,37 @@ contains
 
         ! 1. Calculate Mass of Living Stars
         !    Vectorized dot product: sum(weights * current_mass)
-        tot_mass = sum(buf%weights(1:n) * buf%current_mass(1:n))
+        tot_mass = 0.0_wp
+        !$acc parallel loop reduction(+:tot_mass) present(buf)
+        do i = 1, n
+            tot_mass = tot_mass + buf%weights(i) * buf%current_mass(i)
+        end do
         
         ! 2. Add Remnant Mass (Black Holes, Neutron Stars, White Dwarfs)
         if (ctx%add_stellar_remnants_val == 1) then
              
              ! The turn-off mass is approximately the maximum initial mass 
              ! of stars still present in the isochrone.
-             max_living_mass = maxval(buf%initial_mass(1:n))
+             max_living_mass = -1.0_wp
+             !$acc parallel loop reduction(max:max_living_mass) present(buf)
+             do i = 1, n
+                 if (buf%initial_mass(i) > max_living_mass) max_living_mass = buf%initial_mass(i)
+             end do
              
              ! This routine integrates the IMF for dead stars and adds to tot_mass
+             ! This routine needs to be device-compatible or run on host with scalar update?
+             ! add_remnant_mass uses simple math. Assuming it's routine seq.
              call add_remnant_mass(ctx, tot_mass, max_living_mass)
         end if
 
         ! 3. Calculate Total Bolometric Luminosity
         !    L_tot = sum( weight * 10^logL )
         !    We compute the linear sum first, then take log10.
-        
-        linear_lum = sum(buf%weights(1:n) * exp(buf%log_lum(1:n) * LN10))
+        linear_lum = 0.0_wp
+        !$acc parallel loop reduction(+:linear_lum) present(buf)
+        do i = 1, n
+            linear_lum = linear_lum + buf%weights(i) * exp(buf%log_lum(i) * LN10)
+        end do
         
         ! Prevent log(0)
         tot_lbol = log10(max(linear_lum, SAFE_FLOOR))
@@ -539,56 +573,63 @@ contains
     !> @param[in]     pset      User settings (for EVTYPE/MASSCUT).
     !> @param[in]     buf       The isochrone buffer.
     !> @param[in,out] spec_out  The output spectrum accumulator (L_sol/Hz).
-    !> @param[in,out] work_spec Workspace array for single star spectrum.
-    subroutine accumulate_spectrum(ctx, pset, buf, spec_out, work_spec)
+    subroutine accumulate_spectrum(ctx, pset, buf, spec_out)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
         type(isochrone_buffer_t), intent(in):: buf
         real(WP), intent(inout), contiguous :: spec_out(:)
-        real(WP), intent(inout), contiguous :: work_spec(:)
 
         ! Local variables
-        integer :: j, k, batch_count
+        integer :: j, k
+        integer :: nspec, nstars
         real(WP) :: linear_lbol, current_weight
+        
+        ! Temporary 2D grid for spectral generation
+        real(WP), allocatable :: temp_grid(:,:)
 
-        ! L1 Cache Accumulator (Small enough to stay hot)
-        real(WP) :: batch_sum(size(spec_out))
+        nspec  = size(spec_out)
+        nstars = buf%n_stars
+        
+        if (nstars == 0) return
 
-        batch_count = 0
-        batch_sum   = 0.0_wp
+        ! Allocate and move 2D grid to device
+        allocate(temp_grid(nspec, nstars))
+        !$acc enter data create(temp_grid)
+        
+        ! Map output slice
+        !$acc enter data create(spec_out)
 
-        ! 1. Loop over all stars in the buffer
-        do j = 1, buf%n_stars
+        ! Initialize output
+        !$acc kernels present(spec_out)
+        spec_out = 0.0_wp
+        !$acc end kernels
+
+        ! ----------------------------------------------------------------
+        ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
+        ! ----------------------------------------------------------------
+        !$acc parallel loop gang vector collapse(1) present(ctx, buf, temp_grid)
+        do j = 1, nstars
             
+            ! Check filters locally per thread
+            ! We initialize temp_grid column to 0 if filtered
             current_weight = buf%weights(j)
-
-            ! Optimization: Skip stars with negligible contribution.
-            ! CAUTION: Stars with weight ~0.0 must be genuinely dead/empty, 
-            ! not just low-mass/rare.
-            if (current_weight <= 0.0_wp) cycle
-
-            ! ----------------------------------------------------------------
-            ! FILTERS
-            ! ----------------------------------------------------------------
             
-            ! Filter by Evolutionary Phase (pset%evtype)
-            ! -1 means "All Phases". Otherwise, match integer phase.
-            if (pset%evtype /= -1) then
-                if (int(buf%phase(j)) /= pset%evtype) cycle
+            if (current_weight <= MIN_WEIGHT_CUTOFF .or. &
+                (pset%evtype /= -1 .and. int(buf%phase(j)) /= pset%evtype) .or. &
+                (buf%initial_mass(j) >= pset%masscut)) then
+                
+                ! Zero out this star's spectrum
+                do k = 1, nspec
+                    temp_grid(k, j) = 0.0_wp
+                end do
+                cycle
             end if
 
-            ! Filter by Initial Mass (pset%masscut)
-            ! Only include stars below the mass cut (Original FSPS logic)
-            if (buf%initial_mass(j) >= pset%masscut) cycle
-
-            ! ----------------------------------------------------------------
-            ! GENERATION
-            ! ----------------------------------------------------------------
-            
-            ! Convert LogL -> Linear L (Required by get_stellar_spectrum)
+            ! Convert LogL -> Linear L
             linear_lbol = exp(buf%log_lum(j) * LN10)
 
-            ! Retrieve spectrum for this specific star
+            ! Generate Spectrum into temp_grid column
+            ! get_stellar_spectrum must be '!$acc routine seq'
             call get_stellar_spectrum( &
                 ctx, &
                 pset, &
@@ -599,34 +640,29 @@ contains
                 buf%phase(j), &
                 buf%co_ratio(j), &
                 buf%log_mdot(j), &
-                work_spec) ! Output
-
-            ! ----------------------------------------------------------------
-            ! BATCH ACCUMULATION (L1 Cache)
-            ! ----------------------------------------------------------------
-            ! Accumulate into local stack array (fastest access)
-            ! Compiler will likely SIMDize this loop
-            do k = 1, size(spec_out)
-                batch_sum(k) = batch_sum(k) + (current_weight * work_spec(k))
-            end do
-            
-            batch_count = batch_count + 1
-
-            ! ----------------------------------------------------------------
-            ! FLUSH TO MAIN MEMORY
-            ! ----------------------------------------------------------------
-            if (batch_count >= BATCH_SIZE) then
-                spec_out = spec_out + batch_sum
-                batch_sum = 0.0_wp
-                batch_count = 0
-            end if
+                temp_grid(:, j))
 
         end do
 
-        ! Flush remaining stars
-        if (batch_count > 0) then
-            spec_out = spec_out + batch_sum
-        end if
+        ! ----------------------------------------------------------------
+        ! PHASE 2: REDUCTION (Gang over Wavelengths)
+        ! ----------------------------------------------------------------
+        ! Loop over wavelength (nspec)
+        !$acc parallel loop gang present(temp_grid, spec_out, buf)
+        do k = 1, nspec
+            ! Sequential loop over stars to sum into this wavelength bin
+            !$acc loop seq
+            do j = 1, nstars
+                spec_out(k) = spec_out(k) + temp_grid(k, j) * buf%weights(j)
+                ! DEBUG TEST: Force value
+                ! spec_out(k) = spec_out(k) + 1.0_wp
+            end do
+        end do
+
+        ! Cleanup
+        !$acc exit data copyout(spec_out)
+        !$acc exit data delete(temp_grid)
+        deallocate(temp_grid)
 
     end subroutine accumulate_spectrum
 

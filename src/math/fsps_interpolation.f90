@@ -40,6 +40,7 @@ contains
     !>
     !> @return    y_out  The interpolated value.
     pure function interpolate_linear_scalar(x_in, y_in, x_out) result(y_out)
+        !$acc routine seq
         real(WP), dimension(:), intent(in), contiguous :: x_in, y_in
         real(WP), intent(in) :: x_out
         real(WP) :: y_out
@@ -79,6 +80,7 @@ contains
     !>
     !> @return    y_out  The interpolated values at x_out.
     pure function interpolate_linear_array(x_in, y_in, x_out) result(y_out)
+        !$acc routine seq
         real(WP), dimension(:), intent(in), contiguous :: x_in, y_in, x_out
         real(WP), dimension(size(x_out)) :: y_out
 
@@ -128,6 +130,7 @@ contains
     !>                   Returns 1 if value < array(1).
     !>                   Returns n-1 if value > array(n).
     pure function find_interval(array, value) result(idx)
+        !$acc routine seq
         real(WP), dimension(:), intent(in), contiguous :: array
         real(WP), intent(in) :: value
         integer :: idx
@@ -187,6 +190,7 @@ contains
     !> Wraps the IEEE_ARITHMETIC intrinsic to avoid module namespace pollution
     !> and ensures a safe return value for error conditions in PURE functions.
     pure function get_quiet_nan() result(res)
+        !$acc routine seq
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
         real(WP) :: res
         res = ieee_value(0.0_wp, ieee_quiet_nan)

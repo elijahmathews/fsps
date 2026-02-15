@@ -31,6 +31,8 @@ module fsps_context
     public :: fsps_context_prepare_pset
     public :: fsps_context_compute_ssp
     public :: fsps_context_compute_csp
+    public :: fsps_context_move_to_device
+    public :: fsps_context_remove_from_device
 
     ! ---------------------------------------------------------------------
     ! Module constants
@@ -529,5 +531,518 @@ contains
             ctx%pset%ssp_gen_age = 1
         end if
     end subroutine fsps_context_prepare_pset
+
+    !> @brief Moves the context and all its associated data to the device.
+    !> @details Performs a deep copy of the context state structure.
+    !> @param[inout] ctx Context to move.
+    subroutine fsps_context_move_to_device(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        ! Copy the main structure
+        !$acc enter data copyin(ctx)
+        !$acc enter data copyin(ctx%state)
+        
+        ! Copy allocatable parameter arrays in pset
+        if (allocated(ctx%pset%mag_compute)) then
+            !$acc enter data copyin(ctx%pset%mag_compute)
+            !$acc enter data attach(ctx%pset%mag_compute)
+        end if
+        if (allocated(ctx%pset%ssp_gen_age)) then
+            !$acc enter data copyin(ctx%pset%ssp_gen_age)
+            !$acc enter data attach(ctx%pset%ssp_gen_age)
+        end if
+
+        ! Copy pointer/allocatable components of state
+        if (associated(ctx%state%indexdefined)) then
+            !$acc enter data copyin(ctx%state%indexdefined)
+            !$acc enter data attach(ctx%state%indexdefined)
+        end if
+        if (associated(ctx%state%wgdust)) then
+            !$acc enter data copyin(ctx%state%wgdust)
+            !$acc enter data attach(ctx%state%wgdust)
+        end if
+        if (associated(ctx%state%g03smcextn)) then
+            !$acc enter data copyin(ctx%state%g03smcextn)
+            !$acc enter data attach(ctx%state%g03smcextn)
+        end if
+        if (associated(ctx%state%bands)) then
+            !$acc enter data copyin(ctx%state%bands)
+            !$acc enter data attach(ctx%state%bands)
+        end if
+        if (associated(ctx%state%magsun)) then
+            !$acc enter data copyin(ctx%state%magsun)
+            !$acc enter data attach(ctx%state%magsun)
+        end if
+        if (associated(ctx%state%magvega)) then
+            !$acc enter data copyin(ctx%state%magvega)
+            !$acc enter data attach(ctx%state%magvega)
+        end if
+        if (associated(ctx%state%filter_leff)) then
+            !$acc enter data copyin(ctx%state%filter_leff)
+            !$acc enter data attach(ctx%state%filter_leff)
+        end if
+        if (associated(ctx%state%vega_spec)) then
+            !$acc enter data copyin(ctx%state%vega_spec)
+            !$acc enter data attach(ctx%state%vega_spec)
+        end if
+        if (associated(ctx%state%sun_spec)) then
+            !$acc enter data copyin(ctx%state%sun_spec)
+            !$acc enter data attach(ctx%state%sun_spec)
+        end if
+        if (associated(ctx%state%spec_lambda)) then
+            !$acc enter data copyin(ctx%state%spec_lambda)
+            !$acc enter data attach(ctx%state%spec_lambda)
+        end if
+        if (associated(ctx%state%spec_nu)) then
+            !$acc enter data copyin(ctx%state%spec_nu)
+            !$acc enter data attach(ctx%state%spec_nu)
+        end if
+        if (associated(ctx%state%spec_res)) then
+            !$acc enter data copyin(ctx%state%spec_res)
+            !$acc enter data attach(ctx%state%spec_res)
+        end if
+        if (associated(ctx%state%speclib)) then
+            !$acc enter data copyin(ctx%state%speclib)
+            !$acc enter data attach(ctx%state%speclib)
+        end if
+        if (associated(ctx%state%wmb_spec)) then
+            !$acc enter data copyin(ctx%state%wmb_spec)
+            !$acc enter data attach(ctx%state%wmb_spec)
+        end if
+        if (associated(ctx%state%agb_spec_o)) then
+            !$acc enter data copyin(ctx%state%agb_spec_o)
+            !$acc enter data attach(ctx%state%agb_spec_o)
+        end if
+        if (associated(ctx%state%agb_logt_o)) then
+            !$acc enter data copyin(ctx%state%agb_logt_o)
+            !$acc enter data attach(ctx%state%agb_logt_o)
+        end if
+        if (associated(ctx%state%agb_spec_c)) then
+            !$acc enter data copyin(ctx%state%agb_spec_c)
+            !$acc enter data attach(ctx%state%agb_spec_c)
+        end if
+        if (associated(ctx%state%agb_logt_c)) then
+            !$acc enter data copyin(ctx%state%agb_logt_c)
+            !$acc enter data attach(ctx%state%agb_logt_c)
+        end if
+        if (associated(ctx%state%agb_spec_car)) then
+            !$acc enter data copyin(ctx%state%agb_spec_car)
+            !$acc enter data attach(ctx%state%agb_spec_car)
+        end if
+        if (associated(ctx%state%pagb_spec)) then
+            !$acc enter data copyin(ctx%state%pagb_spec)
+            !$acc enter data attach(ctx%state%pagb_spec)
+        end if
+        if (associated(ctx%state%wrn_spec)) then
+            !$acc enter data copyin(ctx%state%wrn_spec)
+            !$acc enter data attach(ctx%state%wrn_spec)
+        end if
+        if (associated(ctx%state%wrc_spec)) then
+            !$acc enter data copyin(ctx%state%wrc_spec)
+            !$acc enter data attach(ctx%state%wrc_spec)
+        end if
+        if (associated(ctx%state%qpaharr)) then
+            !$acc enter data copyin(ctx%state%qpaharr)
+            !$acc enter data attach(ctx%state%qpaharr)
+        end if
+        if (associated(ctx%state%uminarr)) then
+            !$acc enter data copyin(ctx%state%uminarr)
+            !$acc enter data attach(ctx%state%uminarr)
+        end if
+        if (associated(ctx%state%lambda_dustem)) then
+            !$acc enter data copyin(ctx%state%lambda_dustem)
+            !$acc enter data attach(ctx%state%lambda_dustem)
+        end if
+        if (associated(ctx%state%dustem_dustem)) then
+            !$acc enter data copyin(ctx%state%dustem_dustem)
+            !$acc enter data attach(ctx%state%dustem_dustem)
+        end if
+        if (associated(ctx%state%dustem2_dustem)) then
+            !$acc enter data copyin(ctx%state%dustem2_dustem)
+            !$acc enter data attach(ctx%state%dustem2_dustem)
+        end if
+        if (associated(ctx%state%flux_dagb)) then
+            !$acc enter data copyin(ctx%state%flux_dagb)
+            !$acc enter data attach(ctx%state%flux_dagb)
+        end if
+        if (associated(ctx%state%nebem_cont)) then
+            !$acc enter data copyin(ctx%state%nebem_cont)
+            !$acc enter data attach(ctx%state%nebem_cont)
+        end if
+        if (associated(ctx%state%xnebem_cont)) then
+            !$acc enter data copyin(ctx%state%xnebem_cont)
+            !$acc enter data attach(ctx%state%xnebem_cont)
+        end if
+        if (associated(ctx%state%neb_res_min)) then
+            !$acc enter data copyin(ctx%state%neb_res_min)
+            !$acc enter data attach(ctx%state%neb_res_min)
+        end if
+        if (associated(ctx%state%gaussnebarr)) then
+            !$acc enter data copyin(ctx%state%gaussnebarr)
+            !$acc enter data attach(ctx%state%gaussnebarr)
+        end if
+        if (associated(ctx%state%agndust_spec)) then
+            !$acc enter data copyin(ctx%state%agndust_spec)
+            !$acc enter data attach(ctx%state%agndust_spec)
+        end if
+        if (associated(ctx%state%mact_isoc)) then
+            !$acc enter data copyin(ctx%state%mact_isoc)
+            !$acc enter data attach(ctx%state%mact_isoc)
+        end if
+        if (associated(ctx%state%logl_isoc)) then
+            !$acc enter data copyin(ctx%state%logl_isoc)
+            !$acc enter data attach(ctx%state%logl_isoc)
+        end if
+        if (associated(ctx%state%logt_isoc)) then
+            !$acc enter data copyin(ctx%state%logt_isoc)
+            !$acc enter data attach(ctx%state%logt_isoc)
+        end if
+        if (associated(ctx%state%logg_isoc)) then
+            !$acc enter data copyin(ctx%state%logg_isoc)
+            !$acc enter data attach(ctx%state%logg_isoc)
+        end if
+        if (associated(ctx%state%ffco_isoc)) then
+            !$acc enter data copyin(ctx%state%ffco_isoc)
+            !$acc enter data attach(ctx%state%ffco_isoc)
+        end if
+        if (associated(ctx%state%phase_isoc)) then
+            !$acc enter data copyin(ctx%state%phase_isoc)
+            !$acc enter data attach(ctx%state%phase_isoc)
+        end if
+        if (associated(ctx%state%mini_isoc)) then
+            !$acc enter data copyin(ctx%state%mini_isoc)
+            !$acc enter data attach(ctx%state%mini_isoc)
+        end if
+        if (associated(ctx%state%lmdot_isoc)) then
+            !$acc enter data copyin(ctx%state%lmdot_isoc)
+            !$acc enter data attach(ctx%state%lmdot_isoc)
+        end if
+        if (associated(ctx%state%nmass_isoc)) then
+            !$acc enter data copyin(ctx%state%nmass_isoc)
+            !$acc enter data attach(ctx%state%nmass_isoc)
+        end if
+        if (associated(ctx%state%timestep_isoc)) then
+            !$acc enter data copyin(ctx%state%timestep_isoc)
+            !$acc enter data attach(ctx%state%timestep_isoc)
+        end if
+        if (associated(ctx%state%zlegend)) then
+            !$acc enter data copyin(ctx%state%zlegend)
+            !$acc enter data attach(ctx%state%zlegend)
+        end if
+        if (associated(ctx%state%zlegendinit)) then
+            !$acc enter data copyin(ctx%state%zlegendinit)
+            !$acc enter data attach(ctx%state%zlegendinit)
+        end if
+        if (allocated(ctx%state%spec_ssp_zz)) then
+            !$acc enter data copyin(ctx%state%spec_ssp_zz)
+            !$acc enter data attach(ctx%state%spec_ssp_zz)
+        end if
+        if (allocated(ctx%state%mass_ssp_zz)) then
+            !$acc enter data copyin(ctx%state%mass_ssp_zz)
+            !$acc enter data attach(ctx%state%mass_ssp_zz)
+        end if
+        if (allocated(ctx%state%lbol_ssp_zz)) then
+            !$acc enter data copyin(ctx%state%lbol_ssp_zz)
+            !$acc enter data attach(ctx%state%lbol_ssp_zz)
+        end if
+        if (associated(ctx%state%time_full)) then
+            !$acc enter data copyin(ctx%state%time_full)
+            !$acc enter data attach(ctx%state%time_full)
+        end if
+        if (allocated(ctx%state%weight_ssp)) then
+            !$acc enter data copyin(ctx%state%weight_ssp)
+            !$acc enter data attach(ctx%state%weight_ssp)
+        end if
+        if (allocated(ctx%state%spec_young)) then
+            !$acc enter data copyin(ctx%state%spec_young)
+            !$acc enter data attach(ctx%state%spec_young)
+        end if
+        if (allocated(ctx%state%spec_old)) then
+            !$acc enter data copyin(ctx%state%spec_old)
+            !$acc enter data attach(ctx%state%spec_old)
+        end if
+        if (associated(ctx%state%bpass_spec_ssp)) then
+            !$acc enter data copyin(ctx%state%bpass_spec_ssp)
+            !$acc enter data attach(ctx%state%bpass_spec_ssp)
+        end if
+        if (associated(ctx%state%bpass_mass_ssp)) then
+            !$acc enter data copyin(ctx%state%bpass_mass_ssp)
+            !$acc enter data attach(ctx%state%bpass_mass_ssp)
+        end if
+        if (associated(ctx%state%lam_xrb)) then
+            !$acc enter data copyin(ctx%state%lam_xrb)
+            !$acc enter data attach(ctx%state%lam_xrb)
+        end if
+        if (associated(ctx%state%spec_xrb)) then
+            !$acc enter data copyin(ctx%state%spec_xrb)
+            !$acc enter data attach(ctx%state%spec_xrb)
+        end if
+        if (associated(ctx%state%ages_xrb)) then
+            !$acc enter data copyin(ctx%state%ages_xrb)
+            !$acc enter data attach(ctx%state%ages_xrb)
+        end if
+        if (associated(ctx%state%zmet_xrb)) then
+            !$acc enter data copyin(ctx%state%zmet_xrb)
+            !$acc enter data attach(ctx%state%zmet_xrb)
+        end if
+        if (allocated(ctx%state%lsfinfo%lsf)) then
+            !$acc enter data copyin(ctx%state%lsfinfo%lsf)
+            !$acc enter data attach(ctx%state%lsfinfo%lsf)
+        end if
+        ! Powell and Sedfit data are usually observation data, typically not needed for simulation,
+        ! but we include them to be safe if they are present.
+        if (allocated(ctx%state%powell_data%mags)) then
+            !$acc enter data copyin(ctx%state%powell_data%mags)
+            !$acc enter data attach(ctx%state%powell_data%mags)
+        end if
+        if (allocated(ctx%state%powell_data%magerr)) then
+            !$acc enter data copyin(ctx%state%powell_data%magerr)
+            !$acc enter data attach(ctx%state%powell_data%magerr)
+        end if
+        if (allocated(ctx%state%powell_data%spec)) then
+            !$acc enter data copyin(ctx%state%powell_data%spec)
+            !$acc enter data attach(ctx%state%powell_data%spec)
+        end if
+        if (allocated(ctx%state%powell_data%specerr)) then
+            !$acc enter data copyin(ctx%state%powell_data%specerr)
+            !$acc enter data attach(ctx%state%powell_data%specerr)
+        end if
+        if (allocated(ctx%state%sedfit_data%mags)) then
+            !$acc enter data copyin(ctx%state%sedfit_data%mags)
+            !$acc enter data attach(ctx%state%sedfit_data%mags)
+        end if
+        if (allocated(ctx%state%sedfit_data%magerr)) then
+            !$acc enter data copyin(ctx%state%sedfit_data%magerr)
+            !$acc enter data attach(ctx%state%sedfit_data%magerr)
+        end if
+        if (allocated(ctx%state%sedfit_data%spec)) then
+            !$acc enter data copyin(ctx%state%sedfit_data%spec)
+            !$acc enter data attach(ctx%state%sedfit_data%spec)
+        end if
+        if (allocated(ctx%state%sedfit_data%specerr)) then
+            !$acc enter data copyin(ctx%state%sedfit_data%specerr)
+            !$acc enter data attach(ctx%state%sedfit_data%specerr)
+        end if
+    end subroutine fsps_context_move_to_device
+
+    !> @brief Removes the context and its data from the device.
+    !> @param[inout] ctx Context to remove.
+    subroutine fsps_context_remove_from_device(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        associate(s => ctx%state)
+            if (allocated(s%sedfit_data%specerr)) then
+                !$acc exit data delete(s%sedfit_data%specerr)
+            end if
+            if (allocated(s%sedfit_data%spec)) then
+                !$acc exit data delete(s%sedfit_data%spec)
+            end if
+            if (allocated(s%sedfit_data%magerr)) then
+                !$acc exit data delete(s%sedfit_data%magerr)
+            end if
+            if (allocated(s%sedfit_data%mags)) then
+                !$acc exit data delete(s%sedfit_data%mags)
+            end if
+            if (allocated(s%powell_data%specerr)) then
+                !$acc exit data delete(s%powell_data%specerr)
+            end if
+            if (allocated(s%powell_data%spec)) then
+                !$acc exit data delete(s%powell_data%spec)
+            end if
+            if (allocated(s%powell_data%magerr)) then
+                !$acc exit data delete(s%powell_data%magerr)
+            end if
+            if (allocated(s%powell_data%mags)) then
+                !$acc exit data delete(s%powell_data%mags)
+            end if
+            if (allocated(s%lsfinfo%lsf)) then
+                !$acc exit data delete(s%lsfinfo%lsf)
+            end if
+            if (associated(s%zmet_xrb)) then
+                !$acc exit data delete(s%zmet_xrb)
+            end if
+            if (associated(s%ages_xrb)) then
+                !$acc exit data delete(s%ages_xrb)
+            end if
+            if (associated(s%spec_xrb)) then
+                !$acc exit data delete(s%spec_xrb)
+            end if
+            if (associated(s%lam_xrb)) then
+                !$acc exit data delete(s%lam_xrb)
+            end if
+            if (associated(s%bpass_mass_ssp)) then
+                !$acc exit data delete(s%bpass_mass_ssp)
+            end if
+            if (associated(s%bpass_spec_ssp)) then
+                !$acc exit data delete(s%bpass_spec_ssp)
+            end if
+            if (allocated(s%spec_old)) then
+                !$acc exit data delete(s%spec_old)
+            end if
+            if (allocated(s%spec_young)) then
+                !$acc exit data delete(s%spec_young)
+            end if
+            if (allocated(s%weight_ssp)) then
+                !$acc exit data delete(s%weight_ssp)
+            end if
+            if (associated(s%time_full)) then
+                !$acc exit data delete(s%time_full)
+            end if
+            if (allocated(s%lbol_ssp_zz)) then
+                !$acc exit data delete(s%lbol_ssp_zz)
+            end if
+            if (allocated(s%mass_ssp_zz)) then
+                !$acc exit data delete(s%mass_ssp_zz)
+            end if
+            if (allocated(s%spec_ssp_zz)) then
+                !$acc exit data delete(s%spec_ssp_zz)
+            end if
+            if (associated(s%zlegendinit)) then
+                !$acc exit data delete(s%zlegendinit)
+            end if
+            if (associated(s%zlegend)) then
+                !$acc exit data delete(s%zlegend)
+            end if
+            if (associated(s%timestep_isoc)) then
+                !$acc exit data delete(s%timestep_isoc)
+            end if
+            if (associated(s%nmass_isoc)) then
+                !$acc exit data delete(s%nmass_isoc)
+            end if
+            if (associated(s%lmdot_isoc)) then
+                !$acc exit data delete(s%lmdot_isoc)
+            end if
+            if (associated(s%mini_isoc)) then
+                !$acc exit data delete(s%mini_isoc)
+            end if
+            if (associated(s%phase_isoc)) then
+                !$acc exit data delete(s%phase_isoc)
+            end if
+            if (associated(s%ffco_isoc)) then
+                !$acc exit data delete(s%ffco_isoc)
+            end if
+            if (associated(s%logg_isoc)) then
+                !$acc exit data delete(s%logg_isoc)
+            end if
+            if (associated(s%logt_isoc)) then
+                !$acc exit data delete(s%logt_isoc)
+            end if
+            if (associated(s%logl_isoc)) then
+                !$acc exit data delete(s%logl_isoc)
+            end if
+            if (associated(s%mact_isoc)) then
+                !$acc exit data delete(s%mact_isoc)
+            end if
+            if (associated(s%agndust_spec)) then
+                !$acc exit data delete(s%agndust_spec)
+            end if
+            if (associated(s%gaussnebarr)) then
+                !$acc exit data delete(s%gaussnebarr)
+            end if
+            if (associated(s%neb_res_min)) then
+                !$acc exit data delete(s%neb_res_min)
+            end if
+            if (associated(s%xnebem_cont)) then
+                !$acc exit data delete(s%xnebem_cont)
+            end if
+            if (associated(s%nebem_cont)) then
+                !$acc exit data delete(s%nebem_cont)
+            end if
+            if (associated(s%flux_dagb)) then
+                !$acc exit data delete(s%flux_dagb)
+            end if
+            if (associated(s%dustem2_dustem)) then
+                !$acc exit data delete(s%dustem2_dustem)
+            end if
+            if (associated(s%dustem_dustem)) then
+                !$acc exit data delete(s%dustem_dustem)
+            end if
+            if (associated(s%lambda_dustem)) then
+                !$acc exit data delete(s%lambda_dustem)
+            end if
+            if (associated(s%uminarr)) then
+                !$acc exit data delete(s%uminarr)
+            end if
+            if (associated(s%qpaharr)) then
+                !$acc exit data delete(s%qpaharr)
+            end if
+            if (associated(s%wrc_spec)) then
+                !$acc exit data delete(s%wrc_spec)
+            end if
+            if (associated(s%wrn_spec)) then
+                !$acc exit data delete(s%wrn_spec)
+            end if
+            if (associated(s%pagb_spec)) then
+                !$acc exit data delete(s%pagb_spec)
+            end if
+            if (associated(s%agb_spec_car)) then
+                !$acc exit data delete(s%agb_spec_car)
+            end if
+            if (associated(s%agb_logt_c)) then
+                !$acc exit data delete(s%agb_logt_c)
+            end if
+            if (associated(s%agb_spec_c)) then
+                !$acc exit data delete(s%agb_spec_c)
+            end if
+            if (associated(s%agb_logt_o)) then
+                !$acc exit data delete(s%agb_logt_o)
+            end if
+            if (associated(s%agb_spec_o)) then
+                !$acc exit data delete(s%agb_spec_o)
+            end if
+            if (associated(s%wmb_spec)) then
+                !$acc exit data delete(s%wmb_spec)
+            end if
+            if (associated(s%speclib)) then
+                !$acc exit data delete(s%speclib)
+            end if
+            if (associated(s%spec_res)) then
+                !$acc exit data delete(s%spec_res)
+            end if
+            if (associated(s%spec_nu)) then
+                !$acc exit data delete(s%spec_nu)
+            end if
+            if (associated(s%spec_lambda)) then
+                !$acc exit data delete(s%spec_lambda)
+            end if
+            if (associated(s%sun_spec)) then
+                !$acc exit data delete(s%sun_spec)
+            end if
+            if (associated(s%vega_spec)) then
+                !$acc exit data delete(s%vega_spec)
+            end if
+            if (associated(s%filter_leff)) then
+                !$acc exit data delete(s%filter_leff)
+            end if
+            if (associated(s%magvega)) then
+                !$acc exit data delete(s%magvega)
+            end if
+            if (associated(s%magsun)) then
+                !$acc exit data delete(s%magsun)
+            end if
+            if (associated(s%bands)) then
+                !$acc exit data delete(s%bands)
+            end if
+            if (associated(s%g03smcextn)) then
+                !$acc exit data delete(s%g03smcextn)
+            end if
+            if (associated(s%wgdust)) then
+                !$acc exit data delete(s%wgdust)
+            end if
+            if (associated(s%indexdefined)) then
+                !$acc exit data delete(s%indexdefined)
+            end if
+        end associate
+
+        if (allocated(ctx%pset%ssp_gen_age)) then
+            !$acc exit data delete(ctx%pset%ssp_gen_age)
+        end if
+        if (allocated(ctx%pset%mag_compute)) then
+            !$acc exit data delete(ctx%pset%mag_compute)
+        end if
+
+        !$acc exit data delete(ctx%state)
+        !$acc exit data delete(ctx)
+    end subroutine fsps_context_remove_from_device
 
 end module fsps_context

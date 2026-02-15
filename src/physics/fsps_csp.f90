@@ -145,17 +145,31 @@ contains
         if (ctx%state%check_sps_setup == 0) then
             if (present(status)) status = 1; return
         end if
+        
+        ! Copy input arrays to device
+        !$acc enter data copyin(tspec_ssp, mass_ssp, lbol_ssp)
 
         ! 2. PREPARE GRIDS
         allocate(local_ssp_grid(nspec, nt, nzin))
         allocate(local_emlin_grid(NEMLINE, nt, nzin))
+        
+        ! Initialize on device (Implicit copy for now, but better explicit)
+        !$acc enter data create(local_ssp_grid, local_emlin_grid)
+        
+        ! Copy tspec_ssp (Device to Device if tspec_ssp is on device?)
+        ! tspec_ssp is intent(in). In Resident Device mode, it is likely on device.
+        ! But standard fortran assignment might pull to host.
+        ! Let's assume tspec_ssp is valid on device.
+        !$acc kernels present(local_ssp_grid, tspec_ssp)
         local_ssp_grid = tspec_ssp
         local_emlin_grid = 0.0_wp
+        !$acc end kernels
 
         if (ctx%add_neb_emission_val == 1) then
             if (nzin > 1) then
                  if (present(status)) status = 2; return
             end if
+            ! apply_nebular_emission handles device updates internally
             call apply_nebular_emission(ctx, pset, tspec_ssp(:,:,1), &
                                         local_ssp_grid(:,:,1), local_emlin_grid(:,:,1))
         end if
@@ -165,17 +179,34 @@ contains
         
         ! A. Linearize Luminosity (Avoids 10**x inside hot loops)
         allocate(ssp_lum_linear(nt, nzin))
+        !$acc enter data create(ssp_lum_linear)
+        !$acc kernels present(ssp_lum_linear, lbol_ssp)
         ssp_lum_linear = 10.0_wp**lbol_ssp
+        !$acc end kernels
 
         ! B. Pre-calculate IGM Transmission (Constant for this PSET)
         if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR) then
             allocate(igm_transmission(nspec))
             igm_transmission = get_igm_transmission(ctx%state%spec_lambda, &
                                                     pset%zred, pset%igm_factor)
+            !$acc enter data copyin(igm_transmission)
         end if
 
         ! 4. INITIALIZE BUFFER & BOUNDS
         call init_csp_buffer(buf, nspec, nt, nzin)
+        
+        ! Move buffer to device
+        !$acc enter data create(buf)
+        !$acc enter data create(buf%ssp_weights, buf%spec_young, buf%spec_old)
+        !$acc enter data create(buf%emlin_young, buf%emlin_old)
+        !$acc enter data attach(buf%ssp_weights)
+        !$acc enter data attach(buf%spec_young)
+        !$acc enter data attach(buf%spec_old)
+        !$acc enter data attach(buf%emlin_young)
+        !$acc enter data attach(buf%emlin_old)
+        
+        ! Move local scratch arrays
+        !$acc enter data create(spec_final, emlin_final)
 
         if (pset%tage > 0.0_wp) then
             n_outputs = 1; start_idx = 0 
@@ -189,6 +220,8 @@ contains
 
         ! 5. MAIN GENERATION LOOP
         ! -----------------------
+        !$acc data present(ctx, buf, local_ssp_grid, local_emlin_grid, mass_ssp, ssp_lum_linear) &
+        !$acc      present(spec_final, emlin_final)
         do i = 1, n_outputs
             ! Ensure output arrays are allocated
             if (.not. allocated(results(i)%mags)) then
@@ -229,13 +262,28 @@ contains
                                        igm_transmission, & ! <--- Optimized Input
                                        results(i))
         end do
+        !$acc end data
 
         ! 6. CLEANUP
+        !$acc exit data delete(spec_final, emlin_final)
+        !$acc exit data delete(buf%ssp_weights, buf%spec_young, buf%spec_old)
+        !$acc exit data delete(buf%emlin_young, buf%emlin_old)
+        !$acc exit data delete(buf)
+        
         call free_csp_buffer(buf)
+        
+        !$acc exit data delete(local_ssp_grid, local_emlin_grid, ssp_lum_linear)
+        
         deallocate(local_ssp_grid)
         deallocate(local_emlin_grid)
         deallocate(ssp_lum_linear)
-        if (allocated(igm_transmission)) deallocate(igm_transmission)
+        if (allocated(igm_transmission)) then
+            !$acc exit data delete(igm_transmission)
+            deallocate(igm_transmission)
+        end if
+        
+        ! Remove inputs from device
+        !$acc exit data delete(tspec_ssp, mass_ssp, lbol_ssp)
 
     end subroutine compute_csp_scenario
 
@@ -276,19 +324,24 @@ contains
         type(csp_buffer_t), intent(inout):: buf
         real(WP), intent(out)            :: mass_csp, lbol_csp
 
-        integer :: i, k, nt, i_tesc
+        integer :: i, k, nt, i_tesc, j_vec
         real(WP) :: w, dust_age_log
         real(WP) :: linear_lbol_sum
         
         nt = ctx%state%ntfull
 
         ! 1. Clear Accumulators
+        !$acc kernels present(buf)
         buf%spec_young  = 0.0_wp
         buf%spec_old    = 0.0_wp
         buf%emlin_young = 0.0_wp
         buf%emlin_old   = 0.0_wp
+        !$acc end kernels
 
-        ! 2. Compute SFH Weights
+        ! 2. Compute SFH Weights (Runs on Host or Device? Usually scalar math, but weights is array)
+        !    compute_sfh_weights likely updates buf%ssp_weights on DEVICE. 
+        !    We need to ensure it's device compatible. 
+        !    It accesses ctx%state%time_full etc.
         call compute_sfh_weights(ctx, pset, tage, nzin, buf%ssp_weights)
 
         ! 3. Determine Dust Separation Index
@@ -303,30 +356,40 @@ contains
         linear_lbol_sum = 0.0_wp
         mass_csp        = 0.0_wp
 
+        !$acc parallel loop reduction(+:mass_csp, linear_lbol_sum) &
+        !$acc               present(buf, ssp_grid, emlin_grid, mass_ssp, ssp_lum_linear) &
+        !$acc               collapse(2)
         do k = 1, nzin
-            ! Young Component
-            do i = 1, i_tesc
+            do i = 1, nt
                 w = buf%ssp_weights(i, k)
-                ! Note: We check weights > SAFE_FLOOR to avoid unnecessary calculations, but
-                !       if may end up being faster to just do the full matrix operation
-                !       without the check if the compiler can optimize it well with masking.
-                !       Potentially worth benchmarking both approaches.
+                
                 if (w > SAFE_FLOOR) then
-                    buf%spec_young  = buf%spec_young  + (w * ssp_grid(:, i, k))
-                    buf%emlin_young = buf%emlin_young + (w * emlin_grid(:, i, k))
-                    mass_csp        = mass_csp        + (w * mass_ssp(i, k))
-                    linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k)) ! Fast
-                end if
-            end do
-
-            ! Old Component
-            do i = i_tesc + 1, nt
-                w = buf%ssp_weights(i, k)
-                if (w > SAFE_FLOOR) then
-                    buf%spec_old    = buf%spec_old    + (w * ssp_grid(:, i, k))
-                    buf%emlin_old   = buf%emlin_old   + (w * emlin_grid(:, i, k))
-                    mass_csp        = mass_csp        + (w * mass_ssp(i, k))
-                    linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k)) ! Fast
+                    mass_csp = mass_csp + (w * mass_ssp(i, k))
+                    linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k))
+                    
+                    if (i <= i_tesc) then
+                        ! Young
+                        !$acc loop vector
+                        do j_vec = 1, size(ssp_grid, 1)
+                            buf%spec_young(j_vec) = buf%spec_young(j_vec) + (w * ssp_grid(j_vec, i, k))
+                        end do
+                        
+                        !$acc loop vector
+                        do j_vec = 1, size(emlin_grid, 1)
+                            buf%emlin_young(j_vec) = buf%emlin_young(j_vec) + (w * emlin_grid(j_vec, i, k))
+                        end do
+                    else
+                        ! Old
+                        !$acc loop vector
+                        do j_vec = 1, size(ssp_grid, 1)
+                            buf%spec_old(j_vec) = buf%spec_old(j_vec) + (w * ssp_grid(j_vec, i, k))
+                        end do
+                        
+                        !$acc loop vector
+                        do j_vec = 1, size(emlin_grid, 1)
+                            buf%emlin_old(j_vec) = buf%emlin_old(j_vec) + (w * emlin_grid(j_vec, i, k))
+                        end do
+                    end if
                 end if
             end do
         end do
@@ -469,11 +532,20 @@ contains
              z_effective = pset%zred
         end if
 
+        ! Map result arrays to device
+        !$acc enter data create(result%mags, result%indx)
+
         call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
         
         call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
+        
+        ! Retrieve results
+        !$acc exit data copyout(result%mags, result%indx)
 
         ! 7. Populate Output Structure
+        ! Update scalars/arrays modified on device
+        !$acc update host(spec, emlines)
+
         result%age      = log10(tage * 1.0e9_wp)
         result%mass_csp = current_mass_surviving
         result%lbol_csp = lbol_final

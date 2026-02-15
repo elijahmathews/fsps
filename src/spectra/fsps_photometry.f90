@@ -13,10 +13,9 @@ module fsps_photometry
     use fsps_precision, only: WP
     use fsps_constants, only: SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
     use fsps_context_types, only: fsps_context_t
-    use fsps_interpolation, only: interpolate_linear
-    use fsps_integration, only: integrate_trapezoid_array
+    use fsps_interpolation, only: interpolate_linear, find_interval
     use fsps_special_functions, only: mag_from_flux
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_value, ieee_quiet_nan
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 
     implicit none
     private
@@ -53,13 +52,16 @@ contains
         integer, dimension(:), intent(in), optional :: mag_compute
 
         ! Local variables
-        integer :: i, n_spec, n_bands
+        integer :: i, j, n_spec, n_bands
         integer, allocatable :: work_flags(:)
+        
+        ! Scratch arrays allocated on host to avoid large static/stack storage.
+        ! They are explicitly mirrored on the device for OpenACC kernels.
         real(WP), allocatable :: obs_frame_spec(:)
         real(WP), allocatable :: flux_over_lambda(:)
+        
         real(WP) :: dist_mod_term, integrated_flux
-
-        ! Context shortcuts
+        real(WP) :: x1, x2, y1, y2
         logical :: do_vega, do_light_ages
 
         ! 1. Setup and Validation
@@ -70,89 +72,108 @@ contains
             mags = get_quiet_nan()
             return
         end if
-
+        
         ! Initialize output
+        !$acc kernels present(mags)
         mags = get_quiet_nan()
+        !$acc end kernels
 
         ! Parse Context Flags
         do_vega = (ctx%compute_vega_mags_val == 1)
         do_light_ages = (ctx%compute_light_ages_val == 1)
 
         ! 2. Determine which bands to compute
+        ! NOTE: Allocation on host is fine if we copy it, but Rule 3 says NO heap alloc in kernels.
+        ! If this routine is a kernel, we can't allocate.
+        ! But work_flags is integer mask. We can use a simpler approach.
+        ! For now, let's assume this part runs on host or we map it?
+        ! Actually, if 'mag_compute' is present, it's on host?
+        ! This routine is tricky if it bridges host/device. 
+        ! Assuming 'spec' and 'mags' are device resident. 'mag_compute' might be host.
+        ! We will create work_flags on device.
         allocate(work_flags(n_bands))
+        allocate(obs_frame_spec(n_spec), flux_over_lambda(n_spec))
+        
         if (present(mag_compute)) then
             work_flags = mag_compute
-            ! If calculating Vega mags, we MUST calculate V-band (index 1) for normalization
             if (do_vega) work_flags(IDX_V_BAND) = 1
-            
-            ! Optimization: Early exit if no bands requested
-            if (all(work_flags == 0)) return
         else
-            work_flags = 1 ! Default: compute all
+            work_flags = 1 
         end if
+        
+        ! Move flags to device
+        !$acc enter data copyin(work_flags)
 
         ! 3. Prepare Spectrum (Redshift & Distance Modulus)
-        allocate(obs_frame_spec(n_spec))
+        ! Scratch arrays are host-allocated and explicitly created on device.
+        !$acc enter data create(obs_frame_spec, flux_over_lambda)
         
-        call prepare_observed_spectrum(ctx, zred, spec, obs_frame_spec, dist_mod_term)
+        call prepare_observed_spectrum(ctx, zred, spec, obs_frame_spec, dist_mod_term, n_spec)
 
         ! 4. Pre-calculate terms for Integration
-        ! The integral is int(F * T * dlam / lam).
-        ! We pre-calculate (F / lam) here to save N_bands divisions later.
-        allocate(flux_over_lambda(n_spec))
-        where (ctx%state%spec_lambda > tiny(0.0_wp))
-            flux_over_lambda = obs_frame_spec / ctx%state%spec_lambda
-        elsewhere
-            flux_over_lambda = 0.0_wp
-        end where
+        !$acc parallel loop vector present(ctx, obs_frame_spec, flux_over_lambda)
+        do i = 1, n_spec
+            if (ctx%state%spec_lambda(i) > tiny(0.0_wp)) then
+                flux_over_lambda(i) = obs_frame_spec(i) / ctx%state%spec_lambda(i)
+            else
+                flux_over_lambda(i) = 0.0_wp
+            end if
+        end do
 
         ! 5. Filter Integration Loop
-        ! Note: We cannot vectorize the loop over 'i' easily because 'bands' is large
-        ! and we want to use the optimized `integrate_trapezoid_array`.
+        ! Parallel over bands (gang), sequential over wavelength (vector reduction inside helper?)
+        ! integrate_trapezoid_array needs to be 'routine seq'.
+        ! Note: integrate_trapezoid_array takes array slices. OpenACC handles this but it can be slow if not careful.
+        ! Better to inline the integration logic for performance here.
+        
+        !$acc parallel loop gang present(ctx, mags, work_flags, flux_over_lambda) vector_length(128)
         do i = 1, n_bands
             if (work_flags(i) == 0) cycle
 
-            ! Integrate: Trapz(x=lambda, y = (Flux/lambda) * Transmission)
-            ! Note: ctx%state%bands is shape (n_lambda, n_bands)
-            integrated_flux = integrate_trapezoid_array( &
-                                ctx%state%spec_lambda, &
-                                flux_over_lambda * ctx%state%bands(:, i) &
-                              )
+            ! Manual integration to avoid array temporaries in integrate_trapezoid_array call
+            integrated_flux = 0.0_wp
+            
+            !$acc loop vector reduction(+:integrated_flux)
+            do j = 1, n_spec - 1
+                x1 = ctx%state%spec_lambda(j)
+                x2 = ctx%state%spec_lambda(j + 1)
+                y1 = flux_over_lambda(j) * ctx%state%bands(j, i)
+                y2 = flux_over_lambda(j + 1) * ctx%state%bands(j + 1, i)
+
+                integrated_flux = integrated_flux + 0.5_wp * abs(x2 - x1) * (y1 + y2)
+            end do
 
             if (.not. do_light_ages) then
-                ! Convert Flux to AB Magnitude
-                ! Mag = -2.5*log10(F) - 48.60 - ZeroPointCorrection + DistanceModulus
                 mags(i) = mag_from_flux(integrated_flux) - &
                             AB_ZEROPOINT - &
                             (LOG10_FACTOR * ABS_MAG_ZEROPOINT_LOG) + &
                             dist_mod_term
             else
-                ! For light ages, we just want the raw weight (or NaN if invalid)
                 if (integrated_flux > SAFE_FLOOR) then
                     mags(i) = integrated_flux
                 end if
-                ! else: remains NaN from initialization
             end if
         end do
 
         ! 6. Vega System Correction
-        ! Applies offset relative to V-band if requested.
-        ! Formula: M_i = m_i - v_i + v_1 (Derived from legacy logic)
         if (do_vega .and. .not. do_light_ages) then
-            ! We only need to check the Anchor (V-Band)
-            if (.not. ieee_is_nan(mags(IDX_V_BAND))) then
-                
-                ! Vectorized update!
-                ! Valid bands become (Mag - Vega + Vega_Ref)
-                ! NaN bands stay NaN (because NaN - Vega = NaN)
-                mags(2:n_bands) = mags(2:n_bands) - &
-                                  ctx%state%magvega(2:n_bands) + &
-                                  ctx%state%magvega(IDX_V_BAND)
-            else
-                ! If V-band is invalid, the whole Vega normalization is impossible.
-                mags = get_quiet_nan()
-            end if
+            ! We perform this check on device? Or assume V-band computed?
+            ! Vectorized update on device
+            !$acc parallel loop present(ctx, mags)
+            do i = 2, n_bands
+                if (mags(IDX_V_BAND) == mags(IDX_V_BAND)) then
+                    mags(i) = mags(i) - ctx%state%magvega(i) + ctx%state%magvega(IDX_V_BAND)
+                else
+                    mags(i) = get_quiet_nan()
+                end if
+            end do
         end if
+        
+        ! Cleanup
+        !$acc exit data delete(work_flags)
+        !$acc exit data delete(obs_frame_spec, flux_over_lambda)
+        deallocate(work_flags)
+        deallocate(obs_frame_spec, flux_over_lambda)
 
     end subroutine compute_magnitudes
 
@@ -166,48 +187,40 @@ contains
     !> @details
     !> If z > 0, interpolates the spectrum to the observed frame and calculates
     !> the distance modulus term.
-    subroutine prepare_observed_spectrum(ctx, z, spec_rest, spec_obs, dist_term)
+    subroutine prepare_observed_spectrum(ctx, z, spec_rest, spec_obs, dist_term, n)
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: z
         real(WP), dimension(:), intent(in) :: spec_rest
         real(WP), dimension(:), intent(out) :: spec_obs
         real(WP), intent(out) :: dist_term
+        integer, intent(in) :: n
 
         real(WP) :: dm, z_factor, target_lam_rest
         integer :: k, idx
 
         if (abs(z) > SAFE_FLOOR) then
             ! --- High Redshift Case ---
-
-            ! OPTIMIZATION: 
-            ! 1. Map observed wavelength BACK to rest frame: lam_rest = lam_obs / (1+z)
-            !    This avoids allocating a temporary 'source_grid' array.
-            ! 2. Use monotonic 'hunting' (tracking 'idx') instead of binary search.
-            !    This reduces complexity from O(N log N) to O(N).
-            
-            idx = 1
             z_factor = 1.0_wp + z
             
-            do k = 1, size(spec_obs)
+            ! Run in parallel
+            !$acc parallel loop present(ctx, spec_rest, spec_obs) private(idx, target_lam_rest)
+            do k = 1, n
                 ! The rest-frame wavelength corresponding to this observed grid point
                 target_lam_rest = ctx%state%spec_lambda(k) / z_factor
 
-                ! Hunt for the interval: only move forward
-                ! We stop when spec_lambda(idx+1) is just above our target
-                do while (idx < size(spec_rest) - 1)
-                    if (ctx%state%spec_lambda(idx+1) >= target_lam_rest) exit
-                    idx = idx + 1
-                end do
+                ! Binary search (safer for parallel execution than hunting with shared idx)
+                ! Assuming find_interval is !acc routine seq
+                idx = find_interval(ctx%state%spec_lambda, target_lam_rest)
+                idx = max(1, min(idx, n - 1))
 
                 ! Manual Linear Interpolation
-                ! y = y1 + (x - x1) * slope
                 spec_obs(k) = spec_rest(idx) + &
                               (target_lam_rest - ctx%state%spec_lambda(idx)) * &
                               (spec_rest(idx+1) - spec_rest(idx)) / &
                               (ctx%state%spec_lambda(idx+1) - ctx%state%spec_lambda(idx))
                 
                 ! Physical Constraints
-                if (ieee_is_nan(spec_obs(k))) spec_obs(k) = 0.0_wp
+                if (spec_obs(k) /= spec_obs(k)) spec_obs(k) = 0.0_wp
                 spec_obs(k) = max(spec_obs(k), 0.0_wp)
             end do
 
@@ -216,7 +229,7 @@ contains
                                     ctx%state%cosmospl(:,3), &
                                     z)
 
-            if (ieee_is_nan(dm) .or. dm <= SAFE_FLOOR) then
+            if (dm /= dm .or. dm <= SAFE_FLOOR) then
                 dist_term = 0.0_wp
             else
                 dist_term = (5.0_wp * log10(dm / 10.0_wp)) + & 
@@ -225,7 +238,10 @@ contains
 
         else
             ! --- Zero Redshift Case ---
-            spec_obs  = spec_rest
+            !$acc parallel loop present(spec_rest, spec_obs)
+            do k = 1, n
+                spec_obs(k) = spec_rest(k)
+            end do
             dist_term = 0.0_wp
         end if
         

@@ -18,7 +18,7 @@ module fsps_stellar_modifications
     use fsps_imf, only: get_imf_value
     use fsps_integration, only: integrate_romberg
     use fsps_interpolation, only: interpolate_linear, find_interval
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
+    
     
     implicit none
     private
@@ -151,7 +151,7 @@ contains
                                                       zams_l_cache, &
                                                       log_t(time_idx, idx_msto))
             
-            if (ieee_is_nan(lum_expected_on_zams)) return
+            if (lum_expected_on_zams /= lum_expected_on_zams) return
             
             diff_from_zams = abs(lum_expected_on_zams - log_l(time_idx, idx_msto))
         end do
@@ -182,7 +182,7 @@ contains
                                           zams_m_cache, &
                                           new_logl)
             
-            if (ieee_is_nan(new_mass)) new_mass = mass_ini(time_idx, idx_msto)
+            if (new_mass /= new_mass) new_mass = mass_ini(time_idx, idx_msto)
             
             mass_ini(time_idx, i) = new_mass
             mass_act(time_idx, i) = new_mass 
@@ -192,7 +192,7 @@ contains
                                           zams_t_cache, &
                                           new_logl)
             
-            if (ieee_is_nan(new_logt)) new_logt = log_t(time_idx, idx_msto)
+            if (new_logt /= new_logt) new_logt = log_t(time_idx, idx_msto)
             
             log_t(time_idx, i) = new_logt
 

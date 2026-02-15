@@ -90,6 +90,7 @@ contains
     !> @param[in]    wght   IMF Weight (used for context, not calculation).
     !> @param[out]   spec   The resulting spectrum (L_sun/Hz).
     subroutine get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(inout) :: ctx
         type(params),         intent(in)    :: pset
         real(WP),             intent(in)    :: mact, logt, lbol, logg
@@ -202,6 +203,7 @@ contains
     !> @param[out] r2        Stellar Radius Squared [cm^2].
     !> @param[out] logg_out  Calculated consistent Log(g) [cgs].
     pure subroutine calculate_physical_parameters(mact, lbol, logt, logg_in, r2, logg_out)
+        !$acc routine seq
         real(WP), intent(in)  :: mact, lbol, logt, logg_in
         real(WP), intent(out) :: r2, logg_out
 
@@ -257,6 +259,7 @@ contains
     !> 
     !> @return Integer ID of the library source (SRC_* constants).
     pure function determine_library_source(ctx, phase, logt, ffco) result(src)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         real(WP),             intent(in) :: phase, logt, ffco
         integer                          :: src
@@ -337,6 +340,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized).
     pure subroutine get_pagb_spectrum(ctx, pset, logt, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt
@@ -401,6 +405,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized).
     pure subroutine get_wr_spectrum(ctx, pset, logt, lmdot, r2, ffco, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, lmdot, r2, ffco, scale_factor
@@ -486,6 +491,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
     pure subroutine get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt
@@ -540,6 +546,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
     pure subroutine get_agb_c_spectrum(ctx, logt, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         real(WP),             intent(in)  :: logt
         real(WP),             intent(in)  :: scale_factor
@@ -612,6 +619,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
     pure subroutine get_wmbasic_spectrum(ctx, pset, logt, logg, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, logg
@@ -684,6 +692,7 @@ contains
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated Surface Flux (normalized units).
     pure subroutine get_main_lib_spectrum(ctx, pset, logt, logg, scale_factor, spec)
+        !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, logg

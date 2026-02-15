@@ -66,6 +66,7 @@ contains
     !>
     !> @return    area  The integrated area. Returns NaN on error.
     pure function integrate_trapezoid_array(x, y) result(area)
+        !$acc routine seq
         real(WP), dimension(:), intent(in), contiguous :: x, y
         real(WP) :: area
 
@@ -100,6 +101,7 @@ contains
     !> @param[in] b     Upper integration limit.
     !> @return    res   The integral value. Returns NaN on non-convergence.
     pure function integrate_romberg_simple(func, a, b) result(res)
+        !$acc routine seq
         procedure(func_interface) :: func
         real(WP), intent(in) :: a, b
         real(WP) :: res
@@ -152,6 +154,7 @@ contains
     !> Integrates a context-aware function f(ctx, x) using Romberg integration.
     !> See `integrate_romberg_simple` for algorithm details.
     pure function integrate_romberg_context(ctx, func, a, b) result(res)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
         real(WP), intent(in) :: a, b
@@ -202,6 +205,7 @@ contains
     !> at the midpoints of the previous intervals.
     !> (Simple Function Version)
     pure subroutine refine_trapezoid_simple(func, a, b, s, n)
+        !$acc routine seq
         procedure(func_interface) :: func
         real(WP), intent(in) :: a, b
         real(WP), intent(inout) :: s
@@ -230,6 +234,7 @@ contains
     !> Refines the trapezoidal approximation s_old to s_new.
     !> (Context Function Version)
     pure subroutine refine_trapezoid_context(ctx, func, a, b, s, n)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
         real(WP), intent(in) :: a, b
@@ -256,6 +261,7 @@ contains
     !> Polynomial interpolation/extrapolation (Neville's Algorithm).
     !> Given arrays xa and ya, returns value y at point x, and error estimate dy.
     pure subroutine polynomial_extrapolation(xa, ya, x, y, dy)
+        !$acc routine seq
         real(WP), dimension(:), intent(in) :: xa, ya
         real(WP), intent(in) :: x
         real(WP), intent(out) :: y, dy
@@ -303,6 +309,7 @@ contains
 
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(res)
+        !$acc routine seq
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
         real(WP) :: res
         res = ieee_value(0.0_wp, ieee_quiet_nan)

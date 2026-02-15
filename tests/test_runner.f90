@@ -11,7 +11,7 @@ PROGRAM TEST_RUNNER
       USE fsps_api, ONLY: fsps_create, fsps_setup, fsps_destroy
       USE fsps_csp, ONLY: compute_csp_scenario
    USE fsps_context_types, ONLY: fsps_context_t
-         USE fsps_context, ONLY: fsps_context_set_pset
+         USE fsps_context, ONLY: fsps_context_set_pset, fsps_context_move_to_device, fsps_context_remove_from_device
       USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
 
@@ -170,6 +170,10 @@ PROGRAM TEST_RUNNER
   WRITE(*,*) 'Initializing FSPS...'
   ! Always provide defaults that match the reference generator unless overridden
    CALL fsps_setup(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
+   
+   WRITE(*,*) 'Moving FSPS Context to Device...'
+   CALL fsps_context_move_to_device(ctx)
+   
    IF (verbose_output) CALL DUMP_STATE('AFTER fsps_setup', ctx, pset)
 
   nspec_ctx = ctx%state%nspec
@@ -328,6 +332,8 @@ PROGRAM TEST_RUNNER
    IF (ALLOCATED(new_results)) DEALLOCATE(new_results)
    IF (ALLOCATED(ref_ocompsp)) DEALLOCATE(ref_ocompsp)
 
+   WRITE(*,*) 'Removing FSPS Context from Device...'
+   CALL fsps_context_remove_from_device(ctx)
    CALL fsps_destroy(ctx)
 
    WRITE(*,*) 'Total failures:', nfail

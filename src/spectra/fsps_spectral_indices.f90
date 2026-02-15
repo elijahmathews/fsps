@@ -78,16 +78,19 @@ contains
         real(WP) :: integrated_flux, feature_width
         
         ! Variables for linear continuum slope
-        real(WP) :: cont_slope, cont_intercept
+        real(WP) :: cont_slope, cont_intercept, denom_width
 
         ! Local copies for speed/readability
         n_idx = ctx%state%nindx
 
         ! Initialize with sentinel
+        !$acc kernels present(indices)
         indices = IND_UNDEFINED
+        !$acc end kernels
 
         ! Iterate over all defined indices
-        ! Note: Vectorization is difficult here as integration limits differ per j
+        ! Parallelize over indices (gang vector)
+        !$acc parallel loop gang vector present(ctx, lambda, spec, indices) private(denom_width, cont_slope, cont_intercept)
         do j = 1, n_idx
             
             ! 1. Extract Definitions
@@ -125,18 +128,15 @@ contains
 
                 ! Compute Integral of (Flux / Continuum)
                 ! Here, continuum is a linear interpolation between Blue and Red centers
-                block
-                    real(WP) :: denom_width
-                    denom_width = max(lambda_red_cen - lambda_blue_cen, tiny(0.0_wp))
-                    cont_slope  = (val_red_cont - val_blue_cont) / denom_width
-                    cont_intercept = val_blue_cont
-                    
-                    ! Integrate (Spec / Linear_Continuum)
-                    ! Helper handles the division internally over the specific range
-                    integrated_flux = integrate_ratio_interval(lambda, spec, &
-                                      idx_feat_lo, idx_feat_hi, &
-                                      cont_slope, cont_intercept, lambda_blue_cen)
-                end block
+                denom_width = max(lambda_red_cen - lambda_blue_cen, tiny(0.0_wp))
+                cont_slope  = (val_red_cont - val_blue_cont) / denom_width
+                cont_intercept = val_blue_cont
+                
+                ! Integrate (Spec / Linear_Continuum)
+                ! Helper handles the division internally over the specific range
+                integrated_flux = integrate_ratio_interval(lambda, spec, &
+                                  idx_feat_lo, idx_feat_hi, &
+                                  cont_slope, cont_intercept, lambda_blue_cen)
 
             else
                 ! --------------------------------------------------------
@@ -192,6 +192,7 @@ contains
     !> linearly interpolates the flux at exact endpoints, and performs trapezoidal
     !> integration between them.
     pure function integrate_interval(lam, func, lo, hi) result(area)
+        !$acc routine seq
         real(WP), dimension(:), intent(in) :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP) :: area
@@ -234,6 +235,7 @@ contains
     !> Used for EW and Mag indices where the spectrum is normalized by a pseudo-continuum
     !> defined by the blue and red sidebands.
     pure function integrate_ratio_interval(lam, func, lo, hi, slope, intercept, x_ref) result(area)
+        !$acc routine seq
         real(WP), dimension(:), intent(in) :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP), intent(in) :: slope, intercept, x_ref
@@ -296,6 +298,7 @@ contains
     !> @brief
     !> Helper: Linear interpolation for a single point.
     pure function interpolate_linear_point(x1, y1, x2, y2, x_target) result(y_target)
+        !$acc routine seq
         real(WP), intent(in) :: x1, y1, x2, y2, x_target
         real(WP) :: y_target
         

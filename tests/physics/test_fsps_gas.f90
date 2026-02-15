@@ -3,6 +3,7 @@ module test_fsps_gas_mod
     use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
     use fsps_gas
     use fsps_integration, only: integrate_trapezoid_array
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -20,6 +21,19 @@ module test_fsps_gas_mod
     real(WP), parameter :: LYMAN_LIMIT = 912.0_wp
 
 contains
+
+    !> @brief Wrapper for interpolate_zu_slice (now scalar in core)
+    subroutine interpolate_zu_slice(grid, res, idx_age, idx_z, idx_u, w_z, w_u)
+        real(WP), dimension(:,:,:,:), intent(in) :: grid
+        real(WP), dimension(:), intent(out)    :: res
+        integer, intent(in)  :: idx_age, idx_z, idx_u
+        real(WP), intent(in) :: w_z, w_u
+        integer :: i
+        
+        do i = 1, size(res)
+            res(i) = interpolate_zu_slice_point(grid, i, idx_age, idx_z, idx_u, w_z, w_u)
+        end do
+    end subroutine interpolate_zu_slice
 
     !> @brief
     !> Unit test suite for fsps_gas module.
@@ -97,6 +111,8 @@ contains
         ctx%add_neb_continuum_val = 0
         ctx%add_xrb_emission_val = 0
         ctx%smooth_velocity_val = 0
+
+        call fsps_context_move_to_device(ctx)
     end subroutine setup_gas_context
 
     ! ------------------------------------------------------------------------
@@ -106,6 +122,8 @@ contains
         type(fsps_context_t), allocatable, intent(inout) :: ctx
 
         if (.not. allocated(ctx)) return
+
+        call fsps_context_remove_from_device(ctx)
 
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
         if (associated(ctx%state%spec_nu)) deallocate(ctx%state%spec_nu)

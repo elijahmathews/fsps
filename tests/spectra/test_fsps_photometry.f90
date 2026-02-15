@@ -2,6 +2,7 @@ module test_fsps_photometry_mod
     use fsps_precision, only: WP
     use fsps_constants, only: SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
     use fsps_photometry, only: compute_magnitudes
     use fsps_special_functions, only: mag_from_flux
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -456,10 +457,14 @@ contains
 
         ctx%compute_vega_mags_val = 0
         ctx%compute_light_ages_val = 0
+
+        call fsps_context_move_to_device(ctx)
     end subroutine setup_context
 
     subroutine teardown_context(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+
+        call fsps_context_remove_from_device(ctx)
 
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
         if (associated(ctx%state%bands)) deallocate(ctx%state%bands)

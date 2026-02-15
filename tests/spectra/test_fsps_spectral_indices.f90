@@ -1,6 +1,7 @@
 module test_fsps_spectral_indices_mod
     use fsps_precision, only: WP
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
     use fsps_spectral_indices, only: compute_spectral_indices, integrate_interval, integrate_ratio_interval
     use fsps_special_functions, only: mag_from_flux
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -373,10 +374,14 @@ contains
         allocate(ctx%state%indexdefined(7, 1))
         ctx%state%indexdefined(:, 1) = indexdef
         ctx%state%nindx = 1
+
+        call fsps_context_move_to_device(ctx)
     end subroutine setup_context
 
     subroutine teardown_context(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+
+        call fsps_context_remove_from_device(ctx)
 
         if (associated(ctx%state%indexdefined)) then
             deallocate(ctx%state%indexdefined)

@@ -270,7 +270,6 @@ contains
         type(params) :: pset
         type(isochrone_buffer_t) :: buf
         real(WP), allocatable :: spec_out(:)
-        real(WP), allocatable :: work_spec(:)
         real(WP), allocatable :: ref_spec(:)
         real(WP) :: expected_sum
         integer :: i, n_wave
@@ -282,7 +281,6 @@ contains
 
         n_wave = 4
         allocate(spec_out(n_wave))
-        allocate(work_spec(n_wave))
         allocate(ref_spec(n_wave))
         spec_out = 0.0_wp
 
@@ -313,14 +311,14 @@ contains
         call get_stellar_spectrum(ctx, pset, 1.0_wp, 4.0_wp, 1.0_wp, 4.0_wp, 1.0_wp, 0.0_wp, 0.0_wp, ref_spec)
 
         ! Run accumulation (Unsorted)
-        call accumulate_spectrum(ctx, pset, buf, spec_out, work_spec)
+        call accumulate_spectrum(ctx, pset, buf, spec_out)
 
         do i = 1, n_wave
             call assert_relative_error(ref_spec(i) * expected_sum, spec_out(i), 1.0e-12_wp, &
                                        "Cache-block spec " // trim(adjustl(to_str(i))), total_tests, total_failures)
         end do
 
-        deallocate(spec_out, work_spec, ref_spec)
+        deallocate(spec_out, ref_spec)
         call free_isochrone_buffer(buf)
         call teardown_spectral_context(ctx)
         deallocate(ctx)
