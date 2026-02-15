@@ -141,12 +141,72 @@ tests_units_exe = executable(
     unit_test_sources, 
     dependencies : [fsps_dep, test_utils_dep]
 )
-test('unit_tests', tests_units_exe)
+test('unit_tests', tests_units_exe, suite : 'unit')
 
 # 3. Other Test Drivers
-executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
+test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
 executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
 executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
+
+# 3a. Regression Tests (run through Meson test framework)
+regression_env = environment()
+regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
+regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
+
+test('regression_miles_mist',
+        test_runner_exe,
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-1_MIST-1.bin'),
+            '--isoc', 'mist', '--spec', 'miles'
+        ],
+        env : regression_env,
+        suite : 'regression',
+        timeout : 300
+)
+
+test('regression_basel_padova',
+        test_runner_exe,
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_MIST-0_BASEL-1_PADOVA-1.bin'),
+            '--isoc', 'pdva', '--spec', 'basel'
+        ],
+        env : regression_env,
+        suite : 'regression',
+        timeout : 300
+)
+
+test('regression_themis_dust',
+        test_runner_exe,
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-1_MIST-1_THEMIS-1_DL07-0.bin'),
+            '--isoc', 'mist', '--spec', 'miles', '--dust', 'themis'
+        ],
+        env : regression_env,
+        suite : 'regression',
+        timeout : 300
+)
+
+test('regression_c3k_mist',
+        test_runner_exe,
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_C3K-1_MIST-1.bin'),
+            '--isoc', 'mist', '--spec', 'c3k_afe+0.0'
+        ],
+        env : regression_env,
+        suite : 'regression',
+        timeout : 300
+)
+
+test('regression_bpass',
+        test_runner_exe,
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MIST-0_BPASS-1.bin'),
+            '--isoc', 'bpss'
+        ],
+        env : regression_env,
+        suite : 'regression',
+        timeout : 300
+)
 
 # 4. C Tests
 executable('test_c_driver', 'tests/test_c_driver.c', 
