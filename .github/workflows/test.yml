@@ -143,7 +143,7 @@ jobs:
             install_cmd: |
               apt-get update -y
               apt-get install -y python3-pip
-              pip3 install --break-system-packages meson ninja
+              PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install meson ninja
     
     container:
       image: ${{ matrix.image }}
