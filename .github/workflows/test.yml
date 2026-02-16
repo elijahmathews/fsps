@@ -120,11 +120,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # NVIDIA HPC SDK (Rocky Linux)
           - compiler: { name: 'nvfortran', fc: 'nvfortran', cc: 'nvc' }
             fortran_args: "-acc=multicore -Minfo=accel"
             linker_args: "-acc=multicore"
             build_args: ""
             image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
+            env_cmd: ""
+            install_cmd: |
+              dnf update --assumeyes --refresh
+              dnf install --assumeyes python3-pip
+              pip3 install meson ninja
+          
+          # Intel oneAPI HPC Toolkit (Ubuntu)
+          - compiler: { name: 'ifx', fc: 'ifx', cc: 'icx' }
+            # -fp-model=precise prevents aggressive math reordering that breaks 1e-5 tolerances
+            fortran_args: "-fp-model=precise" 
+            linker_args: ""
+            build_args: ""
+            image: intel/oneapi-hpckit:devel-ubuntu24.04
+            env_cmd: "source /opt/intel/oneapi/setvars.sh"
+            install_cmd: |
+              apt-get update -y
+              apt-get install -y python3-pip
+              pip3 install --break-system-packages meson ninja
     
     container:
       image: ${{ matrix.image }}
@@ -140,22 +159,30 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Install Dependencies
-      run: |
-        dnf update --assumeyes --refresh
-        dnf install --assumeyes python3-pip git
-        pip3 install meson ninja
+      run: ${{ matrix.install_cmd }}
 
     - name: Verify Compiler Version
-      run: $FC --version
+      # Sourcing the environment is required before every step for Intel
+      run: |
+        ${{ matrix.env_cmd }}
+        $FC --version
 
     - name: Configure Build
-      run: meson setup build ${{ matrix.build_args }}
+      run: |
+        ${{ matrix.env_cmd }}
+        meson setup build ${{ matrix.build_args }}
 
     - name: Compile FSPS
-      run: meson compile -C build
+      run: |
+        ${{ matrix.env_cmd }}
+        meson compile -C build
 
     - name: Run Unit Tests
-      run: meson test -v -C build --suite unit
+      run: |
+        ${{ matrix.env_cmd }}
+        meson test -v -C build --suite unit
 
     - name: Run Regression Tests
-      run: meson test -v -C build --suite regression --print-errorlogs
+      run: |
+        ${{ matrix.env_cmd }}
+        meson test -v -C build --suite regression --print-errorlogs
