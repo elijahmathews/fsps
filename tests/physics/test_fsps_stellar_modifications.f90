@@ -874,16 +874,16 @@ contains
 
     pure function wrapper_imf_number(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
 
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_number
 
     pure function wrapper_imf_mass(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
 
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass

@@ -417,7 +417,7 @@ contains
         real(WP) :: r_phot, r_wr, mdot_cgs
 
         ! 1. Calculate Effective "Wind Temperature" (twr)
-        if (trim(ctx%state%isoc_type) == 'mist') then
+        if (ctx%state%isoc_type == 'mist') then
             ! Convert Mdot to g/s
             mdot_cgs = (10.0_wp**lmdot) * M_SOL / YEAR_TO_SECOND
             

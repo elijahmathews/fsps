@@ -40,6 +40,7 @@ contains
         real(WP), dimension(3) :: m = [0.5_wp, 1.0_wp, 2.0_wp]
         real(WP), dimension(3) :: res
         real(WP) :: expected
+        integer :: i
         
         call print_group("Salpeter IMF")
 
@@ -49,7 +50,9 @@ contains
         ctx%state%salp_ind = 2.35_wp ! Standard Salpeter
 
         ! Test Number Density (dN/dM)
-        res = get_imf_value(ctx, m, mass_weighted=.false.)
+        do i = 1, size(m)
+            res(i) = get_imf_value(ctx, m(i), mass_weighted=.false.)
+        end do
         
         ! Check m=1.0 (should be 1.0^-2.35 = 1.0)
         call assert_float_equals(1.0_wp, res(2), 1.0e-6_wp, "Salpeter(1.0)", total_tests, total_failures)
@@ -59,7 +62,9 @@ contains
         call assert_float_equals(expected, res(3), 1.0e-6_wp, "Salpeter(2.0)", total_tests, total_failures)
 
         ! Test Mass Weighting (M * dN/dM)
-        res = get_imf_value(ctx, m, mass_weighted=.true.)
+        do i = 1, size(m)
+            res(i) = get_imf_value(ctx, m(i), mass_weighted=.true.)
+        end do
         expected = 2.0_wp * (2.0_wp**(-2.35_wp))
         call assert_float_equals(expected, res(3), 1.0e-6_wp, "Salpeter Mass-Weighted", total_tests, total_failures)
 
@@ -74,6 +79,7 @@ contains
         real(WP), dimension(2) :: m = [0.1_wp, 2.0_wp] ! Below and above 1.0 break
         real(WP), dimension(2) :: res
         real(WP) :: log_m, log_mc, term, expected
+        integer :: i
         
         call print_group("Chabrier IMF")
 
@@ -82,7 +88,9 @@ contains
         
         ! Note: CHAB_MC, CHAB_SIGMA2, CHAB_IND are from fsps_types (constants)
 
-        res = get_imf_value(ctx, m, mass_weighted=.false.)
+        do i = 1, size(m)
+            res(i) = get_imf_value(ctx, m(i), mass_weighted=.false.)
+        end do
 
         ! Case 1: Low Mass (Log Normal) at m=0.1
         log_m = log10(0.1_wp)
@@ -110,6 +118,7 @@ contains
         real(WP), dimension(3) :: res
         real(WP) :: expected
         real(WP), dimension(3) :: alpha
+        integer :: i
         
         call print_group("Kroupa IMF")
 
@@ -119,7 +128,9 @@ contains
         alpha = [1.3_wp, 2.3_wp, 2.3_wp]
         ctx%state%imf_alpha = alpha
 
-        res = get_imf_value(ctx, m, mass_weighted=.false.)
+        do i = 1, size(m)
+            res(i) = get_imf_value(ctx, m(i), mass_weighted=.false.)
+        end do
 
         ! Regime 1: 0.08 <= m < 0.5 (m=0.2) -> m^-1.3
         expected = 0.2_wp**(-1.3_wp)
@@ -192,9 +203,9 @@ contains
         ctx%state%salp_ind = 2.0_wp ! Simple square law
 
         ! Get dN/dM
-        val_num = get_imf_value(ctx, m, mass_weighted=.false.)
+        val_num(1) = get_imf_value(ctx, m(1), mass_weighted=.false.)
         ! Get M * dN/dM
-        val_mass = get_imf_value(ctx, m, mass_weighted=.true.)
+        val_mass(1) = get_imf_value(ctx, m(1), mass_weighted=.true.)
 
         ! Check relationship
         call assert_float_equals(val_num(1) * m(1), val_mass(1), 1.0e-6_wp, &

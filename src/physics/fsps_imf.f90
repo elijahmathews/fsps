@@ -119,18 +119,20 @@ contains
 
     !> @brief Wrapper to integrate Number Density (dn/dM)
     pure function wrapper_imf_count(ctx, x) result(res)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.false.)
     end function wrapper_imf_count
 
     !> @brief Wrapper to integrate Mass Density (M * dn/dM)
     pure function wrapper_imf_mass(ctx, x) result(res)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass
@@ -159,10 +161,11 @@ contains
     !>                           - .true.:  Returns Mass Density (M * dN/dM approx dN/dlnM).
     !> @return    imf_val        The calculated IMF values.
     pure function get_imf_value(ctx, mass, mass_weighted) result(imf_val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in), contiguous :: mass
+        real(WP), intent(in) :: mass
         logical, intent(in) :: mass_weighted
-        real(WP), dimension(size(mass)) :: imf_val
+        real(WP) :: imf_val
         
         integer :: imf_type_base
 
@@ -205,116 +208,105 @@ contains
     ! ------------------------------------------------------------------------
 
     pure subroutine imf_salpeter(ctx, m, val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
         
         ! Power law: m^(-alpha)
         val = m**(-ctx%state%salp_ind)
     end subroutine imf_salpeter
 
     pure subroutine imf_chabrier(m, val)
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
-        integer :: i
+        !$acc routine seq
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
         real(WP) :: log_m, log_mc, term
 
         log_mc = log10(CHAB_MC)
 
-        do i = 1, size(m)
-            if (m(i) < 1.0_wp) then
-                ! Log-normal part
-                log_m = log10(m(i))
-                term = (log_m - log_mc)**2 / (2.0_wp * CHAB_SIGMA2)
-                val(i) = exp(-term)
-                ! Convert from dn/dlnM to dn/dM (divide by M)
-                val(i) = val(i) / m(i)
-            else
-                ! Power law part
-                term = log_mc**2 / (2.0_wp * CHAB_SIGMA2)
-                val(i) = exp(-term) * m(i)**(-CHAB_IND)
-                val(i) = val(i) / m(i)
-            end if
-        end do
+        if (m < 1.0_wp) then
+            ! Log-normal part
+            log_m = log10(m)
+            term = (log_m - log_mc)**2 / (2.0_wp * CHAB_SIGMA2)
+            val = exp(-term) / m
+        else
+            ! Power law part
+            term = log_mc**2 / (2.0_wp * CHAB_SIGMA2)
+            val = exp(-term) * m**(-CHAB_IND) / m
+        end if
     end subroutine imf_chabrier
 
     pure subroutine imf_kroupa(ctx, m, val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
-        integer :: i
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
         real(WP), dimension(3) :: alpha
 
         alpha = ctx%state%imf_alpha
 
-        do i = 1, size(m)
-            if (m(i) >= 0.08_wp .and. m(i) < 0.5_wp) then
-                val(i) = m(i)**(-alpha(1))
-            else if (m(i) >= 0.5_wp .and. m(i) < 1.0_wp) then
-                val(i) = 0.5_wp**(-alpha(1) + alpha(2)) * m(i)**(-alpha(2))
-            else if (m(i) >= 1.0_wp) then
-                val(i) = 0.5_wp**(-alpha(1) + alpha(2)) * m(i)**(-alpha(3))
-            else
-                val(i) = 0.0_wp
-            end if
-        end do
+        if (m >= 0.08_wp .and. m < 0.5_wp) then
+            val = m**(-alpha(1))
+        else if (m >= 0.5_wp .and. m < 1.0_wp) then
+            val = 0.5_wp**(-alpha(1) + alpha(2)) * m**(-alpha(2))
+        else if (m >= 1.0_wp) then
+            val = 0.5_wp**(-alpha(1) + alpha(2)) * m**(-alpha(3))
+        else
+            val = 0.0_wp
+        end if
     end subroutine imf_kroupa
 
     pure subroutine imf_vandokkum(ctx, m, val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
-        integer :: i
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
         real(WP) :: breakpoint, term, log_m, log_mc
 
         breakpoint = VD_NC * ctx%state%imf_vdmc
         log_mc = log10(ctx%state%imf_vdmc)
 
-        do i = 1, size(m)
-            if (m(i) <= breakpoint) then
-                ! Lognormal-ish
-                log_m = log10(m(i))
-                term = (log_m - log_mc)**2 / (2.0_wp * VD_SIGMA2)
-                
-                val(i) = VD_AL * (0.5_wp * breakpoint)**(-VD_IND) * exp(-term)
-            else
-                ! Power law
-                val(i) = VD_AH * m(i)**(-VD_IND)
-            end if
-        end do
+        if (m <= breakpoint) then
+            ! Lognormal-ish
+            log_m = log10(m)
+            term = (log_m - log_mc)**2 / (2.0_wp * VD_SIGMA2)
+            val = VD_AL * (0.5_wp * breakpoint)**(-VD_IND) * exp(-term)
+        else
+            ! Power law
+            val = VD_AH * m**(-VD_IND)
+        end if
 
         ! Convert from dn/dlnM to dn/dM
         val = val / m
-
     end subroutine imf_vandokkum
 
     pure subroutine imf_dave(ctx, m, val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
-        integer :: i
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
         real(WP), dimension(3) :: alpha
         real(WP) :: mdave
 
         alpha = ctx%state%imf_alpha
         mdave = ctx%state%imf_mdave
 
-        do i = 1, size(m)
-            if (m(i) >= 0.08_wp .and. m(i) < mdave) then
-                val(i) = m(i)**(-alpha(1))
-            else if (m(i) >= mdave) then
-                val(i) = mdave**(-alpha(1) + alpha(2)) * m(i)**(-alpha(2))
-            else
-                val(i) = 0.0_wp
-            end if
-        end do
+        if (m >= 0.08_wp .and. m < mdave) then
+            val = m**(-alpha(1))
+        else if (m >= mdave) then
+            val = mdave**(-alpha(1) + alpha(2)) * m**(-alpha(2))
+        else
+            val = 0.0_wp
+        end if
     end subroutine imf_dave
 
     pure subroutine imf_user_defined(ctx, m, val)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: m
-        real(WP), dimension(:), intent(out) :: val
-        integer :: i, n
+        real(WP), intent(in) :: m
+        real(WP), intent(out) :: val
+        integer :: n
         real(WP) :: imfcu
         integer :: n_user
 
@@ -323,28 +315,26 @@ contains
 
         val = 0.0_wp
 
-        do i = 1, size(m)
-            ! First segment
-            if (m(i) >= ctx%state%imf_user_alpha(1,1) .and. &
-                m(i) <  ctx%state%imf_user_alpha(2,1)) then
-                val(i) = m(i)**(-ctx%state%imf_user_alpha(3,1))
-            end if
+        ! First segment
+        if (m >= ctx%state%imf_user_alpha(1,1) .and. &
+            m <  ctx%state%imf_user_alpha(2,1)) then
+            val = m**(-ctx%state%imf_user_alpha(3,1))
+        end if
 
-            ! Subsequent segments
-            imfcu = 1.0_wp
-            do n = 2, n_user
-                if (m(i) >= ctx%state%imf_user_alpha(1,n) .and. &
-                    m(i) <  ctx%state%imf_user_alpha(2,n)) then
-                    
-                    val(i) = m(i)**(-ctx%state%imf_user_alpha(3,n)) * &
-                             ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
-                             ctx%state%imf_user_alpha(3,n)) * imfcu
-                end if
+        ! Subsequent segments
+        imfcu = 1.0_wp
+        do n = 2, n_user
+            if (m >= ctx%state%imf_user_alpha(1,n) .and. &
+                m <  ctx%state%imf_user_alpha(2,n)) then
                 
-                ! Update cumulative factor
-                imfcu = imfcu * ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
-                        ctx%state%imf_user_alpha(3,n))
-            end do
+                val = m**(-ctx%state%imf_user_alpha(3,n)) * &
+                         ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
+                         ctx%state%imf_user_alpha(3,n)) * imfcu
+            end if
+            
+            ! Update cumulative factor
+            imfcu = imfcu * ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
+                    ctx%state%imf_user_alpha(3,n))
         end do
     end subroutine imf_user_defined
 

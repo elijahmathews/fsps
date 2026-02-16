@@ -508,6 +508,7 @@ contains
     !> @param[in]    log_mdot     Log10 Mass Loss Rate (M_sol/yr) from isochrone (optional).
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
+        !$acc routine seq
         
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
@@ -1020,6 +1021,7 @@ contains
     !> Computes the circumstellar optical depth (tau_1um) from physical parameters.
     !> See Villaume et al. (2015).
     pure function compute_circumstellar_optical_depth(ctx, c_rich_flag, m_act, log_l, log_g, log_mdot_iso) result(tau)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: c_rich_flag
         real(WP), intent(in) :: m_act, log_l, log_g, log_mdot_iso

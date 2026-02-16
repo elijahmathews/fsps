@@ -20,23 +20,23 @@ module fsps_integration
     public :: integrate_romberg
 
     !> @brief
-    !> Abstract interface for a standard vectorized function f(x).
+    !> Abstract interface for a standard scalar function f(x).
     abstract interface
         pure function func_interface(x) result(res)
             import :: WP
-            real(WP), dimension(:), intent(in) :: x
-            real(WP), dimension(size(x)) :: res
+            real(WP), intent(in) :: x
+            real(WP) :: res
         end function func_interface
     end interface
 
     !> @brief
-    !> Abstract interface for a context-aware vectorized function f(ctx, x).
+    !> Abstract interface for a context-aware scalar function f(ctx, x).
     abstract interface
         pure function func_ctx_interface(ctx, x) result(res)
             import :: WP, fsps_context_t
             type(fsps_context_t), intent(in) :: ctx
-            real(WP), dimension(:), intent(in) :: x
-            real(WP), dimension(size(x)) :: res
+            real(WP), intent(in) :: x
+            real(WP) :: res
         end function func_ctx_interface
     end interface
 
@@ -211,21 +211,21 @@ contains
         real(WP), intent(inout) :: s
         integer, intent(in) :: n
 
-        real(WP) :: del, fsum
+        real(WP) :: del, fsum, x
         integer :: it, i
-        real(WP), allocatable :: x_points(:)
 
         if (n == 1) then
-            s = 0.5_wp * (b - a) * sum(func([a, b]))
+            s = 0.5_wp * (b - a) * (func(a) + func(b))
         else
             it = 2**(n - 2)
             del = (b - a) / real(it, WP)
             
-            ! Modern array constructor replaces MYARTH
-            ! Generates midpoints: a + 0.5*del, a + 1.5*del, ...
-            x_points = [ (a + 0.5_wp * del + real(i - 1, WP) * del, i = 1, it) ]
+            fsum = 0.0_wp
+            do i = 1, it
+                x = a + 0.5_wp * del + real(i - 1, WP) * del
+                fsum = fsum + func(x)
+            end do
             
-            fsum = sum(func(x_points))
             s = 0.5_wp * (s + del * fsum)
         end if
     end subroutine refine_trapezoid_simple
@@ -241,18 +241,21 @@ contains
         real(WP), intent(inout) :: s
         integer, intent(in) :: n
 
-        real(WP) :: del, fsum
+        real(WP) :: del, fsum, x
         integer :: it, i
-        real(WP), allocatable :: x_points(:)
 
         if (n == 1) then
-            s = 0.5_wp * (b - a) * sum(func(ctx, [a, b]))
+            s = 0.5_wp * (b - a) * (func(ctx, a) + func(ctx, b))
         else
             it = 2**(n - 2)
             del = (b - a) / real(it, WP)
-            x_points = [ (a + 0.5_wp * del + real(i - 1, WP) * del, i = 1, it) ]
             
-            fsum = sum(func(ctx, x_points))
+            fsum = 0.0_wp
+            do i = 1, it
+                x = a + 0.5_wp * del + real(i - 1, WP) * del
+                fsum = fsum + func(ctx, x)
+            end do
+            
             s = 0.5_wp * (s + del * fsum)
         end if
     end subroutine refine_trapezoid_context
@@ -275,8 +278,13 @@ contains
         d = ya
         dist = xa - x
         
-        ! Find nearest neighbor index
-        ns = minloc(abs(dist), 1)
+        ! Find nearest neighbor index manually for GPU compatibility
+        ns = 1
+        do i = 2, size(dist)
+            if (abs(dist(i)) < abs(dist(ns))) then
+                ns = i
+            end if
+        end do
         y = ya(ns)
         ns = ns - 1
 

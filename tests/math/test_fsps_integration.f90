@@ -13,30 +13,30 @@ contains
 
     ! f(x) = x^4
     pure function func_poly4(x) result(res)
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         res = x**4
     end function func_poly4
 
     ! f(x) = exp(x)
     pure function func_exp(x) result(res)
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         res = exp(x)
     end function func_exp
 
     ! f(x) = 1.0
     pure function func_const(x) result(res)
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         res = 1.0_wp
     end function func_const
 
     ! f(ctx, x) = x^2 (ignores ctx)
     pure function func_ctx_poly2(ctx, x) result(res)
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         
         ! Explicitly ignore ctx to silence unused-dummy-argument warning
         associate (ignore => ctx)
@@ -47,8 +47,8 @@ contains
 
     ! f(x) = sin(1/x) (Pathological oscillation near 0)
     pure function func_pathological(x) result(res)
-        real(WP), dimension(:), intent(in) :: x
-        real(WP), dimension(size(x)) :: res
+        real(WP), intent(in) :: x
+        real(WP) :: res
         res = sin(1.0_wp / x)
     end function func_pathological
 
