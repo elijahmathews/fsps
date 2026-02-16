@@ -126,7 +126,6 @@ jobs:
             linker_args: "-acc=multicore"
             build_args: ""
             image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
-            env_cmd: ""
             install_cmd: |
               dnf update --assumeyes --refresh
               dnf install --assumeyes python3-pip
@@ -139,7 +138,6 @@ jobs:
             linker_args: ""
             build_args: ""
             image: intel/oneapi-hpckit:devel-ubuntu22.04
-            env_cmd: ". /opt/intel/oneapi/setvars.sh"
             install_cmd: |
               apt-get update -y
               apt-get install -y python3-pip
@@ -162,27 +160,16 @@ jobs:
       run: ${{ matrix.install_cmd }}
 
     - name: Verify Compiler Version
-      # Sourcing the environment is required before every step for Intel
-      run: |
-        ${{ matrix.env_cmd }}
-        $FC --version
+      run: $FC --version
 
     - name: Configure Build
-      run: |
-        ${{ matrix.env_cmd }}
-        meson setup build ${{ matrix.build_args }}
+      run: meson setup build ${{ matrix.build_args }}
 
     - name: Compile FSPS
-      run: |
-        ${{ matrix.env_cmd }}
-        meson compile -C build
+      run: meson compile -C build
 
     - name: Run Unit Tests
-      run: |
-        ${{ matrix.env_cmd }}
-        meson test -v -C build --suite unit
+      run: meson test -v -C build --suite unit
 
     - name: Run Regression Tests
-      run: |
-        ${{ matrix.env_cmd }}
-        meson test -v -C build --suite regression --print-errorlogs
+      run: meson test -v -C build --suite regression --print-errorlogs
