@@ -11,6 +11,7 @@ module test_fsps_io_mod
     use fsps_interpolation, only: interpolate_linear
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_int_equals, assert_true, assert_relative_error
+    use, intrinsic :: iso_fortran_env, only: file_storage_size
     implicit none
 
     integer :: total_failures = 0
@@ -213,7 +214,7 @@ contains
 
         file_bin = trim(root) // '/data/spectra/MILES/imiles_z0.0190.spectra.bin'
         inquire(file=trim(file_bin), size=file_size)
-        expected_size = ctx%state%nspec * NDIM_LOGT * NDIM_LOGG * 4
+        expected_size = (ctx%state%nspec * NDIM_LOGT * NDIM_LOGG * 32) / file_storage_size
         call assert_int_equals(expected_size, file_size, "Binary size matches", total_tests, total_failures)
 
         if (allocated(spec_out)) deallocate(spec_out)
@@ -388,6 +389,8 @@ contains
         allocate(ctx%state%bands(ctx%state%nspec, ctx%state%nbands))
         allocate(ctx%state%filter_leff(ctx%state%nbands))
 
+        ctx%state%bands = 0.0_wp
+
         do i = 1, ctx%state%nspec
             ctx%state%spec_lambda(i) = 3000.0_wp + 10.0_wp * real(i - 1, WP)
         end do
@@ -430,6 +433,8 @@ contains
         allocate(ctx%state%spec_lambda(ctx%state%nspec))
         allocate(ctx%state%bands(ctx%state%nspec, ctx%state%nbands))
         allocate(ctx%state%filter_leff(ctx%state%nbands))
+
+        ctx%state%bands = 0.0_wp
 
         do i = 1, ctx%state%nspec
             ctx%state%spec_lambda(i) = 3000.0_wp + 10.0_wp * real(i - 1, WP)
