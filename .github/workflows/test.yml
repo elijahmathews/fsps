@@ -138,7 +138,7 @@ jobs:
             fortran_args: "-fp-model=precise" 
             linker_args: ""
             build_args: ""
-            image: intel/oneapi-hpckit:devel-ubuntu24.04
+            image: intel/oneapi-hpckit:devel-ubuntu22.04
             env_cmd: "source /opt/intel/oneapi/setvars.sh"
             install_cmd: |
               apt-get update -y
