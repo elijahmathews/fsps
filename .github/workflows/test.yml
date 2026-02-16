@@ -139,7 +139,7 @@ jobs:
             linker_args: ""
             build_args: ""
             image: intel/oneapi-hpckit:devel-ubuntu22.04
-            env_cmd: "source /opt/intel/oneapi/setvars.sh"
+            env_cmd: ". /opt/intel/oneapi/setvars.sh"
             install_cmd: |
               apt-get update -y
               apt-get install -y python3-pip
