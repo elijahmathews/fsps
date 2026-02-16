@@ -20,7 +20,7 @@ PROGRAM TEST_RUNNER
   INTEGER, PARAMETER :: EXIT_FAILURE = 1
   
   ! Default tolerance (can be overridden by env var FSPS_TEST_RTOL)
-  REAL(WP), PARAMETER :: DEFAULT_RTOL = 1.0E-5
+  REAL(WP), PARAMETER :: DEFAULT_RTOL = 1.0E-5_wp
 
   ! Test arrays (allocatable)
   ! Reference data (read from disk)
@@ -379,7 +379,7 @@ CONTAINS
              mk = k
           END IF
           ! If ref is close to zero, use absolute tolerance, else relative
-          threshold = MAX(ABS(ref_val) * rtol, 1.0E-30) 
+          threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp) 
           IF (delta > threshold) THEN
              test_passed = .FALSE.
              nfail = nfail + 1
@@ -429,7 +429,7 @@ CONTAINS
           max_delta = delta
           mj = j
        END IF
-       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30)
+       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp)
        IF (delta > threshold) THEN
           test_passed = .FALSE.
           nfail = nfail + 1

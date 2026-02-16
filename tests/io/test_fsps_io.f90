@@ -627,7 +627,8 @@ contains
 
         pset%sfh = 2
         pset%sf_start = 0.0_wp
-        pset%sfh_filename = 'sfh_units.dat'
+        ! Explicitly pad the string to avoid trailing garbage/truncation
+        pset%sfh_filename = 'sfh_units.dat' // repeat(' ', 50 - len('sfh_units.dat'))
 
         call load_tabular_sfh(ctx, pset, 1)
 
@@ -660,7 +661,8 @@ contains
 
         pset%sfh = 2
         pset%sf_start = 0.0_wp
-        pset%sfh_filename = 'sfh_clip.dat'
+        ! Explicitly pad the string
+        pset%sfh_filename = 'sfh_clip.dat' // repeat(' ', 50 - len('sfh_clip.dat'))
 
         call load_tabular_sfh(ctx, pset, 1)
 

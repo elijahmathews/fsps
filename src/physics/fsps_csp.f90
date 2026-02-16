@@ -324,11 +324,15 @@ contains
         type(csp_buffer_t), intent(inout):: buf
         real(WP), intent(out)            :: mass_csp, lbol_csp
 
-        integer :: i, k, nt, i_tesc, j_vec
+        integer :: i, k, j, nt, i_tesc
+        integer :: nspec, nem
         real(WP) :: w, dust_age_log
         real(WP) :: linear_lbol_sum
+        real(WP) :: sum_spec, sum_em
         
         nt = ctx%state%ntfull
+        nspec = size(ssp_grid, 1)
+        nem   = size(emlin_grid, 1)
 
         ! 1. Clear Accumulators
         !$acc kernels present(buf)
@@ -352,13 +356,14 @@ contains
         end if
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
-        ! 4. Integration Loop (Vectorized)
+        ! 4. Integration Loop (Optimized via Async and Private Accumulators)
         linear_lbol_sum = 0.0_wp
         mass_csp        = 0.0_wp
 
+        ! Kernel 1: Scalar Reductions (Async 3)
         !$acc parallel loop reduction(+:mass_csp, linear_lbol_sum) &
-        !$acc               present(buf, ssp_grid, emlin_grid, mass_ssp, ssp_lum_linear) &
-        !$acc               collapse(2)
+        !$acc               present(buf, mass_ssp, ssp_lum_linear) &
+        !$acc               collapse(2) async(3)
         do k = 1, nzin
             do i = 1, nt
                 w = buf%ssp_weights(i, k)
@@ -367,32 +372,68 @@ contains
                     mass_csp = mass_csp + (w * mass_ssp(i, k))
                     linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k))
                     
-                    if (i <= i_tesc) then
-                        ! Young
-                        !$acc loop vector
-                        do j_vec = 1, size(ssp_grid, 1)
-                            buf%spec_young(j_vec) = buf%spec_young(j_vec) + (w * ssp_grid(j_vec, i, k))
-                        end do
-                        
-                        !$acc loop vector
-                        do j_vec = 1, size(emlin_grid, 1)
-                            buf%emlin_young(j_vec) = buf%emlin_young(j_vec) + (w * emlin_grid(j_vec, i, k))
-                        end do
-                    else
-                        ! Old
-                        !$acc loop vector
-                        do j_vec = 1, size(ssp_grid, 1)
-                            buf%spec_old(j_vec) = buf%spec_old(j_vec) + (w * ssp_grid(j_vec, i, k))
-                        end do
-                        
-                        !$acc loop vector
-                        do j_vec = 1, size(emlin_grid, 1)
-                            buf%emlin_old(j_vec) = buf%emlin_old(j_vec) + (w * emlin_grid(j_vec, i, k))
-                        end do
-                    end if
                 end if
             end do
         end do
+
+        ! Kernel 2: Young Spectra (Async 1)
+        !$acc parallel loop gang vector async(1) present(buf, ssp_grid) private(sum_spec)
+        do j = 1, nspec
+            sum_spec = 0.0_wp
+            do k = 1, nzin
+                do i = 1, i_tesc
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        sum_spec = sum_spec + buf%ssp_weights(i, k) * ssp_grid(j, i, k)
+                    end if
+                end do
+            end do
+            buf%spec_young(j) = buf%spec_young(j) + sum_spec
+        end do
+
+        ! Kernel 2b: Young Lines (Async 1)
+        !$acc parallel loop gang vector async(1) present(buf, emlin_grid) private(sum_em)
+        do j = 1, nem
+            sum_em = 0.0_wp
+            do k = 1, nzin
+                do i = 1, i_tesc
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        sum_em = sum_em + buf%ssp_weights(i, k) * emlin_grid(j, i, k)
+                    end if
+                end do
+            end do
+            buf%emlin_young(j) = buf%emlin_young(j) + sum_em
+        end do
+
+        ! Kernel 3: Old Spectra (Async 2)
+        !$acc parallel loop gang vector async(2) present(buf, ssp_grid) private(sum_spec)
+        do j = 1, nspec
+            sum_spec = 0.0_wp
+            do k = 1, nzin
+                do i = i_tesc + 1, nt
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        sum_spec = sum_spec + buf%ssp_weights(i, k) * ssp_grid(j, i, k)
+                    end if
+                end do
+            end do
+            buf%spec_old(j) = buf%spec_old(j) + sum_spec
+        end do
+
+        ! Kernel 3b: Old Lines (Async 2)
+        !$acc parallel loop gang vector async(2) present(buf, emlin_grid) private(sum_em)
+        do j = 1, nem
+            sum_em = 0.0_wp
+            do k = 1, nzin
+                do i = i_tesc + 1, nt
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        sum_em = sum_em + buf%ssp_weights(i, k) * emlin_grid(j, i, k)
+                    end if
+                end do
+            end do
+            buf%emlin_old(j) = buf%emlin_old(j) + sum_em
+        end do
+
+        ! Wait for completion
+        !$acc wait
 
         if (linear_lbol_sum > 0.0_wp) then
             lbol_csp = log10(linear_lbol_sum)
@@ -532,15 +573,23 @@ contains
              z_effective = pset%zred
         end if
 
-        ! Map result arrays to device
-        !$acc enter data create(result%mags, result%indx)
-
-        call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
+        ! Compute Magnitudes
+        if (pset%compute_mags == 1) then
+            !$acc enter data create(result%mags)
+            call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
+            !$acc exit data copyout(result%mags)
+        else
+            result%mags = -99.0_wp
+        end if
         
-        call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
-        
-        ! Retrieve results
-        !$acc exit data copyout(result%mags, result%indx)
+        ! Compute Spectral Indices
+        if (pset%compute_indices == 1) then
+            !$acc enter data create(result%indx)
+            call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
+            !$acc exit data copyout(result%indx)
+        else
+            result%indx = -99.0_wp
+        end if
 
         ! 7. Populate Output Structure
         ! Update scalars/arrays modified on device

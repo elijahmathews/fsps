@@ -49,6 +49,10 @@ The Context API allows you to create multiple isolated instances of FSPS. This i
 
 Parameters are set using key-value pairs. The keys correspond to the FSPS parameter names (e.g., `tage`, `imf_type`, `logzsol`).
 
+**Performance Toggles (MCMC):**
+* `compute_mags`: Set to `0` to skip magnitude calculations (Default: `1`).
+* `compute_indices`: Set to `0` to skip spectral index calculations (Default: `1`).
+
 ```c
 void fsps_context_set_int(int handle, const char *key, int value, int *status);
 void fsps_context_set_float(int handle, const char *key, double value, int *status);

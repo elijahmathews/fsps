@@ -582,7 +582,7 @@ contains
         ! Local variables
         integer :: j, k
         integer :: nspec, nstars
-        real(WP) :: linear_lbol, current_weight
+        real(WP) :: linear_lbol, current_weight, sum_spec
         
         ! Temporary 2D grid for spectral generation
         real(WP), allocatable :: temp_grid(:,:)
@@ -645,18 +645,19 @@ contains
         end do
 
         ! ----------------------------------------------------------------
-        ! PHASE 2: REDUCTION (Gang over Wavelengths)
+        ! PHASE 2: REDUCTION (Vectorized Wavelengths, Sequential Stars)
         ! ----------------------------------------------------------------
-        ! Loop over wavelength (nspec)
-        !$acc parallel loop gang present(temp_grid, spec_out, buf)
+        !$acc parallel loop gang vector present(temp_grid, spec_out, buf) private(sum_spec)
         do k = 1, nspec
-            ! Sequential loop over stars to sum into this wavelength bin
+            sum_spec = 0.0_wp
+            
             !$acc loop seq
             do j = 1, nstars
-                spec_out(k) = spec_out(k) + temp_grid(k, j) * buf%weights(j)
-                ! DEBUG TEST: Force value
-                ! spec_out(k) = spec_out(k) + 1.0_wp
+                sum_spec = sum_spec + temp_grid(k, j) * buf%weights(j)
             end do
+            
+            ! No atomics needed because each vector lane owns a unique 'k'
+            spec_out(k) = spec_out(k) + sum_spec
         end do
 
         ! Cleanup

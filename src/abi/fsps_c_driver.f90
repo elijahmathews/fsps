@@ -765,6 +765,10 @@ contains
             global_pset%wgp2 = val
         case ('wgp3')
             global_pset%wgp3 = val
+        case ('compute_mags')
+            global_pset%compute_mags = val
+        case ('compute_indices')
+            global_pset%compute_indices = val
 
         case DEFAULT
             call fsps_set_error(101, "[FSPS-C] Warning: Unknown integer parameter: "//TRIM(key))

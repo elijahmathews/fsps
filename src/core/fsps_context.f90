@@ -285,6 +285,10 @@ contains
             ctx%use_isoc_mdot_val = value
         case ('setup_nebular_gaussians')
             ctx%setup_nebular_gaussians_val = value
+        case ('compute_mags')
+            ctx%pset%compute_mags = value
+        case ('compute_indices')
+            ctx%pset%compute_indices = value
         case default
             status = FSPS_ERR_UNKNOWN_INT_PARAM
         end select
