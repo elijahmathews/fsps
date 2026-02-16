@@ -1,14 +1,18 @@
-name: FSPS Tests
+name: FSPS CI
 
 on:
   push:
     branches: [ master, develop ]
   pull_request:
     branches: [ master, develop ]
+  workflow_dispatch: # Allow manual triggering from the GitHub Actions tab
 
 jobs:
-  unit-tests:
-    name: Unit Tests (${{ matrix.os }}, ${{ matrix.compiler }})
+  # ------------------------------------------------------------------
+  # Native Environments
+  # ------------------------------------------------------------------
+  native-tests:
+    name: Native Tests (${{ matrix.os }}, ${{ matrix.compiler }})
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -18,6 +22,10 @@ jobs:
           # Linux + GFortran (standard target configuration)
           - os: ubuntu-latest
             compiler: gfortran
+            fortran_args: "-ffpe-summary=invalid,zero,overflow"
+            linker_args: ""
+            # Enable coverage for GFortran builds on Linux only
+            build_args: "-Db_coverage=true"
             coverage: true
             # gcovr only required for coverage reports
             install_cmd: |
@@ -27,6 +35,9 @@ jobs:
           # This is currently pinned to Flang-20, consider bumping in the future.
           - os: ubuntu-latest
             compiler: flang-20
+            fortran_args: ""
+            linker_args: ""
+            build_args: ""
             coverage: false
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y flang-20 ninja-build python3-pip
@@ -36,13 +47,17 @@ jobs:
           # MacOS + GFortran
           - os: macos-latest
             compiler: gfortran-homebrew
+            fortran_args: "-ffpe-summary=invalid,zero,overflow"
+            linker_args: ""
+            build_args: ""
             coverage: false
             install_cmd: |
               brew install gcc meson ninja
 
     env:
-      FSPS_DATA_HOME: ${{ github.workspace }}
       FC: ${{ matrix.compiler }}
+      FFLAGS: ${{ matrix.fortran_args }}
+      LDFLAGS: ${{ matrix.linker_args }}
 
     steps:
     - name: Checkout repository
@@ -51,7 +66,7 @@ jobs:
     - name: Install Dependencies
       run: ${{ matrix.install_cmd }}
     
-    - name: Set Compiler Path (MacOS)
+    - name: Set Compiler Path (MacOS Only)
       if: matrix.os == 'macos-latest'
       run: |
         # Ask Homebrew for the gcc package lives
@@ -68,21 +83,19 @@ jobs:
     - name: Verify Compiler Version
       run: $FC --version
 
-    - name: Configure FSPS (Meson)
+    - name: Configure Build
       # Coverage build requires extra flags
-      run: |
-        if [[ "${{ matrix.coverage }}" == true ]]; then
-          meson setup build -Db_coverage=true
-        else
-          meson setup build
-        fi
+      run: meson setup build ${{ matrix.build_args }}
 
-    - name: Compile FSPS and Unit Tests
+    - name: Compile FSPS
       run: meson compile -C build
 
     - name: Run Unit Tests
       # Verbose output for CI logs
       run: meson test -v -C build --suite unit
+    
+    - name: Run Regression Tests
+      run: meson test -v -C build --suite regression --print-errorlogs
     
     - name: Generate Coverage Report
       if: matrix.coverage == true
@@ -96,17 +109,31 @@ jobs:
         files: ./build/meson-logs/coverage.xml
         fail_ci_if_error: true
 
-  regression-tests:
-    name: Regression Tests (Meson suite)
+  # ------------------------------------------------------------------
+  # Containerized Environments
+  # ------------------------------------------------------------------
+  container-tests:
+    name: Container Tests (${{ matrix.compiler.name }})
     runs-on: ubuntu-latest
-    # needs: unit-tests
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: { name: 'nvfortran', fc: 'nvfortran', cc: 'nvc' }
+            fortran_args: "-acc=multicore -Minfo=accel"
+            linker_args: "-acc=multicore"
+            build_args: ""
+            image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
+    
+    container:
+      image: ${{ matrix.image }}
     
     env:
-      FSPS_DATA_HOME: ${{ github.workspace }}
-      # Set global relative tolerance here
-      FSPS_TEST_RTOL: 1.0E-5
-      # Silence underflows
-      FFLAGS: "-ffpe-summary=invalid,zero,overflow"
+      FC: ${{ matrix.compiler.fc }}
+      CC: ${{ matrix.compiler.cc }}
+      FFLAGS: ${{ matrix.fortran_args }}
+      LDFLAGS: ${{ matrix.linker_args }}
 
     steps:
     - name: Checkout repository
@@ -114,14 +141,21 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y gfortran meson ninja-build
+        dnf update --assumeyes --refresh
+        dnf install --assumeyes python3-pip git
+        pip3 install meson ninja
 
-    - name: Configure FSPS (Meson)
-      run: meson setup build
+    - name: Verify Compiler Version
+      run: $FC --version
+
+    - name: Configure Build
+      run: meson setup build ${{ matrix.build_args }}
 
     - name: Compile FSPS
       run: meson compile -C build
 
-    - name: Run Regression Suite
+    - name: Run Unit Tests
+      run: meson test -v -C build --suite unit
+
+    - name: Run Regression Tests
       run: meson test -v -C build --suite regression --print-errorlogs
