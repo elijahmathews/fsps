@@ -521,8 +521,10 @@ contains
         integer  :: idx_teff, idx_tau
         integer  :: n_teff_grid, n_tau_grid
         real(WP) :: tau_1um, log_g_local
+        real(WP) :: teff_linear, log_tau
         real(WP) :: w_teff, w_tau ! Interpolation weights
-        real(WP), dimension(size(spectrum)) :: dusty_transfer_function
+        real(WP) :: c00, c10, c11, c01, transfer_val
+        integer  :: i
 
         ! 1. Determine Chemistry (C-rich vs O-rich)
         ! -----------------------------------------
@@ -561,34 +563,39 @@ contains
         n_tau_grid  = size(ctx%state%tau1_dagb, 2)
 
         ! A. Interpolate in Teff
-        idx_teff = find_interval(ctx%state%teff_dagb(c_rich_flag + 1, :), 10.0_wp**log_t)
+        teff_linear = 10.0_wp**log_t
+
+        idx_teff = find_interval(ctx%state%teff_dagb(c_rich_flag + 1, :), teff_linear)
         idx_teff = max(1, min(idx_teff, n_teff_grid - 1))
         
-        w_teff = (10.0_wp**log_t - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff)) / &
+        w_teff = (teff_linear - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff)) / &
                  (ctx%state%teff_dagb(c_rich_flag + 1, idx_teff + 1) - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff))
         w_teff = max(-1.0_wp, min(w_teff, 1.0_wp)) ! Allow slight extrapolation
 
         ! B. Interpolate in Tau
-        idx_tau = find_interval(ctx%state%tau1_dagb(c_rich_flag + 1, :), log10(tau_1um))
+        log_tau = log10(tau_1um)
+        idx_tau = find_interval(ctx%state%tau1_dagb(c_rich_flag + 1, :), log_tau)
         idx_tau = max(1, min(idx_tau, n_tau_grid - 1))
 
-        w_tau = (log10(tau_1um) - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau)) / &
+        w_tau = (log_tau - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau)) / &
                 (ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau + 1) - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau))
         w_tau = max(-1.0_wp, min(w_tau, 1.0_wp))
 
 
-        ! C. Bilinear Interpolation
+        ! C. Bilinear Interpolation + In-place application
         ! f(x, y) ~ (1-x)(1-y)F00 + x(1-y)F10 + (1-x)yF01 + xyF11
-        dusty_transfer_function = &
-            (1.0_wp - w_teff) * (1.0_wp - w_tau) * ctx%state%flux_dagb(:, c_rich_flag + 1, idx_teff, idx_tau) + &
-            w_teff            * (1.0_wp - w_tau) * ctx%state%flux_dagb(:, c_rich_flag + 1, idx_teff + 1, idx_tau) + &
-            w_teff            * w_tau            * ctx%state%flux_dagb(:, c_rich_flag + 1, idx_teff + 1, idx_tau + 1) + &
-            (1.0_wp - w_teff) * w_tau            * ctx%state%flux_dagb(:, c_rich_flag + 1, idx_teff, idx_tau + 1)
+        c00 = (1.0_wp - w_teff) * (1.0_wp - w_tau)
+        c10 = w_teff            * (1.0_wp - w_tau)
+        c11 = w_teff            * w_tau
+        c01 = (1.0_wp - w_teff) * w_tau
 
-
-        ! 5. Apply to Spectrum
-        ! --------------------
-        spectrum = spectrum * dusty_transfer_function
+        do i = 1, size(spectrum)
+            transfer_val = c00 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau)     + &
+                           c10 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau)     + &
+                           c11 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau + 1) + &
+                           c01 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau + 1)
+            spectrum(i) = spectrum(i) * transfer_val
+        end do
 
     end subroutine apply_agb_dust_screen
 

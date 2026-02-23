@@ -580,9 +580,9 @@ contains
         real(WP), intent(inout), contiguous :: spec_out(:)
 
         ! Local variables
-        integer :: j, k
+        integer :: j
         integer :: nspec, nstars, n_active, ia
-        real(WP) :: linear_lbol, current_weight, sum_spec
+        real(WP) :: linear_lbol, current_weight
         
         ! Reusable temporary 2D grid for spectral generation.
         ! Reallocation occurs only when required dimensions grow.
@@ -633,7 +633,7 @@ contains
             return
         end if
 
-        !$acc data create(temp_grid) copy(spec_out) copyin(active_idx(1:n_active), active_w(1:n_active))
+        !$acc data create(temp_grid(:,1:n_active)) copyout(spec_out) copyin(active_idx(1:n_active), active_w(1:n_active))
 
         ! Initialize output
         !$acc kernels present(spec_out)
@@ -667,20 +667,11 @@ contains
         end do
 
         ! ----------------------------------------------------------------
-        ! PHASE 2: REDUCTION (Vectorized Wavelengths, Sequential Stars)
+        ! PHASE 2: REDUCTION
         ! ----------------------------------------------------------------
-        !$acc parallel loop gang vector present(temp_grid, spec_out, active_w) private(sum_spec)
-        do k = 1, nspec
-            sum_spec = 0.0_wp
-            
-            !$acc loop seq
-            do ia = 1, n_active
-                sum_spec = sum_spec + temp_grid(k, ia) * active_w(ia)
-            end do
-            
-            ! No atomics needed because each vector lane owns a unique 'k'
-            spec_out(k) = sum_spec
-        end do
+        ! Use matrix-vector multiplication for contiguous column access and
+        ! optimized reduction across active stars.
+        spec_out = matmul(temp_grid(:, 1:n_active), active_w(1:n_active))
 
         !$acc end data
 

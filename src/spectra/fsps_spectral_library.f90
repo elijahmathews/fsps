@@ -746,8 +746,7 @@ contains
         integer  :: idx_check  ! Wavelength index for validity check
         
         ! Validity flags
-        logical  :: valid(4)
-        real(WP) :: check_flux
+        logical  :: v1, v2, v3, v4
 
         ! 1. Setup & Dimensions
         nz = pset%zmet
@@ -778,24 +777,14 @@ contains
         !    Corner mapping: 
         !    1: (j, k),  2: (j+1, k),  3: (j+1, k+1),  4: (j, k+1)
         
-        ! Corner 1: (jlo, klo)
-        check_flux = ctx%state%speclib(idx_check, nz, jlo, klo)
-        valid(1)   = (check_flux > SAFE_FLOOR)
-
-        ! Corner 2: (jlo+1, klo)
-        check_flux = ctx%state%speclib(idx_check, nz, jlo+1, klo)
-        valid(2)   = (check_flux > SAFE_FLOOR)
-
-        ! Corner 3: (jlo+1, klo+1)
-        check_flux = ctx%state%speclib(idx_check, nz, jlo+1, klo+1)
-        valid(3)   = (check_flux > SAFE_FLOOR)
-
-        ! Corner 4: (jlo, klo+1)
-        check_flux = ctx%state%speclib(idx_check, nz, jlo, klo+1)
-        valid(4)   = (check_flux > SAFE_FLOOR)
+        ! Corner validity at reference wavelength
+        v1 = (ctx%state%speclib(idx_check, nz, jlo,   klo)   > SAFE_FLOOR)
+        v2 = (ctx%state%speclib(idx_check, nz, jlo+1, klo)   > SAFE_FLOOR)
+        v3 = (ctx%state%speclib(idx_check, nz, jlo+1, klo+1) > SAFE_FLOOR)
+        v4 = (ctx%state%speclib(idx_check, nz, jlo,   klo+1) > SAFE_FLOOR)
 
         ! 5. Interpolation Dispatch
-        if (all(valid)) then
+        if (v1 .and. v2 .and. v3 .and. v4) then
             ! --- Standard Case: All corners valid ---
             
             ! Pre-calculate scalar weights
@@ -811,7 +800,7 @@ contains
                    w3 * ctx%state%speclib(:, nz, jlo+1, klo+1) + &
                    w4 * ctx%state%speclib(:, nz, jlo,   klo+1)
 
-        else if (.not. any(valid)) then
+        else if ((.not. v1) .and. (.not. v2) .and. (.not. v3) .and. (.not. v4)) then
             ! --- Failure Case: All corners invalid ---
             spec = SAFE_FLOOR
 
@@ -827,10 +816,10 @@ contains
             w4 = (1.0_wp - t) * u
             
             ! Zero out weights for invalid corners
-            if (.not. valid(1)) w1 = -1.0_wp
-            if (.not. valid(2)) w2 = -1.0_wp
-            if (.not. valid(3)) w3 = -1.0_wp
-            if (.not. valid(4)) w4 = -1.0_wp
+            if (.not. v1) w1 = -1.0_wp
+            if (.not. v2) w2 = -1.0_wp
+            if (.not. v3) w3 = -1.0_wp
+            if (.not. v4) w4 = -1.0_wp
 
             ! Find max weight
             if (w1 >= w2 .and. w1 >= w3 .and. w1 >= w4) then
