@@ -11,7 +11,7 @@ bytype.f90
 Makefile.prv
 
 # Ignore compiler outputs
-build/
+build*/
 *.o
 *.mod
 *.exe
@@ -19,6 +19,10 @@ compile_commands.json
 
 # Ignore test outputs
 tmp/
+
+# Ignore profiling outputs
+*.out
+gmon_*
 
 # Main executables produced by Makefile
 autosps

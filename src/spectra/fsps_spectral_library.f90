@@ -100,21 +100,24 @@ contains
         ! Local variables
         real(WP) :: r2_cm, logg_calc, scale_factor
         integer  :: library_source
+        integer  :: i_phase
         
-        ! 1. Initialization
-        !    Initialize to a safe floor to prevent zeros/NaNs in integration
-        spec = SAFE_FLOOR
-
-        ! 2. Calculate Physical Parameters
-        !    Compute physically consistent Radius^2 and Surface Gravity.
-        !    (Uses mact, lbol, logt)
-        call calculate_physical_parameters(mact, lbol, logt, logg, r2_cm, logg_calc)
-
-        ! 3. Determine Spectral Library
+        ! 1. Determine Spectral Library
         !    (Abstracts the complex phase/temperature decision tree)
         library_source = determine_library_source(ctx, phase, logt, ffco)
+        i_phase = int(phase)
 
-        ! 4. Calculate scale factor pre-dispatch
+        ! 2. Compute physical quantities only when needed by the selected source.
+        !    (Main library, WMBasic, and WR require consistent gravity/radius)
+        select case (library_source)
+        case (SRC_MAIN_LIB, SRC_WMBASIC, SRC_WR)
+            call calculate_physical_parameters(mact, lbol, logt, logg, r2_cm, logg_calc)
+        case default
+            r2_cm = 0.0_wp
+            logg_calc = logg
+        end select
+
+        ! 3. Calculate scale factor pre-dispatch
         select case (library_source)
         case (SRC_MAIN_LIB)
             ! Surface Flux -> Luminosity: Scale by Surface Area (4*pi*R^2) * 4pi (Eddington)
@@ -126,7 +129,7 @@ contains
             scale_factor = lbol
         end select
 
-        ! 5. Dispatch to Interpolation Routines
+        ! 4. Dispatch to Interpolation Routines
         select case (library_source)
         
         case (SRC_PAGB)
@@ -157,13 +160,9 @@ contains
             
         end select
 
-        ! 6. Final Safety Clamp
-        !    Ensure no numerical noise produced values below the floor.
-        spec = max(spec, SAFE_FLOOR)
-
-        ! 7. Apply AGB Circumstellar Dust (If applicable)
+        ! 5. Apply AGB Circumstellar Dust (If applicable)
         !    Only for AGB phases (4=RGB/E-AGB, 5=TP-AGB) if model is enabled.
-        if ( (int(phase) == 4 .or. int(phase) == 5) .and. &
+        if ( (i_phase == 4 .or. i_phase == 5) .and. &
              ctx%add_agb_dust_model_val == 1 .and. &
              pset%agb_dust > SAFE_FLOOR ) then
              
@@ -172,6 +171,9 @@ contains
              call apply_agb_dust_screen(ctx, pset%agb_dust, spec, mact, &
                                         logt, log10(lbol), logg, ffco, lmdot)
         end if
+
+        ! 6. Final safety clamp after all optional post-processing.
+        spec = max(spec, SAFE_FLOOR)
 
     end subroutine get_stellar_spectrum
 
@@ -501,22 +503,14 @@ contains
         integer  :: jlo, nz
         real(WP) :: t, w1, w2
         
-        ! Use a stack-allocated temporary array for the temperature grid.
-        ! This prevents the compiler from doing slow heap-allocation 
-        ! when passing the non-contiguous array slice to find_interval.
-        real(WP) :: temp_grid(N_AGB_O)
-        
         nz = pset%zmet
 
-        ! Create contiguous copy on the stack
-        temp_grid = ctx%state%agb_logt_o(nz, :)
-
-        ! Search the stack array
-        jlo = find_interval(temp_grid, logt)
+        ! Search directly on the strided row to avoid per-call copies.
+        jlo = find_interval_row_2d(ctx%state%agb_logt_o, nz, N_AGB_O, logt)
         jlo = max(1, min(jlo, N_AGB_O - 1))
 
-        ! Use the stack array for weights
-        t = (logt - temp_grid(jlo)) / (temp_grid(jlo+1) - temp_grid(jlo))
+        t = (logt - ctx%state%agb_logt_o(nz, jlo)) / &
+            (ctx%state%agb_logt_o(nz, jlo+1) - ctx%state%agb_logt_o(nz, jlo))
         
         t = max(0.0_wp, min(t, 1.0_wp)) 
 
@@ -528,6 +522,51 @@ contains
                  w2 * ctx%state%agb_spec_o(:, jlo+1) )
 
     end subroutine get_agb_o_spectrum
+
+    !> @brief Find interpolation interval on a strided row in a 2D array.
+    !>
+    !> @details
+    !> Specialized helper for lookups like `array2d(row, :)` where row slices
+    !> are non-contiguous in memory (column-major layout). This avoids creating
+    !> temporary contiguous copies on every call.
+    pure function find_interval_row_2d(array2d, row, ncol, value) result(idx)
+        !$acc routine seq
+        real(WP), intent(in) :: array2d(:, :)
+        integer,  intent(in) :: row, ncol
+        real(WP), intent(in) :: value
+        integer :: idx
+
+        integer :: lower, upper, mid
+        logical :: is_ascending
+
+        if (ncol < 2) then
+            idx = 1
+            return
+        end if
+
+        is_ascending = (array2d(row, ncol) >= array2d(row, 1))
+
+        lower = 0
+        upper = ncol + 1
+
+        do while (upper - lower > 1)
+            mid = (upper + lower) / 2
+            if (is_ascending .eqv. (value >= array2d(row, mid))) then
+                lower = mid
+            else
+                upper = mid
+            end if
+        end do
+
+        if (value == array2d(row, 1)) then
+            idx = 1
+        else if (value == array2d(row, ncol)) then
+            idx = ncol - 1
+        else
+            idx = lower
+        end if
+
+    end function find_interval_row_2d
 
     !> @brief Interpolates the Carbon-rich TP-AGB spectral library.
     !>

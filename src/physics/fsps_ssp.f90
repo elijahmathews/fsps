@@ -581,23 +581,59 @@ contains
 
         ! Local variables
         integer :: j, k
-        integer :: nspec, nstars
+        integer :: nspec, nstars, n_active, ia
         real(WP) :: linear_lbol, current_weight, sum_spec
         
-        ! Temporary 2D grid for spectral generation
-        real(WP), allocatable :: temp_grid(:,:)
+        ! Reusable temporary 2D grid for spectral generation.
+        ! Reallocation occurs only when required dimensions grow.
+        real(WP), allocatable, save :: temp_grid(:,:)
+        integer,  allocatable, save :: active_idx(:)
+        real(WP), allocatable, save :: active_w(:)
+        integer, save :: temp_nspec = 0, temp_nstars = 0
 
         nspec  = size(spec_out)
         nstars = buf%n_stars
         
         if (nstars == 0) return
 
-        ! Allocate and move 2D grid to device
-        allocate(temp_grid(nspec, nstars))
-        !$acc enter data create(temp_grid)
-        
-        ! Map output slice
-        !$acc enter data create(spec_out)
+        ! Ensure workspace capacity.
+        if ((.not. allocated(temp_grid)) .or. temp_nspec < nspec .or. temp_nstars < nstars) then
+            if (allocated(temp_grid)) deallocate(temp_grid)
+            allocate(temp_grid(nspec, nstars))
+            temp_nspec  = nspec
+            temp_nstars = nstars
+        end if
+
+        if ((.not. allocated(active_idx)) .or. size(active_idx) < nstars) then
+            if (allocated(active_idx)) deallocate(active_idx)
+            allocate(active_idx(nstars))
+        end if
+        if ((.not. allocated(active_w)) .or. size(active_w) < nstars) then
+            if (allocated(active_w)) deallocate(active_w)
+            allocate(active_w(nstars))
+        end if
+
+        ! Build compact list of active stars once.
+        n_active = 0
+        do j = 1, nstars
+            current_weight = buf%weights(j)
+            if (current_weight <= MIN_WEIGHT_CUTOFF .or. &
+                (pset%evtype /= -1 .and. int(buf%phase(j)) /= pset%evtype) .or. &
+                (buf%initial_mass(j) >= pset%masscut)) then
+                cycle
+            end if
+
+            n_active = n_active + 1
+            active_idx(n_active) = j
+            active_w(n_active) = current_weight
+        end do
+
+        if (n_active == 0) then
+            spec_out = 0.0_wp
+            return
+        end if
+
+        !$acc data create(temp_grid) copy(spec_out) copyin(active_idx(1:n_active), active_w(1:n_active))
 
         ! Initialize output
         !$acc kernels present(spec_out)
@@ -607,23 +643,9 @@ contains
         ! ----------------------------------------------------------------
         ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
         ! ----------------------------------------------------------------
-        !$acc parallel loop gang vector collapse(1) present(ctx, buf, temp_grid)
-        do j = 1, nstars
-            
-            ! Check filters locally per thread
-            ! We initialize temp_grid column to 0 if filtered
-            current_weight = buf%weights(j)
-            
-            if (current_weight <= MIN_WEIGHT_CUTOFF .or. &
-                (pset%evtype /= -1 .and. int(buf%phase(j)) /= pset%evtype) .or. &
-                (buf%initial_mass(j) >= pset%masscut)) then
-                
-                ! Zero out this star's spectrum
-                do k = 1, nspec
-                    temp_grid(k, j) = 0.0_wp
-                end do
-                cycle
-            end if
+        !$acc parallel loop gang vector collapse(1) present(ctx, buf, temp_grid, active_idx)
+        do ia = 1, n_active
+            j = active_idx(ia)
 
             ! Convert LogL -> Linear L
             linear_lbol = exp(buf%log_lum(j) * LN10)
@@ -640,30 +662,27 @@ contains
                 buf%phase(j), &
                 buf%co_ratio(j), &
                 buf%log_mdot(j), &
-                temp_grid(:, j))
+                temp_grid(:, ia))
 
         end do
 
         ! ----------------------------------------------------------------
         ! PHASE 2: REDUCTION (Vectorized Wavelengths, Sequential Stars)
         ! ----------------------------------------------------------------
-        !$acc parallel loop gang vector present(temp_grid, spec_out, buf) private(sum_spec)
+        !$acc parallel loop gang vector present(temp_grid, spec_out, active_w) private(sum_spec)
         do k = 1, nspec
             sum_spec = 0.0_wp
             
             !$acc loop seq
-            do j = 1, nstars
-                sum_spec = sum_spec + temp_grid(k, j) * buf%weights(j)
+            do ia = 1, n_active
+                sum_spec = sum_spec + temp_grid(k, ia) * active_w(ia)
             end do
             
             ! No atomics needed because each vector lane owns a unique 'k'
-            spec_out(k) = spec_out(k) + sum_spec
+            spec_out(k) = sum_spec
         end do
 
-        ! Cleanup
-        !$acc exit data copyout(spec_out)
-        !$acc exit data delete(temp_grid)
-        deallocate(temp_grid)
+        !$acc end data
 
     end subroutine accumulate_spectrum
 

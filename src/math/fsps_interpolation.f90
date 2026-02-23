@@ -4,10 +4,14 @@ module fsps_interpolation
     !>
     !> @details
     !> This module contains routines for finding intervals in monotonic arrays
-    !> (bisection search) and performing linear interpolation/extrapolation.
+    !> (bisection search with optional hint acceleration) and for performing
+    !> linear interpolation/extrapolation.
     !>
     !> It exposes a generic interface `interpolate_linear` that automatically
     !> handles both scalar and array query points.
+    !>
+    !> OpenACC notes:
+    !> - Device-callable routines are marked with `!$acc routine seq`.
     
     use fsps_precision, only: WP
     implicit none
@@ -84,10 +88,11 @@ contains
         real(WP), dimension(:), intent(in), contiguous :: x_in, y_in, x_out
         real(WP), dimension(size(x_out)) :: y_out
 
-        integer :: i, idx, n
+        integer :: i, idx, n, m
         real(WP) :: slope
         
         n = size(x_in)
+        m = size(x_out)
         
         ! Check sizes once before looping
         if (n < 2 .or. (n /= size(y_in))) then
@@ -96,11 +101,16 @@ contains
             return
         end if
 
-        ! Loop over all query points.
-        ! The contiguous attribute allows the compiler to vectorize this loop.
-        do i = 1, size(x_out)
+        if (m == 0) return
+
+        ! Initialize hint for the first iteration.
+        idx = 1
+
+        ! Sequential hint-accelerated path.
+        !$acc loop seq
+        do i = 1, m
             ! Find the interval index and clamp to valid interpolation range.
-            idx = find_interval(x_in, x_out(i))
+            idx = find_interval_with_hint(x_in, x_out(i), idx)
             idx = max(1, min(idx, n - 1))
 
             ! Calculate slope for this interval: (y2 - y1) / (x2 - x1)
@@ -113,23 +123,29 @@ contains
     end function interpolate_linear_array
 
     !> @brief
-    !> Finds the index `i` in an array such that `array(i) <= value < array(i+1)`.
+    !> Finds interval index in a monotonic array.
     !>
     !> @details
-    !> Uses a bisection (binary search) algorithm to find the interval containing the
-    !> input value. It is designed to work efficiently with both monotonic increasing 
-    !> and decreasing arrays. 
-    !>
-    !> This implementation is typically used for interpolation. For values exactly 
-    !> matching the boundaries, it clamps the index to ensure valid interpolation intervals.
+    !> This routine preserves the historical public symbol name `find_interval`
+    !> and implements the standard binary-search interval lookup.
     !>
     !> @param[in] array  The 1D sorted array to search (monotonic).
     !> @param[in] value  The value to find within the array.
     !>
-    !> @return    idx    The lower index of the interval. 
-    !>                   Returns 1 if value < array(1).
-    !>                   Returns n-1 if value > array(n).
+    !> @return    idx    Lower interval index.
     pure function find_interval(array, value) result(idx)
+        !$acc routine seq
+        real(WP), dimension(:), intent(in), contiguous :: array
+        real(WP), intent(in) :: value
+        integer :: idx
+
+        idx = find_interval_no_hint(array, value)
+    end function find_interval
+
+    !> @brief
+    !> Finds the index `i` in an array such that `array(i) <= value < array(i+1)`.
+    !> (Standard version without hint)
+    pure function find_interval_no_hint(array, value) result(idx)
         !$acc routine seq
         real(WP), dimension(:), intent(in), contiguous :: array
         real(WP), intent(in) :: value
@@ -150,7 +166,6 @@ contains
         is_ascending = (array(n) >= array(1))
 
         ! Initialize bisection limits
-        ! Note: 0 and n+1 are used to handle out-of-bound values gracefully
         lower = 0
         upper = n + 1
 
@@ -158,9 +173,6 @@ contains
         do while (upper - lower > 1)
             mid = (upper + lower) / 2
             
-            ! The .eqv. operator cleverly handles both ascending and descending logic:
-            ! Ascending + Value >= Mid -> True  (Keep upper half -> lower = mid)
-            ! Descending + Value >= Mid -> False (Keep lower half -> upper = mid)
             if (is_ascending .eqv. (value >= array(mid))) then
                 lower = mid
             else
@@ -177,7 +189,101 @@ contains
             idx = lower
         end if
 
-    end function find_interval
+    end function find_interval_no_hint
+
+    !> @brief
+    !> Finds the interval index with optional search-hint acceleration.
+    !>
+    !> @details
+    !> This version uses `hint` as a starting point. For values right of the
+    !> hint it performs a short forward linear probe and then bounded binary
+    !> search, avoiding pathological long scans while preserving fast locality.
+    !> For values left of the hint it performs bounded binary search on the
+    !> left segment.
+    !>
+    !> @param[in] array  The 1D sorted array to search (monotonic).
+    !> @param[in] value  The value to find within the array.
+    !> @param[in] hint   Previous interval index guess (typically from neighbor query).
+    !>
+    !> @return    idx    Lower index of the interpolation interval.
+    pure function find_interval_with_hint(array, value, hint) result(idx)
+        !$acc routine seq
+        real(WP), dimension(:), intent(in), contiguous :: array
+        real(WP), intent(in) :: value
+        integer, intent(in) :: hint
+        integer :: idx
+
+        integer :: n, lower, upper, mid
+        integer :: scan_step
+        logical :: is_ascending
+
+        n = size(array)
+
+        ! Safety check for empty or singleton arrays
+        if (n < 2) then
+            idx = 1
+            return
+        end if
+
+        ! Determine sort order
+        is_ascending = (array(n) >= array(1))
+
+        ! Initialize bisection limits
+        lower = 0
+        upper = n + 1
+        
+        ! Check hint
+        if (hint >= 1 .and. hint < n) then
+            if (is_ascending .eqv. (value >= array(hint))) then
+                ! Value is "to the right" (or equal) of hint.
+                lower = hint
+                
+                ! Check if it is in the immediate interval [hint, hint+1)
+                if (.not. (is_ascending .eqv. (value >= array(hint+1)))) then
+                    idx = hint
+                    return
+                end if
+                
+                ! Short forward probe to exploit locality of sorted queries.
+                ! Then fall back to binary search in the remaining range.
+                do scan_step = 1, 8
+                    if (lower + 1 > n) exit
+                    if (.not. (is_ascending .eqv. (value >= array(lower+1)))) then
+                        idx = lower
+                        return
+                    end if
+                    lower = lower + 1
+                end do
+                upper = n + 1
+                
+            else
+                ! Value is "to the left" of hint
+                upper = hint + 1
+                ! lower remains 0
+            end if
+        end if
+
+        ! Perform Binary Search
+        do while (upper - lower > 1)
+            mid = (upper + lower) / 2
+            
+            if (is_ascending .eqv. (value >= array(mid))) then
+                lower = mid
+            else
+                upper = mid
+            end if
+        end do
+
+        ! Match legacy locate behavior for out-of-bounds values.
+        if (value == array(1)) then
+            idx = 1
+        else if (value == array(n)) then
+            idx = n - 1
+        else
+            idx = lower
+        end if
+
+    end function find_interval_with_hint
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPER ROUTINES
