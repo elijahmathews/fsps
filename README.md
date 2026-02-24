@@ -1,6 +1,6 @@
 FSPS: Flexible Stellar Population Synthesis
 =====
-![Version Badge](https://img.shields.io/badge/version-v3.2-blue) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/elijahmathews/fsps/test.yml)
+![Version Badge](https://img.shields.io/badge/version-v3.2-blue) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/elijahmathews/fsps/ci.yml)
  [![codecov](https://img.shields.io/codecov/c/github/elijahmathews/fsps)](https://codecov.io/github/elijahmathews/fsps)
 
 > [!WARNING]
