@@ -12,7 +12,7 @@ jobs:
   # Native Environments
   # ------------------------------------------------------------------
   native-tests:
-    name: Native Tests (${{ matrix.os }}, ${{ matrix.compiler }})
+    name: Native Tests (${{ matrix.os }}, ${{ matrix.compiler }}${{ matrix.variant }})
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -30,6 +30,18 @@ jobs:
             # gcovr only required for coverage reports
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build gcovr
+
+          # Linux + GFortran (OpenMP)
+          - os: ubuntu-latest
+            compiler: gfortran
+            variant: " (OpenMP)"
+            fortran_args: "-ffpe-summary=invalid,zero,overflow"
+            linker_args: ""
+            # Inject OpenMP flags directly into Meson setup
+            build_args: "-Dfortran_args=-fopenmp -Dfortran_link_args=-fopenmp -Dc_args=-fopenmp -Dc_link_args=-fopenmp"
+            coverage: false
+            install_cmd: |
+              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
           
           # Linux + LLVM Flang (experimental)
           # This is currently pinned to Flang-20, consider bumping in the future.
@@ -58,6 +70,7 @@ jobs:
       FC: ${{ matrix.compiler }}
       FFLAGS: ${{ matrix.fortran_args }}
       LDFLAGS: ${{ matrix.linker_args }}
+      OMP_NUM_THREADS: 2
 
     steps:
     - name: Checkout repository

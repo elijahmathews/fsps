@@ -643,6 +643,7 @@ contains
         ! ----------------------------------------------------------------
         ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
         ! ----------------------------------------------------------------
+        !$omp parallel do default(shared) private(j, linear_lbol)
         !$acc parallel loop gang vector collapse(1) present(ctx, buf, temp_grid, active_idx)
         do ia = 1, n_active
             j = active_idx(ia)

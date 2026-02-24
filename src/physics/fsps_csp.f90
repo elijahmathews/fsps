@@ -376,7 +376,11 @@ contains
             end do
         end do
 
+        ! Spin up the thread pool once
+        !$omp parallel default(shared) private(j, i, k, sum_spec, sum_em)
+
         ! Kernel 2: Young Spectra (Async 1)
+        !$omp do
         !$acc parallel loop gang vector async(1) present(buf, ssp_grid) private(sum_spec)
         do j = 1, nspec
             sum_spec = 0.0_wp
@@ -389,8 +393,10 @@ contains
             end do
             buf%spec_young(j) = buf%spec_young(j) + sum_spec
         end do
+        !$omp end do nowait
 
         ! Kernel 2b: Young Lines (Async 1)
+        !$omp do
         !$acc parallel loop gang vector async(1) present(buf, emlin_grid) private(sum_em)
         do j = 1, nem
             sum_em = 0.0_wp
@@ -403,8 +409,10 @@ contains
             end do
             buf%emlin_young(j) = buf%emlin_young(j) + sum_em
         end do
+        !$omp end do nowait
 
         ! Kernel 3: Old Spectra (Async 2)
+        !$omp do
         !$acc parallel loop gang vector async(2) present(buf, ssp_grid) private(sum_spec)
         do j = 1, nspec
             sum_spec = 0.0_wp
@@ -417,8 +425,10 @@ contains
             end do
             buf%spec_old(j) = buf%spec_old(j) + sum_spec
         end do
+        !$omp end do nowait
 
         ! Kernel 3b: Old Lines (Async 2)
+        !$omp do
         !$acc parallel loop gang vector async(2) present(buf, emlin_grid) private(sum_em)
         do j = 1, nem
             sum_em = 0.0_wp
@@ -431,8 +441,10 @@ contains
             end do
             buf%emlin_old(j) = buf%emlin_old(j) + sum_em
         end do
+        !$omp end do nowait
 
         ! Wait for completion
+        !$omp end parallel
         !$acc wait
 
         if (linear_lbol_sum > 0.0_wp) then
