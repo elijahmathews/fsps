@@ -295,13 +295,16 @@ jobs:
           sudo ldconfig
           ldconfig -p | grep libfsps
 
+      - name: Stage Artifacts
+        run: |
+          # Create a local staging directory
+          mkdir -p dist/debian
+          # Move the artifacts from the parent directory into the workspace
+          mv ../libfsps3_*.deb ../libfsps-dev_*.deb ../fsps_*.buildinfo ../fsps_*.changes dist/debian/
+
       - name: Upload DEB Artifacts
         uses: actions/upload-artifact@v6
         with:
           name: ubuntu-latest-debs
-          path: |
-            ../libfsps3_*.deb
-            ../libfsps-dev_*.deb
-            ../fsps_*.buildinfo
-            ../fsps_*.changes
+          path: dist/debian/
           retention-days: 7
