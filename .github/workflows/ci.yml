@@ -238,7 +238,7 @@ jobs:
           # Build binary and source RPMs (-ba)
           rpmbuild -ba ~/rpmbuild/SPECS/fsps.spec
       
-      - name: Verify Installation (Smoke Test)
+      - name: Verify Installation
         run: |
           # Actually install the newly built RPMs into the container
           dnf install -y ~/rpmbuild/RPMS/x86_64/*.rpm
@@ -269,7 +269,7 @@ jobs:
           sudo apt-get install -y \
             debhelper \
             build-essential \
-            gcc-gfortran \
+            gfortran \
             meson \
             ninja-build \
             pkgconf \
@@ -286,7 +286,7 @@ jobs:
           # -b builds only binary packages
           dpkg-buildpackage -us -uc -b
 
-      - name: Verify Installation (Smoke Test)
+      - name: Verify Installation
         run: |
           # Install the generated .debs from the parent directory
           sudo apt-get install -y ../libfsps3_*.deb ../libfsps-dev_*.deb
