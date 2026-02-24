@@ -254,3 +254,54 @@ jobs:
             ~/rpmbuild/RPMS/*/*.rpm
             ~/rpmbuild/SRPMS/*.rpm
           retention-days: 7
+  
+  build-deb:
+    name: Build Ubuntu DEB
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Debian Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            debhelper \
+            build-essential \
+            gcc-gfortran \
+            meson \
+            ninja-build \
+            pkgconf \
+            devscripts
+
+      - name: Set debian/rules permissions
+        run: chmod +x debian/rules
+
+      - name: Build Debian Packages
+        run: |
+          # dpkg-buildpackage handles the entire lifecycle:
+          # configure, build, test (dh_auto_test), and package.
+          # -us -uc skips signing the packages (not needed for CI)
+          # -b builds only binary packages
+          dpkg-buildpackage -us -uc -b
+
+      - name: Verify Installation (Smoke Test)
+        run: |
+          # Install the generated .debs from the parent directory
+          sudo apt-get install -y ../libfsps3_*.deb ../libfsps-dev_*.deb
+          
+          # Verify shared library registration
+          sudo ldconfig
+          ldconfig -p | grep libfsps
+
+      - name: Upload DEB Artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ubuntu-latest-debs
+          path: |
+            ../libfsps3_*.deb
+            ../libfsps-dev_*.deb
+            ../fsps_*.buildinfo
+            ../fsps_*.changes
+          retention-days: 7
