@@ -63,13 +63,20 @@ jobs:
               brew install gcc meson ninja
 
     env:
-      FC: ${{ matrix.compiler }}
+      FC: "ccache ${{ matrix.compiler }}"
       FFLAGS: ${{ matrix.fflags }}
       OMP_NUM_THREADS: 2
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+    
+    - name: Setup Compiler Cache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        # Create a unique cache bucket for each matrix permutation
+        key: ${{ matrix.os }}-${{ matrix.compiler }}${{ matrix.variant }}
+        max-size: '500M'
 
     - name: Install Dependencies
       run: ${{ matrix.install_cmd }}
@@ -86,7 +93,7 @@ jobs:
         echo "Found GFortran at: $GFORTRAN_BIN"
         
         # Export this path to $FC for all future steps
-        echo "FC=$GFORTRAN_BIN" >> $GITHUB_ENV
+        echo "FC=ccache $GFORTRAN_BIN" >> $GITHUB_ENV
 
     - name: Verify Compiler Version
       run: $FC --version

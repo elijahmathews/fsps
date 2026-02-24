@@ -34,20 +34,26 @@ datadir = get_option('datadir')
 # -----------------------------------
 
 accel_target = get_option('accel')
+accel_args = []
 if accel_target != 'none'
     if fc_id != 'nvidia_hpc'
         warning('Hardware acceleration requested but compiler does not support OpenACC. Ignoring accel option.')
     else
         if accel_target == 'multicore'
-            add_project_arguments('-acc=multicore', language : 'fortran')
-            add_project_link_arguments('-acc=multicore', language : 'fortran')
+            accel_args = ['-acc=multicore']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
-            add_project_arguments('-acc=gpu', '-gpu=cc70,cc80,cc90,ptx', language : 'fortran')
-            add_project_link_arguments('-acc=gpu', '-gpu=cc70,cc80,cc90,ptx', language : 'fortran')
+            accel_args = ['-acc=gpu', '-gpu=cc70,cc80,cc90,ptx']
         endif
     endif
 endif
+
+# Create a dependency object that explicitly propagates these flags
+# to both compile and link stages across all consuming targets.
+accel_dep = declare_dependency(
+    compile_args : accel_args,
+    link_args : accel_args
+)
 
 # -----------------------------------
 # CPU Parallelism (OpenMP)
@@ -55,8 +61,8 @@ endif
 
 omp_dep = []
 if get_option('enable_openmp')
-    # Meson natively finds the right flag (-fopenmp, -mp, -qopenmp) based on the compiler
-    omp_dep = dependency('openmp', language: 'fortran', required: true)
+    # Let Meson natively find OpenMP for both Fortran and C
+    omp_dep = dependency('openmp', required: true)
 endif
 
 # -----------------------------------
@@ -126,14 +132,15 @@ libfsps = library('fsps',
     version : meson.project_version(),
     soversion : '3',
     install : true,
-    dependencies : omp_dep,
+    dependencies : [omp_dep, accel_dep],
 )
 
 # Declare a dependency object for executables/tests to use
 # This ensures they find the generated .mod files and link to the lib
 fsps_dep = declare_dependency(
     link_with : libfsps,
-    include_directories : include_directories('include')
+    include_directories : include_directories('include'),
+    dependencies : [omp_dep, accel_dep]
 )
 
 # ===================================
