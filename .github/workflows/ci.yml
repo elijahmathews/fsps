@@ -187,3 +187,73 @@ jobs:
 
     - name: Run Regression Tests
       run: meson test -v -C build --suite regression --print-errorlogs
+
+  # ------------------------------------------------------------------
+  # Packaging Tests
+  # ------------------------------------------------------------------
+  build-rpm:
+    name: Build Fedora RPM
+    runs-on: ubuntu-latest
+
+    # Run the job inside a pristine Fedora container
+    container:
+      image: fedora:latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Fetch full history so git archive can resolve HEAD properly
+          fetch-depth: 0
+      
+      - name: Install RPM Build Dependencies
+        run: |
+          dnf update -y
+          # Install core packaging tools and git
+          dnf install -y rpm-build rpmdevtools git
+          
+          # Use dnf builddep to automatically read the .spec file 
+          # and install gcc-gfortran, meson, and ninja-build
+          dnf builddep -y packaging/fsps.spec
+      
+      - name: Prepare RPM Workspace
+        run: |
+          # Create ~/rpmbuild/SOURCES, SPECS, RPMS, etc.
+          rpmdev-setuptree
+          
+          # Copy the spec file into the workspace
+          cp packaging/fsps.spec ~/rpmbuild/SPECS/
+      
+      - name: Generate Source Tarball
+        run: |
+          # Extract the version number directly from the spec file
+          VERSION=$(grep -i '^Version:' packaging/fsps.spec | awk '{print $2}')
+          echo "Packaging version: $VERSION"
+          
+          # Git archive requires the directory to be a safe repository
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          
+          # Create the tarball that rpmbuild expects
+          git archive --prefix=fsps-$VERSION/ -o ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz HEAD
+      
+      - name: Build RPMs
+        run: |
+          # Build binary and source RPMs (-ba)
+          rpmbuild -ba ~/rpmbuild/SPECS/fsps.spec
+      
+      - name: Verify Installation (Smoke Test)
+        run: |
+          # Actually install the newly built RPMs into the container
+          dnf install -y ~/rpmbuild/RPMS/x86_64/*.rpm
+          
+          # Verify the library was installed and the linker can find it
+          ldconfig -p | grep libfsps
+      
+      - name: Upload RPM Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-42-rpms
+          path: |
+            ~/rpmbuild/RPMS/*/*.rpm
+            ~/rpmbuild/SRPMS/*.rpm
+          retention-days: 7
