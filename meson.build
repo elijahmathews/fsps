@@ -13,8 +13,9 @@ project('fsps', ['fortran', 'c'],
 
 fc = meson.get_compiler('fortran')
 fc_id = fc.get_id()
+host_cpu = host_machine.cpu_family()
 
-# Universal arguments (supported by both gfortran and flang)
+# Universal arguments
 add_project_arguments('-cpp', language : 'fortran')
 
 # GFortran-specific arguments
@@ -27,6 +28,48 @@ prefix = get_option('prefix')
 libdir = get_option('libdir')
 includedir = get_option('includedir')
 datadir = get_option('datadir')
+
+# -----------------------------------
+# Hardware Acceleration (OpenACC)
+# -----------------------------------
+
+accel_target = get_option('accel')
+if accel_target != 'none'
+    if fc_id != 'nvidia_hpc'
+        warning('Hardware acceleration requested but compiler does not support OpenACC. Ignoring accel option.')
+    else
+        if accel_target == 'multicore'
+            add_project_arguments('-acc=multicore', language : 'fortran')
+            add_project_link_arguments('-acc=multicore', language : 'fortran')
+        elif accel_target == 'gpu'
+            # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
+            add_project_arguments('-acc=gpu', '-gpu=cc70,cc80,cc90,ptx', language : 'fortran')
+            add_project_link_arguments('-acc=gpu', '-gpu=cc70,cc80,cc90,ptx', language : 'fortran')
+        endif
+    endif
+endif
+
+# -----------------------------------
+# CPU Parallelism (OpenMP)
+# -----------------------------------
+
+omp_dep = []
+if get_option('enable_openmp')
+    # Meson natively finds the right flag (-fopenmp, -mp, -qopenmp) based on the compiler
+    omp_dep = dependency('openmp', language: 'fortran', required: true)
+endif
+
+# -----------------------------------
+# CPU Architecture Optimization
+# -----------------------------------
+cpu_baseline = get_option('cpu_baseline')
+if get_option('buildtype') == 'release' and fc_id == 'gcc'
+    if cpu_baseline == 'native'
+        add_project_arguments('-march=native', language: 'fortran')
+    elif cpu_baseline == 'x86-64-v3' and host_cpu == 'x86_64'
+        add_project_arguments('-march=x86-64-v3', language: 'fortran')
+    endif
+endif
 
 # ===================================
 # Source Definitions
@@ -82,7 +125,8 @@ libfsps = library('fsps',
     lib_sources,
     version : meson.project_version(),
     soversion : '3',
-    install : true
+    install : true,
+    dependencies : omp_dep,
 )
 
 # Declare a dependency object for executables/tests to use
@@ -91,12 +135,6 @@ fsps_dep = declare_dependency(
     link_with : libfsps,
     include_directories : include_directories('include')
 )
-
-# ===================================
-# Program Executables
-# ===================================
-
- 
 
 # ===================================
 # Tests

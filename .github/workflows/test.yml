@@ -22,8 +22,7 @@ jobs:
           # Linux + GFortran (standard target configuration)
           - os: ubuntu-latest
             compiler: gfortran
-            fortran_args: "-ffpe-summary=invalid,zero,overflow"
-            linker_args: ""
+            fflags: "-ffpe-summary=invalid,zero,overflow"
             # Enable coverage for GFortran builds on Linux only
             build_args: "-Db_coverage=true"
             coverage: true
@@ -35,10 +34,9 @@ jobs:
           - os: ubuntu-latest
             compiler: gfortran
             variant: " (OpenMP)"
-            fortran_args: "-ffpe-summary=invalid,zero,overflow"
-            linker_args: ""
-            # Inject OpenMP flags directly into Meson setup
-            build_args: "-Dfortran_args=-fopenmp -Dfortran_link_args=-fopenmp -Dc_args=-fopenmp -Dc_link_args=-fopenmp"
+            fflags: "-ffpe-summary=invalid,zero,overflow"
+            # Use Meson-managed OpenMP detection/flags
+            build_args: "-Denable_openmp=true"
             coverage: false
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
@@ -47,8 +45,7 @@ jobs:
           # This is currently pinned to Flang-20, consider bumping in the future.
           - os: ubuntu-latest
             compiler: flang-20
-            fortran_args: ""
-            linker_args: ""
+            fflags: ""
             build_args: ""
             coverage: false
             install_cmd: |
@@ -59,8 +56,7 @@ jobs:
           # MacOS + GFortran
           - os: macos-latest
             compiler: gfortran-homebrew
-            fortran_args: "-ffpe-summary=invalid,zero,overflow"
-            linker_args: ""
+            fflags: "-ffpe-summary=invalid,zero,overflow"
             build_args: ""
             coverage: false
             install_cmd: |
@@ -68,8 +64,7 @@ jobs:
 
     env:
       FC: ${{ matrix.compiler }}
-      FFLAGS: ${{ matrix.fortran_args }}
-      LDFLAGS: ${{ matrix.linker_args }}
+      FFLAGS: ${{ matrix.fflags }}
       OMP_NUM_THREADS: 2
 
     steps:
@@ -135,9 +130,10 @@ jobs:
         include:
           # NVIDIA HPC SDK (Rocky Linux)
           - compiler: { name: 'nvfortran', fc: 'nvfortran', cc: 'nvc' }
-            fortran_args: "-acc=multicore -Minfo=accel"
-            linker_args: "-acc=multicore"
-            build_args: ""
+            # Keep compiler diagnostics in CI logs while OpenACC targeting is
+            # configured through Meson options.
+            fflags: "-Minfo=accel"
+            build_args: "-Daccel=multicore"
             image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
             install_cmd: |
               dnf update --assumeyes --refresh
@@ -147,8 +143,7 @@ jobs:
           # # Intel oneAPI HPC Toolkit (Ubuntu)
           # - compiler: { name: 'ifx', fc: 'ifx', cc: 'icx' }
           #   # -fp-model=precise prevents aggressive math reordering that breaks 1e-5 tolerances
-          #   fortran_args: "-fp-model=precise" 
-          #   linker_args: ""
+          #   fflags: "-fp-model=precise"
           #   build_args: ""
           #   image: intel/oneapi-hpckit:devel-ubuntu22.04
           #   install_cmd: |
@@ -162,8 +157,7 @@ jobs:
     env:
       FC: ${{ matrix.compiler.fc }}
       CC: ${{ matrix.compiler.cc }}
-      FFLAGS: ${{ matrix.fortran_args }}
-      LDFLAGS: ${{ matrix.linker_args }}
+      FFLAGS: ${{ matrix.fflags }}
 
     steps:
     - name: Checkout repository

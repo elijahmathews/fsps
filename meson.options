@@ -1,0 +1,8 @@
+option('enable_openmp', type: 'boolean', value: false, 
+  description: 'Enable OpenMP multi-threading for CPU execution')
+
+option('accel', type: 'combo', choices: ['none', 'multicore', 'gpu'], value: 'none', 
+  description: 'Hardware acceleration target (requires nvfortran)')
+
+option('cpu_baseline', type: 'combo', choices: ['generic', 'native', 'x86-64-v3'], value: 'generic',
+  description: 'CPU instruction set optimization level')
