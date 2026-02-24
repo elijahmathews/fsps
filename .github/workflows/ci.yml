@@ -203,8 +203,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          # Fetch full history so git archive can resolve HEAD properly
           fetch-depth: 0
+          set-safe-directory: true
       
       - name: Install RPM Build Dependencies
         run: |
@@ -234,7 +234,7 @@ jobs:
           git config --global --add safe.directory $GITHUB_WORKSPACE
           
           # Create the tarball that rpmbuild expects
-          git archive --prefix=fsps-$VERSION/ -o ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz HEAD
+          git archive --format=tar.gz --prefix=fsps-$VERSION/ -o ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz HEAD
       
       - name: Build RPMs
         run: |
@@ -250,9 +250,9 @@ jobs:
           ldconfig -p | grep libfsps
       
       - name: Upload RPM Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: fedora-42-rpms
+          name: fedora-latest-rpms
           path: |
             ~/rpmbuild/RPMS/*/*.rpm
             ~/rpmbuild/SRPMS/*.rpm
