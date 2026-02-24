@@ -202,15 +202,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          set-safe-directory: true
       
       - name: Install RPM Build Dependencies
         run: |
           dnf update -y
-          # Install core packaging tools and git
-          dnf install -y rpm-build rpmdevtools git
+          # Install core packaging tools
+          dnf install -y rpm-build rpmdevtools
           
           # Use dnf builddep to automatically read the .spec file 
           # and install gcc-gfortran, meson, and ninja-build
@@ -226,15 +223,15 @@ jobs:
       
       - name: Generate Source Tarball
         run: |
-          # Extract the version number directly from the spec file
           VERSION=$(grep -i '^Version:' packaging/fsps.spec | awk '{print $2}')
           echo "Packaging version: $VERSION"
           
-          # Git archive requires the directory to be a safe repository
-          git config --global --add safe.directory $GITHUB_WORKSPACE
-          
-          # Create the tarball that rpmbuild expects
-          git archive --format=tar.gz --prefix=fsps-$VERSION/ -o ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz HEAD
+          # We use tar to bundle the workspace.
+          # --transform renames the root in the tarball to fsps-3.2.0/ to match %autosetup
+          # --exclude='.git' is a safety measure in case a partial repo exists
+          tar -czvf ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz \
+              --transform "s|^\.|fsps-$VERSION|" \
+              --exclude='.git' .
       
       - name: Build RPMs
         run: |
