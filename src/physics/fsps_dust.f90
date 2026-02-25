@@ -244,12 +244,8 @@ contains
         ! However, these are nspec sized.
         ! We can use data create if needed, or rely on compiler.
         ! For resident device, explicit data clauses are safer.
-        real(WP), dimension(size(spec_young)) :: attenuation_curve_diffuse
         real(WP), dimension(size(spec_young)) :: transmission_diffuse
-        real(WP), dimension(size(spec_young)) :: transmission_birth_cloud
-        real(WP), dimension(size(spec_young)) :: spec_attenuated_sum
         real(WP), dimension(size(spec_young)) :: frequencies
-        real(WP), dimension(size(neb_flux_young)) :: transmission_diffuse_neb
         
         real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
         real(WP), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
@@ -257,9 +253,12 @@ contains
         
         integer :: nspec, i
         real(WP) :: y1, y2
+        real(WP) :: curve, trans_birth, trans_old, spec_sum, trans_diffuse_neb, neb_birth
+        real(WP) :: frac_obrun, one_minus_obrun, frac_nodust, one_minus_nodust
+        real(WP) :: dust1, dust1_index, dust2, dust3
+        logical  :: dust_type_is3
 
-        !$acc enter data create(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
-        !$acc enter data create(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+        !$acc enter data create(transmission_diffuse, frequencies)
         !$acc enter data create(dust_emission_shape, dust_emission_final)
 
         nspec = size(spec_young)
@@ -269,6 +268,16 @@ contains
         if (settings%uvb < 0.0_wp) return ! Should trigger error handling upstream
         if (settings%wgp1 < 1 .or. settings%wgp2 < 1) return 
 
+        frac_obrun      = settings%frac_obrun
+        one_minus_obrun = 1.0_wp - frac_obrun
+        frac_nodust     = settings%frac_nodust
+        one_minus_nodust = 1.0_wp - frac_nodust
+        dust1           = settings%dust1
+        dust1_index     = settings%dust1_index
+        dust2           = settings%dust2
+        dust3           = settings%dust3
+        dust_type_is3   = (ctx%dust_type_val == 3)
+
         ! 1. Calculate Attenuation Curves & Transmissivities
         ! --------------------------------------------------
         ! We parallelize the array operations. compute_attenuation_curve needs to be !acc routine seq/vector.
@@ -277,33 +286,41 @@ contains
         ! B. Birth Clouds (affects young stars only)
         ! 2. Apply Attenuation to Stellar Spectra
         
-        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_out) &
-        !$acc               present(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud) &
-        !$acc               present(spec_attenuated_sum)
+        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_out, transmission_diffuse)
         do i = 1, nspec
             ! A. Diffuse Curve (Inline call or routine seq)
-            attenuation_curve_diffuse(i) = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
-                                                                           ctx%dust_type_val, settings, ctx)
+            curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
+                                                    ctx%dust_type_val, settings, ctx)
             
-            if (ctx%dust_type_val == 3) then
-                transmission_diffuse(i) = exp(-attenuation_curve_diffuse(i))
+            if (dust_type_is3) then
+                transmission_diffuse(i) = exp(-curve)
             else
-                transmission_diffuse(i) = exp(-settings%dust2 * attenuation_curve_diffuse(i))
+                transmission_diffuse(i) = exp(-dust2 * curve)
             end if
 
             ! B. Birth Clouds
-            transmission_birth_cloud(i) = exp(-settings%dust1 * &
-                                       (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**settings%dust1_index)
+            if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                trans_birth = 1.0_wp
+            else
+                trans_birth = exp(-dust1 * (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**dust1_index)
+            end if
+
+            if (abs(dust3) <= SAFE_FLOOR) then
+                trans_old = 1.0_wp
+            else
+                trans_old = exp(-dust3 * curve)
+            end if
                                        
             ! 2. Apply Attenuation
-            spec_attenuated_sum(i) = &
-                (spec_young(i) * transmission_birth_cloud(i) * (1.0_wp - settings%frac_obrun) + &
-                 spec_young(i) * settings%frac_obrun) + &
-                (spec_old(i) * exp(-settings%dust3 * attenuation_curve_diffuse(i)))
+            spec_sum = (spec_young(i) * trans_birth * one_minus_obrun + spec_young(i) * frac_obrun) + &
+                       (spec_old(i) * trans_old)
 
             ! Final diffuse screen
-            spec_total_out(i) = spec_attenuated_sum(i) * transmission_diffuse(i) * (1.0_wp - settings%frac_nodust) + &
-                                spec_attenuated_sum(i) * settings%frac_nodust
+            if (one_minus_nodust <= SAFE_FLOOR) then
+                spec_total_out(i) = spec_sum
+            else
+                spec_total_out(i) = spec_sum * (transmission_diffuse(i) * one_minus_nodust + frac_nodust)
+            end if
         end do
 
 
@@ -312,23 +329,33 @@ contains
         ! Note: We must interpolate the diffuse transmission to the line wavelengths
         ! interpolate_linear is now !acc routine seq
         
-        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out) &
-        !$acc               present(transmission_diffuse, transmission_diffuse_neb)
+           !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out, transmission_diffuse)
         do i = 1, size(neb_flux_young)
-             transmission_diffuse_neb(i) = interpolate_linear(ctx%state%spec_lambda, &
-                                                              transmission_diffuse, &
-                                                              ctx%state%nebem_line_pos(i))
+             if (one_minus_nodust <= SAFE_FLOOR) then
+                 trans_diffuse_neb = 1.0_wp
+             else
+                 trans_diffuse_neb = interpolate_linear(ctx%state%spec_lambda, &
+                                                        transmission_diffuse, &
+                                                        ctx%state%nebem_line_pos(i))
+             end if
                                                               
-             if (transmission_diffuse_neb(i) /= transmission_diffuse_neb(i)) transmission_diffuse_neb(i) = 1.0_wp
+               if (trans_diffuse_neb /= trans_diffuse_neb) trans_diffuse_neb = 1.0_wp
+
+             if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                 neb_birth = 1.0_wp
+             else
+                 neb_birth = exp(-dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**dust1_index)
+             end if
              
              neb_flux_out(i) = (neb_flux_young(i) * &
-                        exp(-settings%dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**settings%dust1_index) * &
-                        (1.0_wp - settings%frac_obrun) + &
-                        neb_flux_young(i) * settings%frac_obrun + &
+                        neb_birth * &
+                        one_minus_obrun + &
+                        neb_flux_young(i) * frac_obrun + &
                         neb_flux_old(i))
                         
-             neb_flux_out(i) = neb_flux_out(i) * transmission_diffuse_neb(i) * (1.0_wp - settings%frac_nodust) + &
-                               neb_flux_out(i) * settings%frac_nodust
+               if (one_minus_nodust > SAFE_FLOOR) then
+                  neb_flux_out(i) = neb_flux_out(i) * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
+               end if
         end do
 
 
@@ -398,8 +425,7 @@ contains
             if (emission_norm_factor <= SAFE_FLOOR) then
                 dust_mass = SAFE_FLOOR
                 ! Cleanup
-                !$acc exit data delete(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
-                !$acc exit data delete(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+                !$acc exit data delete(transmission_diffuse, frequencies)
                 !$acc exit data delete(dust_emission_shape, dust_emission_final)
                 return
             end if
@@ -424,8 +450,7 @@ contains
         end if
         
         ! Cleanup
-        !$acc exit data delete(attenuation_curve_diffuse, transmission_diffuse, transmission_birth_cloud)
-        !$acc exit data delete(spec_attenuated_sum, frequencies, transmission_diffuse_neb)
+        !$acc exit data delete(transmission_diffuse, frequencies)
         !$acc exit data delete(dust_emission_shape, dust_emission_final)
 
     end subroutine apply_dust_attenuation_and_emission

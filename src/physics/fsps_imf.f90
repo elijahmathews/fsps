@@ -16,6 +16,7 @@ module fsps_imf
 
     public :: compute_imf_weights
     public :: get_imf_value
+    public :: integrate_imf_interval_analytic
     public :: CHAB_MC, CHAB_SIGMA2, CHAB_IND
 
     ! ------------------------------------------------------------------------
@@ -26,6 +27,9 @@ module fsps_imf
     real(WP), parameter :: CHAB_MC     = 0.08_wp
     real(WP), parameter :: CHAB_SIGMA2 = 0.69_wp**2  ! Explicit squaring
     real(WP), parameter :: CHAB_IND    = 1.3_wp
+    real(WP), parameter :: CHAB_LOG_MC = log10(CHAB_MC)
+    real(WP), parameter :: CHAB_INV_2SIG2 = 1.0_wp / (2.0_wp * CHAB_SIGMA2)
+    real(WP), parameter :: CHAB_HIGH_NORM = exp(-(CHAB_LOG_MC * CHAB_LOG_MC) * CHAB_INV_2SIG2)
 
     ! van Dokkum 2008
     real(WP), parameter :: VD_SIGMA2 = 0.69_wp**2
@@ -55,7 +59,8 @@ contains
         integer, intent(in) :: nmass
 
         real(WP) :: m1, m2, total_mass
-        integer :: i
+        integer :: i, imf_type_base
+        logical :: use_analytic
 
         ! Access limits from state
         real(WP) :: lower_limit, upper_limit, lower_bound
@@ -63,6 +68,14 @@ contains
         lower_limit = ctx%state%imf_lower_limit
         upper_limit = ctx%state%imf_upper_limit
         lower_bound = ctx%state%imf_lower_bound
+        imf_type_base = mod(ctx%imf_type_val, 10)
+
+        select case (imf_type_base)
+        case (0, 2, 4, 5)
+            use_analytic = .true.
+        case default
+            use_analytic = .false.
+        end select
 
         weights = 0.0_wp
 
@@ -98,12 +111,20 @@ contains
 
             ! Integrate dn/dM over [m1, m2]
             ! Uses the wrapper_imf_count to integrate number density
-            weights(i) = integrate_romberg(ctx, wrapper_imf_count, m1, m2)
+            if (use_analytic) then
+                weights(i) = integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted=.false.)
+            else
+                weights(i) = integrate_romberg(ctx, wrapper_imf_count, m1, m2)
+            end if
         end do
 
         ! 2. Calculate Total Mass (Normalization Factor)
         ! Integrate M * dn/dM over the full range [lower_limit, upper_limit]
-        total_mass = integrate_romberg(ctx, wrapper_imf_mass, lower_limit, upper_limit)
+        if (use_analytic) then
+            total_mass = integrate_imf_interval_analytic(ctx, lower_limit, upper_limit, mass_weighted=.true.)
+        else
+            total_mass = integrate_romberg(ctx, wrapper_imf_mass, lower_limit, upper_limit)
+        end if
 
         ! 3. Normalize
         if (total_mass > 0.0_wp) then
@@ -137,6 +158,132 @@ contains
         res = get_imf_value(ctx, x, mass_weighted=.true.)
     end function wrapper_imf_mass
 
+    !> @brief Analytic integral of IMF over [m1, m2] for power-law IMF families.
+    !>
+    !> @details
+    !> Supports IMF base types:
+    !> - 0: Salpeter
+    !> - 2: Kroupa (piecewise power law)
+    !> - 4: Dave (two-slope power law)
+    !> - 5: User-defined piecewise power law
+    !>
+    !> Falls back to zero for unsupported types (caller guards usage).
+    pure function integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted) result(int_val)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in) :: m1, m2
+        logical, intent(in)  :: mass_weighted
+        real(WP) :: int_val
+
+        integer :: imf_type_base
+        real(WP) :: lo, hi, a1, a2, a3, mdave, c2
+        real(WP) :: seg_lo, seg_hi, imfcu
+        integer  :: n, n_user
+
+        int_val = 0.0_wp
+        lo = min(m1, m2)
+        hi = max(m1, m2)
+        if (hi <= lo) return
+
+        imf_type_base = mod(ctx%imf_type_val, 10)
+
+        select case (imf_type_base)
+        case (0)
+            int_val = integrate_powerlaw(lo, hi, ctx%state%salp_ind, mass_weighted, 1.0_wp)
+
+        case (2)
+            a1 = ctx%state%imf_alpha(1)
+            a2 = ctx%state%imf_alpha(2)
+            a3 = ctx%state%imf_alpha(3)
+            c2 = 0.5_wp**(-a1 + a2)
+
+            seg_lo = max(lo, 0.08_wp)
+            seg_hi = min(hi, 0.5_wp)
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a1, mass_weighted, 1.0_wp)
+
+            seg_lo = max(lo, 0.5_wp)
+            seg_hi = min(hi, 1.0_wp)
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a2, mass_weighted, c2)
+
+            seg_lo = max(lo, 1.0_wp)
+            seg_hi = hi
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a3, mass_weighted, c2)
+
+        case (4)
+            a1 = ctx%state%imf_alpha(1)
+            a2 = ctx%state%imf_alpha(2)
+            mdave = ctx%state%imf_mdave
+
+            seg_lo = max(lo, 0.08_wp)
+            seg_hi = min(hi, mdave)
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a1, mass_weighted, 1.0_wp)
+
+            seg_lo = max(lo, mdave)
+            seg_hi = hi
+            if (seg_hi > seg_lo) then
+                int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a2, mass_weighted, mdave**(-a1 + a2))
+            end if
+
+        case (5)
+            n_user = ctx%state%n_user_imf
+            imfcu = 1.0_wp
+
+            ! First segment
+            if (n_user >= 1) then
+                seg_lo = max(lo, ctx%state%imf_user_alpha(1,1))
+                seg_hi = min(hi, ctx%state%imf_user_alpha(2,1))
+                if (seg_hi > seg_lo) then
+                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, ctx%state%imf_user_alpha(3,1), mass_weighted, 1.0_wp)
+                end if
+            end if
+
+            do n = 2, n_user
+                imfcu = imfcu * ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
+                        ctx%state%imf_user_alpha(3,n))
+
+                seg_lo = max(lo, ctx%state%imf_user_alpha(1,n))
+                seg_hi = min(hi, ctx%state%imf_user_alpha(2,n))
+                if (seg_hi > seg_lo) then
+                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, ctx%state%imf_user_alpha(3,n), mass_weighted, imfcu)
+                end if
+            end do
+
+        case default
+            int_val = 0.0_wp
+        end select
+    end function integrate_imf_interval_analytic
+
+    !> @brief Integral of coeff * m^(-alpha) or coeff * m^(1-alpha) over [lo, hi].
+    pure function integrate_powerlaw(lo, hi, alpha, mass_weighted, coeff) result(val)
+        !$acc routine seq
+        real(WP), intent(in) :: lo, hi, alpha, coeff
+        logical, intent(in)  :: mass_weighted
+        real(WP) :: val
+        real(WP) :: denom
+
+        if (hi <= lo) then
+            val = 0.0_wp
+            return
+        end if
+
+        if (mass_weighted) then
+            denom = 2.0_wp - alpha
+        else
+            denom = 1.0_wp - alpha
+        end if
+
+        if (abs(denom) > 1.0e-12_wp) then
+            if (mass_weighted) then
+                val = coeff * (hi**(2.0_wp - alpha) - lo**(2.0_wp - alpha)) / denom
+            else
+                val = coeff * (hi**(1.0_wp - alpha) - lo**(1.0_wp - alpha)) / denom
+            end if
+        else
+            ! log integral limit when exponent is -1
+            val = coeff * log(hi / lo)
+        end if
+    end function integrate_powerlaw
+
     ! ------------------------------------------------------------------------
     ! CORE IMF LOGIC
     ! ------------------------------------------------------------------------
@@ -168,6 +315,10 @@ contains
         real(WP) :: imf_val
         
         integer :: imf_type_base
+        real(WP) :: alpha1, alpha2, alpha3
+        real(WP) :: log_m, vdmc, vd_break, vd_term, mdave
+        real(WP) :: imfcu
+        integer  :: n, n_user
 
         ! The original code used (type + 10) to signal mass-weighting.
         ! We strip that here to get the base algorithm type.
@@ -176,22 +327,81 @@ contains
         select case (imf_type_base)
         case (0) 
             ! Salpeter (1955)
-            call imf_salpeter(ctx, mass, imf_val)
+            imf_val = mass**(-ctx%state%salp_ind)
         case (1) 
             ! Chabrier (2003)
-            call imf_chabrier(mass, imf_val)
+            if (mass < 1.0_wp) then
+                log_m = log10(mass)
+                imf_val = exp(-((log_m - CHAB_LOG_MC)**2) * CHAB_INV_2SIG2) / mass
+            else
+                imf_val = CHAB_HIGH_NORM * mass**(-(CHAB_IND + 1.0_wp))
+            end if
         case (2) 
             ! Kroupa (2001)
-            call imf_kroupa(ctx, mass, imf_val)
+            alpha1 = ctx%state%imf_alpha(1)
+            alpha2 = ctx%state%imf_alpha(2)
+            alpha3 = ctx%state%imf_alpha(3)
+
+            if (mass >= 0.08_wp .and. mass < 0.5_wp) then
+                imf_val = mass**(-alpha1)
+            else if (mass >= 0.5_wp .and. mass < 1.0_wp) then
+                imf_val = 0.5_wp**(-alpha1 + alpha2) * mass**(-alpha2)
+            else if (mass >= 1.0_wp) then
+                imf_val = 0.5_wp**(-alpha1 + alpha2) * mass**(-alpha3)
+            else
+                imf_val = 0.0_wp
+            end if
         case (3) 
             ! van Dokkum (2008)
-            call imf_vandokkum(ctx, mass, imf_val)
+            vdmc = ctx%state%imf_vdmc
+            vd_break = VD_NC * vdmc
+
+            if (mass <= vd_break) then
+                log_m = log10(mass)
+                vd_term = ((log_m - log10(vdmc))**2) / (2.0_wp * VD_SIGMA2)
+                imf_val = VD_AL * (0.5_wp * vd_break)**(-VD_IND) * exp(-vd_term)
+            else
+                imf_val = VD_AH * mass**(-VD_IND)
+            end if
+
+            ! Convert from dn/dlnM to dn/dM
+            imf_val = imf_val / mass
         case (4) 
             ! Dave (2008)
-            call imf_dave(ctx, mass, imf_val)
+            alpha1 = ctx%state%imf_alpha(1)
+            alpha2 = ctx%state%imf_alpha(2)
+            mdave  = ctx%state%imf_mdave
+
+            if (mass >= 0.08_wp .and. mass < mdave) then
+                imf_val = mass**(-alpha1)
+            else if (mass >= mdave) then
+                imf_val = mdave**(-alpha1 + alpha2) * mass**(-alpha2)
+            else
+                imf_val = 0.0_wp
+            end if
         case (5) 
             ! User-defined
-            call imf_user_defined(ctx, mass, imf_val)
+            n_user = ctx%state%n_user_imf
+            imf_val = 0.0_wp
+
+            if (mass >= ctx%state%imf_user_alpha(1,1) .and. &
+                mass <  ctx%state%imf_user_alpha(2,1)) then
+                imf_val = mass**(-ctx%state%imf_user_alpha(3,1))
+            end if
+
+            imfcu = 1.0_wp
+            do n = 2, n_user
+                if (mass >= ctx%state%imf_user_alpha(1,n) .and. &
+                    mass <  ctx%state%imf_user_alpha(2,n)) then
+
+                    imf_val = mass**(-ctx%state%imf_user_alpha(3,n)) * &
+                              ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
+                              ctx%state%imf_user_alpha(3,n)) * imfcu
+                end if
+
+                imfcu = imfcu * ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
+                        ctx%state%imf_user_alpha(3,n))
+            end do
         case default
             imf_val = 0.0_wp
         end select

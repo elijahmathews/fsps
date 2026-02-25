@@ -15,7 +15,7 @@ module fsps_stellar_modifications
     use fsps_constants, only: NM, GRAVITY_L_M_T_COEFF, BHB_SBS_TIME
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
-    use fsps_imf, only: get_imf_value
+    use fsps_imf, only: get_imf_value, integrate_imf_interval_analytic
     use fsps_integration, only: integrate_romberg
     use fsps_interpolation, only: interpolate_linear, find_interval
     
@@ -618,6 +618,8 @@ contains
         real(WP) :: imf_norm
         real(WP) :: integration_min, integration_max
         real(WP) :: term_bh, term_ns, term_wd_const, term_wd_linear
+        integer  :: imf_type_base
+        logical  :: use_analytic
         
         real(WP) :: limit_low, limit_high, limit_bh, limit_ns
 
@@ -626,10 +628,22 @@ contains
         limit_high = ctx%state%imf_upper_limit
         limit_bh   = ctx%state%mlim_bh
         limit_ns   = ctx%state%mlim_ns
+        imf_type_base = mod(ctx%imf_type_val, 10)
+
+        select case (imf_type_base)
+        case (0, 2, 4, 5)
+            use_analytic = .true.
+        case default
+            use_analytic = .false.
+        end select
 
         ! 1. Normalize the weights (Mass-weighted IMF integral over the full range)
         !    This ensures we are working with the correct mass fractions.
-        imf_norm = integrate_romberg(ctx, wrapper_imf_mass, limit_low, limit_high)
+        if (use_analytic) then
+            imf_norm = integrate_imf_interval_analytic(ctx, limit_low, limit_high, mass_weighted=.true.)
+        else
+            imf_norm = integrate_romberg(ctx, wrapper_imf_mass, limit_low, limit_high)
+        end if
 
         if (imf_norm <= 0.0_wp) then
             ! Guard against division by zero if IMF is invalid
@@ -648,7 +662,11 @@ contains
         
         ! Only integrate if the range is valid (min < max)
         if (integration_min < limit_high) then
-            term_bh = integrate_romberg(ctx, wrapper_imf_mass, integration_min, limit_high)
+            if (use_analytic) then
+                term_bh = integrate_imf_interval_analytic(ctx, integration_min, limit_high, mass_weighted=.true.)
+            else
+                term_bh = integrate_romberg(ctx, wrapper_imf_mass, integration_min, limit_high)
+            end if
             current_mass = current_mass + (0.5_wp * term_bh / imf_norm)
         end if
 
@@ -667,7 +685,11 @@ contains
 
             if (integration_min < integration_max) then
                 ! Integrate Number Density (wrapper_imf_number) because mass is constant (1.4)
-                term_ns = integrate_romberg(ctx, wrapper_imf_number, integration_min, integration_max)
+                if (use_analytic) then
+                    term_ns = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.false.)
+                else
+                    term_ns = integrate_romberg(ctx, wrapper_imf_number, integration_min, integration_max)
+                end if
                 current_mass = current_mass + (MASS_NS_REMNANT * term_ns / imf_norm)
             end if
         end if
@@ -684,12 +706,20 @@ contains
 
             if (integration_min < integration_max) then
                 ! Term 1: Constant part (0.48 * Number of stars)
-                term_wd_const = integrate_romberg(ctx, wrapper_imf_number, &
-                                                  integration_min, integration_max)
+                if (use_analytic) then
+                    term_wd_const = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.false.)
+                else
+                    term_wd_const = integrate_romberg(ctx, wrapper_imf_number, &
+                                                      integration_min, integration_max)
+                end if
                 
                 ! Term 2: Linear part (0.077 * Mass of stars)
-                term_wd_linear = integrate_romberg(ctx, wrapper_imf_mass, &
-                                                   integration_min, integration_max)
+                if (use_analytic) then
+                    term_wd_linear = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.true.)
+                else
+                    term_wd_linear = integrate_romberg(ctx, wrapper_imf_mass, &
+                                                       integration_min, integration_max)
+                end if
 
                 current_mass = current_mass + &
                                ((WD_INTERCEPT * term_wd_const) / imf_norm) + &

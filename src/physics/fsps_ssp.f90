@@ -674,6 +674,9 @@ contains
         ! optimized reduction across active stars.
         spec_out = matmul(temp_grid(:, 1:n_active), active_w(1:n_active))
 
+        ! Apply final numerical floor once per SSP accumulation.
+        spec_out = max(spec_out, SAFE_FLOOR)
+
         !$acc end data
 
     end subroutine accumulate_spectrum

@@ -324,11 +324,11 @@ contains
         type(csp_buffer_t), intent(inout):: buf
         real(WP), intent(out)            :: mass_csp, lbol_csp
 
-        integer :: i, k, j, nt, i_tesc
+        integer :: i, k, nt, i_tesc
+        integer :: i_spec, i_em
         integer :: nspec, nem
         real(WP) :: w, dust_age_log
         real(WP) :: linear_lbol_sum
-        real(WP) :: sum_spec, sum_em
         
         nt = ctx%state%ntfull
         nspec = size(ssp_grid, 1)
@@ -356,14 +356,13 @@ contains
         end if
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
-        ! 4. Integration Loop (Optimized via Async and Private Accumulators)
+        ! 4. Integration Loop
+        !    Fused pass over (time, Z) to improve cache locality for spectral arrays.
+        !    Access pattern uses full contiguous slices ssp_grid(:, i, k) and
+        !    emlin_grid(:, i, k), which is faster than strided scalar access.
         linear_lbol_sum = 0.0_wp
         mass_csp        = 0.0_wp
 
-        ! Kernel 1: Scalar Reductions (Async 3)
-        !$acc parallel loop reduction(+:mass_csp, linear_lbol_sum) &
-        !$acc               present(buf, mass_ssp, ssp_lum_linear) &
-        !$acc               collapse(2) async(3)
         do k = 1, nzin
             do i = 1, nt
                 w = buf%ssp_weights(i, k)
@@ -371,81 +370,29 @@ contains
                 if (w > SAFE_FLOOR) then
                     mass_csp = mass_csp + (w * mass_ssp(i, k))
                     linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k))
-                    
+
+                    if (i <= i_tesc) then
+                        !$omp simd
+                        do i_spec = 1, nspec
+                            buf%spec_young(i_spec) = buf%spec_young(i_spec) + w * ssp_grid(i_spec, i, k)
+                        end do
+                        !$omp simd
+                        do i_em = 1, nem
+                            buf%emlin_young(i_em) = buf%emlin_young(i_em) + w * emlin_grid(i_em, i, k)
+                        end do
+                    else
+                        !$omp simd
+                        do i_spec = 1, nspec
+                            buf%spec_old(i_spec) = buf%spec_old(i_spec) + w * ssp_grid(i_spec, i, k)
+                        end do
+                        !$omp simd
+                        do i_em = 1, nem
+                            buf%emlin_old(i_em) = buf%emlin_old(i_em) + w * emlin_grid(i_em, i, k)
+                        end do
+                    end if
                 end if
             end do
         end do
-
-        ! Spin up the thread pool once
-        !$omp parallel default(shared) private(j, i, k, sum_spec, sum_em)
-
-        ! Kernel 2: Young Spectra (Async 1)
-        !$omp do
-        !$acc parallel loop gang vector async(1) present(buf, ssp_grid) private(sum_spec)
-        do j = 1, nspec
-            sum_spec = 0.0_wp
-            do k = 1, nzin
-                do i = 1, i_tesc
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
-                        sum_spec = sum_spec + buf%ssp_weights(i, k) * ssp_grid(j, i, k)
-                    end if
-                end do
-            end do
-            buf%spec_young(j) = buf%spec_young(j) + sum_spec
-        end do
-        !$omp end do nowait
-
-        ! Kernel 2b: Young Lines (Async 1)
-        !$omp do
-        !$acc parallel loop gang vector async(1) present(buf, emlin_grid) private(sum_em)
-        do j = 1, nem
-            sum_em = 0.0_wp
-            do k = 1, nzin
-                do i = 1, i_tesc
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
-                        sum_em = sum_em + buf%ssp_weights(i, k) * emlin_grid(j, i, k)
-                    end if
-                end do
-            end do
-            buf%emlin_young(j) = buf%emlin_young(j) + sum_em
-        end do
-        !$omp end do nowait
-
-        ! Kernel 3: Old Spectra (Async 2)
-        !$omp do
-        !$acc parallel loop gang vector async(2) present(buf, ssp_grid) private(sum_spec)
-        do j = 1, nspec
-            sum_spec = 0.0_wp
-            do k = 1, nzin
-                do i = i_tesc + 1, nt
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
-                        sum_spec = sum_spec + buf%ssp_weights(i, k) * ssp_grid(j, i, k)
-                    end if
-                end do
-            end do
-            buf%spec_old(j) = buf%spec_old(j) + sum_spec
-        end do
-        !$omp end do nowait
-
-        ! Kernel 3b: Old Lines (Async 2)
-        !$omp do
-        !$acc parallel loop gang vector async(2) present(buf, emlin_grid) private(sum_em)
-        do j = 1, nem
-            sum_em = 0.0_wp
-            do k = 1, nzin
-                do i = i_tesc + 1, nt
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
-                        sum_em = sum_em + buf%ssp_weights(i, k) * emlin_grid(j, i, k)
-                    end if
-                end do
-            end do
-            buf%emlin_old(j) = buf%emlin_old(j) + sum_em
-        end do
-        !$omp end do nowait
-
-        ! Wait for completion
-        !$omp end parallel
-        !$acc wait
 
         if (linear_lbol_sum > 0.0_wp) then
             lbol_csp = log10(linear_lbol_sum)
