@@ -593,22 +593,37 @@ contains
         if ((.not. allocated(ctx%state%ssp_temp_grid)) .or. &
             (ctx%state%ssp_temp_nspec < nspec) .or. &
             (ctx%state%ssp_temp_nstars < nstars)) then
-            if (allocated(ctx%state%ssp_temp_grid)) deallocate(ctx%state%ssp_temp_grid)
+            if (allocated(ctx%state%ssp_temp_grid)) then
+                !$acc exit data delete(ctx%state%ssp_temp_grid)
+                deallocate(ctx%state%ssp_temp_grid)
+            end if
             allocate(ctx%state%ssp_temp_grid(nspec, nstars))
+            !$acc enter data create(ctx%state%ssp_temp_grid)
+            !$acc enter data attach(ctx%state%ssp_temp_grid)
             ctx%state%ssp_temp_nspec = nspec
             ctx%state%ssp_temp_nstars = nstars
         end if
 
         if ((.not. allocated(ctx%state%ssp_active_idx)) .or. &
             (size(ctx%state%ssp_active_idx) < nstars)) then
-            if (allocated(ctx%state%ssp_active_idx)) deallocate(ctx%state%ssp_active_idx)
+            if (allocated(ctx%state%ssp_active_idx)) then
+                !$acc exit data delete(ctx%state%ssp_active_idx)
+                deallocate(ctx%state%ssp_active_idx)
+            end if
             allocate(ctx%state%ssp_active_idx(nstars))
+            !$acc enter data create(ctx%state%ssp_active_idx)
+            !$acc enter data attach(ctx%state%ssp_active_idx)
         end if
 
         if ((.not. allocated(ctx%state%ssp_active_w)) .or. &
             (size(ctx%state%ssp_active_w) < nstars)) then
-            if (allocated(ctx%state%ssp_active_w)) deallocate(ctx%state%ssp_active_w)
+            if (allocated(ctx%state%ssp_active_w)) then
+                !$acc exit data delete(ctx%state%ssp_active_w)
+                deallocate(ctx%state%ssp_active_w)
+            end if
             allocate(ctx%state%ssp_active_w(nstars))
+            !$acc enter data create(ctx%state%ssp_active_w)
+            !$acc enter data attach(ctx%state%ssp_active_w)
         end if
 
         ! Build compact list of active stars once.
@@ -631,8 +646,7 @@ contains
             return
         end if
 
-        !$acc data create(ctx%state%ssp_temp_grid(:,1:n_active)) copyout(spec_out) &
-        !$acc& copyin(ctx%state%ssp_active_idx(1:n_active), ctx%state%ssp_active_w(1:n_active))
+        !$acc update device(ctx%state%ssp_active_idx(1:n_active), ctx%state%ssp_active_w(1:n_active))
 
         ! Initialize output
         !$acc kernels present(spec_out)
@@ -675,8 +689,6 @@ contains
 
         ! Apply final numerical floor once per SSP accumulation.
         spec_out = max(spec_out, SAFE_FLOOR)
-
-        !$acc end data
 
     end subroutine accumulate_spectrum
 

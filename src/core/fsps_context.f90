@@ -767,6 +767,18 @@ contains
             !$acc enter data copyin(ctx%state%spec_old)
             !$acc enter data attach(ctx%state%spec_old)
         end if
+        if (allocated(ctx%state%ssp_temp_grid)) then
+            !$acc enter data copyin(ctx%state%ssp_temp_grid)
+            !$acc enter data attach(ctx%state%ssp_temp_grid)
+        end if
+        if (allocated(ctx%state%ssp_active_idx)) then
+            !$acc enter data copyin(ctx%state%ssp_active_idx)
+            !$acc enter data attach(ctx%state%ssp_active_idx)
+        end if
+        if (allocated(ctx%state%ssp_active_w)) then
+            !$acc enter data copyin(ctx%state%ssp_active_w)
+            !$acc enter data attach(ctx%state%ssp_active_w)
+        end if
         if (associated(ctx%state%bpass_spec_ssp)) then
             !$acc enter data copyin(ctx%state%bpass_spec_ssp)
             !$acc enter data attach(ctx%state%bpass_spec_ssp)
@@ -884,6 +896,15 @@ contains
             end if
             if (allocated(s%spec_old)) then
                 !$acc exit data delete(s%spec_old)
+            end if
+            if (allocated(s%ssp_temp_grid)) then
+                !$acc exit data delete(s%ssp_temp_grid)
+            end if
+            if (allocated(s%ssp_active_idx)) then
+                !$acc exit data delete(s%ssp_active_idx)
+            end if
+            if (allocated(s%ssp_active_w)) then
+                !$acc exit data delete(s%ssp_active_w)
             end if
             if (allocated(s%spec_young)) then
                 !$acc exit data delete(s%spec_young)
