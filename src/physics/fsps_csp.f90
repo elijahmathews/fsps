@@ -535,18 +535,14 @@ contains
 
         ! Compute Magnitudes
         if (pset%compute_mags == 1) then
-            !$acc enter data create(result%mags)
             call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
-            !$acc exit data copyout(result%mags)
         else
             result%mags = -99.0_wp
         end if
         
         ! Compute Spectral Indices
         if (pset%compute_indices == 1) then
-            !$acc enter data create(result%indx)
             call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
-            !$acc exit data copyout(result%indx)
         else
             result%indx = -99.0_wp
         end if

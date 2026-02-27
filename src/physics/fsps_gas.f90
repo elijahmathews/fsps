@@ -142,6 +142,7 @@ contains
                     end if
                 end do
             end do
+            !$acc update device(neb_cont_grid_reduced)
         end if
 
         if (calc_lines) then
@@ -159,6 +160,7 @@ contains
                     end if
                 end do
             end do
+            !$acc update device(neb_line_grid_reduced)
         end if
 
         ! 3. Main Time Loop

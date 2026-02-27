@@ -55,8 +55,7 @@ contains
         integer :: i, j, n_spec, n_bands
         integer, allocatable :: work_flags(:)
         
-        ! Scratch arrays allocated on host to avoid large static/stack storage.
-        ! They are explicitly mirrored on the device for OpenACC kernels.
+        ! Scratch arrays allocated on host.
         real(WP), allocatable :: obs_frame_spec(:)
         real(WP), allocatable :: flux_over_lambda(:)
         
@@ -99,13 +98,10 @@ contains
             work_flags = 1 
         end if
         
-        !$acc data pcopyin(ctx, spec, work_flags) pcopy(mags) create(obs_frame_spec, flux_over_lambda)
         ! 3. Prepare Spectrum (Redshift & Distance Modulus)
-        ! Scratch arrays are host-allocated and explicitly created on device.
         call prepare_observed_spectrum(ctx, zred, spec, obs_frame_spec, dist_mod_term, n_spec)
 
         ! 4. Pre-calculate terms for Integration
-        !$acc parallel loop vector present(ctx, obs_frame_spec, flux_over_lambda)
         do i = 1, n_spec
             if (ctx%state%spec_lambda(i) > tiny(0.0_wp)) then
                 flux_over_lambda(i) = obs_frame_spec(i) / ctx%state%spec_lambda(i)
@@ -115,13 +111,11 @@ contains
         end do
 
         ! 5. Filter Integration Loop
-        !$acc parallel loop gang present(ctx, mags, work_flags, flux_over_lambda) vector_length(128)
         do i = 1, n_bands
             if (work_flags(i) == 0) cycle
 
             integrated_flux = 0.0_wp
 
-            !$acc loop vector reduction(+:integrated_flux)
             do j = 1, n_spec - 1
                 x1 = ctx%state%spec_lambda(j)
                 x2 = ctx%state%spec_lambda(j + 1)
@@ -145,7 +139,6 @@ contains
 
         ! 6. Vega System Correction
         if (do_vega .and. .not. do_light_ages) then
-            !$acc parallel loop present(ctx, mags)
             do i = 2, n_bands
                 if (mags(IDX_V_BAND) == mags(IDX_V_BAND)) then
                     mags(i) = mags(i) - ctx%state%magvega(i) + ctx%state%magvega(IDX_V_BAND)
@@ -154,7 +147,6 @@ contains
                 end if
             end do
         end if
-        !$acc end data
 
         ! Cleanup
         deallocate(work_flags)
@@ -187,8 +179,6 @@ contains
             ! --- High Redshift Case ---
             z_factor = 1.0_wp + z
             
-            ! Run in parallel
-            !$acc parallel loop present(ctx, spec_rest, spec_obs) private(idx, target_lam_rest)
             do k = 1, n
                 ! The rest-frame wavelength corresponding to this observed grid point
                 target_lam_rest = ctx%state%spec_lambda(k) / z_factor
@@ -223,7 +213,6 @@ contains
 
         else
             ! --- Zero Redshift Case ---
-            !$acc parallel loop present(spec_rest, spec_obs)
             do k = 1, n
                 spec_obs(k) = spec_rest(k)
             end do
