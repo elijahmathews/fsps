@@ -89,6 +89,8 @@ contains
 
         nspec = size(sspi, 1)
 
+        !$acc data pcopyin(sspi) pcopy(sspo)
+
         ! 0. Initialization & Validation
         ! ------------------------------
         !$acc kernels present(sspo, sspi)
@@ -96,9 +98,7 @@ contains
         !$acc end kernels
         
         if (present(nebemline)) then
-            !$acc kernels present(nebemline)
             nebemline = 0.0_wp
-            !$acc end kernels
         end if
 
         ! Determine what needs calculating
@@ -212,8 +212,6 @@ contains
                 end do
                 
                 if (present(nebemline)) then
-                    !$acc parallel loop present(nebemline, current_step_lines_log) &
-                    !$acc               firstprivate(q_ionizing, t)
                     do k = 1, NEMLINE
                         nebemline(k,t) = (10.0_wp**current_step_lines_log(k)) * q_ionizing
                     end do
@@ -238,6 +236,8 @@ contains
             !$acc exit data delete(neb_line_grid_reduced)
             deallocate(neb_line_grid_reduced)
         end if
+
+        !$acc end data
 
     end subroutine apply_nebular_emission
 

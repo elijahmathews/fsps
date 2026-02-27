@@ -268,7 +268,9 @@ PROGRAM TEST_RUNNER
    ctx%add_neb_emission_val = 1
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (SSP)', ctx, pset)
+   !$acc data copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   !$acc end data
    IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (SSP)', ctx, new_mass_ssp, new_lbol_ssp)
    new_spec_ssp_cmp = new_spec_ssp_ctx
 
@@ -279,7 +281,9 @@ PROGRAM TEST_RUNNER
   pset%dust2 = 0.3
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (CSP)', ctx, pset)
+   !$acc data copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   !$acc end data
    IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
 
    new_mass_ssp2(:,1) = new_mass_ssp
@@ -288,7 +292,9 @@ PROGRAM TEST_RUNNER
     new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
 
    IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
+   !$acc data copy(new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2)
    CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
+   !$acc end data
    IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER compute_csp_scenario', new_results)
 
 

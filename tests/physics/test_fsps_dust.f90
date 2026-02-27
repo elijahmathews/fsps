@@ -364,6 +364,7 @@ contains
         wavelengths = ctx%state%spec_lambda
 
         ctx%dust_type_val = 0
+        !$acc update device(ctx%dust_type_val)
         settings%dust_index = 0.0_wp
 
         ! Test 1.1: Early exit when fagn=0
@@ -406,6 +407,7 @@ contains
 
         ! Test 1.5: Type 3 exception (no dust2 scaling)
         ctx%dust_type_val = 3
+        !$acc update device(ctx%dust_type_val)
         settings%dust2 = 50.0_wp
         spectrum = 0.0_wp
         !$acc data copyin(wavelengths) copy(spectrum)
@@ -416,6 +418,7 @@ contains
 
         ! Test 1.6: Luminosity normalization
         ctx%dust_type_val = 0
+        !$acc update device(ctx%dust_type_val)
         settings%dust2 = 0.0_wp
         settings%agn_tau = 10.0_wp
         settings%fagn = 0.1_wp
@@ -601,6 +604,7 @@ contains
         settings%dust2 = 0.0_wp
         settings%agn_tau = 10.0_wp
         ctx%dust_type_val = 0
+        !$acc update device(ctx%dust_type_val, ctx%state%agndust_spec)
 
         !$acc data copyin(wavelengths) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, log10(lbol_in), spectrum)
@@ -637,6 +641,7 @@ contains
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 0
         ctx%nebemlineinspec_val = 1
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1_index = 0.0_wp
@@ -701,6 +706,7 @@ contains
         neb_old = 0.0_wp
         neb_young(1) = 1.0_wp
         ctx%state%nebem_line_pos = 5500.0_wp
+        !$acc update device(ctx%state%nebem_line_pos)
         !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
@@ -733,6 +739,7 @@ contains
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 1
         ctx%nebemlineinspec_val = 1
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1_index = 0.0_wp
@@ -844,6 +851,7 @@ contains
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 0
         ctx%nebemlineinspec_val = 1
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1 = 0.0_wp

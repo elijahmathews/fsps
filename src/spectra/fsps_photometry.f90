@@ -198,6 +198,8 @@ contains
         real(WP) :: dm, z_factor, target_lam_rest
         integer :: k, idx
 
+        !$acc data pcopyin(spec_rest) pcopyout(spec_obs)
+
         if (abs(z) > SAFE_FLOOR) then
             ! --- High Redshift Case ---
             z_factor = 1.0_wp + z
@@ -244,6 +246,8 @@ contains
             end do
             dist_term = 0.0_wp
         end if
+
+        !$acc end data
         
     end subroutine prepare_observed_spectrum
 
