@@ -159,7 +159,7 @@ jobs:
             fflags: "-Minfo=accel"
             build_args: "-Daccel=multicore"
             stress_args: "-Denable_stress_testing=true -Daccel=multicore"
-            stress_env: "FSPS_STRESS_ITERS=5"
+            stress_env: "FSPS_STRESS_ITERS=20"
             image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
             install_cmd: |
               dnf update --assumeyes --refresh
