@@ -74,9 +74,7 @@ contains
         end if
         
         ! Initialize output
-        !$acc kernels present(mags)
         mags = get_quiet_nan()
-        !$acc end kernels
 
         ! Parse Context Flags
         do_vega = (ctx%compute_vega_mags_val == 1)
@@ -101,13 +99,9 @@ contains
             work_flags = 1 
         end if
         
-        ! Move flags to device
-        !$acc enter data copyin(work_flags)
-
+        !$acc data pcopyin(ctx, spec, work_flags) pcopy(mags) create(obs_frame_spec, flux_over_lambda)
         ! 3. Prepare Spectrum (Redshift & Distance Modulus)
         ! Scratch arrays are host-allocated and explicitly created on device.
-        !$acc enter data create(obs_frame_spec, flux_over_lambda)
-        
         call prepare_observed_spectrum(ctx, zred, spec, obs_frame_spec, dist_mod_term, n_spec)
 
         ! 4. Pre-calculate terms for Integration
@@ -121,18 +115,12 @@ contains
         end do
 
         ! 5. Filter Integration Loop
-        ! Parallel over bands (gang), sequential over wavelength (vector reduction inside helper?)
-        ! integrate_trapezoid_array needs to be 'routine seq'.
-        ! Note: integrate_trapezoid_array takes array slices. OpenACC handles this but it can be slow if not careful.
-        ! Better to inline the integration logic for performance here.
-        
         !$acc parallel loop gang present(ctx, mags, work_flags, flux_over_lambda) vector_length(128)
         do i = 1, n_bands
             if (work_flags(i) == 0) cycle
 
-            ! Manual integration to avoid array temporaries in integrate_trapezoid_array call
             integrated_flux = 0.0_wp
-            
+
             !$acc loop vector reduction(+:integrated_flux)
             do j = 1, n_spec - 1
                 x1 = ctx%state%spec_lambda(j)
@@ -157,8 +145,6 @@ contains
 
         ! 6. Vega System Correction
         if (do_vega .and. .not. do_light_ages) then
-            ! We perform this check on device? Or assume V-band computed?
-            ! Vectorized update on device
             !$acc parallel loop present(ctx, mags)
             do i = 2, n_bands
                 if (mags(IDX_V_BAND) == mags(IDX_V_BAND)) then
@@ -168,10 +154,9 @@ contains
                 end if
             end do
         end if
-        
+        !$acc end data
+
         ! Cleanup
-        !$acc exit data delete(work_flags)
-        !$acc exit data delete(obs_frame_spec, flux_over_lambda)
         deallocate(work_flags)
         deallocate(obs_frame_spec, flux_over_lambda)
 
@@ -197,8 +182,6 @@ contains
 
         real(WP) :: dm, z_factor, target_lam_rest
         integer :: k, idx
-
-        !$acc data pcopyin(spec_rest) pcopyout(spec_obs)
 
         if (abs(z) > SAFE_FLOOR) then
             ! --- High Redshift Case ---
@@ -247,8 +230,6 @@ contains
             dist_term = 0.0_wp
         end if
 
-        !$acc end data
-        
     end subroutine prepare_observed_spectrum
 
     !> @brief Helper to generate a Quiet NaN

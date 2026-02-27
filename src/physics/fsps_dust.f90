@@ -412,6 +412,7 @@ contains
             ! Get Dust Emission Template (Draine & Li 2007)
             ! ---------------------------------------------
             call interpolate_draine_li_dust_model(ctx, settings, dust_emission_shape)
+            !$acc update device(dust_emission_shape)
             
             ! Normalize template area
             emission_norm_factor = 0.0_wp
@@ -427,8 +428,10 @@ contains
             else
                 ! Calculate Self-Absorption & Final Emission
                 ! ------------------------------------------
+                !$acc update host(frequencies, transmission_diffuse, dust_emission_shape)
                 call calculate_dust_self_absorption(frequencies, dust_emission_shape, transmission_diffuse, &
                                                     lum_absorbed_total, dust_emission_final)
+                !$acc update device(dust_emission_final)
 
                 ! Add to total spectrum
                 !$acc parallel loop present(spec_total_work, dust_emission_final)

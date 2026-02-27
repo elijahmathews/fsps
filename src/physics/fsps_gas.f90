@@ -211,6 +211,7 @@ contains
                     current_step_lines_log(k) = (1.0_wp - w_a) * neb_line_grid_reduced(k, idx_a) + &
                                                 (         w_a) * neb_line_grid_reduced(k, idx_a + 1)
                 end do
+                !$acc update host(current_step_lines_log)
                 
                 if (present(nebemline)) then
                     do k = 1, NEMLINE

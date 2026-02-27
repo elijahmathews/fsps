@@ -148,6 +148,7 @@ contains
         
         ! Copy input arrays to device
         !$acc enter data copyin(tspec_ssp, mass_ssp, lbol_ssp)
+        !$acc update device(tspec_ssp, mass_ssp, lbol_ssp)
 
         ! 2. PREPARE GRIDS
         allocate(local_ssp_grid(nspec, nt, nzin))
