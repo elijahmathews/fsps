@@ -270,9 +270,8 @@ PROGRAM TEST_RUNNER
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (SSP)', ctx, pset)
    !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
-   !$acc kernels present(ctx)
    ctx%add_neb_emission_val = 1
-   !$acc end kernels
+   !$acc update device(ctx%add_neb_emission_val)
    CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc end data
@@ -288,9 +287,8 @@ PROGRAM TEST_RUNNER
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (CSP)', ctx, pset)
    !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
-   !$acc kernels present(ctx)
    ctx%add_neb_emission_val = 1
-   !$acc end kernels
+   !$acc update device(ctx%add_neb_emission_val)
    CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc end data
@@ -304,9 +302,8 @@ PROGRAM TEST_RUNNER
    IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
    !$acc data copyin(pset, new_spec_ssp_ctx, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_results)
    !$acc update device(pset)
-   !$acc kernels present(ctx)
    ctx%add_neb_emission_val = 1
-   !$acc end kernels
+   !$acc update device(ctx%add_neb_emission_val)
    CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
    !$acc update self(new_spec_ssp_ctx, new_results)
    !$acc end data

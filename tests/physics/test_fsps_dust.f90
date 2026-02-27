@@ -366,9 +366,8 @@ contains
 
         ctx%dust_type_val = 0
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         settings%dust_index = 0.0_wp
 
         ! Test 1.1: Early exit when fagn=0
@@ -377,9 +376,8 @@ contains
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -393,9 +391,8 @@ contains
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -408,9 +405,8 @@ contains
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -424,9 +420,8 @@ contains
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -436,17 +431,15 @@ contains
         ! Test 1.5: Type 3 exception (no dust2 scaling)
         ctx%dust_type_val = 3
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         settings%dust2 = 50.0_wp
         spectrum = 0.0_wp
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -456,9 +449,8 @@ contains
         ! Test 1.6: Luminosity normalization
         ctx%dust_type_val = 0
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         settings%dust2 = 0.0_wp
         settings%agn_tau = 10.0_wp
         settings%fagn = 0.1_wp
@@ -466,9 +458,8 @@ contains
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 10.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -652,17 +643,15 @@ contains
         settings%agn_tau = 10.0_wp
         ctx%dust_type_val = 0
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%state%agndust_spec(:, :) = 1.0_wp / norm_template
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%state%agndust_spec(:, :))
 
         !$acc data copyin(wavelengths, spectrum, settings)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val)
         call apply_agn_dust_emission(ctx, settings, wavelengths, log10(lbol_in), spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -703,11 +692,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1_index = 0.0_wp
@@ -727,11 +715,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -748,11 +735,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -770,11 +756,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -792,11 +777,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -813,19 +797,17 @@ contains
         neb_young(1) = 1.0_wp
         ctx%state%nebem_line_pos = 5500.0_wp
         tmp_nebem_line_pos1 = ctx%state%nebem_line_pos(1)
-        !$acc serial present(ctx)
         ctx%state%nebem_line_pos(1) = tmp_nebem_line_pos1
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_line_pos(1))
         !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -862,11 +844,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1_index = 0.0_wp
@@ -888,11 +869,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -992,11 +972,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
         settings%dust1 = 0.0_wp
@@ -1018,11 +997,10 @@ contains
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
         tmp_nebemline = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%dust_type_val = tmp_dust_type
         ctx%add_dust_emission_val = tmp_add_dust
         ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc end serial
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, &
                              neb_young, neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)

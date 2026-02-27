@@ -345,19 +345,17 @@ contains
         ctx%state%nebem_line = 0.5_wp
         tmp_nebem_cont_val = ctx%state%nebem_cont(1,1,1,1)
         tmp_nebem_line_val = ctx%state%nebem_line(1,1,1,1)
-        !$acc serial present(ctx)
         ctx%state%nebem_cont = tmp_nebem_cont_val
         ctx%state%nebem_line = tmp_nebem_line_val
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_cont, ctx%state%nebem_line)
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
@@ -471,22 +469,20 @@ contains
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         ctx%state%nebem_line_pos(1) = 1500.0_wp
         tmp_line_pos1 = ctx%state%nebem_line_pos(1)
-        !$acc serial present(ctx)
         ctx%state%nebem_line = -30.0_wp
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         ctx%state%nebem_line_pos(1) = tmp_line_pos1
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line(1,:,:,:), ctx%state%nebem_line_pos(1))
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
         tmp_smooth_velocity = ctx%smooth_velocity_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
         ctx%smooth_velocity_val = tmp_smooth_velocity
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val, ctx%smooth_velocity_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
@@ -541,21 +537,19 @@ contains
         ctx%state%xnebem_cont = 0.0_wp
         tmp_nebem_cont_val = ctx%state%nebem_cont(1,1,1,1)
         tmp_xnebem_cont_val = ctx%state%xnebem_cont(1,1,1,1)
-        !$acc serial present(ctx)
         ctx%state%nebem_cont = tmp_nebem_cont_val
         ctx%state%xnebem_cont = tmp_xnebem_cont_val
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_cont, ctx%state%xnebem_cont)
 
         !$acc data copyin(sspi, pset) copy(sspo)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
         tmp_add_xrb = ctx%add_xrb_emission_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
         ctx%add_xrb_emission_val = tmp_add_xrb
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val, ctx%add_xrb_emission_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -612,18 +606,16 @@ contains
         ctx%nebemlineinspec_val = 0
         ctx%state%nebem_cont = 1.0_wp
         tmp_nebem_cont_val = ctx%state%nebem_cont(1,1,1,1)
-        !$acc serial present(ctx)
         ctx%state%nebem_cont = tmp_nebem_cont_val
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_cont)
 
         !$acc data copyin(sspi, pset) copy(sspo)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -662,17 +654,15 @@ contains
         ctx%nebemlineinspec_val = 0
         ctx%state%nebem_cont = 1.0_wp
         tmp_nebem_cont_val = ctx%state%nebem_cont(1,1,1,1)
-        !$acc serial present(ctx)
         ctx%state%nebem_cont = tmp_nebem_cont_val
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_cont)
         !$acc data copyin(sspi, pset) copy(sspo)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -683,18 +673,16 @@ contains
         ctx%nebemlineinspec_val = 0
         ctx%state%nebem_line = -30.0_wp
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
-        !$acc serial present(ctx)
         ctx%state%nebem_line = -30.0_wp
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
-        !$acc end serial
+        !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line(1,:,:,:))
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
-        !$acc serial present(ctx)
         ctx%add_neb_continuum_val = tmp_add_neb_cont
         ctx%nebemlineinspec_val = tmp_nebemlineinspec
-        !$acc end serial
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
