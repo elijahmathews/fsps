@@ -525,7 +525,7 @@ contains
         build_root = ''
         call get_environment_variable('MESON_BUILD_ROOT', build_root, env_len, env_status, .false.)
         if (env_status /= 0 .or. env_len == 0) then
-            build_root = '.'
+            build_root = './tmp/test_fsps_ssp'
         else
             build_root = build_root(1:env_len)
         end if

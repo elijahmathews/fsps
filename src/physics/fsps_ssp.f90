@@ -584,33 +584,31 @@ contains
         integer :: nspec, nstars, n_active, ia
         real(WP) :: linear_lbol, current_weight
         
-        ! Reusable temporary 2D grid for spectral generation.
-        ! Reallocation occurs only when required dimensions grow.
-        real(WP), allocatable, save :: temp_grid(:,:)
-        integer,  allocatable, save :: active_idx(:)
-        real(WP), allocatable, save :: active_w(:)
-        integer, save :: temp_nspec = 0, temp_nstars = 0
-
         nspec  = size(spec_out)
         nstars = buf%n_stars
         
         if (nstars == 0) return
 
-        ! Ensure workspace capacity.
-        if ((.not. allocated(temp_grid)) .or. temp_nspec < nspec .or. temp_nstars < nstars) then
-            if (allocated(temp_grid)) deallocate(temp_grid)
-            allocate(temp_grid(nspec, nstars))
-            temp_nspec  = nspec
-            temp_nstars = nstars
+        ! Grow context-owned workspace only when needed.
+        if ((.not. allocated(ctx%state%ssp_temp_grid)) .or. &
+            (ctx%state%ssp_temp_nspec < nspec) .or. &
+            (ctx%state%ssp_temp_nstars < nstars)) then
+            if (allocated(ctx%state%ssp_temp_grid)) deallocate(ctx%state%ssp_temp_grid)
+            allocate(ctx%state%ssp_temp_grid(nspec, nstars))
+            ctx%state%ssp_temp_nspec = nspec
+            ctx%state%ssp_temp_nstars = nstars
         end if
 
-        if ((.not. allocated(active_idx)) .or. size(active_idx) < nstars) then
-            if (allocated(active_idx)) deallocate(active_idx)
-            allocate(active_idx(nstars))
+        if ((.not. allocated(ctx%state%ssp_active_idx)) .or. &
+            (size(ctx%state%ssp_active_idx) < nstars)) then
+            if (allocated(ctx%state%ssp_active_idx)) deallocate(ctx%state%ssp_active_idx)
+            allocate(ctx%state%ssp_active_idx(nstars))
         end if
-        if ((.not. allocated(active_w)) .or. size(active_w) < nstars) then
-            if (allocated(active_w)) deallocate(active_w)
-            allocate(active_w(nstars))
+
+        if ((.not. allocated(ctx%state%ssp_active_w)) .or. &
+            (size(ctx%state%ssp_active_w) < nstars)) then
+            if (allocated(ctx%state%ssp_active_w)) deallocate(ctx%state%ssp_active_w)
+            allocate(ctx%state%ssp_active_w(nstars))
         end if
 
         ! Build compact list of active stars once.
@@ -624,8 +622,8 @@ contains
             end if
 
             n_active = n_active + 1
-            active_idx(n_active) = j
-            active_w(n_active) = current_weight
+            ctx%state%ssp_active_idx(n_active) = j
+            ctx%state%ssp_active_w(n_active) = current_weight
         end do
 
         if (n_active == 0) then
@@ -633,7 +631,8 @@ contains
             return
         end if
 
-        !$acc data create(temp_grid(:,1:n_active)) copyout(spec_out) copyin(active_idx(1:n_active), active_w(1:n_active))
+        !$acc data create(ctx%state%ssp_temp_grid(:,1:n_active)) copyout(spec_out) &
+        !$acc& copyin(ctx%state%ssp_active_idx(1:n_active), ctx%state%ssp_active_w(1:n_active))
 
         ! Initialize output
         !$acc kernels present(spec_out)
@@ -644,9 +643,9 @@ contains
         ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
         ! ----------------------------------------------------------------
         !$omp parallel do default(shared) private(j, linear_lbol)
-        !$acc parallel loop gang vector collapse(1) present(ctx, buf, temp_grid, active_idx)
+        !$acc parallel loop gang vector collapse(1) present(ctx, buf)
         do ia = 1, n_active
-            j = active_idx(ia)
+            j = ctx%state%ssp_active_idx(ia)
 
             ! Convert LogL -> Linear L
             linear_lbol = exp(buf%log_lum(j) * LN10)
@@ -663,7 +662,7 @@ contains
                 buf%phase(j), &
                 buf%co_ratio(j), &
                 buf%log_mdot(j), &
-                temp_grid(:, ia))
+                ctx%state%ssp_temp_grid(:, ia))
 
         end do
 
@@ -672,7 +671,7 @@ contains
         ! ----------------------------------------------------------------
         ! Use matrix-vector multiplication for contiguous column access and
         ! optimized reduction across active stars.
-        spec_out = matmul(temp_grid(:, 1:n_active), active_w(1:n_active))
+        spec_out = matmul(ctx%state%ssp_temp_grid(:, 1:n_active), ctx%state%ssp_active_w(1:n_active))
 
         ! Apply final numerical floor once per SSP accumulation.
         spec_out = max(spec_out, SAFE_FLOOR)

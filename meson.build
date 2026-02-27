@@ -1,10 +1,13 @@
 project('fsps', ['fortran', 'c'],
   version : '3.2.0',
+  license : 'MIT',
+  license_files : ['LICENSE.md'],
   default_options : [
     'buildtype=release', 
     'warning_level=0',
     'default_library=shared'
-  ]
+  ],
+  meson_version : '>=1.1',
 )
 
 # ===================================
@@ -193,6 +196,17 @@ test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencie
 executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
 executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep)
+
+if get_option('enable_stress_testing')
+    stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep)
+    stress_env = environment()
+    stress_env.set('FSPS_DATA_HOME', meson.project_source_root())
+    test('stress_test', stress_test_exe,
+        suite : 'stress',
+        env : stress_env,
+        timeout : 1200
+    )
+endif
 
 # 3a. Regression Tests (run through Meson test framework)
 regression_env = environment()

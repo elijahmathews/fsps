@@ -19,6 +19,7 @@ compile_commands.json
 
 # Ignore test outputs
 tmp/
+data/imf_test.dat
 
 # Ignore profiling outputs
 *.out

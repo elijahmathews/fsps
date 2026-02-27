@@ -26,6 +26,8 @@ jobs:
             # Enable coverage for GFortran builds on Linux only
             build_args: "-Db_coverage=true"
             coverage: true
+            stress_args: "-Denable_stress_testing=true -Db_sanitize=address,undefined"
+            stress_env: "FSPS_STRESS_ITERS=5"
             # gcovr only required for coverage reports
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build gcovr
@@ -38,6 +40,8 @@ jobs:
             # Use Meson-managed OpenMP detection/flags
             build_args: "-Denable_openmp=true"
             coverage: false
+            stress_args: "-Denable_openmp=true -Denable_stress_testing=true -Db_sanitize=thread"
+            stress_env: "FSPS_STRESS_ITERS=5 TSAN_OPTIONS='suppressions=${{ github.workspace }}/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1'"
             install_cmd: |
               sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
           
@@ -123,6 +127,19 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./build/meson-logs/coverage.xml
         fail_ci_if_error: true
+    
+    - name: Configure Stress Build
+      # Run if previous tests failed, but only if this matrix entry has stress_args
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: meson setup build_stress ${{ matrix.stress_args }}
+
+    - name: Compile Stress Tests
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: meson compile -C build_stress
+
+    - name: Run Stress Tests
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: ${{ matrix.stress_env }} meson test -v -C build_stress --suite stress --print-errorlogs
 
   # ------------------------------------------------------------------
   # Containerized Environments
@@ -141,6 +158,8 @@ jobs:
             # configured through Meson options.
             fflags: "-Minfo=accel"
             build_args: "-Daccel=multicore"
+            stress_args: "-Denable_stress_testing=true -Daccel=multicore"
+            stress_env: "FSPS_STRESS_ITERS=5"
             image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
             install_cmd: |
               dnf update --assumeyes --refresh
@@ -187,6 +206,18 @@ jobs:
 
     - name: Run Regression Tests
       run: meson test -v -C build --suite regression --print-errorlogs
+    
+    - name: Configure Stress Build
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: meson setup build_stress ${{ matrix.stress_args }}
+
+    - name: Compile Stress Tests
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: meson compile -C build_stress
+
+    - name: Run Stress Tests
+      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
+      run: ${{ matrix.stress_env }} meson test -v -C build_stress --suite stress --print-errorlogs
 
   # ------------------------------------------------------------------
   # Packaging Tests

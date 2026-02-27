@@ -44,7 +44,7 @@ contains
 
     !> @brief Create a new FSPS context with default parameters.
     subroutine fsps_create(ctx)
-        type(fsps_context_t), intent(out) :: ctx
+        type(fsps_context_t), intent(inout) :: ctx
 
         call fsps_context_create(ctx)
     end subroutine fsps_create

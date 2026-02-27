@@ -15,6 +15,9 @@
 *.spectra.bin binary
 *.bin         binary
 
+# ThreadSanitizer suppression files (ensure LF line endings for Linux CI)
+*.supp text eol=lf linguist-detectable=false
+
 # Explicitly mark various other files
 meson.options linguist-language=Meson linguist-detectable=true
 packaging/fsps.spec linguist-language=Specfile linguist-detectable=true

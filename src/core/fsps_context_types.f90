@@ -134,6 +134,11 @@ module fsps_context_types
         real(WP), allocatable :: weight_ssp(:, :)
         real(WP), allocatable :: spec_young(:)
         real(WP), allocatable :: spec_old(:)
+        real(WP), allocatable :: ssp_temp_grid(:, :)
+        integer, allocatable :: ssp_active_idx(:)
+        real(WP), allocatable :: ssp_active_w(:)
+        integer :: ssp_temp_nspec = 0
+        integer :: ssp_temp_nstars = 0
         real(WP), pointer :: bpass_spec_ssp(:, :, :) => null()
         real(WP), pointer :: bpass_mass_ssp(:, :) => null()
         real(WP), pointer :: lam_xrb(:) => null()
@@ -251,6 +256,9 @@ contains
         if (allocated(state%weight_ssp)) deallocate (state%weight_ssp)
         if (allocated(state%spec_young)) deallocate (state%spec_young)
         if (allocated(state%spec_old)) deallocate (state%spec_old)
+        if (allocated(state%ssp_temp_grid)) deallocate (state%ssp_temp_grid)
+        if (allocated(state%ssp_active_idx)) deallocate (state%ssp_active_idx)
+        if (allocated(state%ssp_active_w)) deallocate (state%ssp_active_w)
         if (associated(state%bpass_spec_ssp)) nullify (state%bpass_spec_ssp)
         if (associated(state%bpass_mass_ssp)) nullify (state%bpass_mass_ssp)
         if (associated(state%lam_xrb)) nullify (state%lam_xrb)
@@ -277,6 +285,8 @@ contains
         state%nspec_xrb = 0
         state%nt_xrb = 0
         state%nz_xrb = 0
+        state%ssp_temp_nspec = 0
+        state%ssp_temp_nstars = 0
         state%check_sps_setup = 0
         state%tuniv = 0.0
         state%whlam5000 = 0

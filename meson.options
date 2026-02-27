@@ -6,3 +6,6 @@ option('accel', type: 'combo', choices: ['none', 'multicore', 'gpu'], value: 'no
 
 option('cpu_baseline', type: 'combo', choices: ['generic', 'native', 'x86-64-v3'], value: 'generic',
   description: 'CPU instruction set optimization level')
+
+option('enable_stress_testing', type: 'boolean', value: false,
+  description: 'Build and register stress-test executables for CI and profiling')
