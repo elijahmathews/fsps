@@ -131,6 +131,8 @@ contains
         type(isochrone_buffer_t) :: buf
         integer :: n_times, i_time, out_idx
         real(WP) :: time_log_yr
+        real(WP), pointer :: buf_initial_mass(:), buf_current_mass(:), buf_log_lum(:), buf_log_teff(:)
+        real(WP), pointer :: buf_log_g(:), buf_phase(:), buf_co_ratio(:), buf_log_mdot(:), buf_weights(:)
 
         ! --------------------------------------------------------------------
         ! 1. INITIALIZATION
@@ -197,6 +199,16 @@ contains
         !$acc enter data attach(buf%log_mdot)
         !$acc enter data attach(buf%weights)
 
+        buf_initial_mass => buf%initial_mass
+        buf_current_mass => buf%current_mass
+        buf_log_lum => buf%log_lum
+        buf_log_teff => buf%log_teff
+        buf_log_g => buf%log_g
+        buf_phase => buf%phase
+        buf_co_ratio => buf%co_ratio
+        buf_log_mdot => buf%log_mdot
+        buf_weights => buf%weights
+
         ! --------------------------------------------------------------------
         ! 4. EVOLUTION LOOP
         ! --------------------------------------------------------------------
@@ -223,10 +235,19 @@ contains
             !    IMF, Horizontal Branch, Blue Stragglers, Giant Branch modifications
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
+            buf_initial_mass => buf%initial_mass
+            buf_current_mass => buf%current_mass
+            buf_log_lum => buf%log_lum
+            buf_log_teff => buf%log_teff
+            buf_log_g => buf%log_g
+            buf_phase => buf%phase
+            buf_co_ratio => buf%co_ratio
+            buf_log_mdot => buf%log_mdot
+            buf_weights => buf%weights
+
             ! Sync buffer to device for integration and spectral accumulation
-            !$acc update device(buf%n_stars)
-            !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
-            !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+            !$acc update device(buf_initial_mass, buf_current_mass, buf_log_lum, buf_log_teff)
+            !$acc update device(buf_log_g, buf_phase, buf_co_ratio, buf_log_mdot, buf_weights)
 
             ! C. COMPUTE INTEGRATED PROPERTIES
             !    Mass and Bolometric Luminosity
@@ -583,6 +604,8 @@ contains
         integer :: j, i_spec
         integer :: nspec, nstars, n_active, ia
         real(WP) :: linear_lbol, current_weight
+        integer, allocatable :: active_idx(:)
+        real(WP), allocatable :: active_w(:)
         
         nspec  = size(spec_out)
         nstars = buf%n_stars
@@ -604,27 +627,8 @@ contains
             ctx%state%ssp_temp_nstars = nstars
         end if
 
-        if ((.not. allocated(ctx%state%ssp_active_idx)) .or. &
-            (size(ctx%state%ssp_active_idx) < nstars)) then
-            if (allocated(ctx%state%ssp_active_idx)) then
-                !$acc exit data delete(ctx%state%ssp_active_idx)
-                deallocate(ctx%state%ssp_active_idx)
-            end if
-            allocate(ctx%state%ssp_active_idx(nstars))
-            !$acc enter data create(ctx%state%ssp_active_idx)
-            !$acc enter data attach(ctx%state%ssp_active_idx)
-        end if
-
-        if ((.not. allocated(ctx%state%ssp_active_w)) .or. &
-            (size(ctx%state%ssp_active_w) < nstars)) then
-            if (allocated(ctx%state%ssp_active_w)) then
-                !$acc exit data delete(ctx%state%ssp_active_w)
-                deallocate(ctx%state%ssp_active_w)
-            end if
-            allocate(ctx%state%ssp_active_w(nstars))
-            !$acc enter data create(ctx%state%ssp_active_w)
-            !$acc enter data attach(ctx%state%ssp_active_w)
-        end if
+        allocate(active_idx(nstars), active_w(nstars))
+        !$acc data create(active_idx, active_w)
 
         ! Build compact list of active stars once.
         n_active = 0
@@ -637,61 +641,63 @@ contains
             end if
 
             n_active = n_active + 1
-            ctx%state%ssp_active_idx(n_active) = j
-            ctx%state%ssp_active_w(n_active) = current_weight
+            active_idx(n_active) = j
+            active_w(n_active) = current_weight
         end do
 
         if (n_active == 0) then
             spec_out = 0.0_wp
-            return
+        else
+            !$acc update device(active_idx(1:n_active), active_w(1:n_active))
+
+            ! Initialize output
+            !$acc kernels present(spec_out)
+            spec_out = 0.0_wp
+            !$acc end kernels
+
+            ! ----------------------------------------------------------------
+            ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
+            ! ----------------------------------------------------------------
+            !$omp parallel do default(shared) private(j, linear_lbol)
+            !$acc parallel loop gang vector collapse(1) present(ctx, buf)
+            do ia = 1, n_active
+                j = active_idx(ia)
+
+                ! Convert LogL -> Linear L
+                linear_lbol = exp(buf%log_lum(j) * LN10)
+
+                ! Generate Spectrum into temp_grid column
+                ! get_stellar_spectrum must be '!$acc routine seq'
+                call get_stellar_spectrum( &
+                    ctx, &
+                    pset, &
+                    buf%current_mass(j), &
+                    buf%log_teff(j), &
+                    linear_lbol, &
+                    buf%log_g(j), &
+                    buf%phase(j), &
+                    buf%co_ratio(j), &
+                    buf%log_mdot(j), &
+                    ctx%state%ssp_temp_grid(:, ia))
+
+            end do
+
+            ! ----------------------------------------------------------------
+            ! PHASE 2: REDUCTION
+            ! ----------------------------------------------------------------
+            !$acc parallel loop gang vector private(ia) present(ctx, spec_out)
+            do i_spec = 1, nspec
+                spec_out(i_spec) = 0.0_wp
+                do ia = 1, n_active
+                    spec_out(i_spec) = spec_out(i_spec) + &
+                                       ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia)
+                end do
+                spec_out(i_spec) = max(spec_out(i_spec), SAFE_FLOOR)
+            end do
         end if
 
-        !$acc update device(ctx%state%ssp_active_idx(1:n_active), ctx%state%ssp_active_w(1:n_active))
-
-        ! Initialize output
-        !$acc kernels present(spec_out)
-        spec_out = 0.0_wp
-        !$acc end kernels
-
-        ! ----------------------------------------------------------------
-        ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
-        ! ----------------------------------------------------------------
-        !$omp parallel do default(shared) private(j, linear_lbol)
-        !$acc parallel loop gang vector collapse(1) present(ctx, buf)
-        do ia = 1, n_active
-            j = ctx%state%ssp_active_idx(ia)
-
-            ! Convert LogL -> Linear L
-            linear_lbol = exp(buf%log_lum(j) * LN10)
-
-            ! Generate Spectrum into temp_grid column
-            ! get_stellar_spectrum must be '!$acc routine seq'
-            call get_stellar_spectrum( &
-                ctx, &
-                pset, &
-                buf%current_mass(j), &
-                buf%log_teff(j), &
-                linear_lbol, &
-                buf%log_g(j), &
-                buf%phase(j), &
-                buf%co_ratio(j), &
-                buf%log_mdot(j), &
-                ctx%state%ssp_temp_grid(:, ia))
-
-        end do
-
-        ! ----------------------------------------------------------------
-        ! PHASE 2: REDUCTION
-        ! ----------------------------------------------------------------
-        !$acc parallel loop gang vector private(ia) present(ctx, spec_out)
-        do i_spec = 1, nspec
-            spec_out(i_spec) = 0.0_wp
-            do ia = 1, n_active
-                spec_out(i_spec) = spec_out(i_spec) + &
-                                   ctx%state%ssp_temp_grid(i_spec, ia) * ctx%state%ssp_active_w(ia)
-            end do
-            spec_out(i_spec) = max(spec_out(i_spec), SAFE_FLOOR)
-        end do
+        !$acc end data
+        deallocate(active_idx, active_w)
 
     end subroutine accumulate_spectrum
 
