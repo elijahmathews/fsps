@@ -710,7 +710,7 @@ contains
         spec_old = 100.0_wp
         settings%dust1 = 5.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
@@ -730,7 +730,7 @@ contains
         spec_old = 0.0_wp
         settings%dust1 = 1.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         tmp_add_dust = ctx%add_dust_emission_val
