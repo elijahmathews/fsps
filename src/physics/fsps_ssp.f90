@@ -202,7 +202,7 @@ contains
         ! --------------------------------------------------------------------
         n_times = ctx%state%nt
 
-        !$acc data present(ctx, buf)
+        !$acc data present(ctx, buf) copy(spec_grid)
         do i_time = 1, n_times
             
             ! Optimization: Skip ages not requested by the user
@@ -580,7 +580,7 @@ contains
         real(WP), intent(inout), contiguous :: spec_out(:)
 
         ! Local variables
-        integer :: j
+        integer :: j, i_spec
         integer :: nspec, nstars, n_active, ia
         real(WP) :: linear_lbol, current_weight
         
@@ -683,12 +683,15 @@ contains
         ! ----------------------------------------------------------------
         ! PHASE 2: REDUCTION
         ! ----------------------------------------------------------------
-        ! Use matrix-vector multiplication for contiguous column access and
-        ! optimized reduction across active stars.
-        spec_out = matmul(ctx%state%ssp_temp_grid(:, 1:n_active), ctx%state%ssp_active_w(1:n_active))
-
-        ! Apply final numerical floor once per SSP accumulation.
-        spec_out = max(spec_out, SAFE_FLOOR)
+        !$acc parallel loop gang vector private(ia) present(ctx, spec_out)
+        do i_spec = 1, nspec
+            spec_out(i_spec) = 0.0_wp
+            do ia = 1, n_active
+                spec_out(i_spec) = spec_out(i_spec) + &
+                                   ctx%state%ssp_temp_grid(i_spec, ia) * ctx%state%ssp_active_w(ia)
+            end do
+            spec_out(i_spec) = max(spec_out(i_spec), SAFE_FLOOR)
+        end do
 
     end subroutine accumulate_spectrum
 
