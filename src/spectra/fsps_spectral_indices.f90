@@ -83,6 +83,8 @@ contains
         ! Local copies for speed/readability
         n_idx = ctx%state%nindx
 
+        !$acc data pcopyin(lambda, spec) pcopy(indices)
+
         ! Initialize with sentinel
         !$acc kernels present(indices)
         indices = IND_UNDEFINED
@@ -177,6 +179,8 @@ contains
             end if
 
         end do
+
+        !$acc end data
 
     end subroutine compute_spectral_indices
 

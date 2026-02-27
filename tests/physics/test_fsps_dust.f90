@@ -370,7 +370,7 @@ contains
         ! Test 1.1: Early exit when fagn=0
         settings%fagn = 0.0_wp
         spectrum = 100.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc end data
         call assert_true(all(abs(spectrum - 100.0_wp) <= EPS), "AGN early exit (fagn=0)", total_tests, total_failures)
@@ -380,7 +380,7 @@ contains
         settings%dust2 = 0.0_wp
         settings%agn_tau = 20.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc end data
         expected = 2.0_wp
@@ -389,7 +389,7 @@ contains
         ! Test 1.3: Torus interpolation linear
         settings%agn_tau = 15.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc end data
         expected = 1.5_wp
@@ -399,7 +399,7 @@ contains
         settings%agn_tau = 10.0_wp
         settings%dust2 = 1.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc end data
         expected = exp(-1.0_wp)
@@ -410,7 +410,7 @@ contains
         !$acc update device(ctx%dust_type_val)
         settings%dust2 = 50.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc end data
         expected = exp(-1.0_wp)
@@ -423,7 +423,7 @@ contains
         settings%agn_tau = 10.0_wp
         settings%fagn = 0.1_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 10.0_wp, spectrum)
         !$acc end data
         expected = 1.0e9_wp
@@ -606,7 +606,7 @@ contains
         ctx%dust_type_val = 0
         !$acc update device(ctx%dust_type_val, ctx%state%agndust_spec)
 
-        !$acc data copyin(wavelengths) copy(spectrum)
+        !$acc data copyin(wavelengths, settings) copy(spectrum)
         call apply_agn_dust_emission(ctx, settings, wavelengths, log10(lbol_in), spectrum)
         !$acc end data
         lbol_out = integrate_trapezoid_array(freqs, spectrum)
@@ -656,7 +656,7 @@ contains
         spec_old = 100.0_wp
         settings%dust1 = 5.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc end data

@@ -292,7 +292,7 @@ PROGRAM TEST_RUNNER
     new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
 
    IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
-   !$acc data copy(new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2)
+   !$acc data copy(new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
    CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
    !$acc end data
    IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER compute_csp_scenario', new_results)
