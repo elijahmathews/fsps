@@ -606,7 +606,7 @@ contains
         end if
 
         allocate(active_idx(nstars), active_w(nstars))
-        !$acc data create(active_idx, active_w)
+        !$acc data create(active_idx, active_w) pcopy(spec_out)
 
         ! Build compact list of active stars once.
         n_active = 0
@@ -636,7 +636,6 @@ contains
             ! ----------------------------------------------------------------
             ! PHASE 1: PARALLEL GENERATION (Gang over Stars)
             ! ----------------------------------------------------------------
-            !$omp parallel do default(shared) private(j, linear_lbol)
             !$acc parallel loop gang vector collapse(1) present(ctx, buf)
             do ia = 1, n_active
                 j = active_idx(ia)

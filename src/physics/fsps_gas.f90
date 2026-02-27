@@ -113,6 +113,7 @@ contains
         ! compute_line_gaussians is likely expensive.
         if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
             call compute_line_gaussians(ctx, pset)
+            !$acc update device(ctx%state%gaussnebarr)
         end if
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
