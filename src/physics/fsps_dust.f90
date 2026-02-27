@@ -246,6 +246,7 @@ contains
         ! For resident device, explicit data clauses are safer.
         real(WP), dimension(size(spec_young)) :: transmission_diffuse
         real(WP), dimension(size(spec_young)) :: frequencies
+        real(WP), dimension(size(spec_young)) :: spec_total_work
         
         real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
         real(WP), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
@@ -257,9 +258,6 @@ contains
         real(WP) :: frac_obrun, one_minus_obrun, frac_nodust, one_minus_nodust
         real(WP) :: dust1, dust1_index, dust2, dust3
         logical  :: dust_type_is3
-
-        !$acc enter data create(transmission_diffuse, frequencies)
-        !$acc enter data create(dust_emission_shape, dust_emission_final)
 
         nspec = size(spec_young)
 
@@ -278,6 +276,8 @@ contains
         dust3           = settings%dust3
         dust_type_is3   = (ctx%dust_type_val == 3)
 
+        !$acc data create(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
+
         ! 1. Calculate Attenuation Curves & Transmissivities
         ! --------------------------------------------------
         ! We parallelize the array operations. compute_attenuation_curve needs to be !acc routine seq/vector.
@@ -286,7 +286,7 @@ contains
         ! B. Birth Clouds (affects young stars only)
         ! 2. Apply Attenuation to Stellar Spectra
         
-        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_out, transmission_diffuse)
+        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_work, transmission_diffuse)
         do i = 1, nspec
             ! A. Diffuse Curve (Inline call or routine seq)
             curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
@@ -317,9 +317,9 @@ contains
 
             ! Final diffuse screen
             if (one_minus_nodust <= SAFE_FLOOR) then
-                spec_total_out(i) = spec_sum
+                spec_total_work(i) = spec_sum
             else
-                spec_total_out(i) = spec_sum * (transmission_diffuse(i) * one_minus_nodust + frac_nodust)
+                spec_total_work(i) = spec_sum * (transmission_diffuse(i) * one_minus_nodust + frac_nodust)
             end if
         end do
 
@@ -393,10 +393,10 @@ contains
 
             ! Attenuated (Post-Dust)
             lum_bol_attenuated = 0.0_wp
-            !$acc parallel loop reduction(+:lum_bol_attenuated) present(frequencies, spec_total_out)
+            !$acc parallel loop reduction(+:lum_bol_attenuated) present(frequencies, spec_total_work)
             do i = 1, nspec-1
-                y1 = spec_total_out(i)
-                y2 = spec_total_out(i+1)
+                y1 = spec_total_work(i)
+                y2 = spec_total_work(i+1)
                 lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
             end do
             
@@ -424,34 +424,33 @@ contains
             
             if (emission_norm_factor <= SAFE_FLOOR) then
                 dust_mass = SAFE_FLOOR
-                ! Cleanup
-                !$acc exit data delete(transmission_diffuse, frequencies)
-                !$acc exit data delete(dust_emission_shape, dust_emission_final)
-                return
+            else
+                ! Calculate Self-Absorption & Final Emission
+                ! ------------------------------------------
+                call calculate_dust_self_absorption(frequencies, dust_emission_shape, transmission_diffuse, &
+                                                    lum_absorbed_total, dust_emission_final)
+
+                ! Add to total spectrum
+                !$acc parallel loop present(spec_total_work, dust_emission_final)
+                do i = 1, nspec
+                    spec_total_work(i) = spec_total_work(i) + dust_emission_final(i)
+                end do
+
+                ! Estimate Dust Mass (Factor from Draine & Li MW3.1 model)
+                ! 3.21e-3 converts Luminosity/Norm to Mass (Solar Units) roughly
+                dust_mass = 3.21e-3_wp / (4.0_wp * PI) * (lum_absorbed_total / emission_norm_factor)
             end if
-
-            ! Calculate Self-Absorption & Final Emission
-            ! ------------------------------------------
-            call calculate_dust_self_absorption(frequencies, dust_emission_shape, transmission_diffuse, &
-                                                lum_absorbed_total, dust_emission_final)
-
-            ! Add to total spectrum
-            !$acc parallel loop present(spec_total_out, dust_emission_final)
-            do i = 1, nspec
-                spec_total_out(i) = spec_total_out(i) + dust_emission_final(i)
-            end do
-
-            ! Estimate Dust Mass (Factor from Draine & Li MW3.1 model)
-            ! 3.21e-3 converts Luminosity/Norm to Mass (Solar Units) roughly
-            dust_mass = 3.21e-3_wp / (4.0_wp * PI) * (lum_absorbed_total / emission_norm_factor)
 
         else
             dust_mass = SAFE_FLOOR
         end if
         
-        ! Cleanup
-        !$acc exit data delete(transmission_diffuse, frequencies)
-        !$acc exit data delete(dust_emission_shape, dust_emission_final)
+        !$acc parallel loop present(spec_total_out, spec_total_work)
+        do i = 1, nspec
+            spec_total_out(i) = spec_total_work(i)
+        end do
+
+        !$acc end data
 
     end subroutine apply_dust_attenuation_and_emission
 

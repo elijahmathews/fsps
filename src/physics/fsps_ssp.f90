@@ -131,8 +131,6 @@ contains
         type(isochrone_buffer_t) :: buf
         integer :: n_times, i_time, out_idx
         real(WP) :: time_log_yr
-        real(WP), pointer :: buf_initial_mass(:), buf_current_mass(:), buf_log_lum(:), buf_log_teff(:)
-        real(WP), pointer :: buf_log_g(:), buf_phase(:), buf_co_ratio(:), buf_log_mdot(:), buf_weights(:)
 
         ! --------------------------------------------------------------------
         ! 1. INITIALIZATION
@@ -199,16 +197,6 @@ contains
         !$acc enter data attach(buf%log_mdot)
         !$acc enter data attach(buf%weights)
 
-        buf_initial_mass => buf%initial_mass
-        buf_current_mass => buf%current_mass
-        buf_log_lum => buf%log_lum
-        buf_log_teff => buf%log_teff
-        buf_log_g => buf%log_g
-        buf_phase => buf%phase
-        buf_co_ratio => buf%co_ratio
-        buf_log_mdot => buf%log_mdot
-        buf_weights => buf%weights
-
         ! --------------------------------------------------------------------
         ! 4. EVOLUTION LOOP
         ! --------------------------------------------------------------------
@@ -235,19 +223,9 @@ contains
             !    IMF, Horizontal Branch, Blue Stragglers, Giant Branch modifications
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
-            buf_initial_mass => buf%initial_mass
-            buf_current_mass => buf%current_mass
-            buf_log_lum => buf%log_lum
-            buf_log_teff => buf%log_teff
-            buf_log_g => buf%log_g
-            buf_phase => buf%phase
-            buf_co_ratio => buf%co_ratio
-            buf_log_mdot => buf%log_mdot
-            buf_weights => buf%weights
-
             ! Sync buffer to device for integration and spectral accumulation
-            !$acc update device(buf_initial_mass, buf_current_mass, buf_log_lum, buf_log_teff)
-            !$acc update device(buf_log_g, buf_phase, buf_co_ratio, buf_log_mdot, buf_weights)
+            !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+            !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
 
             ! C. COMPUTE INTEGRATED PROPERTIES
             !    Mass and Bolometric Luminosity
@@ -648,7 +626,7 @@ contains
         if (n_active == 0) then
             spec_out = 0.0_wp
         else
-            !$acc update device(active_idx(1:n_active), active_w(1:n_active))
+            !$acc update device(active_idx, active_w)
 
             ! Initialize output
             !$acc kernels present(spec_out)

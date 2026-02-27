@@ -300,12 +300,18 @@ PROGRAM TEST_RUNNER
     new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
 
    IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
-   !$acc data copyin(pset, new_spec_ssp_ctx, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_results)
+   !$acc data copyin(pset, new_spec_ssp_ctx, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) create(new_results)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
    !$acc update device(ctx%add_neb_emission_val)
    CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
-   !$acc update self(new_spec_ssp_ctx, new_results)
+   !$acc update self(new_spec_ssp_ctx)
+   do i = 1, size(new_results)
+      !$acc update self(new_results(i)%lbol_csp, new_results(i)%mass_csp, new_results(i)%sfr)
+      !$acc update self(new_results(i)%mdust, new_results(i)%mformed)
+      !$acc update self(new_results(i)%mags, new_results(i)%spec)
+      !$acc update self(new_results(i)%indx, new_results(i)%emlines)
+   end do
    !$acc end data
    IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER compute_csp_scenario', new_results)
 
