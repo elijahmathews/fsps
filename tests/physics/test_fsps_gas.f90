@@ -344,7 +344,8 @@ contains
         !$acc update device(ctx%state%nebem_cont, ctx%state%nebem_line)
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
@@ -458,7 +459,8 @@ contains
         !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line_pos)
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val, ctx%smooth_velocity_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
@@ -512,7 +514,8 @@ contains
         !$acc update device(ctx%state%nebem_cont, ctx%state%xnebem_cont)
 
         !$acc data copyin(sspi, pset) copy(sspo)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val, ctx%add_xrb_emission_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -569,7 +572,8 @@ contains
         !$acc update device(ctx%state%nebem_cont)
 
         !$acc data copyin(sspi, pset) copy(sspo)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -607,7 +611,8 @@ contains
         ctx%state%nebem_cont = 1.0_wp
         !$acc update device(ctx%state%nebem_cont)
         !$acc data copyin(sspi, pset) copy(sspo)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo)
         !$acc update self(sspo)
         !$acc end data
@@ -620,7 +625,8 @@ contains
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         !$acc update device(ctx%state%nebem_line)
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
-        !$acc update device(ctx, pset)
+        !$acc update device(pset)
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
         call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
         !$acc update self(sspo, nebemline)
         !$acc end data
