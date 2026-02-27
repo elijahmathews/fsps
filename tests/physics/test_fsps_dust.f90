@@ -206,7 +206,7 @@ contains
         deallocate(ctx)
 
     end subroutine test_ccm89
-
+    ! ------------------------------------------------------------------------
     ! ------------------------------------------------------------------------
     ! TEST SUITE: Calzetti et al. (Type 2)
     ! ------------------------------------------------------------------------
@@ -370,8 +370,8 @@ contains
         ! Test 1.1: Early exit when fagn=0
         settings%fagn = 0.0_wp
         spectrum = 100.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -382,8 +382,8 @@ contains
         settings%dust2 = 0.0_wp
         settings%agn_tau = 20.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -393,8 +393,8 @@ contains
         ! Test 1.3: Torus interpolation linear
         settings%agn_tau = 15.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -405,8 +405,8 @@ contains
         settings%agn_tau = 10.0_wp
         settings%dust2 = 1.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -418,8 +418,8 @@ contains
         !$acc update device(ctx%dust_type_val)
         settings%dust2 = 50.0_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -433,8 +433,8 @@ contains
         settings%agn_tau = 10.0_wp
         settings%fagn = 0.1_wp
         spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, 10.0_wp, spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -618,8 +618,8 @@ contains
         ctx%dust_type_val = 0
         !$acc update device(ctx%dust_type_val, ctx%state%agndust_spec)
 
-        !$acc data copyin(wavelengths, spectrum)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc update device(ctx)
         call apply_agn_dust_emission(ctx, settings, wavelengths, log10(lbol_in), spectrum)
         !$acc update self(spectrum)
         !$acc end data
@@ -670,10 +670,12 @@ contains
         spec_old = 100.0_wp
         settings%dust1 = 5.0_wp
         settings%dust2 = 1.0_wp
-        !$acc update device(spec_young, spec_old, neb_young, neb_old, settings, ctx)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
+        !$acc end data
         call assert_true(all(abs(spec_out - 100.0_wp * exp(-1.0_wp)) <= EPS), &
                          "Old stars diffuse only", total_tests, total_failures)
 
@@ -681,8 +683,8 @@ contains
         spec_old = 0.0_wp
         settings%dust1 = 1.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old)
-        !$acc update device(ctx, settings)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
         !$acc update self(spec_out, neb_out)
@@ -695,9 +697,11 @@ contains
         settings%dust1 = 100.0_wp
         settings%dust2 = 0.0_wp
         settings%frac_obrun = 0.25_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
+        !$acc update self(spec_out, neb_out)
         !$acc end data
         call assert_true(all(abs(spec_out - 25.0_wp) <= LESS_SMALL_DELTA), &
                          "OB runaways", total_tests, total_failures)
@@ -707,9 +711,11 @@ contains
         settings%frac_obrun = 0.0_wp
         settings%dust2 = 100.0_wp
         settings%frac_nodust = 0.10_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
+        !$acc update self(spec_out, neb_out)
         !$acc end data
         call assert_true(all(abs(spec_out - 10.0_wp) <= LESS_SMALL_DELTA), &
                          "Patchy ISM", total_tests, total_failures)
@@ -723,9 +729,11 @@ contains
         neb_young(1) = 1.0_wp
         ctx%state%nebem_line_pos = 5500.0_wp
         !$acc update device(ctx%state%nebem_line_pos)
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
+        !$acc update self(spec_out, neb_out)
         !$acc end data
         call assert_float_equals(exp(-1.0_wp), neb_out(1), 1.0e-6_wp, &
                                  "Nebular line attenuation", total_tests, total_failures)
@@ -772,9 +780,11 @@ contains
         neb_young = 0.0_wp
         neb_old = 0.0_wp
 
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
                                                  neb_old, spec_out, dust_mass, neb_out)
+        !$acc update self(spec_out, neb_out)
         !$acc end data
 
         freqs = C_LIGHT / ctx%state%spec_lambda
@@ -884,9 +894,11 @@ contains
         neb_young = 0.0_wp
         neb_old = 0.0_wp
 
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old) copy(spec_out, neb_out)
+        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
+        !$acc update device(ctx)
         call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, &
                              neb_young, neb_old, spec_out, dust_mass, neb_out)
+        !$acc update self(spec_out, neb_out)
         !$acc end data
         call assert_true(all(abs(spec_out - 100.0_wp) <= EPS), "No dust spectrum unchanged", total_tests, total_failures)
         call assert_true(dust_mass <= SAFE_FLOOR, "No dust mass ~ 0", total_tests, total_failures)
