@@ -90,6 +90,7 @@ contains
         nspec = size(sspi, 1)
 
         !$acc data pcopyin(sspi) pcopy(sspo)
+        !$acc update device(sspi)
 
         ! 0. Initialization & Validation
         ! ------------------------------
@@ -271,16 +272,17 @@ contains
         real(WP) :: integral_flux
         integer :: i
         real(WP) :: y1, y2
-        real(WP), pointer :: lambda(:)
         real(WP) :: frac_obrun_clamped
         
         whlylim = ctx%state%whlylim
-        lambda => ctx%state%spec_nu
         frac_obrun_clamped = max(0.0_wp, min(pset%frac_obrun, 1.0_wp))
+
+        !$acc data pcopyin(spec_in) pcopy(spec_out)
+        !$acc update device(spec_in)
 
         ! 1. Attenuate Output Spectrum (EUV < 912 A)
         if (whlylim > 0) then
-            !$acc parallel loop pcopyin(spec_in, lambda) pcopy(spec_out) firstprivate(frac_obrun_clamped)
+            !$acc parallel loop present(ctx, spec_in, spec_out) firstprivate(frac_obrun_clamped)
             do i = 1, whlylim
                 spec_out(i) = spec_in(i) * frac_obrun_clamped
             end do
@@ -292,11 +294,11 @@ contains
         else
             integral_flux = 0.0_wp
             ! Use specialized loop to avoid array temp (spec_in / spec_nu)
-            !$acc parallel loop reduction(+:integral_flux) pcopyin(spec_in, lambda)
+            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in)
             do i = 1, whlylim - 1
-                y1 = spec_in(i) / lambda(i)
-                y2 = spec_in(i+1) / lambda(i+1)
-                integral_flux = integral_flux + 0.5_wp * abs(lambda(i+1) - lambda(i)) * (y1 + y2)
+                y1 = spec_in(i) / ctx%state%spec_nu(i)
+                y2 = spec_in(i+1) / ctx%state%spec_nu(i+1)
+                integral_flux = integral_flux + 0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)) * (y1 + y2)
             end do
             
             ! We check NaN on host? Or device?
@@ -304,6 +306,8 @@ contains
             ! Assuming logic holds.
             q_val = abs((integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun))
         end if
+
+        !$acc end data
 
     end subroutine process_ionizing_radiation
 

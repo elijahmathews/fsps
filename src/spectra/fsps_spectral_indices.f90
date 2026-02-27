@@ -84,15 +84,16 @@ contains
         n_idx = ctx%state%nindx
 
         !$acc data pcopyin(lambda, spec) pcopy(indices)
+        !$acc update device(spec, lambda)
 
         ! Initialize with sentinel
-        !$acc kernels present(indices)
+        !$acc kernels present(spec, lambda, indices)
         indices = IND_UNDEFINED
         !$acc end kernels
 
         ! Iterate over all defined indices
         ! Parallelize over indices (gang vector)
-        !$acc parallel loop gang vector present(ctx, lambda, spec, indices) private(denom_width, cont_slope, cont_intercept)
+        !$acc parallel loop gang vector present(spec, lambda, indices, ctx) private(denom_width, cont_slope, cont_intercept)
         do j = 1, n_idx
             
             ! 1. Extract Definitions
