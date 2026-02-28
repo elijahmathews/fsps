@@ -1,638 +1,761 @@
-PROGRAM TEST_RUNNER
+program test_runner
 
-  ! FSPS Regression Test Runner
-  ! Reads reference data from disk, runs current FSPS code with identical
-  ! parameters, and compares outputs with a relative tolerance.
+    !> @brief
+    !> Regression test runner for end-to-end FSPS numerical validation.
+    !>
+    !> @details
+    !> This program validates FSPS outputs against a binary reference file that was
+    !> produced from a known-good run. It executes both SSP and CSP workflows using
+    !> the currently built code, then compares scalar and array outputs with a
+    !> relative tolerance.
+    !>
+    !> The execution flow is:
+    !> 1. Parse CLI options and environment-controlled tolerances.
+    !> 2. Initialize and configure an FSPS context.
+    !> 3. Read reference dimensions and payload from disk.
+    !> 4. Regenerate SSP and CSP outputs from the same setup.
+    !> 5. Compare all validated fields and report pass/fail.
+    !>
+    !> CLI usage:
+    !> - `./test_runner [--isoc type] [--spec type] [--dust type] ref_file.bin`
+    !>
+    !> Environment controls:
+    !> - `FSPS_TEST_RTOL`: relative tolerance override.
+    !> - `FSPS_TEST_VERBOSE`: enables detailed mismatch output.
+    !> - `FSPS_TEST_MAXFAIL`: caps mismatch lines unless verbose mode is enabled.
+    !>
+    !> Exit status:
+    !> - 0 on success (all comparisons within tolerance).
+    !> - 1 on failure (setup/read errors or numerical mismatches).
 
-  USE, INTRINSIC :: IEEE_ARITHMETIC
-      USE fsps_precision, ONLY: WP
-      USE fsps_constants, ONLY: NEMLINE
-      USE fsps_types, ONLY: PARAMS, COMPSPOUT
-      USE fsps_api, ONLY: fsps_create, fsps_setup, fsps_destroy
-      USE fsps_csp, ONLY: compute_csp_scenario
-   USE fsps_context_types, ONLY: fsps_context_t
-         USE fsps_context, ONLY: fsps_context_set_pset, fsps_context_move_to_device, fsps_context_remove_from_device
-      USE fsps_ssp, ONLY: generate_ssp_grid
-  IMPLICIT NONE
+    use, intrinsic :: ieee_arithmetic
+    use fsps_precision, only: WP
+    use fsps_constants, only: NEMLINE
+    use fsps_types, only: PARAMS, COMPSPOUT
+    use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
+    use fsps_csp, only: compute_csp_scenario
+    use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_set_pset, fsps_context_move_to_device, &
+                            fsps_context_remove_from_device
+    use fsps_ssp, only: generate_ssp_grid
+    implicit none
 
-  ! Exit codes
-  INTEGER, PARAMETER :: EXIT_SUCCESS = 0
-  INTEGER, PARAMETER :: EXIT_FAILURE = 1
-  
-  ! Default tolerance (can be overridden by env var FSPS_TEST_RTOL)
-  REAL(WP), PARAMETER :: DEFAULT_RTOL = 1.0E-5_wp
+    ! Exit codes
+    integer, parameter :: EXIT_SUCCESS = 0
+    integer, parameter :: EXIT_FAILURE = 1
 
-  ! Test arrays (allocatable)
-  ! Reference data (read from disk)
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: ref_spec_ssp
-  REAL(WP), ALLOCATABLE, DIMENSION(:)   :: ref_mass_ssp, ref_lbol_ssp
-  TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: ref_ocompsp
+    ! Default tolerance (can be overridden by env var FSPS_TEST_RTOL)
+    real(WP), parameter :: DEFAULT_RTOL = 1.0e-5_wp
 
-  ! New data (computed on the fly)
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_ctx
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_spec_ssp_cmp
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:,:) :: new_spec_ssp3
-   REAL(WP), ALLOCATABLE, DIMENSION(:,:) :: new_mass_ssp2, new_lbol_ssp2
-  REAL(WP), ALLOCATABLE, DIMENSION(:)   :: new_mass_ssp, new_lbol_ssp
-   TYPE(COMPSPOUT), ALLOCATABLE, DIMENSION(:) :: new_results
+    ! Test arrays (allocatable)
+    ! Reference data (read from disk)
+    real(WP), allocatable, dimension(:, :) :: ref_spec_ssp
+    real(WP), allocatable, dimension(:) :: ref_mass_ssp, ref_lbol_ssp
+    type(COMPSPOUT), allocatable, dimension(:) :: ref_ocompsp
 
-  ! Control variables
-   TYPE(fsps_context_t) :: ctx
-   TYPE(PARAMS) :: pset
-   INTEGER :: i, unit_in, status, arg_count
-  CHARACTER(LEN=255) :: filename_in, env_buffer, arg_val
-  CHARACTER(LEN=20) :: isoc_arg, spec_arg, dust_arg
-  LOGICAL :: isoc_set, spec_set, dust_set
-  
-  ! Dimensions read from file
-   INTEGER :: file_nspec, file_ntfull, file_nbands
-   INTEGER :: nspec_ctx, ntfull_ctx, nbands_ctx, nt_ctx, nindx_ctx
+    ! New data (computed on the fly)
+    real(WP), allocatable, dimension(:, :) :: new_spec_ssp
+    real(WP), allocatable, dimension(:, :) :: new_spec_ssp_ctx
+    real(WP), allocatable, dimension(:, :) :: new_spec_ssp_cmp
+    real(WP), allocatable, dimension(:, :, :) :: new_spec_ssp3
+    real(WP), allocatable, dimension(:, :) :: new_mass_ssp2, new_lbol_ssp2
+    real(WP), allocatable, dimension(:) :: new_mass_ssp, new_lbol_ssp
+    type(COMPSPOUT), allocatable, dimension(:) :: new_results
 
-  ! Comparison stats
-   REAL(WP) :: rtol
-   LOGICAL :: test_passed
-   INTEGER :: nfail
-   LOGICAL :: verbose_output
-   INTEGER :: max_fail_print, fail_printed
-   LOGICAL :: fail_suppression_noted
+    ! Control variables
+    type(fsps_context_t) :: ctx
+    type(PARAMS) :: pset
+    integer :: i, unit_in, status, arg_count
+    character(len=255) :: filename_in, env_buffer, arg_val
+    character(len=20) :: isoc_arg, spec_arg, dust_arg
+    logical :: isoc_set, spec_set, dust_set
 
+    ! Dimensions read from file
+    integer :: file_nspec, file_ntfull, file_nbands
+    integer :: nspec_ctx, ntfull_ctx, nbands_ctx, nt_ctx, nindx_ctx
 
-   ! Configuration
-   unit_in = 40
+    ! Comparison stats
+    real(WP) :: rtol
+    logical :: test_passed
+    integer :: nfail
+    logical :: verbose_output
+    integer :: max_fail_print, fail_printed
+    logical :: fail_suppression_noted
 
-   CALL ENSURE_OUTPUT_DIR('OUTPUTS/')
+    ! ------------------------------------------------------------------------
+    ! PROGRAM INITIALIZATION
+    ! ------------------------------------------------------------------------
 
-   test_passed = .TRUE.
-   nfail = 0
-   verbose_output = .FALSE.
-   max_fail_print = 20
-   fail_printed = 0
-   fail_suppression_noted = .FALSE.
-   isoc_set = .FALSE.
-   spec_set = .FALSE.
-   dust_set = .FALSE.
-   isoc_arg = 'mist'
-   spec_arg = 'miles'
-   dust_arg = 'DL07'
-   filename_in = ''
+    ! Configuration
+    unit_in = 40
 
-  WRITE(*,*) '========================================='
-  WRITE(*,*) 'FSPS TEST RUNNER'
-  WRITE(*,*) '========================================='
+    call ensure_output_dir('OUTPUTS/')
 
-  ! Parse command line arguments
-  arg_count = COMMAND_ARGUMENT_COUNT()
-  i = 1
-  DO WHILE (i <= arg_count)
-     CALL GET_COMMAND_ARGUMENT(i, arg_val, STATUS=status)
-     IF (status /= 0) EXIT
-     
-     IF (TRIM(arg_val) == '--isoc') THEN
+    test_passed = .true.
+    nfail = 0
+    verbose_output = .false.
+    max_fail_print = 20
+    fail_printed = 0
+    fail_suppression_noted = .false.
+    isoc_set = .false.
+    spec_set = .false.
+    dust_set = .false.
+    isoc_arg = 'mist'
+    spec_arg = 'miles'
+    dust_arg = 'DL07'
+    filename_in = ''
+
+    write(*, *) '========================================='
+    write(*, *) 'FSPS TEST RUNNER'
+    write(*, *) '========================================='
+
+    ! ------------------------------------------------------------------------
+    ! 1) INPUT ARGUMENTS AND ENVIRONMENT OPTIONS
+    ! ------------------------------------------------------------------------
+
+    ! Parse command line arguments
+    arg_count = command_argument_count()
+    i = 1
+    do while (i <= arg_count)
+        call get_command_argument(i, arg_val, status=status)
+        if (status /= 0) exit
+
+        if (trim(arg_val) == '--isoc') then
+            i = i + 1
+            if (i <= arg_count) then
+                call get_command_argument(i, isoc_arg, status=status)
+                isoc_set = .true.
+            else
+                write(*, *) 'ERROR: --isoc requires an argument'
+                stop EXIT_FAILURE
+            end if
+        else if (trim(arg_val) == '--spec') then
+            i = i + 1
+            if (i <= arg_count) then
+                call get_command_argument(i, spec_arg, status=status)
+                spec_set = .true.
+            else
+                write(*, *) 'ERROR: --spec requires an argument'
+                stop EXIT_FAILURE
+            end if
+        else if (trim(arg_val) == '--dust') then
+            i = i + 1
+            if (i <= arg_count) then
+                call get_command_argument(i, dust_arg, status=status)
+                dust_set = .true.
+            else
+                write(*, *) 'ERROR: --dust requires an argument'
+                stop EXIT_FAILURE
+            end if
+        else
+            ! Assume it's the filename if it doesn't start with --
+            ! Or if we haven't found one yet.
+            if (len_trim(filename_in) == 0) then
+                filename_in = trim(arg_val)
+            end if
+        end if
         i = i + 1
-        IF (i <= arg_count) THEN
-           CALL GET_COMMAND_ARGUMENT(i, isoc_arg, STATUS=status)
-           isoc_set = .TRUE.
-        ELSE
-           WRITE(*,*) 'ERROR: --isoc requires an argument'
-           STOP EXIT_FAILURE
-        END IF
-     ELSE IF (TRIM(arg_val) == '--spec') THEN
-        i = i + 1
-        IF (i <= arg_count) THEN
-           CALL GET_COMMAND_ARGUMENT(i, spec_arg, STATUS=status)
-           spec_set = .TRUE.
-        ELSE
-           WRITE(*,*) 'ERROR: --spec requires an argument'
-           STOP EXIT_FAILURE
-        END IF
-     ELSE IF (TRIM(arg_val) == '--dust') THEN
-        i = i + 1
-        IF (i <= arg_count) THEN
-           CALL GET_COMMAND_ARGUMENT(i, dust_arg, STATUS=status)
-           dust_set = .TRUE.
-        ELSE
-           WRITE(*,*) 'ERROR: --dust requires an argument'
-           STOP EXIT_FAILURE
-        END IF
-     ELSE
-        ! Assume it's the filename if it doesn't start with --
-        ! Or if we haven't found one yet.
-        IF (LEN_TRIM(filename_in) == 0) THEN
-           filename_in = TRIM(arg_val)
-        END IF
-     END IF
-     i = i + 1
-  END DO
+    end do
 
-  IF (LEN_TRIM(filename_in) == 0) THEN
-     WRITE(*,*) 'ERROR: Must provide reference filename as argument.'
-     WRITE(*,*) 'Usage: ./test_runner [--isoc type] [--spec type] [--dust type] tests/data/sps_ref_XXX.bin'
-     STOP EXIT_FAILURE
-  END IF
+    if (len_trim(filename_in) == 0) then
+        write(*, *) 'ERROR: Must provide reference filename as argument.'
+        write(*, *) 'Usage: ./test_runner [--isoc type] [--spec type] [--dust type] tests/data/sps_ref_XXX.bin'
+        stop EXIT_FAILURE
+    end if
 
-  ! Read tolerance from environment variable
-  CALL GET_ENVIRONMENT_VARIABLE("FSPS_TEST_RTOL", VALUE=env_buffer, STATUS=status)
-  IF (status == 0) THEN
-     READ(env_buffer, *) rtol
-     WRITE(*,*) 'Using RTOL from environment: ', rtol
-  ELSE
-     rtol = DEFAULT_RTOL
-     WRITE(*,*) 'Using default RTOL: ', rtol
-  END IF
+    ! Read tolerance from environment variable
+    call get_environment_variable('FSPS_TEST_RTOL', value=env_buffer, status=status)
+    if (status == 0) then
+        read(env_buffer, *) rtol
+        write(*, *) 'Using RTOL from environment: ', rtol
+    else
+        rtol = DEFAULT_RTOL
+        write(*, *) 'Using default RTOL: ', rtol
+    end if
 
-  ! Optional verbose output
-  CALL GET_ENVIRONMENT_VARIABLE("FSPS_TEST_VERBOSE", VALUE=env_buffer, STATUS=status)
-  IF (status == 0) THEN
-     IF (LEN_TRIM(env_buffer) > 0) THEN
-        SELECT CASE (env_buffer(1:1))
-        CASE ('1','t','T','y','Y')
-           verbose_output = .TRUE.
-        END SELECT
-     END IF
-  END IF
+    ! Optional verbose output
+    call get_environment_variable('FSPS_TEST_VERBOSE', value=env_buffer, status=status)
+    if (status == 0) then
+        if (len_trim(env_buffer) > 0) then
+            select case (env_buffer(1:1))
+            case ('1', 't', 'T', 'y', 'Y')
+                verbose_output = .true.
+            end select
+        end if
+    end if
 
-  ! Optional maximum printed failures
-  CALL GET_ENVIRONMENT_VARIABLE("FSPS_TEST_MAXFAIL", VALUE=env_buffer, STATUS=status)
-  IF (status == 0) THEN
-     READ(env_buffer, *, IOSTAT=status) max_fail_print
-     IF (status /= 0) max_fail_print = 20
-  END IF
+    ! Optional maximum printed failures
+    call get_environment_variable('FSPS_TEST_MAXFAIL', value=env_buffer, status=status)
+    if (status == 0) then
+        read(env_buffer, *, iostat=status) max_fail_print
+        if (status /= 0) max_fail_print = 20
+    end if
 
-  ! Initialize FSPS and check dimensions
-  ! Note: We must initialize FSPS before allocating, but we must read the 
-  ! file header before we know if dimensions match.
-  
-   CALL fsps_create(ctx)
-   ctx%imf_type_val = 1
-   pset%zmet = 10
-  
-  WRITE(*,*) 'Initializing FSPS...'
-  ! Always provide defaults that match the reference generator unless overridden
-   CALL fsps_setup(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
-   
-   WRITE(*,*) 'Moving FSPS Context to Device...'
-   CALL fsps_context_move_to_device(ctx)
-   
-   IF (verbose_output) CALL DUMP_STATE('AFTER fsps_setup', ctx, pset)
+    ! ------------------------------------------------------------------------
+    ! 2) FSPS SETUP AND DIMENSION DISCOVERY
+    ! ------------------------------------------------------------------------
 
-  nspec_ctx = ctx%state%nspec
-  ntfull_ctx = ctx%state%ntfull
-  nbands_ctx = ctx%state%nbands
-  nt_ctx = ctx%state%nt
-  nindx_ctx = ctx%state%nindx
+    ! Initialize FSPS and check dimensions
+    ! Note: We must initialize FSPS before allocating, but we must read the
+    ! file header before we know if dimensions match.
 
-   ! Global dimensions are synchronized via fsps_context_apply_globals
+    call fsps_create(ctx)
+    ctx%imf_type_val = 1
+    pset%zmet = 10
 
-  ! Allocate pset allocatable components
-  IF (ALLOCATED(pset%mag_compute)) DEALLOCATE(pset%mag_compute)
-   ALLOCATE(pset%mag_compute(nbands_ctx))
-  pset%mag_compute = 1
-  
-  IF (ALLOCATED(pset%ssp_gen_age)) DEALLOCATE(pset%ssp_gen_age)
-   ALLOCATE(pset%ssp_gen_age(nt_ctx))
-  pset%ssp_gen_age = 1
+    write(*, *) 'Initializing FSPS...'
+    ! Always provide defaults that match the reference generator unless overridden
+    call fsps_setup(ctx, pset%zmet, isoc_type_in=trim(isoc_arg), spec_type_in=trim(spec_arg), &
+                    dust_type_in=trim(dust_arg))
 
-  ! Open the reference file
-  OPEN(UNIT=unit_in, FILE=TRIM(filename_in), STATUS='OLD', &
-       FORM='UNFORMATTED', ACCESS='STREAM', IOSTAT=status)
-  IF (status /= 0) THEN
-     WRITE(*,*) 'ERROR: Could not open file: ', TRIM(filename_in)
-     STOP EXIT_FAILURE
-  END IF
+    write(*, *) 'Moving FSPS Context to Device...'
+    call fsps_context_move_to_device(ctx)
 
-  ! Read Header
-  READ(unit_in) file_nspec
-  READ(unit_in) file_ntfull
-  READ(unit_in) file_nbands
+    if (verbose_output) call dump_state('AFTER fsps_setup', ctx, pset)
 
-   WRITE(*,*) 'Reference Dimensions: nspec=', file_nspec, ' nt=', file_ntfull
-   WRITE(*,*) 'Compiled Dimensions:  nspec=', nspec_ctx,  ' nt=', ntfull_ctx
+    nspec_ctx = ctx%state%nspec
+    ntfull_ctx = ctx%state%ntfull
+    nbands_ctx = ctx%state%nbands
+    nt_ctx = ctx%state%nt
+    nindx_ctx = ctx%state%nindx
 
-  ! Strict dimension check
-   IF (file_nspec /= nspec_ctx .OR. file_ntfull /= ntfull_ctx) THEN
-     WRITE(*,*) 'FATAL: Binary dimensions do not match compiled FSPS dimensions.'
-     WRITE(*,*) 'Ensure you are running the test with the same flags/arguments used to generate the data.'
-     STOP EXIT_FAILURE
-  END IF
+    ! Global dimensions are synchronized via fsps_context_apply_globals
 
-  ! Allocate and read reference data
-   ALLOCATE(ref_spec_ssp(nspec_ctx,ntfull_ctx))
-   ALLOCATE(ref_mass_ssp(ntfull_ctx))
-   ALLOCATE(ref_lbol_ssp(ntfull_ctx))
-   ALLOCATE(ref_ocompsp(ntfull_ctx))
+    ! Allocate pset allocatable components
+    if (allocated(pset%mag_compute)) deallocate(pset%mag_compute)
+    allocate(pset%mag_compute(nbands_ctx))
+    pset%mag_compute = 1
 
-   ALLOCATE(new_spec_ssp(ntfull_ctx,nspec_ctx))
-   ALLOCATE(new_spec_ssp_ctx(nspec_ctx,ntfull_ctx))
-   ALLOCATE(new_spec_ssp_cmp(nspec_ctx,ntfull_ctx))
-   ALLOCATE(new_mass_ssp(ntfull_ctx))
-   ALLOCATE(new_lbol_ssp(ntfull_ctx))
-   ALLOCATE(new_mass_ssp2(ntfull_ctx,1))
-   ALLOCATE(new_lbol_ssp2(ntfull_ctx,1))
-   ALLOCATE(new_spec_ssp3(nspec_ctx,ntfull_ctx,1))
-   ! new_results allocated by compute_csp_scenario
+    if (allocated(pset%ssp_gen_age)) deallocate(pset%ssp_gen_age)
+    allocate(pset%ssp_gen_age(nt_ctx))
+    pset%ssp_gen_age = 1
 
-  WRITE(*,*) 'Reading SSP reference data...'
-  READ(unit_in) ref_mass_ssp
-  READ(unit_in) ref_lbol_ssp
-  READ(unit_in) ref_spec_ssp
+    ! Open the reference file
+    open(unit=unit_in, file=trim(filename_in), status='OLD', &
+         form='UNFORMATTED', access='STREAM', iostat=status)
+    if (status /= 0) then
+        write(*, *) 'ERROR: Could not open file: ', trim(filename_in)
+        stop EXIT_FAILURE
+    end if
 
-  WRITE(*,*) 'Reading CSP reference data...'
-   DO i = 1, ntfull_ctx
-     ! Allocate components of derived type before reading
-   ALLOCATE(ref_ocompsp(i)%mags(nbands_ctx))
-   ALLOCATE(ref_ocompsp(i)%spec(nspec_ctx))
-   ALLOCATE(ref_ocompsp(i)%indx(nindx_ctx))
-     ALLOCATE(ref_ocompsp(i)%emlines(NEMLINE))
-     
-     READ(unit_in) ref_ocompsp(i)%age
-     READ(unit_in) ref_ocompsp(i)%mass_csp
-     READ(unit_in) ref_ocompsp(i)%lbol_csp
-     READ(unit_in) ref_ocompsp(i)%sfr
-     READ(unit_in) ref_ocompsp(i)%mdust
-     READ(unit_in) ref_ocompsp(i)%mformed
-     READ(unit_in) ref_ocompsp(i)%mags      
-     READ(unit_in) ref_ocompsp(i)%spec      
-     READ(unit_in) ref_ocompsp(i)%indx      
-     READ(unit_in) ref_ocompsp(i)%emlines   
-  END DO
-  CLOSE(unit_in)
+    ! Read Header
+    read(unit_in) file_nspec
+    read(unit_in) file_ntfull
+    read(unit_in) file_nbands
 
-  ! Generate new data
-  WRITE(*,*) 'Generating new SSP data...'
-  pset%sfh   = 0     
-  pset%const = 0.0
-  pset%zred  = 0.0
-  pset%dust1 = 0.0
-  pset%dust2 = 0.0
-   ctx%add_neb_emission_val = 1
-   CALL fsps_context_set_pset(ctx, pset)
-   IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (SSP)', ctx, pset)
-   !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
-   !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
-   !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
-   !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc update device(pset)
-   ctx%add_neb_emission_val = 1
-   !$acc update device(ctx%add_neb_emission_val)
-   CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc end data
-   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (SSP)', ctx, new_mass_ssp, new_lbol_ssp)
-   new_spec_ssp_cmp = new_spec_ssp_ctx
+    write(*, *) 'Reference Dimensions: nspec=', file_nspec, ' nt=', file_ntfull
+    write(*, *) 'Compiled Dimensions:  nspec=', nspec_ctx, ' nt=', ntfull_ctx
 
-  WRITE(*,*) 'Generating new CSP data...'
-  pset%sfh   = 1    
-  pset%tau   = 2.0   
-  pset%dust1 = 1.0   
-  pset%dust2 = 0.3
-   CALL fsps_context_set_pset(ctx, pset)
-   IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (CSP)', ctx, pset)
-   !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
-   !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
-   !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
-   !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc update device(pset)
-   ctx%add_neb_emission_val = 1
-   !$acc update device(ctx%add_neb_emission_val)
-   CALL generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
-   !$acc end data
-   IF (verbose_output) CALL DUMP_SSP_SUMMARY('AFTER generate_ssp_grid (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
+    ! Strict dimension check
+    if (file_nspec /= nspec_ctx .or. file_ntfull /= ntfull_ctx) then
+        write(*, *) 'FATAL: Binary dimensions do not match compiled FSPS dimensions.'
+        write(*, *) 'Ensure you are running the test with the same flags/arguments used to generate the data.'
+        stop EXIT_FAILURE
+    end if
 
-   new_mass_ssp2(:,1) = new_mass_ssp
-   new_lbol_ssp2(:,1) = new_lbol_ssp
+    ! ------------------------------------------------------------------------
+    ! 3) REFERENCE DATA LOAD
+    ! ------------------------------------------------------------------------
+
+    ! Allocate and read reference data
+    allocate(ref_spec_ssp(nspec_ctx, ntfull_ctx))
+    allocate(ref_mass_ssp(ntfull_ctx))
+    allocate(ref_lbol_ssp(ntfull_ctx))
+    allocate(ref_ocompsp(ntfull_ctx))
+
+    allocate(new_spec_ssp(ntfull_ctx, nspec_ctx))
+    allocate(new_spec_ssp_ctx(nspec_ctx, ntfull_ctx))
+    allocate(new_spec_ssp_cmp(nspec_ctx, ntfull_ctx))
+    allocate(new_mass_ssp(ntfull_ctx))
+    allocate(new_lbol_ssp(ntfull_ctx))
+    allocate(new_mass_ssp2(ntfull_ctx, 1))
+    allocate(new_lbol_ssp2(ntfull_ctx, 1))
+    allocate(new_spec_ssp3(nspec_ctx, ntfull_ctx, 1))
+    ! new_results allocated by compute_csp_scenario
+
+    write(*, *) 'Reading SSP reference data...'
+    read(unit_in) ref_mass_ssp
+    read(unit_in) ref_lbol_ssp
+    read(unit_in) ref_spec_ssp
+
+    write(*, *) 'Reading CSP reference data...'
+    do i = 1, ntfull_ctx
+        ! Allocate components of derived type before reading
+        allocate(ref_ocompsp(i)%mags(nbands_ctx))
+        allocate(ref_ocompsp(i)%spec(nspec_ctx))
+        allocate(ref_ocompsp(i)%indx(nindx_ctx))
+        allocate(ref_ocompsp(i)%emlines(NEMLINE))
+
+        read(unit_in) ref_ocompsp(i)%age
+        read(unit_in) ref_ocompsp(i)%mass_csp
+        read(unit_in) ref_ocompsp(i)%lbol_csp
+        read(unit_in) ref_ocompsp(i)%sfr
+        read(unit_in) ref_ocompsp(i)%mdust
+        read(unit_in) ref_ocompsp(i)%mformed
+        read(unit_in) ref_ocompsp(i)%mags
+        read(unit_in) ref_ocompsp(i)%spec
+        read(unit_in) ref_ocompsp(i)%indx
+        read(unit_in) ref_ocompsp(i)%emlines
+    end do
+    close(unit_in)
+
+    ! ------------------------------------------------------------------------
+    ! 4) REGENERATE CURRENT OUTPUTS (SSP + CSP)
+    ! ------------------------------------------------------------------------
+
+    ! Generate new data
+    write(*, *) 'Generating new SSP data...'
+    pset%sfh = 0
+    pset%const = 0.0_wp
+    pset%zred = 0.0_wp
+    pset%dust1 = 0.0_wp
+    pset%dust2 = 0.0_wp
+    ctx%add_neb_emission_val = 1
+    call fsps_context_set_pset(ctx, pset)
+    if (verbose_output) call dump_state('BEFORE generate_ssp_grid (SSP)', ctx, pset)
+    !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
+    !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
+    !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
+    !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc update device(pset)
+    ctx%add_neb_emission_val = 1
+    !$acc update device(ctx%add_neb_emission_val)
+    call generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc end data
+    if (verbose_output) call dump_ssp_summary('AFTER generate_ssp_grid (SSP)', ctx, new_mass_ssp, new_lbol_ssp)
+    new_spec_ssp_cmp = new_spec_ssp_ctx
+
+    write(*, *) 'Generating new CSP data...'
+    pset%sfh = 1
+    pset%tau = 2.0_wp
+    pset%dust1 = 1.0_wp
+    pset%dust2 = 0.3_wp
+    call fsps_context_set_pset(ctx, pset)
+    if (verbose_output) call dump_state('BEFORE generate_ssp_grid (CSP)', ctx, pset)
+    !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
+    !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
+    !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
+    !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc update device(pset)
+    ctx%add_neb_emission_val = 1
+    !$acc update device(ctx%add_neb_emission_val)
+    call generate_ssp_grid(ctx, pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc update self(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+    !$acc end data
+    if (verbose_output) call dump_ssp_summary('AFTER generate_ssp_grid (CSP)', ctx, new_mass_ssp, new_lbol_ssp)
+
+    new_mass_ssp2(:, 1) = new_mass_ssp
+    new_lbol_ssp2(:, 1) = new_lbol_ssp
     ! Match COMPSP input layout: (nspec, ntfull, nzin)
-    new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
+    new_spec_ssp3(:, :, 1) = new_spec_ssp_ctx
 
-   IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
-   !$acc data copyin(pset, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_spec_ssp_ctx)
-   !$acc update device(pset)
-   ctx%add_neb_emission_val = 1
-   !$acc update device(ctx%add_neb_emission_val)
-   CALL compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
-   !$acc update self(new_spec_ssp_ctx)
-   !$acc end data
-   IF (verbose_output) CALL DUMP_CSP_SUMMARY('AFTER compute_csp_scenario', new_results)
+    if (verbose_output) call dump_state('BEFORE compute_csp_scenario', ctx, pset)
+    !$acc data copyin(pset, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_spec_ssp_ctx)
+    !$acc update device(pset)
+    ctx%add_neb_emission_val = 1
+    !$acc update device(ctx%add_neb_emission_val)
+    call compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
+    !$acc update self(new_spec_ssp_ctx)
+    !$acc end data
+    if (verbose_output) call dump_csp_summary('AFTER compute_csp_scenario', new_results)
 
+    ! ------------------------------------------------------------------------
+    ! 5) NUMERICAL COMPARISON AGAINST REFERENCE
+    ! ------------------------------------------------------------------------
 
-  ! Compare results
-  WRITE(*,*) 'Verifying results (RTOL = ', rtol, ')...'
+    ! Compare results
+    write(*, *) 'Verifying results (RTOL = ', rtol, ')...'
 
-  ! Helper internal subroutine to check arrays
-   CALL CHECK_ARRAY_2D("SSP Spectra", ref_spec_ssp, new_spec_ssp_cmp, nspec_ctx, ntfull_ctx)
-   CALL CHECK_ARRAY_1D("SSP Mass", ref_mass_ssp, new_mass_ssp, ntfull_ctx)
-   CALL CHECK_ARRAY_1D("SSP Lbol", ref_lbol_ssp, new_lbol_ssp, ntfull_ctx)
+    ! Helper internal subroutine to check arrays
+    call check_array_2d('SSP Spectra', ref_spec_ssp, new_spec_ssp_cmp, nspec_ctx, ntfull_ctx)
+    call check_array_1d('SSP Mass', ref_mass_ssp, new_mass_ssp, ntfull_ctx)
+    call check_array_1d('SSP Lbol', ref_lbol_ssp, new_lbol_ssp, ntfull_ctx)
 
-  ! Check CSP structure components manually
-   DO i = 1, ntfull_ctx
-     ! Check Scalars
-   CALL CHECK_VAL("CSP Lbol", i, ref_ocompsp(i)%lbol_csp, new_results(i)%lbol_csp)
-   CALL CHECK_VAL("CSP Mass", i, ref_ocompsp(i)%mass_csp, new_results(i)%mass_csp)
-   CALL CHECK_VAL("CSP SFR", i, ref_ocompsp(i)%sfr, new_results(i)%sfr)
-   CALL CHECK_VAL("CSP Dust Mass", i, ref_ocompsp(i)%mdust, new_results(i)%mdust)
-   CALL CHECK_VAL("CSP Mass Formed", i, ref_ocompsp(i)%mformed, new_results(i)%mformed)
+    ! Check CSP structure components manually
+    do i = 1, ntfull_ctx
+        ! Check Scalars
+        call check_val('CSP Lbol', i, ref_ocompsp(i)%lbol_csp, new_results(i)%lbol_csp)
+        call check_val('CSP Mass', i, ref_ocompsp(i)%mass_csp, new_results(i)%mass_csp)
+        call check_val('CSP SFR', i, ref_ocompsp(i)%sfr, new_results(i)%sfr)
+        call check_val('CSP Dust Mass', i, ref_ocompsp(i)%mdust, new_results(i)%mdust)
+        call check_val('CSP Mass Formed', i, ref_ocompsp(i)%mformed, new_results(i)%mformed)
 
-     ! Check Arrays for EVERY time step
-    CALL CHECK_MAGS_1D("CSP Mags (flux)", ref_ocompsp(i)%mags, new_results(i)%mags, nbands_ctx)
-    
-    ! Legacy behavior compatibility: 
-    ! The reference files have 0.0 for indices (not computed).
-    ! The new module computes them automatically. Zero them out for comparison if ref is empty.
-    IF (ALL(ref_ocompsp(i)%indx == 0.0_wp)) THEN
-        new_results(i)%indx = 0.0_wp
-    END IF
-   
-    CALL CHECK_ARRAY_1D("CSP Indx", ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx)
-       CALL CHECK_ARRAY_1D("CSP Emlines", ref_ocompsp(i)%emlines, new_results(i)%emlines, NEMLINE)
-     
-     ! Check Spectrum
-   CALL CHECK_ARRAY_1D("CSP Spec", ref_ocompsp(i)%spec, new_results(i)%spec, nspec_ctx)
-  END DO
+        ! Check Arrays for EVERY time step
+        call check_mags_1d('CSP Mags (flux)', ref_ocompsp(i)%mags, new_results(i)%mags, nbands_ctx)
 
-  ! Report results
-  WRITE(*,*) '--------------------------------------------------'  
+        ! Legacy behavior compatibility:
+        ! The reference files have 0.0 for indices (not computed).
+        ! The new module computes them automatically. Zero them out for comparison if ref is empty.
+        if (all(ref_ocompsp(i)%indx == 0.0_wp)) then
+            new_results(i)%indx = 0.0_wp
+        end if
 
-   IF (ALLOCATED(new_results)) DEALLOCATE(new_results)
-   IF (ALLOCATED(ref_ocompsp)) DEALLOCATE(ref_ocompsp)
+        call check_array_1d('CSP Indx', ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx)
+        call check_array_1d('CSP Emlines', ref_ocompsp(i)%emlines, new_results(i)%emlines, NEMLINE)
 
-   WRITE(*,*) 'Removing FSPS Context from Device...'
-   CALL fsps_context_remove_from_device(ctx)
-   CALL fsps_destroy(ctx)
+        ! Check Spectrum
+        call check_array_1d('CSP Spec', ref_ocompsp(i)%spec, new_results(i)%spec, nspec_ctx)
+    end do
 
-   WRITE(*,*) 'Total failures:', nfail
-   IF (test_passed) THEN
-     WRITE(*,*) 'TEST RESULT: PASS'
-     STOP EXIT_SUCCESS
-  ELSE
-     WRITE(*,*) 'TEST RESULT: FAIL'
-     STOP EXIT_FAILURE
-  END IF
+    ! Report results
+    write(*, *) '--------------------------------------------------'
 
+    if (allocated(new_results)) deallocate(new_results)
+    if (allocated(ref_ocompsp)) deallocate(ref_ocompsp)
 
-CONTAINS
+    write(*, *) 'Removing FSPS Context from Device...'
+    call fsps_context_remove_from_device(ctx)
+    call fsps_destroy(ctx)
 
-  SUBROUTINE CHECK_ARRAY_2D(label, ref, new, d1, d2)
-    CHARACTER(*), INTENT(IN) :: label
-    INTEGER, INTENT(IN) :: d1, d2
-    REAL(WP), DIMENSION(d1,d2), INTENT(IN) :: ref, new
-   REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
-   INTEGER :: j, k, mj, mk
+    write(*, *) 'Total failures:', nfail
+    if (test_passed) then
+        write(*, *) 'TEST RESULT: PASS'
+        stop EXIT_SUCCESS
+    else
+        write(*, *) 'TEST RESULT: FAIL'
+        stop EXIT_FAILURE
+    end if
 
-   max_delta = 0.0
-   max_rel = 0.0
-   mj = 1
-   mk = 1
+contains
 
-    DO k = 1, d2
-       DO j = 1, d1
-          IF (IEEE_IS_NAN(ref(j,k)) .OR. IEEE_IS_NAN(new(j,k))) THEN
-             WRITE(*,*) 'FAIL: ', label, ' contains NaN at index (',j,',',k,')'
-             test_passed = .FALSE.
-             RETURN 
-          END IF
+    !> @brief
+    !> Compare two 2D real arrays element-wise using relative tolerance.
+    !>
+    !> @details
+    !> Tracks maximum absolute and relative differences, checks for NaNs, and
+    !> increments global failure counters when any element exceeds the dynamic
+    !> threshold `max(abs(ref) * rtol, 1.0e-30_wp)`.
+    !>
+    !> @param[in] label Label printed in diagnostics.
+    !> @param[in] ref   Reference array.
+    !> @param[in] new   Newly generated array.
+    !> @param[in] d1    First dimension length.
+    !> @param[in] d2    Second dimension length.
+    subroutine check_array_2d(label, ref, new, d1, d2)
+        character(*), intent(in) :: label
+        integer, intent(in) :: d1, d2
+        real(WP), dimension(d1, d2), intent(in) :: ref, new
+        real(WP) :: delta, threshold, max_delta, max_rel, ref_val
+        integer :: j, k, mj, mk
 
-          ref_val = ref(j,k)
-          delta = ABS(ref_val - new(j,k))
-          if (ABS(ref_val) > 0.0_wp) then
-             max_rel = MAX(max_rel, delta / ABS(ref_val))
-          end if
-          IF (delta > max_delta) THEN
-             max_delta = delta
-             mj = j
-             mk = k
-          END IF
-          ! If ref is close to zero, use absolute tolerance, else relative
-          threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp) 
-          IF (delta > threshold) THEN
-             test_passed = .FALSE.
-             nfail = nfail + 1
-             IF (verbose_output .OR. fail_printed < max_fail_print) THEN
-                WRITE(*,*) 'FAIL: ', label, ' mismatch at index (',j,',',k,')'
-                WRITE(*,*) '  Ref:', ref_val, ' New:', new(j,k), ' Diff:', delta
+        max_delta = 0.0_wp
+        max_rel = 0.0_wp
+        mj = 1
+        mk = 1
+
+        do k = 1, d2
+            do j = 1, d1
+                if (ieee_is_nan(ref(j, k)) .or. ieee_is_nan(new(j, k))) then
+                    write(*, *) 'FAIL: ', label, ' contains NaN at index (', j, ',', k, ')'
+                    test_passed = .false.
+                    return
+                end if
+
+                ref_val = ref(j, k)
+                delta = abs(ref_val - new(j, k))
+                if (abs(ref_val) > 0.0_wp) then
+                    max_rel = max(max_rel, delta / abs(ref_val))
+                end if
+                if (delta > max_delta) then
+                    max_delta = delta
+                    mj = j
+                    mk = k
+                end if
+                ! If ref is close to zero, use absolute tolerance, else relative
+                threshold = max(abs(ref_val) * rtol, 1.0e-30_wp)
+                if (delta > threshold) then
+                    test_passed = .false.
+                    nfail = nfail + 1
+                    if (verbose_output .or. fail_printed < max_fail_print) then
+                        write(*, *) 'FAIL: ', label, ' mismatch at index (', j, ',', k, ')'
+                        write(*, *) '  Ref:', ref_val, ' New:', new(j, k), ' Diff:', delta
+                        fail_printed = fail_printed + 1
+                    else if (.not. fail_suppression_noted) then
+                        write(*, *) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).'
+                        fail_suppression_noted = .true.
+                    end if
+                end if
+            end do
+        end do
+        write(*, *) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ',', mk, ')', &
+                    ' max rel diff=', max_rel
+    end subroutine check_array_2d
+
+    !> @brief
+    !> Compare two 1D real arrays element-wise using relative tolerance.
+    !>
+    !> @details
+    !> Mirrors `check_array_2d` behavior for vector data and records index-wise
+    !> diagnostics for the largest absolute and relative deviations.
+    !>
+    !> @param[in] label Label printed in diagnostics.
+    !> @param[in] ref   Reference vector.
+    !> @param[in] new   Newly generated vector.
+    !> @param[in] d1    Vector length.
+    subroutine check_array_1d(label, ref, new, d1)
+        character(*), intent(in) :: label
+        integer, intent(in) :: d1
+        real(WP), dimension(d1), intent(in) :: ref, new
+        real(WP) :: delta, threshold, max_delta, max_rel, ref_val
+        integer :: j, mj, mrj
+
+        max_delta = 0.0_wp
+        max_rel = 0.0_wp
+        mj = 1
+        mrj = 1
+
+        do j = 1, d1
+            if (ieee_is_nan(ref(j)) .or. ieee_is_nan(new(j))) then
+                write(*, *) 'FAIL: ', label, ' contains NaN at index (', j, ')'
+                test_passed = .false.
+                return
+            end if
+
+            ref_val = ref(j)
+            delta = abs(ref_val - new(j))
+            if (abs(ref_val) > 0.0_wp) then
+                if (delta / abs(ref_val) > max_rel) then
+                    max_rel = delta / abs(ref_val)
+                    mrj = j
+                end if
+            end if
+            if (delta > max_delta) then
+                max_delta = delta
+                mj = j
+            end if
+            threshold = max(abs(ref_val) * rtol, 1.0e-30_wp)
+            if (delta > threshold) then
+                test_passed = .false.
+                nfail = nfail + 1
+                if (verbose_output .or. fail_printed < max_fail_print) then
+                    write(*, *) 'FAIL: ', label, ' mismatch at index (', j, ')'
+                    write(*, *) '  Ref:', ref_val, ' New:', new(j), ' Diff:', delta
+                    fail_printed = fail_printed + 1
+                else if (.not. fail_suppression_noted) then
+                    write(*, *) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).'
+                    fail_suppression_noted = .true.
+                end if
+            end if
+        end do
+        write(*, *) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ')', &
+                    ' max rel diff=', max_rel, ' at (', mrj, ')'
+    end subroutine check_array_1d
+
+    !> @brief
+    !> Compare magnitude vectors in linear flux space.
+    !>
+    !> @details
+    !> Magnitudes are transformed to relative linear flux prior to comparison so
+    !> tolerances are evaluated on physically meaningful scale ratios. Exponents
+    !> are clamped to avoid overflow/underflow in `exp`.
+    !>
+    !> @param[in] label   Label printed in diagnostics.
+    !> @param[in] ref_mag Reference magnitudes.
+    !> @param[in] new_mag Newly generated magnitudes.
+    !> @param[in] d1      Vector length.
+    subroutine check_mags_1d(label, ref_mag, new_mag, d1)
+        character(*), intent(in) :: label
+        integer, intent(in) :: d1
+        real(WP), dimension(d1), intent(in) :: ref_mag, new_mag
+        real(WP) :: delta, threshold, max_delta, max_rel, ref_val
+        real(WP) :: flux_ref, flux_new, exp_ref, exp_new
+        integer :: j, mj
+
+        max_delta = 0.0_wp
+        max_rel = 0.0_wp
+        mj = 1
+
+        do j = 1, d1
+            if (ieee_is_nan(ref_mag(j)) .or. ieee_is_nan(new_mag(j))) then
+                write(*, *) 'FAIL: ', label, ' contains NaN at index (', j, ')'
+                test_passed = .false.
+                return
+            end if
+
+            ! Convert magnitudes to linear flux units (relative scale)
+            exp_ref = -0.4_wp * ref_mag(j) * log(10.0_wp)
+            exp_new = -0.4_wp * new_mag(j) * log(10.0_wp)
+            if (exp_ref < -700.0_wp) then
+                flux_ref = 0.0_wp
+            else if (exp_ref > 700.0_wp) then
+                flux_ref = huge(1.0_wp)
+            else
+                flux_ref = exp(exp_ref)
+            end if
+            if (exp_new < -700.0_wp) then
+                flux_new = 0.0_wp
+            else if (exp_new > 700.0_wp) then
+                flux_new = huge(1.0_wp)
+            else
+                flux_new = exp(exp_new)
+            end if
+
+            ref_val = flux_ref
+            delta = abs(flux_ref - flux_new)
+            if (abs(ref_val) > 0.0_wp) then
+                max_rel = max(max_rel, delta / abs(ref_val))
+            end if
+            if (delta > max_delta) then
+                max_delta = delta
+                mj = j
+            end if
+            threshold = max(abs(ref_val) * rtol, 1.0e-30_wp)
+            if (delta > threshold) then
+                test_passed = .false.
+                nfail = nfail + 1
+                if (verbose_output .or. fail_printed < max_fail_print) then
+                    write(*, *) 'FAIL: ', label, ' mismatch at index (', j, ')'
+                    write(*, *) '  Ref mag:', ref_mag(j), ' New mag:', new_mag(j)
+                    write(*, *) '  Ref flux:', flux_ref, ' New flux:', flux_new, ' Diff:', delta
+                    fail_printed = fail_printed + 1
+                else if (.not. fail_suppression_noted) then
+                    write(*, *) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).'
+                    fail_suppression_noted = .true.
+                end if
+            end if
+        end do
+        write(*, *) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ')', &
+                    ' max rel diff=', max_rel
+    end subroutine check_mags_1d
+
+    !> @brief
+    !> Compare a scalar value at a logical step index.
+    !>
+    !> @param[in] label Label printed in diagnostics.
+    !> @param[in] idx   Logical step/time index for reporting.
+    !> @param[in] r     Reference value.
+    !> @param[in] n     Newly generated value.
+    subroutine check_val(label, idx, r, n)
+        character(*), intent(in) :: label
+        integer, intent(in) :: idx
+        real(WP), intent(in) :: r, n
+        real(WP) :: delta, threshold
+
+        if (ieee_is_nan(r) .or. ieee_is_nan(n)) then
+            write(*, *) 'FAIL: ', label, ' contains NaN at step ', idx
+            test_passed = .false.
+            return
+        end if
+
+        delta = abs(r - n)
+        threshold = max(abs(r) * rtol, 1.0e-30_wp)
+
+        if (delta > threshold) then
+            test_passed = .false.
+            nfail = nfail + 1
+            if (verbose_output .or. fail_printed < max_fail_print) then
+                write(*, *) 'FAIL: ', label, ' mismatch at step ', idx
+                write(*, *) '  Ref:', r, ' New:', n, ' Diff:', delta
                 fail_printed = fail_printed + 1
-             ELSEIF (.NOT. fail_suppression_noted) THEN
-                WRITE(*,*) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).' 
-                fail_suppression_noted = .TRUE.
-             END IF
-          END IF
-       END DO
-    END DO
-    WRITE(*,*) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ',', mk, ')', &
-         ' max rel diff=', max_rel
-  END SUBROUTINE CHECK_ARRAY_2D
+            else if (.not. fail_suppression_noted) then
+                write(*, *) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).'
+                fail_suppression_noted = .true.
+            end if
+        end if
+    end subroutine check_val
 
-  SUBROUTINE CHECK_ARRAY_1D(label, ref, new, d1)
-    CHARACTER(*), INTENT(IN) :: label
-    INTEGER, INTENT(IN) :: d1
-    REAL(WP), DIMENSION(d1), INTENT(IN) :: ref, new
-   REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
-   INTEGER :: j, mj, mrj
+    !> @brief
+    !> Emit diagnostic context and parameter state.
+    !>
+    !> @details
+    !> Used only when verbose mode is enabled to help debug cross-build or
+    !> cross-backend mismatches in regression runs.
+    !>
+    !> @param[in] label Human-readable checkpoint label.
+    !> @param[in] ctx   FSPS context snapshot.
+    !> @param[in] pset  Active parameter set snapshot.
+    subroutine dump_state(label, ctx, pset)
+        character(*), intent(in) :: label
+        type(fsps_context_t), intent(in) :: ctx
+        type(PARAMS), intent(in) :: pset
 
-   max_delta = 0.0
-   max_rel = 0.0
-   mj = 1
-   mrj = 1
+        write(*, *) '--- STATE:', trim(label)
+        write(*, *) '  imf_type=', ctx%imf_type_val
+        write(*, *) '  imf_lower_limit=', ctx%state%imf_lower_limit, ' imf_upper_limit=', ctx%state%imf_upper_limit
+        write(*, *) '  dust_type=', ctx%dust_type_val, ' add_dust_emission=', ctx%add_dust_emission_val
+        write(*, *) '  add_neb_emission=', ctx%add_neb_emission_val, ' nebemlineinspec=', ctx%nebemlineinspec_val
+        write(*, *) '  interpolation_type=', ctx%interpolation_type_val, ' tiny_logt=', ctx%tiny_logt_val
+        write(*, *) '  pset: sfh=', pset%sfh, ' tau=', pset%tau, ' const=', pset%const, ' fburst=', pset%fburst
+        write(*, *) '  pset: sf_start=', pset%sf_start, ' sf_trunc=', pset%sf_trunc, ' tburst=', pset%tburst
+        write(*, *) '  pset: dust1=', pset%dust1, ' dust2=', pset%dust2, ' zred=', pset%zred
+        write(*, *) '  dims: ntfull=', ctx%state%ntfull, ' nspec=', ctx%state%nspec, ' nbands=', ctx%state%nbands
+    end subroutine dump_state
 
-    DO j = 1, d1
-       IF (IEEE_IS_NAN(ref(j)) .OR. IEEE_IS_NAN(new(j))) THEN
-          WRITE(*,*) 'FAIL: ', label, ' contains NaN at index (',j,')'
-          test_passed = .FALSE.
-          RETURN
-       END IF
-       
-       ref_val = ref(j)
-       delta = ABS(ref_val - new(j))
-       if (ABS(ref_val) > 0.0_wp) then
-          if (delta / ABS(ref_val) > max_rel) then
-             max_rel = delta / ABS(ref_val)
-             mrj = j
-          end if
-       end if
-       IF (delta > max_delta) THEN
-          max_delta = delta
-          mj = j
-       END IF
-       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp)
-       IF (delta > threshold) THEN
-          test_passed = .FALSE.
-          nfail = nfail + 1
-          IF (verbose_output .OR. fail_printed < max_fail_print) THEN
-             WRITE(*,*) 'FAIL: ', label, ' mismatch at index (',j,')'
-             WRITE(*,*) '  Ref:', ref_val, ' New:', new(j), ' Diff:', delta
-             fail_printed = fail_printed + 1
-          ELSEIF (.NOT. fail_suppression_noted) THEN
-             WRITE(*,*) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).' 
-             fail_suppression_noted = .TRUE.
-          END IF
-       END IF
-    END DO
-    WRITE(*,*) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ')', &
-         ' max rel diff=', max_rel, ' at (', mrj, ')'
-  END SUBROUTINE CHECK_ARRAY_1D
+    !> @brief
+    !> Emit compact SSP summary diagnostics.
+    !>
+    !> @param[in] label    Human-readable checkpoint label.
+    !> @param[in] ctx      FSPS context (used for time grid reporting).
+    !> @param[in] mass_ssp SSP mass history.
+    !> @param[in] lbol_ssp SSP bolometric luminosity history.
+    subroutine dump_ssp_summary(label, ctx, mass_ssp, lbol_ssp)
+        character(*), intent(in) :: label
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), dimension(:), intent(in) :: mass_ssp, lbol_ssp
+        integer :: n
 
-  SUBROUTINE CHECK_MAGS_1D(label, ref_mag, new_mag, d1)
-    CHARACTER(*), INTENT(IN) :: label
-    INTEGER, INTENT(IN) :: d1
-    REAL(WP), DIMENSION(d1), INTENT(IN) :: ref_mag, new_mag
-    REAL(WP) :: delta, threshold, max_delta, max_rel, ref_val
-    REAL(WP) :: flux_ref, flux_new, exp_ref, exp_new
-    INTEGER :: j, mj
+        n = size(mass_ssp)
+        write(*, *) '--- SSP SUMMARY:', trim(label)
+        write(*, *) '  mass_ssp(1)=', mass_ssp(1), ' mass_ssp(n)=', mass_ssp(n)
+        write(*, *) '  lbol_ssp(1)=', lbol_ssp(1), ' lbol_ssp(n)=', lbol_ssp(n)
+        write(*, *) '  time_full(1)=', ctx%state%time_full(1), ' time_full(n)=', ctx%state%time_full(n)
+    end subroutine dump_ssp_summary
 
-    max_delta = 0.0_wp
-    max_rel = 0.0_wp
-    mj = 1
+    !> @brief
+    !> Emit compact CSP summary diagnostics.
+    !>
+    !> @param[in] label   Human-readable checkpoint label.
+    !> @param[in] ocompsp CSP output series.
+    subroutine dump_csp_summary(label, ocompsp)
+        character(*), intent(in) :: label
+        type(COMPSPOUT), dimension(:), intent(in) :: ocompsp
+        integer :: n
 
-    DO j = 1, d1
-       IF (IEEE_IS_NAN(ref_mag(j)) .OR. IEEE_IS_NAN(new_mag(j))) THEN
-          WRITE(*,*) 'FAIL: ', label, ' contains NaN at index (',j,')'
-          test_passed = .FALSE.
-          RETURN
-       END IF
+        n = size(ocompsp)
+        write(*, *) '--- CSP SUMMARY:', trim(label)
+        write(*, *) '  age(1)=', ocompsp(1)%age, ' age(n)=', ocompsp(n)%age
+        write(*, *) '  mass_csp(1)=', ocompsp(1)%mass_csp, ' mass_csp(n)=', ocompsp(n)%mass_csp
+        write(*, *) '  lbol_csp(1)=', ocompsp(1)%lbol_csp, ' lbol_csp(n)=', ocompsp(n)%lbol_csp
+    end subroutine dump_csp_summary
 
-       ! Convert magnitudes to linear flux units (relative scale)
-       exp_ref = -0.4_wp * ref_mag(j) * LOG(10.0_wp)
-       exp_new = -0.4_wp * new_mag(j) * LOG(10.0_wp)
-       IF (exp_ref < -700.0_wp) THEN
-          flux_ref = 0.0_wp
-       ELSE IF (exp_ref > 700.0_wp) THEN
-          flux_ref = HUGE(1.0_wp)
-       ELSE
-          flux_ref = EXP(exp_ref)
-       END IF
-       IF (exp_new < -700.0_wp) THEN
-          flux_new = 0.0_wp
-       ELSE IF (exp_new > 700.0_wp) THEN
-          flux_new = HUGE(1.0_wp)
-       ELSE
-          flux_new = EXP(exp_new)
-       END IF
+    !> @brief
+    !> Ensure output directory exists before regression execution.
+    !>
+    !> @details
+    !> Accepts either a directory path (`path/`) or a file path (`path/file`) and
+    !> creates the directory component if it is missing.
+    !>
+    !> @param[in] path Directory path or file path with directory component.
+    subroutine ensure_output_dir(path)
+        character(*), intent(in) :: path
+        integer :: last_slash, ierr
+        logical :: exists
+        character(:), allocatable :: dir_path
 
-       ref_val = flux_ref
-       delta = ABS(flux_ref - flux_new)
-       IF (ABS(ref_val) > 0.0_wp) THEN
-          max_rel = MAX(max_rel, delta / ABS(ref_val))
-       END IF
-       IF (delta > max_delta) THEN
-          max_delta = delta
-          mj = j
-       END IF
-       threshold = MAX(ABS(ref_val) * rtol, 1.0E-30_wp)
-       IF (delta > threshold) THEN
-          test_passed = .FALSE.
-          nfail = nfail + 1
-          IF (verbose_output .OR. fail_printed < max_fail_print) THEN
-             WRITE(*,*) 'FAIL: ', label, ' mismatch at index (',j,')'
-             WRITE(*,*) '  Ref mag:', ref_mag(j), ' New mag:', new_mag(j)
-             WRITE(*,*) '  Ref flux:', flux_ref, ' New flux:', flux_new, ' Diff:', delta
-             fail_printed = fail_printed + 1
-          ELSEIF (.NOT. fail_suppression_noted) THEN
-             WRITE(*,*) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).'
-             fail_suppression_noted = .TRUE.
-          END IF
-       END IF
-    END DO
-    WRITE(*,*) 'SUMMARY: ', label, ' max abs diff=', max_delta, ' at (', mj, ')', &
-         ' max rel diff=', max_rel
-  END SUBROUTINE CHECK_MAGS_1D
+        ! If the path provided is the directory (ends in /)
+        if (path(len_trim(path):len_trim(path)) == '/') then
+            dir_path = path(1:len_trim(path) - 1)
+        else
+            ! Original logic for "path/to/file" strings
+            last_slash = scan(path, '/', back=.true.)
+            if (last_slash > 0) then
+                dir_path = path(1:last_slash - 1)
+            else
+                return ! No directory part found
+            end if
+        end if
 
-  SUBROUTINE CHECK_VAL(label, idx, r, n)
-    CHARACTER(*), INTENT(IN) :: label
-    INTEGER, INTENT(IN) :: idx
-    REAL(WP), INTENT(IN) :: r, n
-    REAL(WP) :: delta, threshold
+        inquire(file=dir_path, exist=exists)
 
-    IF (IEEE_IS_NAN(r) .OR. IEEE_IS_NAN(n)) THEN
-       WRITE(*,*) 'FAIL: ', label, ' contains NaN at step ', idx
-       test_passed = .FALSE.
-       RETURN
-    END IF
+        if (.not. exists) then
+            write(*, *) 'Pre-test check: Creating missing directory: ', dir_path
+            call execute_command_line('mkdir -p ' // dir_path, exitstat=ierr)
+            if (ierr /= 0) then
+                write(*, *) 'FATAL: Could not create output directory.'
+                stop 1
+            end if
+        end if
+    end subroutine ensure_output_dir
 
-    delta = ABS(r - n)
-    threshold = MAX(ABS(r) * rtol, 1.0E-30_wp)
-
-      IF (delta > threshold) THEN
-       test_passed = .FALSE.
-          nfail = nfail + 1
-       IF (verbose_output .OR. fail_printed < max_fail_print) THEN
-          WRITE(*,*) 'FAIL: ', label, ' mismatch at step ', idx
-          WRITE(*,*) '  Ref:', r, ' New:', n, ' Diff:', delta
-          fail_printed = fail_printed + 1
-       ELSEIF (.NOT. fail_suppression_noted) THEN
-          WRITE(*,*) 'NOTE: Further failure details suppressed (set FSPS_TEST_VERBOSE=1 to expand).' 
-          fail_suppression_noted = .TRUE.
-       END IF
-    END IF
-  END SUBROUTINE CHECK_VAL
-
-   SUBROUTINE DUMP_STATE(label, ctx, pset)
-      CHARACTER(*), INTENT(IN) :: label
-      TYPE(fsps_context_t), INTENT(IN) :: ctx
-      TYPE(PARAMS), INTENT(IN) :: pset
-      WRITE(*,*) '--- STATE:', TRIM(label)
-      WRITE(*,*) '  imf_type=', ctx%imf_type_val
-      WRITE(*,*) '  imf_lower_limit=', ctx%state%imf_lower_limit, ' imf_upper_limit=', ctx%state%imf_upper_limit
-      WRITE(*,*) '  dust_type=', ctx%dust_type_val, ' add_dust_emission=', ctx%add_dust_emission_val
-      WRITE(*,*) '  add_neb_emission=', ctx%add_neb_emission_val, ' nebemlineinspec=', ctx%nebemlineinspec_val
-      WRITE(*,*) '  interpolation_type=', ctx%interpolation_type_val, ' tiny_logt=', ctx%tiny_logt_val
-      WRITE(*,*) '  pset: sfh=', pset%sfh, ' tau=', pset%tau, ' const=', pset%const, ' fburst=', pset%fburst
-      WRITE(*,*) '  pset: sf_start=', pset%sf_start, ' sf_trunc=', pset%sf_trunc, ' tburst=', pset%tburst
-      WRITE(*,*) '  pset: dust1=', pset%dust1, ' dust2=', pset%dust2, ' zred=', pset%zred
-      WRITE(*,*) '  dims: ntfull=', ctx%state%ntfull, ' nspec=', ctx%state%nspec, ' nbands=', ctx%state%nbands
-   END SUBROUTINE DUMP_STATE
-
-   SUBROUTINE DUMP_SSP_SUMMARY(label, ctx, mass_ssp, lbol_ssp)
-      CHARACTER(*), INTENT(IN) :: label
-      TYPE(fsps_context_t), INTENT(IN) :: ctx
-      REAL(WP), DIMENSION(:), INTENT(IN) :: mass_ssp, lbol_ssp
-      INTEGER :: n
-      n = SIZE(mass_ssp)
-      WRITE(*,*) '--- SSP SUMMARY:', TRIM(label)
-      WRITE(*,*) '  mass_ssp(1)=', mass_ssp(1), ' mass_ssp(n)=', mass_ssp(n)
-      WRITE(*,*) '  lbol_ssp(1)=', lbol_ssp(1), ' lbol_ssp(n)=', lbol_ssp(n)
-      WRITE(*,*) '  time_full(1)=', ctx%state%time_full(1), ' time_full(n)=', ctx%state%time_full(n)
-   END SUBROUTINE DUMP_SSP_SUMMARY
-
-   SUBROUTINE DUMP_CSP_SUMMARY(label, ocompsp)
-      CHARACTER(*), INTENT(IN) :: label
-      TYPE(COMPSPOUT), DIMENSION(:), INTENT(IN) :: ocompsp
-      INTEGER :: n
-      n = SIZE(ocompsp)
-      WRITE(*,*) '--- CSP SUMMARY:', TRIM(label)
-      WRITE(*,*) '  age(1)=', ocompsp(1)%age, ' age(n)=', ocompsp(n)%age
-      WRITE(*,*) '  mass_csp(1)=', ocompsp(1)%mass_csp, ' mass_csp(n)=', ocompsp(n)%mass_csp
-      WRITE(*,*) '  lbol_csp(1)=', ocompsp(1)%lbol_csp, ' lbol_csp(n)=', ocompsp(n)%lbol_csp
-   END SUBROUTINE DUMP_CSP_SUMMARY
-
-   SUBROUTINE ENSURE_OUTPUT_DIR(path)
-      CHARACTER(*), INTENT(IN) :: path
-      INTEGER :: last_slash, ierr
-      LOGICAL :: exists
-      CHARACTER(:), ALLOCATABLE :: dir_path
-
-      ! If the path provided is the directory (ends in /)
-      IF (path(LEN_TRIM(path):LEN_TRIM(path)) == '/') THEN
-         dir_path = path(1:LEN_TRIM(path)-1)
-      ELSE
-         ! Original logic for "path/to/file" strings
-         last_slash = SCAN(path, '/', BACK=.TRUE.)
-         IF (last_slash > 0) THEN
-            dir_path = path(1:last_slash-1)
-         ELSE
-            RETURN ! No directory part found
-         END IF
-      END IF
-         
-      INQUIRE(FILE=dir_path, EXIST=exists)
-      
-      IF (.NOT. exists) THEN
-         WRITE(*,*) 'Pre-test check: Creating missing directory: ', dir_path
-         CALL EXECUTE_COMMAND_LINE('mkdir -p ' // dir_path, EXITSTAT=ierr)
-         IF (ierr /= 0) THEN
-            WRITE(*,*) 'FATAL: Could not create output directory.'
-            STOP 1
-         END IF
-      END IF
-   END SUBROUTINE ENSURE_OUTPUT_DIR
-
-END PROGRAM TEST_RUNNER
+end program test_runner
