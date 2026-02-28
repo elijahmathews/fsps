@@ -268,6 +268,9 @@ PROGRAM TEST_RUNNER
    ctx%add_neb_emission_val = 1
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (SSP)', ctx, pset)
+   !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
+   !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
+   !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
    !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
@@ -285,6 +288,9 @@ PROGRAM TEST_RUNNER
   pset%dust2 = 0.3
    CALL fsps_context_set_pset(ctx, pset)
    IF (verbose_output) CALL DUMP_STATE('BEFORE generate_ssp_grid (CSP)', ctx, pset)
+   !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
+   !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
+   !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
    !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
@@ -543,7 +549,7 @@ CONTAINS
     END IF
 
     delta = ABS(r - n)
-    threshold = MAX(ABS(r) * rtol, 1.0E-30)
+    threshold = MAX(ABS(r) * rtol, 1.0E-30_wp)
 
       IF (delta > threshold) THEN
        test_passed = .FALSE.

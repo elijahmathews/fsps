@@ -137,6 +137,27 @@ contains
         deallocate(ctx)
     end subroutine teardown_basic_context
 
+    subroutine map_csp_buffer_to_device(buf)
+        type(csp_buffer_t), intent(inout) :: buf
+
+        !$acc enter data copyin(buf)
+        !$acc enter data copyin(buf%ssp_weights, buf%spec_young, buf%spec_old)
+        !$acc enter data copyin(buf%emlin_young, buf%emlin_old)
+        !$acc enter data attach(buf%ssp_weights)
+        !$acc enter data attach(buf%spec_young)
+        !$acc enter data attach(buf%spec_old)
+        !$acc enter data attach(buf%emlin_young)
+        !$acc enter data attach(buf%emlin_old)
+    end subroutine map_csp_buffer_to_device
+
+    subroutine unmap_csp_buffer_from_device(buf)
+        type(csp_buffer_t), intent(inout) :: buf
+
+        !$acc exit data delete(buf%ssp_weights, buf%spec_young, buf%spec_old)
+        !$acc exit data delete(buf%emlin_young, buf%emlin_old)
+        !$acc exit data delete(buf)
+    end subroutine unmap_csp_buffer_from_device
+
     subroutine setup_nebular_line_context(ctx)
         type(fsps_context_t), intent(inout) :: ctx
         integer :: i
@@ -440,11 +461,13 @@ contains
         ssp_lum = 1.0_wp
 
         call init_csp_buffer(buf, 1, n, 1)
+        call map_csp_buffer_to_device(buf)
 
         pset%sfh = 0
         pset%dust_tesc = 3.0_wp
 
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call unmap_csp_buffer_from_device(buf)
 
         call assert_true(all(abs(buf%spec_young) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
         call assert_true(sum(buf%spec_old) > 0.0_wp, "Old component carries flux", total_tests, total_failures)
@@ -485,12 +508,14 @@ contains
         ssp_lum = 1.0_wp
 
         call init_csp_buffer(buf, 1, n, 1)
+        call map_csp_buffer_to_device(buf)
 
         pset%sfh = 1
         pset%tau = 2.0_wp
         pset%dust_tesc = 10.15_wp
 
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call unmap_csp_buffer_from_device(buf)
 
         call assert_true(all(abs(buf%spec_old) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
         call assert_true(sum(buf%spec_young) > 0.0_wp, "Young component carries flux", total_tests, total_failures)
@@ -531,6 +556,7 @@ contains
         ssp_lum = 1.0_wp
 
         call init_csp_buffer(buf, 1, n, 1)
+        call map_csp_buffer_to_device(buf)
 
         pset%sfh = 1
         pset%tau = 2.0_wp
@@ -538,6 +564,7 @@ contains
         pset%dust_tesc = 7.0_wp
 
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call unmap_csp_buffer_from_device(buf)
 
         k = find_interval(time_full, 7.0_wp)
         expected_young = sum(buf%ssp_weights(1:k, 1))
@@ -584,12 +611,14 @@ contains
         ssp_lum = 1.0_wp
 
         call init_csp_buffer(buf, 1, n, 1)
+        call map_csp_buffer_to_device(buf)
 
         pset%sfh = 1
         pset%tau = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call unmap_csp_buffer_from_device(buf)
 
         call assert_relative_error(sum(buf%ssp_weights(:,1)), mass_csp, REL_EPS, &
                                    "Mass matches sum of weights", total_tests, total_failures)

@@ -332,6 +332,8 @@ contains
 
         n_wave = size(lambda)
         allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(NEMLINE,1))
+        sspo = 0.0_wp
+        nebemline = 0.0_wp
 
         sspi(:,1) = [0.0_wp, 0.0_wp, 0.0_wp, 1.0_wp, 1.0_wp]
 
@@ -453,6 +455,9 @@ contains
         call setup_gas_context(ctx, lambda, time_full)
 
         allocate(sspi(n_wave,1), sspo(n_wave,1), nebemline(NEMLINE,1), line_wpec(n_wave))
+        sspo = 0.0_wp
+        nebemline = 0.0_wp
+        line_wpec = 0.0_wp
 
         sspi(:,1) = 0.0_wp
         sspi(1:3,1) = 1.0_wp
@@ -521,6 +526,7 @@ contains
         call setup_gas_context(ctx, lambda, time_full)
 
         allocate(sspi(4,1), sspo(4,1))
+        sspo = 0.0_wp
         sspi(:,1) = 0.0_wp
         sspi(1:3,1) = 1.0_wp
 
@@ -594,6 +600,7 @@ contains
         call setup_gas_context(ctx, lambda, time_full)
 
         allocate(sspi(4,2), sspo(4,2))
+        sspo = 0.0_wp
         sspi(:,1) = 0.0_wp
         sspi(1:3,1) = 1.0_wp
         sspi(:,2) = sspi(:,1)
@@ -642,6 +649,8 @@ contains
         call setup_gas_context(ctx, lambda, time_full)
 
         allocate(sspi(4,1), sspo(4,1), nebemline(NEMLINE,1))
+        sspo = 0.0_wp
+        nebemline = 0.0_wp
         sspi(:,1) = 0.0_wp
         sspi(1:3,1) = 1.0_wp
 
@@ -675,7 +684,7 @@ contains
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         ctx%state%nebem_line = -30.0_wp
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
-        !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line(1,:,:,:))
+        !$acc update device(ctx%state%nebem_line)
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val

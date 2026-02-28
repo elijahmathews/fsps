@@ -184,7 +184,7 @@ contains
         call init_isochrone_buffer(buf)
         
         ! Move buffer to device
-        !$acc enter data create(buf)
+        !$acc enter data copyin(buf)
         !$acc enter data create(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
         !$acc enter data create(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
         !$acc enter data attach(buf%initial_mass)
@@ -224,6 +224,7 @@ contains
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
             ! Sync buffer to device for integration and spectral accumulation
+            !$acc update device(buf%n_stars)
             !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
             !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
             !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
