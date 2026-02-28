@@ -197,7 +197,7 @@ contains
         call init_csp_buffer(buf, nspec, nt, nzin)
         
         ! Move buffer to device
-        !$acc enter data create(buf)
+        !$acc enter data copyin(buf)
         !$acc enter data create(buf%ssp_weights, buf%spec_young, buf%spec_old)
         !$acc enter data create(buf%emlin_young, buf%emlin_old)
         !$acc enter data attach(buf%ssp_weights)
