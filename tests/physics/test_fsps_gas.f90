@@ -372,7 +372,7 @@ contains
         type(params) :: pset
         real(WP), dimension(5) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), dimension(5) :: spec_in, spec_out
+        real(WP), dimension(5,1) :: spec_in, spec_out
         real(WP) :: q_val, expected_q
         integer :: whlylim
 
@@ -386,11 +386,11 @@ contains
         spec_out = spec_in
         pset%frac_obrun = 0.0_wp
 
-        call process_ionizing_radiation(ctx, pset, spec_in, spec_out, q_val)
-        expected_q = compute_expected_q(ctx, spec_in, pset%frac_obrun)
+        call process_ionizing_radiation(ctx, pset, spec_in, spec_out, 1, q_val)
+        expected_q = compute_expected_q(ctx, spec_in(:,1), pset%frac_obrun)
 
         whlylim = ctx%state%whlylim
-        call assert_true(all(abs(spec_out(1:whlylim)) <= EPS), "Ionizing flux fully absorbed", total_tests, total_failures)
+        call assert_true(all(abs(spec_out(1:whlylim,1)) <= EPS), "Ionizing flux fully absorbed", total_tests, total_failures)
         call assert_relative_error(expected_q, q_val, REL_EPS, "Q(H) matches trapezoid", total_tests, total_failures)
 
         call teardown_gas_context(ctx)
@@ -401,7 +401,7 @@ contains
         type(params) :: pset
         real(WP), dimension(5) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), dimension(5) :: spec_in, spec_out
+        real(WP), dimension(5,1) :: spec_in, spec_out
         real(WP) :: q_val, expected_q
         integer :: whlylim
 
@@ -415,11 +415,11 @@ contains
         spec_out = spec_in
         pset%frac_obrun = 0.3_wp
 
-        call process_ionizing_radiation(ctx, pset, spec_in, spec_out, q_val)
-        expected_q = compute_expected_q(ctx, spec_in, pset%frac_obrun)
+        call process_ionizing_radiation(ctx, pset, spec_in, spec_out, 1, q_val)
+        expected_q = compute_expected_q(ctx, spec_in(:,1), pset%frac_obrun)
 
         whlylim = ctx%state%whlylim
-        call assert_true(all(abs(spec_out(1:whlylim) - 0.3_wp * spec_in(1:whlylim)) <= EPS), &
+        call assert_true(all(abs(spec_out(1:whlylim,1) - 0.3_wp * spec_in(1:whlylim,1)) <= EPS), &
                          "Leakage scaling below 912A", total_tests, total_failures)
         call assert_relative_error(expected_q, q_val, REL_EPS, "Q(H) scales with (1-frac_obrun)", total_tests, total_failures)
 

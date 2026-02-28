@@ -182,7 +182,7 @@ contains
         do t = 1, max_neb_time_idx
             
             ! A. Calculate Ionizing Photons
-            call process_ionizing_radiation(ctx, pset, sspi(:,t), sspo(:,t), q_ionizing)
+            call process_ionizing_radiation(ctx, pset, sspi, sspo, t, q_ionizing)
 
             ! Optimization: Skip expensive math if there is no ionizing radiation
             if (q_ionizing <= SAFE_FLOOR) cycle
@@ -262,14 +262,16 @@ contains
     !>
     !> @param[in]  ctx       FSPS context (wavelength arrays).
     !> @param[in]  pset      Parameters (frac_obrun).
-    !> @param[in]  spec_in   Intrinsic stellar spectrum.
-    !> @param[out] spec_out  Attenuated stellar spectrum.
+    !> @param[in]  spec_in   Intrinsic stellar spectrum grid.
+    !> @param[out] spec_out  Attenuated stellar spectrum grid.
+    !> @param[in]  t_idx     Time index into spectral grids.
     !> @param[out] q_val     Number of ionizing photons absorbed.
-    subroutine process_ionizing_radiation(ctx, pset, spec_in, spec_out, q_val)
+    subroutine process_ionizing_radiation(ctx, pset, spec_in, spec_out, t_idx, q_val)
         type(fsps_context_t), intent(in)    :: ctx
         type(params), intent(in)            :: pset
-        real(WP), dimension(:), intent(in)  :: spec_in
-        real(WP), dimension(:), intent(inout) :: spec_out
+        real(WP), dimension(:,:), intent(in)  :: spec_in
+        real(WP), dimension(:,:), intent(inout) :: spec_out
+        integer, intent(in)                 :: t_idx
         real(WP), intent(out)               :: q_val
         
         integer :: whlylim
@@ -286,9 +288,9 @@ contains
 
         ! 1. Attenuate Output Spectrum (EUV < 912 A)
         if (whlylim > 0) then
-            !$acc parallel loop present(ctx, spec_in, spec_out) firstprivate(frac_obrun_clamped)
+            !$acc parallel loop present(ctx, spec_in, spec_out) firstprivate(frac_obrun_clamped, t_idx)
             do i = 1, whlylim
-                spec_out(i) = spec_in(i) * frac_obrun_clamped
+                spec_out(i, t_idx) = spec_in(i, t_idx) * frac_obrun_clamped
             end do
         end if
 
@@ -298,10 +300,10 @@ contains
         else
             integral_flux = 0.0_wp
             ! Use specialized loop to avoid array temp (spec_in / spec_nu)
-            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in)
+            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx)
             do i = 1, whlylim - 1
-                y1 = spec_in(i) / ctx%state%spec_nu(i)
-                y2 = spec_in(i+1) / ctx%state%spec_nu(i+1)
+                y1 = spec_in(i, t_idx) / ctx%state%spec_nu(i)
+                y2 = spec_in(i+1, t_idx) / ctx%state%spec_nu(i+1)
                 integral_flux = integral_flux + 0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)) * (y1 + y2)
             end do
             

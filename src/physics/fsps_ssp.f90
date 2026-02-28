@@ -120,7 +120,7 @@ contains
     !> @param[out]    lbol_grid Output bolometric luminosity history.
     !> @param[out]    spec_grid Output spectral grid (wavelength, time).
     subroutine generate_ssp_grid(ctx, pset, mass_grid, lbol_grid, spec_grid)
-        type(fsps_context_t), intent(inout) :: ctx
+        type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)            :: pset
         real(WP), intent(out), contiguous   :: mass_grid(:)
         real(WP), intent(out), contiguous   :: lbol_grid(:)
@@ -510,7 +510,7 @@ contains
         real(WP), intent(out) :: tot_mass, tot_lbol
 
         integer :: n, i
-        real(WP) :: max_living_mass, linear_lum
+        real(WP) :: max_living_mass, local_mass, local_linear_lum
 
         n = buf%n_stars
         
@@ -523,10 +523,10 @@ contains
 
         ! 1. Calculate Mass of Living Stars
         !    Vectorized dot product: sum(weights * current_mass)
-        tot_mass = 0.0_wp
-        !$acc parallel loop reduction(+:tot_mass) present(buf)
+        local_mass = 0.0_wp
+        !$acc parallel loop reduction(+:local_mass) present(buf)
         do i = 1, n
-            tot_mass = tot_mass + buf%weights(i) * buf%current_mass(i)
+            local_mass = local_mass + buf%weights(i) * buf%current_mass(i)
         end do
         
         ! 2. Add Remnant Mass (Black Holes, Neutron Stars, White Dwarfs)
@@ -543,20 +543,22 @@ contains
              ! This routine integrates the IMF for dead stars and adds to tot_mass
              ! This routine needs to be device-compatible or run on host with scalar update?
              ! add_remnant_mass uses simple math. Assuming it's routine seq.
-             call add_remnant_mass(ctx, tot_mass, max_living_mass)
+               call add_remnant_mass(ctx, local_mass, max_living_mass)
         end if
+
+           tot_mass = local_mass
 
         ! 3. Calculate Total Bolometric Luminosity
         !    L_tot = sum( weight * 10^logL )
         !    We compute the linear sum first, then take log10.
-        linear_lum = 0.0_wp
-        !$acc parallel loop reduction(+:linear_lum) present(buf)
+        local_linear_lum = 0.0_wp
+        !$acc parallel loop reduction(+:local_linear_lum) present(buf)
         do i = 1, n
-            linear_lum = linear_lum + buf%weights(i) * exp(buf%log_lum(i) * LN10)
+            local_linear_lum = local_linear_lum + buf%weights(i) * exp(buf%log_lum(i) * LN10)
         end do
         
         ! Prevent log(0)
-        tot_lbol = log10(max(linear_lum, SAFE_FLOOR))
+        tot_lbol = log10(max(local_linear_lum, SAFE_FLOOR))
 
     end subroutine compute_integrated_properties
 
@@ -573,7 +575,7 @@ contains
     !> @param[in]     buf       The isochrone buffer.
     !> @param[in,out] spec_out  The output spectrum accumulator (L_sol/Hz).
     subroutine accumulate_spectrum(ctx, pset, buf, spec_out)
-        type(fsps_context_t), intent(inout) :: ctx
+        type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)            :: pset
         type(isochrone_buffer_t), intent(in):: buf
         real(WP), intent(inout), contiguous :: spec_out(:)
