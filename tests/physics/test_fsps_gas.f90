@@ -472,7 +472,7 @@ contains
         ctx%state%nebem_line = -30.0_wp
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         ctx%state%nebem_line_pos(1) = tmp_line_pos1
-        !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line(1,:,:,:), ctx%state%nebem_line_pos(1))
+        !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line_pos)
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
         !$acc update device(pset)

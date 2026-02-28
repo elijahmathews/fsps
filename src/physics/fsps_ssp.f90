@@ -226,6 +226,7 @@ contains
             ! Sync buffer to device for integration and spectral accumulation
             !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
             !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+            !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
 
             ! C. COMPUTE INTEGRATED PROPERTIES
             !    Mass and Bolometric Luminosity

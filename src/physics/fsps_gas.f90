@@ -171,7 +171,10 @@ contains
         ! Scratch arrays
         allocate(current_step_cont(nspec))
         allocate(current_step_lines_log(NEMLINE))
+        current_step_cont = 0.0_wp
+        current_step_lines_log = log10(SAFE_FLOOR)
         !$acc enter data create(current_step_cont, current_step_lines_log)
+        !$acc update device(current_step_cont, current_step_lines_log)
 
         ! NOTE: The loop over time steps 't' must be sequential because process_ionizing_radiation
         ! and integration might be heavy, and we are updating sspo(:, t).

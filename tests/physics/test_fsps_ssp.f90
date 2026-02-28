@@ -310,8 +310,38 @@ contains
         ! Pre-calculate the spectrum for a single star (all stars are identical here)
         call get_stellar_spectrum(ctx, pset, 1.0_wp, 4.0_wp, 1.0_wp, 4.0_wp, 1.0_wp, 0.0_wp, 0.0_wp, ref_spec)
 
+        !$acc enter data copyin(ctx)
+        !$acc enter data copyin(ctx%state)
+        !$acc enter data copyin(ctx%state%spec_lambda, ctx%state%spec_nu, ctx%state%speclib)
+        !$acc enter data attach(ctx%state%spec_lambda)
+        !$acc enter data attach(ctx%state%spec_nu)
+        !$acc enter data attach(ctx%state%speclib)
+
+        !$acc enter data copyin(buf)
+        !$acc enter data create(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+        !$acc enter data create(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+        !$acc enter data attach(buf%initial_mass)
+        !$acc enter data attach(buf%current_mass)
+        !$acc enter data attach(buf%log_lum)
+        !$acc enter data attach(buf%log_teff)
+        !$acc enter data attach(buf%log_g)
+        !$acc enter data attach(buf%phase)
+        !$acc enter data attach(buf%co_ratio)
+        !$acc enter data attach(buf%log_mdot)
+        !$acc enter data attach(buf%weights)
+        !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
+        !$acc update device(buf%log_teff, buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot)
+
         ! Run accumulation (Unsorted)
         call accumulate_spectrum(ctx, pset, buf, spec_out)
+
+        !$acc exit data delete(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
+        !$acc exit data delete(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
+        !$acc exit data delete(buf)
+
+        !$acc exit data delete(ctx%state%spec_lambda, ctx%state%spec_nu, ctx%state%speclib)
+        !$acc exit data delete(ctx%state)
+        !$acc exit data delete(ctx)
 
         do i = 1, n_wave
             call assert_relative_error(ref_spec(i) * expected_sum, spec_out(i), 1.0e-12_wp, &
@@ -349,7 +379,18 @@ contains
         expected_mass = sum(buf%weights(1:3) * buf%current_mass(1:3))
         call add_remnant_mass(ctx, expected_mass, maxval(buf%initial_mass(1:3)))
 
+        !$acc enter data copyin(buf)
+        !$acc enter data create(buf%initial_mass, buf%current_mass, buf%log_lum, buf%weights)
+        !$acc enter data attach(buf%initial_mass)
+        !$acc enter data attach(buf%current_mass)
+        !$acc enter data attach(buf%log_lum)
+        !$acc enter data attach(buf%weights)
+        !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
+
         call compute_integrated_properties(ctx, buf, tot_mass, tot_lbol)
+
+        !$acc exit data delete(buf%initial_mass, buf%current_mass, buf%log_lum, buf%weights)
+        !$acc exit data delete(buf)
         call assert_relative_error(expected_mass, tot_mass, 1.0e-10_wp, &
                                    "Remnant mass added", total_tests, total_failures)
 
