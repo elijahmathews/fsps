@@ -271,7 +271,7 @@ PROGRAM TEST_RUNNER
    !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
    !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
    !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
-   !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
    !$acc update device(ctx%add_neb_emission_val)
@@ -291,7 +291,7 @@ PROGRAM TEST_RUNNER
    !$acc update device(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc)
    !$acc update device(ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc)
    !$acc update device(ctx%state%nmass_isoc, ctx%state%timestep_isoc)
-   !$acc data copyin(pset, new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
+   !$acc data copyin(pset) copy(new_mass_ssp, new_lbol_ssp, new_spec_ssp_ctx)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
    !$acc update device(ctx%add_neb_emission_val)
@@ -306,7 +306,7 @@ PROGRAM TEST_RUNNER
     new_spec_ssp3(:,:,1) = new_spec_ssp_ctx
 
    IF (verbose_output) CALL DUMP_STATE('BEFORE compute_csp_scenario', ctx, pset)
-   !$acc data copyin(pset, new_spec_ssp_ctx, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2)
+   !$acc data copyin(pset, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_spec_ssp_ctx)
    !$acc update device(pset)
    ctx%add_neb_emission_val = 1
    !$acc update device(ctx%add_neb_emission_val)

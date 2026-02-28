@@ -118,12 +118,48 @@ contains
         ctx%smoothspec_fast_val = 0
 
         ctx%state%nebem_line_pos = 5500.0_wp
+
+        !$acc enter data copyin(ctx)
+        !$acc enter data copyin(ctx%state)
+        !$acc enter data copyin(ctx%state%time_full, ctx%state%spec_lambda, ctx%state%spec_nu, ctx%state%zlegend)
+        !$acc enter data attach(ctx%state%time_full)
+        !$acc enter data attach(ctx%state%spec_lambda)
+        !$acc enter data attach(ctx%state%spec_nu)
+        !$acc enter data attach(ctx%state%zlegend)
+        if (associated(ctx%state%bands)) then
+            !$acc enter data copyin(ctx%state%bands)
+            !$acc enter data attach(ctx%state%bands)
+        end if
     end subroutine setup_basic_context
 
     subroutine teardown_basic_context(ctx)
         type(fsps_context_t), allocatable, intent(inout) :: ctx
 
         if (.not. allocated(ctx)) return
+
+        if (associated(ctx%state%time_full)) then
+            !$acc exit data delete(ctx%state%time_full)
+        end if
+        if (associated(ctx%state%spec_lambda)) then
+            !$acc exit data delete(ctx%state%spec_lambda)
+        end if
+        if (associated(ctx%state%spec_nu)) then
+            !$acc exit data delete(ctx%state%spec_nu)
+        end if
+        if (associated(ctx%state%bands)) then
+            !$acc exit data delete(ctx%state%bands)
+        end if
+        if (associated(ctx%state%zlegend)) then
+            !$acc exit data delete(ctx%state%zlegend)
+        end if
+        if (associated(ctx%state%neb_res_min)) then
+            !$acc exit data delete(ctx%state%neb_res_min)
+        end if
+        if (associated(ctx%state%gaussnebarr)) then
+            !$acc exit data delete(ctx%state%gaussnebarr)
+        end if
+        !$acc exit data delete(ctx%state)
+        !$acc exit data delete(ctx)
 
         if (associated(ctx%state%time_full)) deallocate(ctx%state%time_full)
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
@@ -190,6 +226,19 @@ contains
 
         ctx%state%nebem_line = -99.0_wp
         ctx%state%nebem_line(1, :, :, :) = 5.0_wp
+
+        if (associated(ctx%state%neb_res_min)) then
+            !$acc enter data copyin(ctx%state%neb_res_min)
+            !$acc enter data attach(ctx%state%neb_res_min)
+        end if
+        if (associated(ctx%state%gaussnebarr)) then
+            !$acc enter data copyin(ctx%state%gaussnebarr)
+            !$acc enter data attach(ctx%state%gaussnebarr)
+        end if
+        !$acc update device(ctx%add_neb_emission_val, ctx%add_neb_continuum_val, ctx%nebemlineinspec_val)
+        !$acc update device(ctx%setup_nebular_gaussians_val, ctx%smooth_velocity_val)
+        !$acc update device(ctx%state%nebem_line_pos, ctx%state%nebem_logz, ctx%state%nebem_logu)
+        !$acc update device(ctx%state%nebem_age, ctx%state%nebem_line)
     end subroutine setup_nebular_line_context
 
     ! ---------------------------------------------------------------------

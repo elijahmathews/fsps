@@ -128,7 +128,8 @@ contains
         
         if (calc_cont) then
             allocate(neb_cont_grid_reduced(nspec, NEBNAGE))
-            !$acc enter data create(neb_cont_grid_reduced)
+            neb_cont_grid_reduced = 0.0_wp
+            !$acc enter data copyin(neb_cont_grid_reduced)
 
             do k = 1, NEBNAGE
                 do t = 1, nspec
@@ -148,7 +149,8 @@ contains
 
         if (calc_lines) then
             allocate(neb_line_grid_reduced(NEMLINE, NEBNAGE))
-            !$acc enter data create(neb_line_grid_reduced)
+            neb_line_grid_reduced = 0.0_wp
+            !$acc enter data copyin(neb_line_grid_reduced)
 
             do k = 1, NEBNAGE
                 do t = 1, NEMLINE
@@ -173,8 +175,7 @@ contains
         allocate(current_step_lines_log(NEMLINE))
         current_step_cont = 0.0_wp
         current_step_lines_log = log10(SAFE_FLOOR)
-        !$acc enter data create(current_step_cont, current_step_lines_log)
-        !$acc update device(current_step_cont, current_step_lines_log)
+        !$acc enter data copyin(current_step_cont, current_step_lines_log)
 
         ! NOTE: The loop over time steps 't' must be sequential because process_ionizing_radiation
         ! and integration might be heavy, and we are updating sspo(:, t).
@@ -303,7 +304,7 @@ contains
         else
             integral_flux = 0.0_wp
             ! Use specialized loop to avoid array temp (spec_in / spec_nu)
-            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx)
+            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx) private(y1, y2)
             do i = 1, whlylim - 1
                 y1 = spec_in(i, t_idx) / ctx%state%spec_nu(i)
                 y2 = spec_in(i+1, t_idx) / ctx%state%spec_nu(i+1)
@@ -335,8 +336,10 @@ contains
         
         integer :: i
         real(WP) :: sigma_angstroms, norm_factor
-        real(WP), dimension(size(ctx%state%spec_lambda)) :: lambda_grid
+        real(WP), allocatable, dimension(:) :: lambda_grid
 
+        allocate(lambda_grid(size(ctx%state%spec_lambda)))
+        lambda_grid = 0.0_wp
         lambda_grid = ctx%state%spec_lambda
 
         do i = 1, NEMLINE
@@ -365,6 +368,8 @@ contains
             ctx%state%gaussnebarr(:,i) = norm_factor * &
                 exp( -0.5_wp * ((lambda_grid - ctx%state%nebem_line_pos(i)) / sigma_angstroms)**2 )
         end do
+
+        deallocate(lambda_grid)
     end subroutine compute_line_gaussians
 
     !> @brief
