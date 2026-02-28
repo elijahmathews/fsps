@@ -352,6 +352,7 @@ contains
         !$acc update device(ctx%state%nebem_cont, ctx%state%nebem_line)
 
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
+        !$acc update device(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
@@ -479,7 +480,8 @@ contains
         ctx%state%nebem_line_pos(1) = tmp_line_pos1
         !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line_pos)
 
-        !$acc data copyin(sspi, pset) copy(sspo, nebemline)
+        !$acc data copyin(sspi, pset) copy(sspo, nebemline, line_wpec)
+        !$acc update device(sspo, nebemline, line_wpec)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val
@@ -686,6 +688,7 @@ contains
         ctx%state%nebem_line(1,:,:,:) = 0.0_wp
         !$acc update device(ctx%state%nebem_line)
         !$acc data copyin(sspi, pset) copy(sspo, nebemline)
+        !$acc update device(sspo, nebemline)
         !$acc update device(pset)
         tmp_add_neb_cont = ctx%add_neb_continuum_val
         tmp_nebemlineinspec = ctx%nebemlineinspec_val

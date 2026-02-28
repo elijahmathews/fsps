@@ -321,7 +321,15 @@ contains
     subroutine reset_buffer(buf)
         type(isochrone_buffer_t), intent(inout) :: buf
         buf%n_stars = 0
-        buf%weights = 0.0_wp ! Essential to zero this as it's often accumulated
+        if (associated(buf%initial_mass)) buf%initial_mass = 0.0_wp
+        if (associated(buf%current_mass)) buf%current_mass = 0.0_wp
+        if (associated(buf%log_lum))      buf%log_lum = SAFE_FLOOR
+        if (associated(buf%log_teff))     buf%log_teff = 0.0_wp
+        if (associated(buf%log_g))        buf%log_g = 0.0_wp
+        if (associated(buf%phase))        buf%phase = 0.0_wp
+        if (associated(buf%co_ratio))     buf%co_ratio = 0.0_wp
+        if (associated(buf%log_mdot))     buf%log_mdot = 0.0_wp
+        if (associated(buf%weights))      buf%weights = 0.0_wp
     end subroutine reset_buffer
 
     !> @brief Deallocates the isochrone buffer.

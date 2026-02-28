@@ -237,19 +237,12 @@ contains
         real(WP), dimension(:), intent(out)    :: neb_flux_out
 
         ! Local Variables
-        ! We use automatic arrays. If sizes are large, we might need create.
-        ! But here we are inside a kernel-like routine (called from csp).
-        ! We assume data is present.
-        ! Note: Automatic arrays on device stack might be limited.
-        ! However, these are nspec sized.
-        ! We can use data create if needed, or rely on compiler.
-        ! For resident device, explicit data clauses are safer.
-        real(WP), dimension(size(spec_young)) :: transmission_diffuse
-        real(WP), dimension(size(spec_young)) :: frequencies
-        real(WP), dimension(size(spec_young)) :: spec_total_work
+        real(WP), allocatable :: transmission_diffuse(:)
+        real(WP), allocatable :: frequencies(:)
+        real(WP), allocatable :: spec_total_work(:)
         
         real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
-        real(WP), dimension(size(spec_young)) :: dust_emission_shape, dust_emission_final
+        real(WP), allocatable :: dust_emission_shape(:), dust_emission_final(:)
         real(WP) :: emission_norm_factor
         
         integer :: nspec, i
@@ -276,7 +269,9 @@ contains
         dust3           = settings%dust3
         dust_type_is3   = (ctx%dust_type_val == 3)
 
-        !$acc data create(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
+        allocate(transmission_diffuse(nspec), frequencies(nspec), spec_total_work(nspec), &
+             dust_emission_shape(nspec), dust_emission_final(nspec))
+        !$acc enter data create(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
 
         ! 1. Calculate Attenuation Curves & Transmissivities
         ! --------------------------------------------------
@@ -453,7 +448,8 @@ contains
             spec_total_out(i) = spec_total_work(i)
         end do
 
-        !$acc end data
+        !$acc exit data delete(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
+        deallocate(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
 
     end subroutine apply_dust_attenuation_and_emission
 
