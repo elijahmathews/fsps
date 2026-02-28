@@ -1,0 +1,16 @@
+PROJECT_NAME           = FSPS
+PROJECT_NUMBER         = @PROJECT_VERSION@
+OUTPUT_DIRECTORY       = @DOXYGEN_OUTPUT_DIR@
+
+INPUT                  = @FSPS_SRC_DIR@ @FSPS_INCLUDE_DIR@
+RECURSIVE              = YES
+FILE_PATTERNS          = *.f90 *.F90 *.h *.c
+
+GENERATE_XML           = YES
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+
+OPTIMIZE_FOR_FORTRAN   = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+QUIET                  = YES

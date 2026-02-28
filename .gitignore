@@ -31,6 +31,9 @@ simple
 lesssimple
 spec_bin
 
+# Ignore Python virtual environments
+.venv/
+
 # Test executables
 generate_test_data
 test_cache

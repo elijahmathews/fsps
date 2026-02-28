@@ -291,3 +291,7 @@ pkg.generate(libfsps,
     description : 'Flexible Stellar Population Synthesis',
     url : 'https://github.com/cconroy20/fsps'
 )
+
+if get_option('build_docs')
+    subdir('docs')
+endif
