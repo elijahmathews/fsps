@@ -113,7 +113,7 @@ contains
         ! compute_line_gaussians is likely expensive.
         if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
             call compute_line_gaussians(ctx, pset)
-            !$acc update device(ctx%state%gaussnebarr)
+            !$acc update device(ctx%state%gaussnebarr(:,:))
         end if
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
@@ -221,13 +221,14 @@ contains
                 !$acc update host(current_step_lines_log)
                 
                 if (present(nebemline)) then
+                    !$acc parallel loop present(current_step_lines_log, nebemline) firstprivate(t, q_ionizing)
                     do k = 1, NEMLINE
                         nebemline(k,t) = (10.0_wp**current_step_lines_log(k)) * q_ionizing
                     end do
                 end if
 
                 if (ctx%nebemlineinspec_val == 1) then
-                    call add_lines_to_spectrum(ctx, sspo(:,t), current_step_lines_log, q_ionizing)
+                    call add_lines_to_spectrum(ctx, sspo, t, current_step_lines_log, q_ionizing)
                 end if
             end if
 
@@ -356,12 +357,9 @@ contains
             ! The factor of 2 ensures we don't alias on the grid.
             sigma_angstroms = max(sigma_angstroms, ctx%state%neb_res_min(i) * 2.0_wp)
 
-            ! Compute Gaussian
-            ! Profile = (1 / (sqrt(2pi)*sigma)) * exp( -0.5 * ((lam - lam_0)/sigma)^2 )
-            ! We also convert luminosity units here if needed, but original code divides by C_LIGHT*lambda^2?
-            ! Original: ... / C_LIGHT * nebem_line_pos(i)**2
-            ! This converts from L_lambda to L_nu? 
-            ! Yes: L_nu = L_lambda * lambda^2 / c. 
+            ! Gaussian line profile normalized by 1/(sqrt(2*pi)*sigma).
+            ! The lambda^2 / c factor converts L_lambda to L_nu so that line
+            ! luminosities and spectrum units remain consistent downstream.
             norm_factor = (1.0_wp / (SQRT_2_PI * sigma_angstroms)) * &
                           (ctx%state%nebem_line_pos(i)**2 / C_LIGHT)
 
@@ -374,24 +372,25 @@ contains
 
     !> @brief
     !> Adds emission lines to the spectrum.
-    subroutine add_lines_to_spectrum(ctx, spectrum, line_lum_log, q_val)
-        type(fsps_context_t), intent(in)    :: ctx
-        real(WP), dimension(:), intent(inout) :: spectrum
-        real(WP), dimension(:), intent(in)    :: line_lum_log
-        real(WP), intent(in)                  :: q_val
+    subroutine add_lines_to_spectrum(ctx, spectrum, t_idx, line_lum_log, q_val)
+        type(fsps_context_t), intent(in)        :: ctx
+        real(WP), dimension(:,:), intent(inout) :: spectrum
+        integer, intent(in)                     :: t_idx
+        real(WP), dimension(:), intent(in)      :: line_lum_log
+        real(WP), intent(in)                    :: q_val
         
         integer :: i, j
         real(WP) :: sum_val
 
         ! Manual Matmul
         ! spectrum(j) = sum(gauss(j, i) * flux(i))
-        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val)
-        do j = 1, size(spectrum)
+        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val) firstprivate(t_idx)
+        do j = 1, size(spectrum, 1)
             sum_val = 0.0_wp
             do i = 1, NEMLINE
                 sum_val = sum_val + ctx%state%gaussnebarr(j, i) * (10.0_wp**line_lum_log(i)) * q_val
             end do
-            spectrum(j) = spectrum(j) + sum_val
+            spectrum(j, t_idx) = spectrum(j, t_idx) + sum_val
         end do
 
     end subroutine add_lines_to_spectrum

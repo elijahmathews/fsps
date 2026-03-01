@@ -129,7 +129,7 @@ contains
 
         ! Local variables
         type(isochrone_buffer_t) :: buf
-        integer :: n_times, i_time, out_idx
+        integer :: n_curr, n_times, i_time, out_idx
         real(WP) :: time_log_yr
 
         ! --------------------------------------------------------------------
@@ -200,6 +200,7 @@ contains
         ! --------------------------------------------------------------------
         ! 4. EVOLUTION LOOP
         ! --------------------------------------------------------------------
+        
         n_times = ctx%state%nt
 
         !$acc data present(ctx, buf) copy(spec_grid)
@@ -224,16 +225,20 @@ contains
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
             ! Sync buffer to device for integration and spectral accumulation
+            n_curr = buf%n_stars
             !$acc update device(buf%n_stars)
-            !$acc update device(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
-            !$acc update device(buf%log_g, buf%phase, buf%co_ratio, buf%log_mdot, buf%weights)
-            !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
+            if (n_curr > 0) then
+                !$acc update device(buf%initial_mass(1:n_curr), buf%current_mass(1:n_curr), buf%log_lum(1:n_curr))
+                !$acc update device(buf%log_teff(1:n_curr), buf%log_g(1:n_curr), buf%phase(1:n_curr))
+                !$acc update device(buf%co_ratio(1:n_curr), buf%log_mdot(1:n_curr), buf%weights(1:n_curr))
+            end if
 
             ! C. COMPUTE INTEGRATED PROPERTIES
             !    Mass and Bolometric Luminosity
-            call compute_integrated_properties(ctx, buf, &
-                                               mass_grid(out_idx), &
-                                               lbol_grid(out_idx))
+            call compute_integrated_properties(ctx, buf, mass_grid(out_idx), lbol_grid(out_idx))
+
+            ! Prevent host/device desync if the caller mapped these to the device
+            !$acc update device(mass_grid(out_idx), lbol_grid(out_idx)) if_present
 
             ! D. ACCUMULATE SPECTRA
             !    Sum individual stellar spectra into the grid

@@ -157,22 +157,25 @@ contains
         ! Initialize on device (Implicit copy for now, but better explicit)
         !$acc enter data create(local_ssp_grid, local_emlin_grid)
         
-        ! Copy tspec_ssp (Device to Device if tspec_ssp is on device?)
-        ! tspec_ssp is intent(in). In Resident Device mode, it is likely on device.
-        ! But standard fortran assignment might pull to host.
-        ! Let's assume tspec_ssp is valid on device.
-        !$acc kernels present(local_ssp_grid, tspec_ssp)
+        ! Initialize host-side working grids from SSP inputs.
+        ! Perform a device update immediately after assignment so OpenACC
+        ! kernels consume the initialized values regardless of residency mode.
         local_ssp_grid = tspec_ssp
         local_emlin_grid = 0.0_wp
-        !$acc end kernels
+
+        ! Explicitly push the initialized grids to the device
+        !$acc update device(local_ssp_grid, local_emlin_grid)
 
         if (ctx%add_neb_emission_val == 1) then
             if (nzin > 1) then
                  if (present(status)) status = 2; return
             end if
-            ! apply_nebular_emission handles device updates internally
+
             call apply_nebular_emission(ctx, pset, tspec_ssp(:,:,1), &
                                         local_ssp_grid(:,:,1), local_emlin_grid(:,:,1))
+            
+            ! Pull updated data to host for the integrator
+            !$acc update host(local_ssp_grid(:,:,1), local_emlin_grid(:,:,1))
         end if
 
         ! 3. OPTIMIZATIONS (Pre-calculations)
@@ -252,6 +255,9 @@ contains
                                     local_ssp_grid, local_emlin_grid, mass_ssp, &
                                     ssp_lum_linear, &  ! <--- Optimized Input
                                     buf, mass_csp, lbol_csp)
+            
+            !$acc update device(buf%spec_young(1:nspec), buf%spec_old(1:nspec), &
+            !$acc               buf%emlin_young(1:NEMLINE), buf%emlin_old(1:NEMLINE))
 
             ! Dust Physics
             call apply_dust_physics(ctx, pset, buf, spec_final, emlin_final, mdust_total)
@@ -490,7 +496,9 @@ contains
         ! 2. Handle History vs Snapshot Normalization
         if (pset%tage <= 0.0_wp) then
             ! History Mode: Output represents the total galaxy luminosity at time T.
+            !$acc kernels present(spec)
             spec       = spec * mass_frac
+            !$acc end kernels
             lbol_final = lbol_csp + log10(max(mass_frac, SAFE_FLOOR))
         else
             ! Snapshot Mode: Output is normalized to 1 M_sol formed *total*.
@@ -503,14 +511,18 @@ contains
 
         ! 3. Instrumental Smoothing
         if (pset%sigma_smooth > 0.0_wp) then
+            !$acc update host(spec)
             call apply_smoothing(ctx, ctx%state%spec_lambda, spec, &
                                  pset%sigma_smooth, &
                                  pset%min_wave_smooth, pset%max_wave_smooth)
+            !$acc update device(spec)
         end if
 
         ! 4. IGM Absorption
         if (present(igm_transmission)) then
-             spec = spec * igm_transmission
+            !$acc kernels present(spec, igm_transmission)
+            spec = spec * igm_transmission
+            !$acc end kernels
         end if
 
         ! 5. AGN Dust Emission

@@ -707,6 +707,8 @@ contains
         buf%emlin_young = 0.0_wp
         buf%emlin_old = 0.0_wp
 
+        call map_csp_buffer_to_device(buf)
+
         allocate(spec_total(size(spec_lambda)))
         allocate(emlin_total(NEMLINE))
 
@@ -721,7 +723,9 @@ contains
         pset%wgp2 = 1
         pset%wgp3 = 1
 
+        !$acc data copyin(pset) copy(spec_total, emlin_total)
         call apply_dust_physics(ctx, pset, buf, spec_total, emlin_total, mdust)
+        !$acc end data
 
         call assert_true(spec_total(1) > 1.0_wp .and. spec_total(1) < 2.0_wp, &
                          "Young attenuated, old unattenuated", total_tests, total_failures)
@@ -729,6 +733,7 @@ contains
                                    "Young component attenuated", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, spec_total, emlin_total)
+        call unmap_csp_buffer_from_device(buf)
         call free_csp_buffer(buf)
         call teardown_basic_context(ctx)
     end subroutine test_dust_screen_logic
@@ -773,10 +778,14 @@ contains
         lbol_csp = 0.0_wp
         mdust = 0.0_wp
 
+        !$acc data copyin(pset) copy(spec_no, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_no, emlines, result=result_no)
+        !$acc end data
 
         igm = get_igm_transmission(spec_lambda, pset%zred, pset%igm_factor)
+        !$acc data copyin(pset, igm) copy(spec_yes, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_yes, emlines, igm, result_yes)
+        !$acc end data
 
         i_blue = 1
         i_red = 4
@@ -837,7 +846,9 @@ contains
         lbol_csp = 0.0_wp
         mdust = 0.0_wp
 
+        !$acc data copyin(pset) copy(spec, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec, emlines, result=result)
+        !$acc end data
 
         area_after = sum(result%spec)
         peak_after = maxval(result%spec)
