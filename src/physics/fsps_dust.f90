@@ -241,16 +241,19 @@ contains
         real(WP), allocatable :: frequencies(:)
         real(WP), allocatable :: spec_total_work(:)
         
-        real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
+        real(WP)              :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
         real(WP), allocatable :: dust_emission_shape(:), dust_emission_final(:)
-        real(WP) :: emission_norm_factor
+        real(WP)              :: emission_norm_factor
         
-        integer :: nspec, i
+        integer  :: nspec, i
         real(WP) :: y1, y2
         real(WP) :: curve, trans_birth, trans_old, spec_sum, trans_diffuse_neb, neb_birth
         real(WP) :: frac_obrun, one_minus_obrun, frac_nodust, one_minus_nodust
         real(WP) :: dust1, dust1_index, dust2, dust3
         logical  :: dust_type_is3
+
+        integer  :: search_lower, search_upper, search_mid
+        real(WP) :: search_val, search_slope
 
         nspec = size(spec_young)
 
@@ -270,7 +273,7 @@ contains
         dust_type_is3   = (ctx%dust_type_val == 3)
 
         allocate(transmission_diffuse(nspec), frequencies(nspec), spec_total_work(nspec), &
-             dust_emission_shape(nspec), dust_emission_final(nspec))
+                 dust_emission_shape(nspec), dust_emission_final(nspec))
         !$acc enter data create(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
 
         ! 1. Calculate Attenuation Curves & Transmissivities
@@ -324,33 +327,53 @@ contains
         ! Note: We must interpolate the diffuse transmission to the line wavelengths
         ! interpolate_linear is now !acc routine seq
         
-           !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out, transmission_diffuse)
+        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out, transmission_diffuse)
         do i = 1, size(neb_flux_young)
-             if (one_minus_nodust <= SAFE_FLOOR) then
-                 trans_diffuse_neb = 1.0_wp
-             else
-                 trans_diffuse_neb = interpolate_linear(ctx%state%spec_lambda, &
-                                                        transmission_diffuse, &
-                                                        ctx%state%nebem_line_pos(i))
-             end if
-                                                              
-               if (trans_diffuse_neb /= trans_diffuse_neb) trans_diffuse_neb = 1.0_wp
+            if (one_minus_nodust <= SAFE_FLOOR) then
+                trans_diffuse_neb = 1.0_wp
+            else
+                ! Inlined interpolation to bypass device array descriptor allocation
+                search_val = ctx%state%nebem_line_pos(i)
+                search_lower = 1
+                search_upper = nspec + 1
 
-             if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
-                 neb_birth = 1.0_wp
-             else
-                 neb_birth = exp(-dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**dust1_index)
-             end if
+                ! Binary search
+                do while (search_upper - search_lower > 1)
+                    search_mid = (search_lower + search_upper) / 2
+                    if (search_val >= ctx%state%spec_lambda(search_mid)) then
+                        search_lower = search_mid
+                    else
+                        search_upper = search_mid
+                    end if
+                end do
+
+                search_lower = max(1, min(search_lower, nspec - 1))
+
+                ! Linear interpolation
+                search_slope = (transmission_diffuse(search_lower+1) - transmission_diffuse(search_lower)) / &
+                               (ctx%state%spec_lambda(search_lower+1) - ctx%state%spec_lambda(search_lower))
+                
+                trans_diffuse_neb = transmission_diffuse(search_lower) + &
+                                    search_slope * (search_val - ctx%state%spec_lambda(search_lower))
+            end if
+                                                              
+            if (trans_diffuse_neb /= trans_diffuse_neb) trans_diffuse_neb = 1.0_wp
+
+            if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                neb_birth = 1.0_wp
+            else
+                neb_birth = exp(-dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**dust1_index)
+            end if
              
-             neb_flux_out(i) = (neb_flux_young(i) * &
-                        neb_birth * &
-                        one_minus_obrun + &
-                        neb_flux_young(i) * frac_obrun + &
-                        neb_flux_old(i))
+            neb_flux_out(i) = (neb_flux_young(i) * &
+                               neb_birth * &
+                               one_minus_obrun + &
+                               neb_flux_young(i) * frac_obrun + &
+                               neb_flux_old(i))
                         
-               if (one_minus_nodust > SAFE_FLOOR) then
-                  neb_flux_out(i) = neb_flux_out(i) * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
-               end if
+            if (one_minus_nodust > SAFE_FLOOR) then
+                neb_flux_out(i) = neb_flux_out(i) * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
+            end if
         end do
 
 
@@ -381,9 +404,10 @@ contains
             end do
             
             if (ctx%nebemlineinspec_val == 0) then
-                 !$acc kernels present(neb_flux_young, neb_flux_old)
-                 lum_bol_intrinsic = lum_bol_intrinsic + sum(neb_flux_young) + sum(neb_flux_old)
-                 !$acc end kernels
+                !$acc parallel loop reduction(+:lum_bol_intrinsic) present(neb_flux_young, neb_flux_old)
+                do i = 1, size(neb_flux_young)
+                    lum_bol_intrinsic = lum_bol_intrinsic + neb_flux_young(i) + neb_flux_old(i)
+                end do
             end if
 
             ! Attenuated (Post-Dust)
@@ -396,9 +420,10 @@ contains
             end do
             
             if (ctx%nebemlineinspec_val == 0) then
-                 !$acc kernels present(neb_flux_out)
-                 lum_bol_attenuated = lum_bol_attenuated + sum(neb_flux_out)
-                 !$acc end kernels
+                !$acc parallel loop reduction(+:lum_bol_attenuated) present(neb_flux_out)
+                do i = 1, size(neb_flux_out)
+                    lum_bol_attenuated = lum_bol_attenuated + neb_flux_out(i)
+                end do
             end if
             
             ! Total Energy Absorbed by Dust
@@ -646,9 +671,8 @@ contains
         real(WP), dimension(:), intent(inout)  :: spectrum_inout
 
         ! Local variables
-        ! Use max size for stack alloc if needed, or assume kernel mode
-        real(WP) :: agn_template_interpolated(size(wavelengths))
-        real(WP) :: galaxy_attenuation_curve(size(wavelengths))
+        real(WP) :: agn_template_interpolated
+        real(WP) :: galaxy_attenuation_curve
         real(WP) :: tau_agn_param, interpolation_weight
         real(WP) :: luminosity_agn_bolometric
         integer  :: idx_tau_grid, n_agn_grid
@@ -677,21 +701,21 @@ contains
         !$acc parallel loop present(ctx, wavelengths, spectrum_inout) private(agn_template_interpolated, galaxy_attenuation_curve)
         do i = 1, size(wavelengths)
             ! Interpolate Template
-            agn_template_interpolated(i) = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
-                                           interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
+            agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
+                                        interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
             
             ! Calculate Attenuation
-            galaxy_attenuation_curve(i) = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
+            galaxy_attenuation_curve = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
             
             ! Apply Attenuation
             if (ctx%dust_type_val == 3) then
-                agn_template_interpolated(i) = agn_template_interpolated(i) * exp(-galaxy_attenuation_curve(i))
+                agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
             else
-                agn_template_interpolated(i) = agn_template_interpolated(i) * exp(-settings%dust2 * galaxy_attenuation_curve(i))
+                agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
             end if
             
             ! Add to Spectrum
-            spectrum_inout(i) = spectrum_inout(i) + (luminosity_agn_bolometric * agn_template_interpolated(i))
+            spectrum_inout(i) = spectrum_inout(i) + (luminosity_agn_bolometric * agn_template_interpolated)
         end do
 
     end subroutine apply_agn_dust_emission

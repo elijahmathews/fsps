@@ -165,9 +165,9 @@ contains
             lbol_grid = 0.0_wp
             mass_grid = ctx%state%bpass_mass_ssp(:, pset%zmet)
             
-            ! BPASS usually doesn't provide separate Lbol history in the same way,
-            ! or it's handled differently, but we leave it 0.
-            ! (Legacy code implies simple copy for spec/mass)
+            ! Push the assigned arrays to the device so downstream device
+            ! kernels (like CSP) see the valid data.
+            !$acc update device(spec_grid, lbol_grid, mass_grid) if_present
             
             return ! Exit immediately
         end if

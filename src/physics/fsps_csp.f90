@@ -187,6 +187,7 @@ contains
         !$acc kernels present(ssp_lum_linear, lbol_ssp)
         ssp_lum_linear = 10.0_wp**lbol_ssp
         !$acc end kernels
+        !$acc update host(ssp_lum_linear)
 
         ! B. Pre-calculate IGM Transmission (Constant for this PSET)
         if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR) then
@@ -342,6 +343,13 @@ contains
         nem   = size(emlin_grid, 1)
 
         ! 1. Clear Accumulators
+        ! Clear host arrays
+        buf%spec_young  = 0.0_wp
+        buf%spec_old    = 0.0_wp
+        buf%emlin_young = 0.0_wp
+        buf%emlin_old   = 0.0_wp
+
+        ! Clear device arrays
         !$acc kernels present(buf)
         buf%spec_young  = 0.0_wp
         buf%spec_old    = 0.0_wp
@@ -534,6 +542,7 @@ contains
         ! 6. Calculate Magnitudes and Spectral Indices
         ! ---------------------------------
         ! Redshift for magnitudes calculation
+        !$acc update host(spec)
         if (ctx%redshift_colors_val == 1) then
              ! Inverse lookup from Age (tage) to Redshift using pre-computed spline.
              ! cosmospl(:,2) is Age(Gyr), cosmospl(:,1) is Redshift.
