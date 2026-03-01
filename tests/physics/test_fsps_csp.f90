@@ -515,7 +515,9 @@ contains
         pset%sfh = 0
         pset%dust_tesc = 3.0_wp
 
+        !$acc data copyin(ssp_grid, emlin_grid)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        !$acc end data
         call unmap_csp_buffer_from_device(buf)
 
         call assert_true(all(abs(buf%spec_young) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
@@ -563,7 +565,9 @@ contains
         pset%tau = 2.0_wp
         pset%dust_tesc = 10.15_wp
 
+        !$acc data copyin(ssp_grid, emlin_grid)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        !$acc end data
         call unmap_csp_buffer_from_device(buf)
 
         call assert_true(all(abs(buf%spec_old) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
@@ -612,7 +616,9 @@ contains
         pset%const = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
+        !$acc data copyin(ssp_grid, emlin_grid)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        !$acc end data
         call unmap_csp_buffer_from_device(buf)
 
         k = find_interval(time_full, 7.0_wp)
@@ -666,7 +672,9 @@ contains
         pset%tau = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
+        !$acc data copyin(ssp_grid, emlin_grid)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        !$acc end data
         call unmap_csp_buffer_from_device(buf)
 
         call assert_relative_error(sum(buf%ssp_weights(:,1)), mass_csp, REL_EPS, &

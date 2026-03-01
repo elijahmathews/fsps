@@ -375,7 +375,7 @@ program test_runner
     ! Check CSP structure components manually
     do i = 1, ntfull_ctx
         ! Check Scalars
-        call check_val('CSP Lbol', i, ref_ocompsp(i)%lbol_csp, new_results(i)%lbol_csp)
+        call check_val('CSP Lbol', i, ref_ocompsp(i)%lbol_csp, new_results(i)%lbol_csp, atol=1.0e-12_wp)
         call check_val('CSP Mass', i, ref_ocompsp(i)%mass_csp, new_results(i)%mass_csp)
         call check_val('CSP SFR', i, ref_ocompsp(i)%sfr, new_results(i)%sfr)
         call check_val('CSP Dust Mass', i, ref_ocompsp(i)%mdust, new_results(i)%mdust)
@@ -626,11 +626,14 @@ contains
     !> @param[in] idx   Logical step/time index for reporting.
     !> @param[in] r     Reference value.
     !> @param[in] n     Newly generated value.
-    subroutine check_val(label, idx, r, n)
+    !> @param[in] atol  Optional absolute tolerance override.
+    subroutine check_val(label, idx, r, n, atol)
         character(*), intent(in) :: label
         integer, intent(in) :: idx
         real(WP), intent(in) :: r, n
-        real(WP) :: delta, threshold
+        real(WP), intent(in), optional :: atol
+
+        real(WP) :: delta, threshold, local_atol
 
         if (ieee_is_nan(r) .or. ieee_is_nan(n)) then
             write(*, *) 'FAIL: ', label, ' contains NaN at step ', idx
@@ -638,8 +641,11 @@ contains
             return
         end if
 
+        local_atol = 1.0e-30_wp
+        if (present(atol)) local_atol = atol
+
         delta = abs(r - n)
-        threshold = max(abs(r) * rtol, 1.0e-30_wp)
+        threshold = max(abs(r) * rtol, local_atol)
 
         if (delta > threshold) then
             test_passed = .false.

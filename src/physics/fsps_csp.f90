@@ -328,14 +328,14 @@ contains
         real(WP), intent(in), contiguous :: ssp_grid(:,:,:)
         real(WP), intent(in), contiguous :: emlin_grid(:,:,:)
         real(WP), intent(in), contiguous :: mass_ssp(:,:)
-        real(WP), intent(in), contiguous :: ssp_lum_linear(:,:) ! <--- Linear Input
+        real(WP), intent(in), contiguous :: ssp_lum_linear(:,:)
         type(csp_buffer_t), intent(inout):: buf
         real(WP), intent(out)            :: mass_csp, lbol_csp
 
         integer :: i, k, nt, i_tesc
         integer :: i_spec, i_em
         integer :: nspec, nem
-        real(WP) :: w, dust_age_log
+        real(WP) :: dust_age_log
         real(WP) :: linear_lbol_sum
         
         nt = ctx%state%ntfull
@@ -363,6 +363,9 @@ contains
         !    It accesses ctx%state%time_full etc.
         call compute_sfh_weights(ctx, pset, tage, nzin, buf%ssp_weights)
 
+        ! Update full array to avoid subarray descriptor bugs
+        !$acc update device(buf%ssp_weights)
+
         ! 3. Determine Dust Separation Index
         if (pset%dust_tesc > SAFE_FLOOR) then
             dust_age_log = pset%dust_tesc
@@ -372,42 +375,57 @@ contains
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
         ! 4. Integration Loop
-        !    Fused pass over (time, Z) to improve cache locality for spectral arrays.
-        !    Access pattern uses full contiguous slices ssp_grid(:, i, k) and
-        !    emlin_grid(:, i, k), which is faster than strided scalar access.
+        ! Scalar reduction executed on host CPU
         linear_lbol_sum = 0.0_wp
         mass_csp        = 0.0_wp
 
         do k = 1, nzin
             do i = 1, nt
-                w = buf%ssp_weights(i, k)
-                
-                if (w > SAFE_FLOOR) then
-                    mass_csp = mass_csp + (w * mass_ssp(i, k))
-                    linear_lbol_sum = linear_lbol_sum + (w * ssp_lum_linear(i, k))
-
-                    if (i <= i_tesc) then
-                        !$omp simd
-                        do i_spec = 1, nspec
-                            buf%spec_young(i_spec) = buf%spec_young(i_spec) + w * ssp_grid(i_spec, i, k)
-                        end do
-                        !$omp simd
-                        do i_em = 1, nem
-                            buf%emlin_young(i_em) = buf%emlin_young(i_em) + w * emlin_grid(i_em, i, k)
-                        end do
-                    else
-                        !$omp simd
-                        do i_spec = 1, nspec
-                            buf%spec_old(i_spec) = buf%spec_old(i_spec) + w * ssp_grid(i_spec, i, k)
-                        end do
-                        !$omp simd
-                        do i_em = 1, nem
-                            buf%emlin_old(i_em) = buf%emlin_old(i_em) + w * emlin_grid(i_em, i, k)
-                        end do
-                    end if
+                if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                    mass_csp = mass_csp + (buf%ssp_weights(i, k) * mass_ssp(i, k))
+                    linear_lbol_sum = linear_lbol_sum + (buf%ssp_weights(i, k) * ssp_lum_linear(i, k))
                 end if
             end do
         end do
+
+        ! Massive parallelization for spectra
+        !$acc parallel loop gang vector present(buf, ssp_grid)
+        do i_spec = 1, nspec
+            do k = 1, nzin
+                do i = 1, nt
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        if (i <= i_tesc) then
+                            buf%spec_young(i_spec) = buf%spec_young(i_spec) + &
+                                buf%ssp_weights(i, k) * ssp_grid(i_spec, i, k)
+                        else
+                            buf%spec_old(i_spec) = buf%spec_old(i_spec) + &
+                                buf%ssp_weights(i, k) * ssp_grid(i_spec, i, k)
+                        end if
+                    end if
+                end do
+            end do
+        end do
+
+        ! More parallelization for nebular emission
+        !$acc parallel loop gang vector present(buf, emlin_grid)
+        do i_em = 1, nem
+            do k = 1, nzin
+                do i = 1, nt
+                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                        if (i <= i_tesc) then
+                            buf%emlin_young(i_em) = buf%emlin_young(i_em) + &
+                                buf%ssp_weights(i, k) * emlin_grid(i_em, i, k)
+                        else
+                            buf%emlin_old(i_em) = buf%emlin_old(i_em) + &
+                                buf%ssp_weights(i, k) * emlin_grid(i_em, i, k)
+                        end if
+                    end if
+                end do
+            end do
+        end do
+
+        ! Fetch results back to host for subsequent physics steps
+        !$acc update host(buf%spec_young, buf%spec_old, buf%emlin_young, buf%emlin_old)
 
         if (linear_lbol_sum > 0.0_wp) then
             lbol_csp = log10(linear_lbol_sum)
