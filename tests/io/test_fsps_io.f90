@@ -512,7 +512,7 @@ contains
         type(fsps_context_t), allocatable :: ctx
         character(len=256) :: root, file_path
         integer :: u, i
-        real(WP), allocatable :: raw_lam(:), raw_spec(:)
+        real(WP), allocatable :: raw_lam(:), raw_spec(:), raw_spec_log(:)
         real(WP), allocatable :: expected(:)
         real(WP) :: val_logz, val_age, val_logu
 
@@ -547,13 +547,17 @@ contains
         allocate(raw_lam(NLAM_NEBCONT))
         allocate(raw_spec(NLAM_NEBCONT))
         allocate(expected(ctx%state%nspec))
+        allocate(raw_spec_log(NLAM_NEBCONT))
 
         read(u, *) raw_lam
         read(u, *) val_logz, val_age, val_logu
         read(u, *) raw_spec
         close(u)
 
-        expected = interpolate_linear(raw_lam, log10(raw_spec + 1.0e-95_wp), ctx%state%spec_lambda)
+        raw_spec_log = log10(raw_spec + 1.0e-95_wp)
+        do i = 1, ctx%state%nspec
+            expected(i) = interpolate_linear(raw_lam, raw_spec_log, ctx%state%spec_lambda(i))
+        end do
 
         call assert_float_equals(expected(1), ctx%state%nebem_cont(1, 1, 1, 1), 1.0e-6_wp, &
                                  "Nebem interp [1]", total_tests, total_failures)
@@ -562,7 +566,7 @@ contains
         call assert_float_equals(expected(50), ctx%state%nebem_cont(50, 1, 1, 1), 1.0e-6_wp, &
                                  "Nebem interp [50]", total_tests, total_failures)
 
-        deallocate(raw_lam, raw_spec, expected)
+        deallocate(raw_lam, raw_spec, raw_spec_log, expected)
         call teardown_nebular_context(ctx)
         deallocate(ctx)
     end subroutine test_nebular_grid_interpolation

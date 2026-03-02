@@ -697,12 +697,12 @@ contains
         character(len=*), intent(in) :: isoc_type
         logical, intent(in) :: use_cloudy
 
-        integer :: u_file, io_stat, i, j, k
+        integer :: u_file, io_stat, i, j, k, i_spec
         character(len=1024) :: file_path_cont, file_path_lines
         character(len=32) :: suffix
         
         ! Temporary arrays for the raw grid reading
-        real(WP), allocatable :: raw_lam(:), raw_spec(:)
+        real(WP), allocatable :: raw_lam(:), raw_spec(:), raw_spec_log(:)
         real(WP) :: val_logz, val_age, val_logu
         real(WP), parameter :: NEBULAR_FLOOR = 10.0_wp**(-95.0_wp)
 
@@ -735,6 +735,7 @@ contains
         ! Allocate using the Constant from fsps_constants
         allocate(raw_lam(NLAM_NEBCONT))
         allocate(raw_spec(NLAM_NEBCONT))
+        allocate(raw_spec_log(NLAM_NEBCONT))
 
         read(u_file, *) raw_lam
 
@@ -757,11 +758,14 @@ contains
                     ctx%state%nebem_logu(k) = val_logu
 
                     ! INTERPOLATION
-                    ! Legacy logic: raw_spec can be 0.0, set floor 1e-95, log10, interpolate
-                    ctx%state%nebem_cont(:, i, j, k) = interpolate_linear( &
-                        raw_lam, &
-                        log10(raw_spec + NEBULAR_FLOOR), &
-                        ctx%state%spec_lambda )
+                    ! Legacy logic: raw_spec can be 0.0, set floor 1e-95, log10, interpolate.
+                    raw_spec_log = log10(raw_spec + NEBULAR_FLOOR)
+                    do i_spec = 1, ctx%state%nspec
+                        ctx%state%nebem_cont(i_spec, i, j, k) = interpolate_linear( &
+                            raw_lam, &
+                            raw_spec_log, &
+                            ctx%state%spec_lambda(i_spec))
+                    end do
 
                 end do
             end do
@@ -776,7 +780,7 @@ contains
             write(*,'(A,1x,ES13.5)') '[DEBUG_IO] nebem_line(1,1,1,1)=', ctx%state%nebem_line(1,1,1,1)
         end if
 
-        deallocate(raw_lam, raw_spec)
+        deallocate(raw_lam, raw_spec, raw_spec_log)
 
 
         ! 3. Read Lines (.lines)
@@ -843,7 +847,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         character(len=*), intent(in) :: dust_type
 
-        integer :: u_file, io_stat, k, i_spec
+        integer :: u_file, io_stat, k, i_spec, i_lam
         character(len=1024) :: file_path
         character(len=1) :: qpah_char
         real(WP), allocatable :: raw_lam(:), raw_spec(:,:)
@@ -907,8 +911,10 @@ contains
             start_idx = max(find_interval(ctx%state%spec_lambda, 1.0e4_wp), 1)
             do i_spec = 1, numin_dust * 2
                 ctx%state%dustem2_dustem(:, k, i_spec) = 0.0_wp
-                ctx%state%dustem2_dustem(start_idx:ctx%state%nspec, k, i_spec) = interpolate_linear( &
-                    raw_lam, raw_spec(:, i_spec), ctx%state%spec_lambda(start_idx:ctx%state%nspec))
+                do i_lam = start_idx, ctx%state%nspec
+                    ctx%state%dustem2_dustem(i_lam, k, i_spec) = interpolate_linear( &
+                        raw_lam, raw_spec(:, i_spec), ctx%state%spec_lambda(i_lam))
+                end do
             end do
 
         end do
@@ -1022,7 +1028,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         character(len=*), intent(in), optional :: alt_filename
 
-        integer :: u_file, io_stat, i_filt, i_point, n_points, start_idx, end_idx
+        integer :: u_file, io_stat, i_filt, i_point, i_grid, n_points, start_idx, end_idx
         character(len=256) :: line_buf
         character(len=1024) :: file_path
         real(WP), allocatable :: raw_lam(:), raw_trans(:)
@@ -1115,11 +1121,13 @@ contains
                 call find_bounds(ctx%state%spec_lambda, raw_lam(1), raw_lam(n_points), start_idx, end_idx)
                 
                 ! Restore strict legacy check (start_idx < end_idx)
-                if (end_idx > start_idx) then 
-                     ctx%state%bands(start_idx:end_idx, i_filt) = interpolate_linear( &
-                        raw_lam(1:n_points), &
-                        raw_trans(1:n_points), &
-                        ctx%state%spec_lambda(start_idx:end_idx) )
+                if (end_idx > start_idx) then
+                    do i_grid = start_idx, end_idx
+                        ctx%state%bands(i_grid, i_filt) = interpolate_linear( &
+                            raw_lam(1:n_points), &
+                            raw_trans(1:n_points), &
+                            ctx%state%spec_lambda(i_grid))
+                    end do
                 end if
             end if
 
@@ -1569,7 +1577,7 @@ contains
     subroutine load_agb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: u_file, io_stat, i, i1
+        integer :: u_file, io_stat, i, i1, i_spec
         character(len=1024) :: file_path
         character(len=1) :: char_dummy
         real(WP) :: dumr1, dz
@@ -1639,8 +1647,10 @@ contains
         close(u_file)
         
         do i = 1, N_AGB_O
-            ctx%state%agb_spec_o(:, i) = max(interpolate_linear(agb_lam, raw_spec_o(:, i), &
-                                             ctx%state%spec_lambda), SAFE_FLOOR)
+            do i_spec = 1, ctx%state%nspec
+                ctx%state%agb_spec_o(i_spec, i) = max(interpolate_linear(agb_lam, raw_spec_o(:, i), &
+                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+            end do
         end do
 
         ! 4. C-rich Spectra (Read & Interpolate)
@@ -1656,8 +1666,10 @@ contains
         close(u_file)
         
         do i = 1, N_AGB_C
-            ctx%state%agb_spec_c(:, i) = max(interpolate_linear(agb_lam, raw_spec_c(:, i), &
-                                             ctx%state%spec_lambda), SAFE_FLOOR)
+            do i_spec = 1, ctx%state%nspec
+                ctx%state%agb_spec_c(i_spec, i) = max(interpolate_linear(agb_lam, raw_spec_c(:, i), &
+                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+            end do
         end do
 
         ! 5. Aringer C-rich (Read & Interpolate)
@@ -1679,8 +1691,10 @@ contains
         close(u_file)
         
         do i = 1, N_AGB_CAR
-             ctx%state%agb_spec_car(:, i) = max(interpolate_linear(aringer_lam, raw_spec_car(:, i), &
-                                                ctx%state%spec_lambda), SAFE_FLOOR)
+            do i_spec = 1, ctx%state%nspec
+                ctx%state%agb_spec_car(i_spec, i) = max(interpolate_linear(aringer_lam, raw_spec_car(:, i), &
+                                                     ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+            end do
         end do
 
         ! Deallocate temporary buffers
@@ -1711,7 +1725,7 @@ contains
     subroutine load_post_agb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
         
-        integer :: u_file, io_stat, i, j
+        integer :: u_file, io_stat, i, j, i_spec
         character(len=1024) :: file_path
         integer, parameter :: NSPEC_PAGB = 9281
         
@@ -1753,8 +1767,10 @@ contains
         ! 4. Interpolate
         do j = 1, 2
             do i = 1, NDIM_PAGB
-                 ctx%state%pagb_spec(:, i, j) = max(interpolate_linear(pagb_lam, pagb_raw(:, i, j), &
-                                                    ctx%state%spec_lambda), SAFE_FLOOR)
+                do i_spec = 1, ctx%state%nspec
+                    ctx%state%pagb_spec(i_spec, i, j) = max(interpolate_linear(pagb_lam, pagb_raw(:, i, j), &
+                                                        ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+                end do
             end do
         end do
 
@@ -1918,10 +1934,10 @@ contains
     subroutine load_wmbasic_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: u_file, io_stat, i, j, z, i1
+        integer :: u_file, io_stat, i, j, z, i1, i_spec
         character(len=1024) :: file_path
         character(len=6) :: zstype
-        real(WP) :: dz
+        real(WP) :: dz, log_spec_val
         
         real(WP), dimension(NZWMB) :: zwmb
         
@@ -1961,8 +1977,10 @@ contains
             ! Interpolate onto master wavelength grid immediately
             do j = 1, NDIM_WMB_LOGG
                 do i = 1, NDIM_WMB_LOGT
-                    wmbsi(:, z, i, j) = max(interpolate_linear(wmb_lam, wmb_spec_raw(:, i, j), &
-                                            ctx%state%spec_lambda), SAFE_FLOOR)
+                    do i_spec = 1, ctx%state%nspec
+                        wmbsi(i_spec, z, i, j) = max(interpolate_linear(wmb_lam, wmb_spec_raw(:, i, j), &
+                                                     ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+                    end do
                 end do
             end do
         end do
@@ -1977,12 +1995,16 @@ contains
                  (log10(zwmb(i1+1)/ctx%state%zsol_spec) - log10(zwmb(i1)/ctx%state%zsol_spec))
             dz = min(max(dz, 0.0_wp), 1.0_wp)
 
-            ! Interpolate in Metallicity
-            ! Explicit cast to target kind to suppress warnings if target is REAL(4)
-            ctx%state%wmb_spec(:, z, :, :) = real( &
-                10.0_wp**((1.0_wp - dz) * log10(wmbsi(:, i1, :, :) + SAFE_FLOOR) + &
-                          dz * log10(wmbsi(:, i1+1, :, :) + SAFE_FLOOR)), &
-                kind=kind(ctx%state%wmb_spec))
+            ! Interpolate in metallicity with scalar loops (ifx-safe path).
+            do j = 1, NDIM_WMB_LOGG
+                do i = 1, NDIM_WMB_LOGT
+                    do i_spec = 1, ctx%state%nspec
+                        log_spec_val = (1.0_wp - dz) * log10(wmbsi(i_spec, i1, i, j) + SAFE_FLOOR) + &
+                                       dz * log10(wmbsi(i_spec, i1 + 1, i, j) + SAFE_FLOOR)
+                        ctx%state%wmb_spec(i_spec, z, i, j) = 10.0_wp**log_spec_val
+                    end do
+                end do
+            end do
         end do
 
         deallocate(wmb_lam, wmb_spec_raw, wmbsi)

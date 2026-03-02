@@ -318,9 +318,9 @@ contains
     subroutine load_stellar_data(ctx, zin)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: zin
-        integer :: z, zmin, zmax, i, i1, nzinit
-        real(WP) :: dz
-        real(WP), allocatable :: speclibinit(:, :, :, :)
+        integer :: z, zmin, zmax, i, i1, j, k, nzinit
+        real(WP) :: dz, log_spec_val
+        real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
 
         call load_zlegend_file(ctx, ctx%state%isoc_type, .false.)
 
@@ -355,10 +355,12 @@ contains
 
         nzinit = ctx%state%nzinit
         allocate (speclibinit(ctx%state%nspec, nzinit, NDIM_LOGT, NDIM_LOGG))
+        allocate (speclib_slice(ctx%state%nspec, NDIM_LOGT, NDIM_LOGG))
         speclibinit = 0.0_wp
 
         do z = 1, nzinit
-            call read_spectral_binary(ctx, ctx%state%spec_type, z, speclibinit(:, z, :, :))
+            call read_spectral_binary(ctx, ctx%state%spec_type, z, speclib_slice)
+            speclibinit(:, z, :, :) = speclib_slice
         end do
 
         do z = 1, ctx%state%nz
@@ -370,11 +372,18 @@ contains
                   log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
             dz = min(max(dz, 0.0_wp), 1.0_wp)
 
-            ctx%state%speclib(:, z, :, :) = real((1.0_wp - dz)*log10(speclibinit(:, i1, :, :) + SAFE_FLOOR) + &
-                                                 dz*log10(speclibinit(:, i1 + 1, :, :) + SAFE_FLOOR), kind(ctx%state%speclib))
-            ctx%state%speclib(:, z, :, :) = 10.0**ctx%state%speclib(:, z, :, :)
+            do k = 1, NDIM_LOGG
+                do j = 1, NDIM_LOGT
+                    do i = 1, ctx%state%nspec
+                        log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + SAFE_FLOOR) + &
+                                       dz * log10(speclibinit(i, i1 + 1, j, k) + SAFE_FLOOR)
+                        ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                    end do
+                end do
+            end do
         end do
 
+        deallocate (speclib_slice)
         deallocate (speclibinit)
 
         call load_wmbasic_spectra(ctx)
@@ -1022,7 +1031,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
 
         integer :: i, j, nlam, stat
-        integer :: jj
+        integer :: jj, i_spec
         real(WP), allocatable :: lambda_dagb(:), fluxin_dagb(:)
 
         open (99, file=trim(ctx%sps_home)//'/data/dust/dusty/Orich_dusty.spec', status='old', action='read', iostat=stat)
@@ -1040,7 +1049,10 @@ contains
                 read (99, *) ctx%state%teff_dagb(1, i), ctx%state%tau1_dagb(1, j)
                 read (99, *) fluxin_dagb
                 jj = max(find_interval(ctx%state%spec_lambda, lambda_dagb(1)), 1)
-                ctx%state%flux_dagb(jj:, 1, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, ctx%state%spec_lambda(jj:))
+                do i_spec = jj, ctx%state%nspec
+                    ctx%state%flux_dagb(i_spec, 1, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, &
+                                                                              ctx%state%spec_lambda(i_spec))
+                end do
             end do
         end do
         close (99)
@@ -1062,7 +1074,10 @@ contains
                 read (99, *) ctx%state%teff_dagb(2, i), ctx%state%tau1_dagb(2, j)
                 read (99, *) fluxin_dagb
                 jj = max(find_interval(ctx%state%spec_lambda, lambda_dagb(1)), 1)
-                ctx%state%flux_dagb(jj:, 2, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, ctx%state%spec_lambda(jj:))
+                do i_spec = jj, ctx%state%nspec
+                    ctx%state%flux_dagb(i_spec, 2, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, &
+                                                                              ctx%state%spec_lambda(i_spec))
+                end do
             end do
         end do
         close (99)
@@ -1074,8 +1089,9 @@ contains
     subroutine load_xray_nebular_grid(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, k, stat
+        integer :: i, j, k, stat, i_spec
         real(WP), dimension(NEBNIP) :: readcontneb
+        real(WP), dimension(NEBNIP) :: raw_spec_log
         real(WP), dimension(NEBNAGE) :: tmp_age
         real(WP), dimension(NEBNZ) :: tmp_logz
         real(WP), dimension(NEBNIP) :: tmp_logu
@@ -1102,8 +1118,11 @@ contains
                 do k = 1, NEBNIP
                     read (99, *, iostat=stat) tmp_logz(i), tmp_age(j), tmp_logu(k)
                     read (99, *, iostat=stat) readcontneb
-                    ctx%state%xnebem_cont(:, i, j, k) = interpolate_linear(readlambneb, &
-                                                                    log10(readcontneb + 10.0_wp**(-95.0_wp)), ctx%state%spec_lambda)
+                    raw_spec_log = log10(readcontneb + 10.0_wp**(-95.0_wp))
+                    do i_spec = 1, ctx%state%nspec
+                        ctx%state%xnebem_cont(i_spec, i, j, k) = interpolate_linear(readlambneb, raw_spec_log, &
+                                                                                      ctx%state%spec_lambda(i_spec))
+                    end do
                 end do
             end do
         end do
@@ -1141,7 +1160,7 @@ contains
     subroutine load_xrb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, stat
+        integer :: i, j, stat, i_spec
         character(len=5), allocatable :: zz_str(:)
         real(WP), allocatable :: tspec(:)
 
@@ -1173,7 +1192,10 @@ contains
             end if
             do i = 1, ctx%state%nt_xrb
                 read (98, *) tspec
-                ctx%state%spec_xrb(:, i, j) = max(interpolate_linear(ctx%state%lam_xrb, tspec, ctx%state%spec_lambda), SAFE_FLOOR)
+                do i_spec = 1, ctx%state%nspec
+                    ctx%state%spec_xrb(i_spec, i, j) = max(interpolate_linear(ctx%state%lam_xrb, tspec, &
+                                                           ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+                end do
             end do
             close (98)
         end do

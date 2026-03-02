@@ -166,16 +166,15 @@ jobs:
               dnf install --assumeyes python3-pip
               pip3 install meson ninja
           
-          # # Intel oneAPI HPC Toolkit (Ubuntu)
-          # - compiler: { name: 'ifx', fc: 'ifx', cc: 'icx' }
-          #   # -fp-model=precise prevents aggressive math reordering that breaks 1e-5 tolerances
-          #   fflags: "-fp-model=precise"
-          #   build_args: ""
-          #   image: intel/oneapi-hpckit:devel-ubuntu22.04
-          #   install_cmd: |
-          #     apt-get update -y
-          #     apt-get install -y python3-pip
-          #     PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install meson ninja
+          # Intel oneAPI HPC Toolkit (Ubuntu)
+          - compiler: { name: 'ifx', fc: 'ifx', cc: 'icx' }
+            fflags: ""
+            build_args: ""
+            image: intel/oneapi-hpckit:devel-ubuntu22.04
+            install_cmd: |
+              apt-get update -y
+              apt-get install -y python3-pip
+              PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install meson ninja
     
     container:
       image: ${{ matrix.image }}

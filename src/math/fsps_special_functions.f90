@@ -141,7 +141,7 @@ contains
         real(WP), intent(in) :: arg
         real(WP) :: res
         
-        real(WP) :: sum_term, term
+        real(WP) :: sum_term, term, prefactor, real_power
         integer :: k
 
         if (arg < 0.0_WP) then
@@ -160,18 +160,42 @@ contains
             !         = -expm1(-arg) - arg * exp(-arg)
             res = -fsps_expm1(-arg) - arg * exp(-arg)
             
-        else 
-            ! General case
-            sum_term = 1.0_WP
-            term = 1.0_WP
-            
-            do k = 1, power - 1
-                term = term * (arg / k)
-                sum_term = sum_term + term
-            end do
-            
-            res = 1.0_WP - exp(-arg) * sum_term
+        else
+            ! General case:
+            ! Use a numerically stable branch when arg < power (small lower tail),
+            ! and use the finite-sum complement form otherwise.
+            real_power = real(power, WP)
+
+            if (arg == 0.0_wp) then
+                res = 0.0_wp
+            else if (arg < real_power) then
+                ! P(a,x) = exp(-x) * x^a / Gamma(a+1) * sum_{n=0..inf} x^n / ((a+1)...(a+n))
+                sum_term = 1.0_wp
+                term = 1.0_wp
+
+                do k = 1, 10000
+                    term = term * (arg / (real_power + real(k, WP)))
+                    sum_term = sum_term + term
+                    if (abs(term) <= 10.0_wp * epsilon(1.0_wp) * abs(sum_term)) exit
+                end do
+
+                prefactor = exp(real_power * log(arg) - arg - log_gamma(real_power + 1.0_wp))
+                res = prefactor * sum_term
+            else
+                sum_term = 1.0_WP
+                term = 1.0_WP
+
+                do k = 1, power - 1
+                    term = term * (arg / real(k, WP))
+                    sum_term = sum_term + term
+                end do
+
+                res = 1.0_WP - exp(-arg) * sum_term
+            end if
         endif
+
+        if (res < 0.0_wp) res = 0.0_wp
+        if (res > 1.0_wp) res = 1.0_wp
 
     end function gammainc
 
