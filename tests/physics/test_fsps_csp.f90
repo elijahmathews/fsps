@@ -3,8 +3,9 @@ module test_fsps_csp_mod
     use fsps_constants, only: SAFE_FLOOR, NEMLINE, C_LIGHT
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_prepare_csp_workspace
     use fsps_csp, only: compute_sfh_weights, convert_sfhparams, integrate_csp_step, apply_dust_physics, &
-                        apply_post_processing, compute_csp_scenario, csp_buffer_t, init_csp_buffer, free_csp_buffer
+                        apply_post_processing, compute_csp_scenario
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: get_igm_transmission
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -173,26 +174,37 @@ contains
         deallocate(ctx)
     end subroutine teardown_basic_context
 
-    subroutine map_csp_buffer_to_device(buf)
-        type(csp_buffer_t), intent(inout) :: buf
+    subroutine map_csp_workspace_to_device(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        if (allocated(ctx%state%csp_weights)) then
+            !$acc enter data copyin(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
+            !$acc enter data attach(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
+            !$acc enter data copyin(ctx%state%csp_ssp_lum_linear, ctx%state%csp_igm_transmission)
+            !$acc enter data attach(ctx%state%csp_ssp_lum_linear, ctx%state%csp_igm_transmission)
+            !$acc enter data copyin(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
+            !$acc enter data attach(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
+            !$acc enter data copyin(ctx%state%csp_weights, ctx%state%spec_young, ctx%state%spec_old)
+            !$acc enter data attach(ctx%state%csp_weights, ctx%state%spec_young, ctx%state%spec_old)
+            !$acc enter data copyin(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
+            !$acc enter data attach(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
+        end if
+    end subroutine map_csp_workspace_to_device
 
-        !$acc enter data copyin(buf)
-        !$acc enter data copyin(buf%ssp_weights, buf%spec_young, buf%spec_old)
-        !$acc enter data copyin(buf%emlin_young, buf%emlin_old)
-        !$acc enter data attach(buf%ssp_weights)
-        !$acc enter data attach(buf%spec_young)
-        !$acc enter data attach(buf%spec_old)
-        !$acc enter data attach(buf%emlin_young)
-        !$acc enter data attach(buf%emlin_old)
-    end subroutine map_csp_buffer_to_device
+    subroutine unmap_csp_workspace_from_device(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        if (allocated(ctx%state%csp_weights)) then
+            !$acc exit data delete(ctx%state%csp_weights)
+            !$acc exit data delete(ctx%state%spec_young, ctx%state%spec_old)
+            !$acc exit data delete(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
+            !$acc exit data delete(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
+            !$acc exit data delete(ctx%state%csp_ssp_lum_linear)
+            !$acc exit data delete(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
+        end if
 
-    subroutine unmap_csp_buffer_from_device(buf)
-        type(csp_buffer_t), intent(inout) :: buf
-
-        !$acc exit data delete(buf%ssp_weights, buf%spec_young, buf%spec_old)
-        !$acc exit data delete(buf%emlin_young, buf%emlin_old)
-        !$acc exit data delete(buf)
-    end subroutine unmap_csp_buffer_from_device
+        if (allocated(ctx%state%csp_igm_transmission)) then
+            !$acc exit data delete(ctx%state%csp_igm_transmission)
+        end if
+    end subroutine unmap_csp_workspace_from_device
 
     subroutine setup_nebular_line_context(ctx)
         type(fsps_context_t), intent(inout) :: ctx
@@ -482,7 +494,6 @@ contains
     subroutine test_all_old_limit()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(csp_buffer_t) :: buf
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
@@ -509,21 +520,20 @@ contains
         mass_ssp = 1.0_wp
         ssp_lum = 1.0_wp
 
-        call init_csp_buffer(buf, 1, n, 1)
-        call map_csp_buffer_to_device(buf)
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 0
         pset%dust_tesc = 3.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
-        call unmap_csp_buffer_from_device(buf)
+        call unmap_csp_workspace_from_device(ctx)
 
-        call assert_true(all(abs(buf%spec_young) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
-        call assert_true(sum(buf%spec_old) > 0.0_wp, "Old component carries flux", total_tests, total_failures)
+        call assert_true(all(abs(ctx%state%spec_young) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
+        call assert_true(sum(ctx%state%spec_old) > 0.0_wp, "Old component carries flux", total_tests, total_failures)
 
-        call free_csp_buffer(buf)
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
     end subroutine test_all_old_limit
@@ -531,7 +541,6 @@ contains
     subroutine test_all_young_limit()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(csp_buffer_t) :: buf
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
@@ -558,22 +567,21 @@ contains
         mass_ssp = 1.0_wp
         ssp_lum = 1.0_wp
 
-        call init_csp_buffer(buf, 1, n, 1)
-        call map_csp_buffer_to_device(buf)
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 1
         pset%tau = 2.0_wp
         pset%dust_tesc = 10.15_wp
 
         !$acc data copyin(ssp_grid, emlin_grid)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
-        call unmap_csp_buffer_from_device(buf)
+        call unmap_csp_workspace_from_device(ctx)
 
-        call assert_true(all(abs(buf%spec_old) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
-        call assert_true(sum(buf%spec_young) > 0.0_wp, "Young component carries flux", total_tests, total_failures)
+        call assert_true(all(abs(ctx%state%spec_old) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
+        call assert_true(sum(ctx%state%spec_young) > 0.0_wp, "Young component carries flux", total_tests, total_failures)
 
-        call free_csp_buffer(buf)
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
     end subroutine test_all_young_limit
@@ -581,7 +589,6 @@ contains
     subroutine test_split_boundary()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(csp_buffer_t) :: buf
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
@@ -608,8 +615,8 @@ contains
         mass_ssp = 1.0_wp
         ssp_lum = 1.0_wp
 
-        call init_csp_buffer(buf, 1, n, 1)
-        call map_csp_buffer_to_device(buf)
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 1
         pset%tau = 2.0_wp
@@ -617,20 +624,19 @@ contains
         pset%dust_tesc = 7.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
-        call unmap_csp_buffer_from_device(buf)
+        call unmap_csp_workspace_from_device(ctx)
 
         k = find_interval(time_full, 7.0_wp)
-        expected_young = sum(buf%ssp_weights(1:k, 1))
-        expected_old = sum(buf%ssp_weights(k+1:n, 1))
+        expected_young = sum(ctx%state%csp_weights(1:k, 1))
+        expected_old = sum(ctx%state%csp_weights(k+1:n, 1))
 
-        call assert_relative_error(expected_young, buf%spec_young(1), REL_EPS, &
+        call assert_relative_error(expected_young, ctx%state%spec_young(1), REL_EPS, &
                                    "Young sum matches weights", total_tests, total_failures)
-        call assert_relative_error(expected_old, buf%spec_old(1), REL_EPS, &
+        call assert_relative_error(expected_old, ctx%state%spec_old(1), REL_EPS, &
                                    "Old sum matches weights", total_tests, total_failures)
 
-        call free_csp_buffer(buf)
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
     end subroutine test_split_boundary
@@ -638,7 +644,6 @@ contains
     subroutine test_mass_sum_consistency()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(csp_buffer_t) :: buf
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
@@ -665,24 +670,23 @@ contains
         mass_ssp = 1.0_wp
         ssp_lum = 1.0_wp
 
-        call init_csp_buffer(buf, 1, n, 1)
-        call map_csp_buffer_to_device(buf)
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 1
         pset%tau = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, buf, mass_csp, lbol_csp)
+        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
-        call unmap_csp_buffer_from_device(buf)
+        call unmap_csp_workspace_from_device(ctx)
 
-        call assert_relative_error(sum(buf%ssp_weights(:,1)), mass_csp, REL_EPS, &
+        call assert_relative_error(sum(ctx%state%csp_weights(:,1)), mass_csp, REL_EPS, &
                                    "Mass matches sum of weights", total_tests, total_failures)
         call assert_relative_error(1.0_wp, mass_csp, 1.0e-3_wp, &
                                    "Mass ~1 for normalized weights", total_tests, total_failures)
 
-        call free_csp_buffer(buf)
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
     end subroutine test_mass_sum_consistency
@@ -693,7 +697,6 @@ contains
     subroutine test_dust_screen_logic()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(csp_buffer_t) :: buf
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: spec_total(:), emlin_total(:)
@@ -708,14 +711,14 @@ contains
         spec_lambda = [5500.0_wp, 5500.0_wp, 5500.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        call init_csp_buffer(buf, size(spec_lambda), 2, 1)
+        call fsps_context_prepare_csp_workspace(ctx)
 
-        buf%spec_young = 1.0_wp
-        buf%spec_old = 1.0_wp
-        buf%emlin_young = 0.0_wp
-        buf%emlin_old = 0.0_wp
+        ctx%state%spec_young = 1.0_wp
+        ctx%state%spec_old = 1.0_wp
+        ctx%state%csp_emlin_young = 0.0_wp
+        ctx%state%csp_emlin_old = 0.0_wp
 
-        call map_csp_buffer_to_device(buf)
+        call map_csp_workspace_to_device(ctx)
 
         allocate(spec_total(size(spec_lambda)))
         allocate(emlin_total(NEMLINE))
@@ -732,7 +735,7 @@ contains
         pset%wgp3 = 1
 
         !$acc data copyin(pset) copy(spec_total, emlin_total)
-        call apply_dust_physics(ctx, pset, buf, spec_total, emlin_total, mdust)
+        call apply_dust_physics(ctx, pset, spec_total, emlin_total, mdust)
         !$acc end data
 
         call assert_true(spec_total(1) > 1.0_wp .and. spec_total(1) < 2.0_wp, &
@@ -741,8 +744,7 @@ contains
                                    "Young component attenuated", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, spec_total, emlin_total)
-        call unmap_csp_buffer_from_device(buf)
-        call free_csp_buffer(buf)
+        call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_dust_screen_logic
 
@@ -786,10 +788,12 @@ contains
         lbol_csp = 0.0_wp
         mdust = 0.0_wp
 
+        ctx%add_igm_absorption_val = 0
         !$acc data copyin(pset) copy(spec_no, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_no, emlines, result=result_no)
         !$acc end data
 
+        ctx%add_igm_absorption_val = 1
         igm = get_igm_transmission(spec_lambda, pset%zred, pset%igm_factor)
         !$acc data copyin(pset, igm) copy(spec_yes, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_yes, emlines, igm, result_yes)
@@ -891,6 +895,9 @@ contains
         spec_lambda = [800.0_wp, 1200.0_wp, 3000.0_wp, 5500.0_wp, 9000.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
+
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
@@ -919,6 +926,7 @@ contains
 
         deallocate(results)
         deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_snapshot_vs_history
 
@@ -942,6 +950,9 @@ contains
         spec_lambda = [800.0_wp, 1200.0_wp, 3000.0_wp, 5500.0_wp, 9000.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
+
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
@@ -962,6 +973,7 @@ contains
 
         deallocate(results)
         deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_mass_normalization_surviving
 
@@ -989,6 +1001,11 @@ contains
 
         call setup_nebular_line_context(ctx_yes)
 
+        call fsps_context_prepare_csp_workspace(ctx_no)
+        call map_csp_workspace_to_device(ctx_no)
+        call fsps_context_prepare_csp_workspace(ctx_yes)
+        call map_csp_workspace_to_device(ctx_yes)
+
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
@@ -1015,6 +1032,8 @@ contains
 
         deallocate(res_no, res_yes)
         deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        call unmap_csp_workspace_from_device(ctx_no)
+        call unmap_csp_workspace_from_device(ctx_yes)
         call teardown_basic_context(ctx_no)
         call teardown_basic_context(ctx_yes)
     end subroutine test_nebular_precalculation

@@ -46,43 +46,12 @@ module fsps_csp
 
     !> Public API
     public :: compute_csp_scenario
-    public :: csp_buffer_t
-    public :: init_csp_buffer, free_csp_buffer
     ! Expose internal kernels for unit testing
     public :: compute_sfh_weights
     public :: convert_sfhparams
     public :: integrate_csp_step
     public :: apply_dust_physics
     public :: apply_post_processing
-
-    ! ------------------------------------------------------------------------
-    ! DERIVED TYPES
-    ! ------------------------------------------------------------------------
-
-    !> @brief A recyclable workspace buffer for CSP integration.
-    !> @details
-    !> Holds temporary arrays for weights and spectral accumulators.
-    !> Using this structure avoids repeated allocation/deallocation of 
-    !> large arrays during the age loop.
-    type :: csp_buffer_t
-        !> Weights for each SSP bin [dim: ntfull x nzin]
-        !> Represents the mass formed in each bin.
-        real(WP), allocatable :: ssp_weights(:,:) 
-        
-        !> Accumulated Spectrum (Young / Birth Cloud component)
-        !> Contains contributions from stars younger than `dust_tesc`.
-        real(WP), allocatable :: spec_young(:)
-        
-        !> Accumulated Spectrum (Old / Diffuse ISM component)
-        !> Contains contributions from stars older than `dust_tesc`.
-        real(WP), allocatable :: spec_old(:)
-        
-        !> Accumulated Emission Line Luminosities (Young)
-        real(WP), allocatable :: emlin_young(:)
-        
-        !> Accumulated Emission Line Luminosities (Old)
-        real(WP), allocatable :: emlin_old(:)
-    end type csp_buffer_t
 
 contains
 
@@ -119,18 +88,6 @@ contains
         integer, intent(out), optional      :: status
 
         ! Local variables
-        type(csp_buffer_t) :: buf
-        real(WP), allocatable, target :: local_ssp_grid(:,:,:) 
-        real(WP), allocatable, target :: local_emlin_grid(:,:,:)
-        
-        ! Optimization: Pre-calculated Linear Luminosity Grid
-        real(WP), allocatable :: ssp_lum_linear(:,:)
-        
-        ! Optimization: Pre-calculated IGM Transmission
-        real(WP), allocatable :: igm_transmission(:)
-        
-        real(WP), dimension(size(tspec_ssp, 1)) :: spec_final
-        real(WP), dimension(NEMLINE) :: emlin_final
         real(WP) :: mass_csp, lbol_csp, mdust_total
         real(WP) :: target_age
         
@@ -149,22 +106,13 @@ contains
         ! Copy input arrays to device
         !$acc enter data copyin(tspec_ssp, mass_ssp, lbol_ssp)
         !$acc update device(tspec_ssp, mass_ssp, lbol_ssp)
-
-        ! 2. PREPARE GRIDS
-        allocate(local_ssp_grid(nspec, nt, nzin))
-        allocate(local_emlin_grid(NEMLINE, nt, nzin))
-        
-        ! Initialize on device (Implicit copy for now, but better explicit)
-        !$acc enter data create(local_ssp_grid, local_emlin_grid)
         
         ! Initialize host-side working grids from SSP inputs.
-        ! Perform a device update immediately after assignment so OpenACC
-        ! kernels consume the initialized values regardless of residency mode.
-        local_ssp_grid = tspec_ssp
-        local_emlin_grid = 0.0_wp
+        ctx%state%csp_ssp_grid(:,:,1:nzin) = tspec_ssp
+        ctx%state%csp_emlin_grid(:,:,1:nzin) = 0.0_wp
 
         ! Explicitly push the initialized grids to the device
-        !$acc update device(local_ssp_grid, local_emlin_grid)
+        !$acc update device(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
 
         if (ctx%add_neb_emission_val == 1) then
             if (nzin > 1) then
@@ -172,61 +120,41 @@ contains
             end if
 
             call apply_nebular_emission(ctx, pset, tspec_ssp(:,:,1), &
-                                        local_ssp_grid(:,:,1), local_emlin_grid(:,:,1))
+                                        ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
             
             ! Pull updated data to host for the integrator
-            !$acc update host(local_ssp_grid(:,:,1), local_emlin_grid(:,:,1))
+            !$acc update host(ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
         end if
 
-        ! 3. OPTIMIZATIONS (Pre-calculations)
+        ! 2. OPTIMIZATIONS (Pre-calculations)
         ! -----------------------------------
         
         ! A. Linearize Luminosity (Avoids 10**x inside hot loops)
-        allocate(ssp_lum_linear(nt, nzin))
-        !$acc enter data create(ssp_lum_linear)
-        !$acc kernels present(ssp_lum_linear, lbol_ssp)
-        ssp_lum_linear = 10.0_wp**lbol_ssp
+        !$acc kernels present(ctx%state%csp_ssp_lum_linear, lbol_ssp)
+        ctx%state%csp_ssp_lum_linear(:,1:nzin) = 10.0_wp**lbol_ssp
         !$acc end kernels
-        !$acc update host(ssp_lum_linear)
+        !$acc update host(ctx%state%csp_ssp_lum_linear)
 
         ! B. Pre-calculate IGM Transmission (Constant for this PSET)
         if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR) then
-            allocate(igm_transmission(nspec))
-            igm_transmission = get_igm_transmission(ctx%state%spec_lambda, &
-                                                    pset%zred, pset%igm_factor)
-            !$acc enter data copyin(igm_transmission)
+            ctx%state%csp_igm_transmission = get_igm_transmission(ctx%state%spec_lambda, &
+                                                                  pset%zred, pset%igm_factor)
+            !$acc enter data copyin(ctx%state%csp_igm_transmission)
         end if
-
-        ! 4. INITIALIZE BUFFER & BOUNDS
-        call init_csp_buffer(buf, nspec, nt, nzin)
-        
-        ! Move buffer to device
-        !$acc enter data copyin(buf)
-        !$acc enter data create(buf%ssp_weights, buf%spec_young, buf%spec_old)
-        !$acc enter data create(buf%emlin_young, buf%emlin_old)
-        !$acc enter data attach(buf%ssp_weights)
-        !$acc enter data attach(buf%spec_young)
-        !$acc enter data attach(buf%spec_old)
-        !$acc enter data attach(buf%emlin_young)
-        !$acc enter data attach(buf%emlin_old)
-        
-        ! Move local scratch arrays
-        !$acc enter data create(spec_final, emlin_final)
 
         if (pset%tage > 0.0_wp) then
             n_outputs = 1; start_idx = 0 
         elseif (pset%tage == -99.0_wp .and. (pset%sfh == 2 .or. pset%sfh == 3)) then
-             n_outputs = 1; start_idx = -99
+            n_outputs = 1; start_idx = -99
         else
             n_outputs = nt; start_idx = 1
         end if
         
         allocate(results(n_outputs))
 
-        ! 5. MAIN GENERATION LOOP
+        ! 3. MAIN GENERATION LOOP
         ! -----------------------
-        !$acc data present(ctx, buf, local_ssp_grid, local_emlin_grid, mass_ssp, ssp_lum_linear) &
-        !$acc      present(spec_final, emlin_final)
+        !$acc data present(ctx, mass_ssp)
         do i = 1, n_outputs
             ! Ensure output arrays are allocated
             if (.not. allocated(results(i)%mags)) then
@@ -253,42 +181,21 @@ contains
 
             ! Integration Kernel (Passes pre-calculated Linear Lum)
             call integrate_csp_step(ctx, pset, target_age, nzin, &
-                                    local_ssp_grid, local_emlin_grid, mass_ssp, &
-                                    ssp_lum_linear, &  ! <--- Optimized Input
-                                    buf, mass_csp, lbol_csp)
-            
-            !$acc update device(buf%spec_young(1:nspec), buf%spec_old(1:nspec), &
-            !$acc               buf%emlin_young(1:NEMLINE), buf%emlin_old(1:NEMLINE))
+                                    ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid, mass_ssp, &
+                                    ctx%state%csp_ssp_lum_linear, &
+                                    mass_csp, lbol_csp)
 
             ! Dust Physics
-            call apply_dust_physics(ctx, pset, buf, spec_final, emlin_final, mdust_total)
+            call apply_dust_physics(ctx, pset, ctx%state%csp_spec_final, ctx%state%csp_emlin_final, mdust_total)
 
             ! Post-Processing (Passes pre-calculated IGM)
             call apply_post_processing(ctx, pset, target_age, &
                                        mass_csp, lbol_csp, mdust_total, &
-                                       spec_final, emlin_final, &
-                                       igm_transmission, & ! <--- Optimized Input
+                                       ctx%state%csp_spec_final, ctx%state%csp_emlin_final, &
+                                       ctx%state%csp_igm_transmission, &
                                        results(i))
         end do
         !$acc end data
-
-        ! 6. CLEANUP
-        !$acc exit data delete(spec_final, emlin_final)
-        !$acc exit data delete(buf%ssp_weights, buf%spec_young, buf%spec_old)
-        !$acc exit data delete(buf%emlin_young, buf%emlin_old)
-        !$acc exit data delete(buf)
-        
-        call free_csp_buffer(buf)
-        
-        !$acc exit data delete(local_ssp_grid, local_emlin_grid, ssp_lum_linear)
-        
-        deallocate(local_ssp_grid)
-        deallocate(local_emlin_grid)
-        deallocate(ssp_lum_linear)
-        if (allocated(igm_transmission)) then
-            !$acc exit data delete(igm_transmission)
-            deallocate(igm_transmission)
-        end if
         
         ! Remove inputs from device
         !$acc exit data delete(tspec_ssp, mass_ssp, lbol_ssp)
@@ -309,28 +216,25 @@ contains
     !>    the buffer, preserving the Young/Old separation.
     !> 4. Computes total Stellar Mass and Bolometric Luminosity.
     !>
-    !> @param[in]     ctx        Context.
+    !> @param[inout]  ctx        Context.
     !> @param[in]     pset       User parameters.
     !> @param[in]     tage       Target age of the galaxy [Gyr].
     !> @param[in]     nzin       Number of metallicities.
     !> @param[in]     ssp_grid   Input SSP grid [Lambda, Age, Z].
     !> @param[in]     emlin_grid Input Emission Line grid [Line, Age, Z].
-    !> @param[in,out] buf        Workspace buffer (accumulators stored here).
     !> @param[out]    mass_csp   Total stellar mass formed (normalized).
     !> @param[out]    lbol_csp   Total bolometric luminosity [log10(L_sol)].
     subroutine integrate_csp_step(ctx, pset, tage, nzin, ssp_grid, emlin_grid, &
-                                  mass_ssp, ssp_lum_linear, &
-                                  buf, mass_csp, lbol_csp)
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: pset
-        real(WP), intent(in)             :: tage
-        integer, intent(in)              :: nzin
-        real(WP), intent(in), contiguous :: ssp_grid(:,:,:)
-        real(WP), intent(in), contiguous :: emlin_grid(:,:,:)
-        real(WP), intent(in), contiguous :: mass_ssp(:,:)
-        real(WP), intent(in), contiguous :: ssp_lum_linear(:,:)
-        type(csp_buffer_t), intent(inout):: buf
-        real(WP), intent(out)            :: mass_csp, lbol_csp
+                                  mass_ssp, ssp_lum_linear, mass_csp, lbol_csp)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: tage
+        integer, intent(in)                 :: nzin
+        real(WP), intent(in), contiguous    :: ssp_grid(:,:,:)
+        real(WP), intent(in), contiguous    :: emlin_grid(:,:,:)
+        real(WP), intent(in), contiguous    :: mass_ssp(:,:)
+        real(WP), intent(in), contiguous    :: ssp_lum_linear(:,:)
+        real(WP), intent(out)               :: mass_csp, lbol_csp
 
         integer :: i, k, nt, i_tesc
         integer :: i_spec, i_em
@@ -344,27 +248,24 @@ contains
 
         ! 1. Clear Accumulators
         ! Clear host arrays
-        buf%spec_young  = 0.0_wp
-        buf%spec_old    = 0.0_wp
-        buf%emlin_young = 0.0_wp
-        buf%emlin_old   = 0.0_wp
+        ctx%state%spec_young  = 0.0_wp
+        ctx%state%spec_old    = 0.0_wp
+        ctx%state%csp_emlin_young = 0.0_wp
+        ctx%state%csp_emlin_old   = 0.0_wp
 
         ! Clear device arrays
-        !$acc kernels present(buf)
-        buf%spec_young  = 0.0_wp
-        buf%spec_old    = 0.0_wp
-        buf%emlin_young = 0.0_wp
-        buf%emlin_old   = 0.0_wp
+        !$acc kernels present(ctx)
+        ctx%state%spec_young  = 0.0_wp
+        ctx%state%spec_old    = 0.0_wp
+        ctx%state%csp_emlin_young = 0.0_wp
+        ctx%state%csp_emlin_old   = 0.0_wp
         !$acc end kernels
 
-        ! 2. Compute SFH Weights (Runs on Host or Device? Usually scalar math, but weights is array)
-        !    compute_sfh_weights likely updates buf%ssp_weights on DEVICE. 
-        !    We need to ensure it's device compatible. 
-        !    It accesses ctx%state%time_full etc.
-        call compute_sfh_weights(ctx, pset, tage, nzin, buf%ssp_weights)
+        ! 2. Compute SFH Weights
+        call compute_sfh_weights(ctx, pset, tage, nzin, ctx%state%csp_weights)
 
         ! Update full array to avoid subarray descriptor bugs
-        !$acc update device(buf%ssp_weights)
+        !$acc update device(ctx%state%csp_weights)
 
         ! 3. Determine Dust Separation Index
         if (pset%dust_tesc > SAFE_FLOOR) then
@@ -381,25 +282,25 @@ contains
 
         do k = 1, nzin
             do i = 1, nt
-                if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
-                    mass_csp = mass_csp + (buf%ssp_weights(i, k) * mass_ssp(i, k))
-                    linear_lbol_sum = linear_lbol_sum + (buf%ssp_weights(i, k) * ssp_lum_linear(i, k))
+                if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
+                    mass_csp = mass_csp + (ctx%state%csp_weights(i, k) * mass_ssp(i, k))
+                    linear_lbol_sum = linear_lbol_sum + (ctx%state%csp_weights(i, k) * ssp_lum_linear(i, k))
                 end if
             end do
         end do
 
         ! Massive parallelization for spectra
-        !$acc parallel loop gang vector present(buf, ssp_grid)
+        !$acc parallel loop gang vector present(ctx, ssp_grid)
         do i_spec = 1, nspec
             do k = 1, nzin
                 do i = 1, nt
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                    if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
                         if (i <= i_tesc) then
-                            buf%spec_young(i_spec) = buf%spec_young(i_spec) + &
-                                buf%ssp_weights(i, k) * ssp_grid(i_spec, i, k)
+                            ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + &
+                                ctx%state%csp_weights(i, k) * ssp_grid(i_spec, i, k)
                         else
-                            buf%spec_old(i_spec) = buf%spec_old(i_spec) + &
-                                buf%ssp_weights(i, k) * ssp_grid(i_spec, i, k)
+                            ctx%state%spec_old(i_spec) = ctx%state%spec_old(i_spec) + &
+                                ctx%state%csp_weights(i, k) * ssp_grid(i_spec, i, k)
                         end if
                     end if
                 end do
@@ -407,17 +308,17 @@ contains
         end do
 
         ! More parallelization for nebular emission
-        !$acc parallel loop gang vector present(buf, emlin_grid)
+        !$acc parallel loop gang vector present(ctx, emlin_grid)
         do i_em = 1, nem
             do k = 1, nzin
                 do i = 1, nt
-                    if (buf%ssp_weights(i, k) > SAFE_FLOOR) then
+                    if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
                         if (i <= i_tesc) then
-                            buf%emlin_young(i_em) = buf%emlin_young(i_em) + &
-                                buf%ssp_weights(i, k) * emlin_grid(i_em, i, k)
+                            ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + &
+                                ctx%state%csp_weights(i, k) * emlin_grid(i_em, i, k)
                         else
-                            buf%emlin_old(i_em) = buf%emlin_old(i_em) + &
-                                buf%ssp_weights(i, k) * emlin_grid(i_em, i, k)
+                            ctx%state%csp_emlin_old(i_em) = ctx%state%csp_emlin_old(i_em) + &
+                                ctx%state%csp_weights(i, k) * emlin_grid(i_em, i, k)
                         end if
                     end if
                 end do
@@ -425,7 +326,7 @@ contains
         end do
 
         ! Fetch results back to host for subsequent physics steps
-        !$acc update host(buf%spec_young, buf%spec_old, buf%emlin_young, buf%emlin_old)
+        !$acc update host(ctx%state%spec_young, ctx%state%spec_old, ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
 
         if (linear_lbol_sum > 0.0_wp) then
             lbol_csp = log10(linear_lbol_sum)
@@ -449,14 +350,12 @@ contains
     !>
     !> @param[in]     ctx           Context.
     !> @param[in]     pset          User parameters.
-    !> @param[in]     buf           Buffer containing raw Young/Old spectra.
     !> @param[out]    spec_total    Final attenuated spectrum (L_sol/Hz).
     !> @param[out]    emlin_total   Final attenuated emission lines (L_sol).
     !> @param[out]    mdust_total   Total dust mass (M_sol).
-    subroutine apply_dust_physics(ctx, pset, buf, spec_total, emlin_total, mdust_total)
+    subroutine apply_dust_physics(ctx, pset, spec_total, emlin_total, mdust_total)
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: pset
-        type(csp_buffer_t), intent(in)   :: buf
         real(WP), intent(out)            :: spec_total(:)
         real(WP), intent(out)            :: emlin_total(:)
         real(WP), intent(out)            :: mdust_total
@@ -466,10 +365,10 @@ contains
         call apply_dust_attenuation_and_emission( &
             ctx, &
             pset, &
-            buf%spec_young, &
-            buf%spec_old, &
-            buf%emlin_young, &
-            buf%emlin_old, &
+            ctx%state%spec_young, &
+            ctx%state%spec_old, &
+            ctx%state%csp_emlin_young, &
+            ctx%state%csp_emlin_old, &
             spec_total, &    ! Output
             mdust_total, &   ! Output
             emlin_total)     ! Output
@@ -545,7 +444,7 @@ contains
         end if
 
         ! 4. IGM Absorption
-        if (present(igm_transmission)) then
+        if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR .and. present(igm_transmission)) then
             !$acc kernels present(spec, igm_transmission)
             spec = spec * igm_transmission
             !$acc end kernels
@@ -871,81 +770,5 @@ contains
         sfh%use_simha_limits = 0
 
     end subroutine convert_sfhparams
-
-    ! ------------------------------------------------------------------------
-    ! BUFFER MANAGEMENT
-    ! ------------------------------------------------------------------------
-
-    !> @brief Allocates the CSP workspace buffer.
-    !>
-    !> @details
-    !> Allocates the internal arrays based on the grid dimensions.
-    !> Safely handles cases where the buffer might already be allocated 
-    !> (though the caller should generally ensure it is free).
-    !>
-    !> @param[out] buf   The buffer structure to initialize.
-    !> @param[in]  nspec Number of spectral points (wavelengths).
-    !> @param[in]  nt    Number of time steps in the SSP grid.
-    !> @param[in]  nz    Number of metallicity points in the SSP grid.
-    subroutine init_csp_buffer(buf, nspec, nt, nz)
-        type(csp_buffer_t), intent(out) :: buf
-        integer, intent(in) :: nspec, nt, nz
-        
-        ! 1. SSP Weights (Matrix: Time x Metallicity)
-        if (allocated(buf%ssp_weights)) deallocate(buf%ssp_weights)
-        allocate(buf%ssp_weights(nt, nz))
-        
-        ! 2. Spectral Accumulators (Vector: Wavelength)
-        if (allocated(buf%spec_young)) deallocate(buf%spec_young)
-        allocate(buf%spec_young(nspec))
-        
-        if (allocated(buf%spec_old)) deallocate(buf%spec_old)
-        allocate(buf%spec_old(nspec))
-        
-        ! 3. Emission Line Accumulators (Vector: NEMLINE)
-        if (allocated(buf%emlin_young)) deallocate(buf%emlin_young)
-        allocate(buf%emlin_young(NEMLINE))
-        
-        if (allocated(buf%emlin_old)) deallocate(buf%emlin_old)
-        allocate(buf%emlin_old(NEMLINE))
-        
-        ! 4. Initialize to Zero
-        call zero_csp_buffer(buf)
-
-    end subroutine init_csp_buffer
-
-
-    !> @brief Resets the buffer accumulators to zero.
-    !>
-    !> @details
-    !> Call this between different age steps when reusing the same buffer object.
-    !> It is much faster than freeing and re-allocating.
-    !>
-    !> @param[in,out] buf The buffer to clear.
-    subroutine zero_csp_buffer(buf)
-        type(csp_buffer_t), intent(inout) :: buf
-        
-        if (allocated(buf%ssp_weights)) buf%ssp_weights = 0.0_wp
-        if (allocated(buf%spec_young))  buf%spec_young  = 0.0_wp
-        if (allocated(buf%spec_old))    buf%spec_old    = 0.0_wp
-        if (allocated(buf%emlin_young)) buf%emlin_young = 0.0_wp
-        if (allocated(buf%emlin_old))   buf%emlin_old   = 0.0_wp
-        
-    end subroutine zero_csp_buffer
-
-
-    !> @brief Deallocates the CSP workspace buffer.
-    !>
-    !> @param[in,out] buf The buffer to free.
-    subroutine free_csp_buffer(buf)
-        type(csp_buffer_t), intent(inout) :: buf
-        
-        if (allocated(buf%ssp_weights)) deallocate(buf%ssp_weights)
-        if (allocated(buf%spec_young))  deallocate(buf%spec_young)
-        if (allocated(buf%spec_old))    deallocate(buf%spec_old)
-        if (allocated(buf%emlin_young)) deallocate(buf%emlin_young)
-        if (allocated(buf%emlin_old))   deallocate(buf%emlin_old)
-        
-    end subroutine free_csp_buffer
 
 end module fsps_csp

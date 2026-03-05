@@ -7,6 +7,7 @@ module fsps_context
     !> `fsps_context_t`, along with high-level SSP/CSP execution helpers.
 
     use fsps_precision, only: WP
+    use fsps_constants, only: NEMLINE
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
     use fsps_environment, only: fsps_cleanup
@@ -31,6 +32,7 @@ module fsps_context
     public :: fsps_context_prepare_pset
     public :: fsps_context_compute_ssp
     public :: fsps_context_compute_csp
+    public :: fsps_context_prepare_csp_workspace
     public :: fsps_context_move_to_device
     public :: fsps_context_remove_from_device
 
@@ -507,6 +509,7 @@ contains
             call load_tabular_sfh(ctx, ctx%pset, nzin)
         end if
 
+        call fsps_context_prepare_csp_workspace(ctx)
         call compute_csp_scenario(ctx, ctx%pset, nzin, spec_ssp, mass_ssp, lbol_ssp, results, status)
         if (status /= 0) then
             return
@@ -522,6 +525,63 @@ contains
         end do
         deallocate (results)
     end subroutine fsps_context_compute_csp
+
+    !> @brief Set up workspace for the CSP hot path.
+    !> @param[inout] ctx Context to prepare CSP workspace for.
+    subroutine fsps_context_prepare_csp_workspace(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        integer :: nspec, nt, nz_max
+        
+        nspec = ctx%state%nspec
+        nt = ctx%state%ntfull
+        nz_max = ctx%state%nz
+
+        if (nspec == 0 .or. nt == 0 .or. nz_max == 0) return
+
+        if (.not. allocated(ctx%state%csp_ssp_grid)) then
+            allocate(ctx%state%csp_ssp_grid(nspec, nt, nz_max))
+        end if
+
+        if (.not. allocated(ctx%state%csp_emlin_grid)) then
+            allocate(ctx%state%csp_emlin_grid(NEMLINE, nt, nz_max))
+        end if
+
+        if (.not. allocated(ctx%state%csp_ssp_lum_linear)) then
+            allocate(ctx%state%csp_ssp_lum_linear(nt, nz_max))
+        end if
+
+        if (.not. allocated(ctx%state%csp_igm_transmission)) then
+            allocate(ctx%state%csp_igm_transmission(nspec))
+        end if
+
+        if (.not. allocated(ctx%state%csp_spec_final)) then
+            allocate(ctx%state%csp_spec_final(nspec))
+        end if
+
+        if (.not. allocated(ctx%state%csp_emlin_final)) then
+            allocate(ctx%state%csp_emlin_final(NEMLINE))
+        end if
+
+        if (.not. allocated(ctx%state%csp_weights)) then
+            allocate(ctx%state%csp_weights(nt, nz_max))
+        end if
+
+        if (.not. allocated(ctx%state%csp_emlin_young)) then
+            allocate(ctx%state%csp_emlin_young(NEMLINE))
+        end if
+
+        if (.not. allocated(ctx%state%csp_emlin_old)) then
+            allocate(ctx%state%csp_emlin_old(NEMLINE))
+        end if
+
+        if (.not. allocated(ctx%state%spec_young)) then
+            allocate(ctx%state%spec_young(nspec))
+        end if
+
+        if (.not. allocated(ctx%state%spec_old)) then
+            allocate(ctx%state%spec_old(nspec))
+        end if
+    end subroutine fsps_context_prepare_csp_workspace
 
     !> @brief Ensure allocatable parameter-set arrays are allocated.
     !> @param[inout] ctx Context to update.
@@ -543,6 +603,9 @@ contains
     !> @param[inout] ctx Context to move.
     subroutine fsps_context_move_to_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+
+        ! Pre-allocate CSP workspace so it gets mapped correctly
+        call fsps_context_prepare_csp_workspace(ctx)
 
         ! Copy the main structure
         !$acc enter data copyin(ctx)
@@ -841,6 +904,44 @@ contains
             !$acc enter data copyin(ctx%state%sedfit_data%specerr)
             !$acc enter data attach(ctx%state%sedfit_data%specerr)
         end if
+
+        ! --- Permanent CSP Workspace ---
+        if (allocated(ctx%state%csp_ssp_grid)) then
+            !$acc enter data copyin(ctx%state%csp_ssp_grid)
+            !$acc enter data attach(ctx%state%csp_ssp_grid)
+        end if
+        if (allocated(ctx%state%csp_emlin_grid)) then
+            !$acc enter data copyin(ctx%state%csp_emlin_grid)
+            !$acc enter data attach(ctx%state%csp_emlin_grid)
+        end if
+        if (allocated(ctx%state%csp_ssp_lum_linear)) then
+            !$acc enter data copyin(ctx%state%csp_ssp_lum_linear)
+            !$acc enter data attach(ctx%state%csp_ssp_lum_linear)
+        end if
+        if (allocated(ctx%state%csp_igm_transmission)) then
+            !$acc enter data copyin(ctx%state%csp_igm_transmission)
+            !$acc enter data attach(ctx%state%csp_igm_transmission)
+        end if
+        if (allocated(ctx%state%csp_spec_final)) then
+            !$acc enter data copyin(ctx%state%csp_spec_final)
+            !$acc enter data attach(ctx%state%csp_spec_final)
+        end if
+        if (allocated(ctx%state%csp_emlin_final)) then
+            !$acc enter data copyin(ctx%state%csp_emlin_final)
+            !$acc enter data attach(ctx%state%csp_emlin_final)
+        end if
+        if (allocated(ctx%state%csp_weights)) then
+            !$acc enter data copyin(ctx%state%csp_weights)
+            !$acc enter data attach(ctx%state%csp_weights)
+        end if
+        if (allocated(ctx%state%csp_emlin_young)) then
+            !$acc enter data copyin(ctx%state%csp_emlin_young)
+            !$acc enter data attach(ctx%state%csp_emlin_young)
+        end if
+        if (allocated(ctx%state%csp_emlin_old)) then
+            !$acc enter data copyin(ctx%state%csp_emlin_old)
+            !$acc enter data attach(ctx%state%csp_emlin_old)
+        end if
     end subroutine fsps_context_move_to_device
 
     !> @brief Removes the context and its data from the device.
@@ -1058,6 +1159,35 @@ contains
             end if
             if (associated(s%indexdefined)) then
                 !$acc exit data delete(s%indexdefined)
+            end if
+
+            ! --- Permanent CSP Workspace ---
+            if (allocated(s%csp_ssp_grid)) then
+                !$acc exit data delete(s%csp_ssp_grid)
+            end if
+            if (allocated(s%csp_emlin_grid)) then
+                !$acc exit data delete(s%csp_emlin_grid)
+            end if
+            if (allocated(s%csp_ssp_lum_linear)) then
+                !$acc exit data delete(s%csp_ssp_lum_linear)
+            end if
+            if (allocated(s%csp_igm_transmission)) then
+                !$acc exit data delete(s%csp_igm_transmission)
+            end if
+            if (allocated(s%csp_spec_final)) then
+                !$acc exit data delete(s%csp_spec_final)
+            end if
+            if (allocated(s%csp_emlin_final)) then
+                !$acc exit data delete(s%csp_emlin_final)
+            end if
+            if (allocated(s%csp_weights)) then
+                !$acc exit data delete(s%csp_weights)
+            end if
+            if (allocated(s%csp_emlin_young)) then
+                !$acc exit data delete(s%csp_emlin_young)
+            end if
+            if (allocated(s%csp_emlin_old)) then
+                !$acc exit data delete(s%csp_emlin_old)
             end if
         end associate
 

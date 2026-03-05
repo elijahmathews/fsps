@@ -148,6 +148,19 @@ module fsps_context_types
         type(TLSF) :: lsfinfo
         type(OBSDAT) :: powell_data
         type(OBSDAT) :: sedfit_data
+
+        ! --- Persistent CSP Workspace ---
+        real(WP), allocatable :: csp_ssp_grid(:,:,:)
+        real(WP), allocatable :: csp_emlin_grid(:,:,:)
+        real(WP), allocatable :: csp_ssp_lum_linear(:,:)
+        real(WP), allocatable :: csp_igm_transmission(:)
+        real(WP), allocatable :: csp_spec_final(:)
+        real(WP), allocatable :: csp_emlin_final(:)
+
+        ! --- Replacements for csp_buffer_t ---
+        real(WP), allocatable :: csp_weights(:,:)
+        real(WP), allocatable :: csp_emlin_young(:)
+        real(WP), allocatable :: csp_emlin_old(:)
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -275,6 +288,19 @@ contains
         if (allocated(state%sedfit_data%spec)) deallocate (state%sedfit_data%spec)
         if (allocated(state%sedfit_data%specerr)) deallocate (state%sedfit_data%specerr)
 
+        ! --- Persistent CSP Workspace ---
+        if (allocated(state%csp_ssp_grid)) deallocate (state%csp_ssp_grid)
+        if (allocated(state%csp_emlin_grid)) deallocate (state%csp_emlin_grid)
+        if (allocated(state%csp_ssp_lum_linear)) deallocate (state%csp_ssp_lum_linear)
+        if (allocated(state%csp_igm_transmission)) deallocate (state%csp_igm_transmission)
+        if (allocated(state%csp_spec_final)) deallocate (state%csp_spec_final)
+        if (allocated(state%csp_emlin_final)) deallocate (state%csp_emlin_final)
+
+        ! --- Replacements for csp_buffer_t ---
+        if (allocated(state%csp_weights)) deallocate (state%csp_weights)
+        if (allocated(state%csp_emlin_young)) deallocate (state%csp_emlin_young)
+        if (allocated(state%csp_emlin_old)) deallocate (state%csp_emlin_old)
+
         state%nt = 0
         state%nz = 0
         state%nspec = 0
@@ -314,6 +340,7 @@ contains
         state%powell_data%logsmass = 0.0
         state%sedfit_data%zred = 0.0
         state%sedfit_data%logsmass = 0.0
+        
     end subroutine fsps_context_state_destroy
 
 end module fsps_context_types
