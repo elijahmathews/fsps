@@ -25,6 +25,7 @@ module fsps_c_driver
     use fsps_interpolation, only: find_interval
     use fsps_spectral_indices, only: compute_spectral_indices
     use fsps_photometry, only: compute_magnitudes
+    use fsps_context, only: fsps_context_update_ssp_basis
     use fsps_context_types, only: fsps_context_t
 
     implicit none
@@ -1022,8 +1023,8 @@ contains
             block
                 type(COMPSPOUT), allocatable :: results(:)
                 integer :: status
-                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, ssp_spec_zz, ssp_mass_zz, ssp_lbol_zz, &
-                                          results, status)
+                call fsps_context_update_ssp_basis(fsps_default_ctx, ssp_spec_zz, ssp_mass_zz, ssp_lbol_zz, 1)
+                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, results, status)
                 if (status /= 0) then
                     call fsps_set_error(311, "[FSPS-C] Error: compute_csp_scenario failed")
                     deallocate (results)
@@ -1131,10 +1132,11 @@ contains
             block
                 type(COMPSPOUT), allocatable :: results(:)
                 integer :: status
-                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, &
-                                          fsps_default_ctx%state%spec_ssp_zz(:, :, zmet:zmet), &
-                                          fsps_default_ctx%state%mass_ssp_zz(:, zmet:zmet), &
-                                          fsps_default_ctx%state%lbol_ssp_zz(:, zmet:zmet), results, status)
+                call fsps_context_update_ssp_basis(fsps_default_ctx, &
+                                                   fsps_default_ctx%state%spec_ssp_zz(:, :, zmet:zmet), &
+                                                   fsps_default_ctx%state%mass_ssp_zz(:, zmet:zmet), &
+                                                   fsps_default_ctx%state%lbol_ssp_zz(:, zmet:zmet), 1)
+                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, results, status)
                 if (status /= 0) then
                     call fsps_set_error(312, "[FSPS-C] Error: compute_csp_scenario failed")
                     deallocate (results)
@@ -1160,7 +1162,8 @@ contains
             block
                 type(COMPSPOUT), allocatable :: results(:)
                 integer :: status
-                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, spec_zz, mass_zz, lbol_zz, results, status)
+                call fsps_context_update_ssp_basis(fsps_default_ctx, spec_zz, mass_zz, lbol_zz, 1)
+                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, results, status)
                 if (status /= 0) then
                     call fsps_set_error(313, "[FSPS-C] Error: compute_csp_scenario failed")
                     deallocate (results)
@@ -1184,7 +1187,8 @@ contains
             block
                 type(COMPSPOUT), allocatable :: results(:)
                 integer :: status
-                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, spec_zz, mass_zz, lbol_zz, results, status)
+                call fsps_context_update_ssp_basis(fsps_default_ctx, spec_zz, mass_zz, lbol_zz, 1)
+                call compute_csp_scenario(fsps_default_ctx, global_pset, 1, results, status)
                 if (status /= 0) then
                     call fsps_set_error(314, "[FSPS-C] Error: compute_csp_scenario failed")
                     deallocate (results)
@@ -1203,9 +1207,10 @@ contains
             block
                 type(COMPSPOUT), allocatable :: results(:)
                 integer :: status
-                call compute_csp_scenario(fsps_default_ctx, global_pset, fsps_default_ctx%state%nz, &
-                                          fsps_default_ctx%state%spec_ssp_zz, fsps_default_ctx%state%mass_ssp_zz, &
-                                          fsps_default_ctx%state%lbol_ssp_zz, results, status)
+                call fsps_context_update_ssp_basis(fsps_default_ctx, fsps_default_ctx%state%spec_ssp_zz, &
+                                                   fsps_default_ctx%state%mass_ssp_zz, &
+                                                   fsps_default_ctx%state%lbol_ssp_zz, fsps_default_ctx%state%nz)
+                call compute_csp_scenario(fsps_default_ctx, global_pset, fsps_default_ctx%state%nz, results, status)
                 if (status /= 0) then
                     call fsps_set_error(315, "[FSPS-C] Error: compute_csp_scenario failed")
                     deallocate (results)

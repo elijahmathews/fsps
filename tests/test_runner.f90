@@ -36,7 +36,7 @@ program test_runner
     use fsps_csp, only: compute_csp_scenario
     use fsps_context_types, only: fsps_context_t
     use fsps_context, only: fsps_context_set_pset, fsps_context_move_to_device, &
-                            fsps_context_remove_from_device
+                            fsps_context_remove_from_device, fsps_context_update_ssp_basis
     use fsps_ssp, only: generate_ssp_grid
     implicit none
 
@@ -351,11 +351,13 @@ program test_runner
     new_spec_ssp3(:, :, 1) = new_spec_ssp_ctx
 
     if (verbose_output) call dump_state('BEFORE compute_csp_scenario', ctx, pset)
-    !$acc data copyin(pset, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2) copy(new_spec_ssp_ctx)
+    call fsps_context_update_ssp_basis(ctx, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, 1)
+
+    !$acc data copyin(pset) copy(new_spec_ssp_ctx)
     !$acc update device(pset)
     ctx%add_neb_emission_val = 1
     !$acc update device(ctx%add_neb_emission_val)
-    call compute_csp_scenario(ctx, pset, 1, new_spec_ssp3, new_mass_ssp2, new_lbol_ssp2, new_results)
+    call compute_csp_scenario(ctx, pset, 1, new_results)
     !$acc update self(new_spec_ssp_ctx)
     !$acc end data
     if (verbose_output) call dump_csp_summary('AFTER compute_csp_scenario', new_results)

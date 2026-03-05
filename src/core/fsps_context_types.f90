@@ -150,6 +150,9 @@ module fsps_context_types
         type(OBSDAT) :: sedfit_data
 
         ! --- Persistent CSP Workspace ---
+        real(WP), allocatable :: ssp_basis_spec(:, :, :)
+        real(WP), allocatable :: ssp_basis_mass(:, :)
+        real(WP), allocatable :: ssp_basis_lbol(:, :)
         real(WP), allocatable :: csp_ssp_grid(:,:,:)
         real(WP), allocatable :: csp_emlin_grid(:,:,:)
         real(WP), allocatable :: csp_ssp_lum_linear(:,:)
@@ -289,6 +292,9 @@ contains
         if (allocated(state%sedfit_data%specerr)) deallocate (state%sedfit_data%specerr)
 
         ! --- Persistent CSP Workspace ---
+        if (allocated(state%ssp_basis_spec)) deallocate (state%ssp_basis_spec)
+        if (allocated(state%ssp_basis_mass)) deallocate (state%ssp_basis_mass)
+        if (allocated(state%ssp_basis_lbol)) deallocate (state%ssp_basis_lbol)
         if (allocated(state%csp_ssp_grid)) deallocate (state%csp_ssp_grid)
         if (allocated(state%csp_emlin_grid)) deallocate (state%csp_emlin_grid)
         if (allocated(state%csp_ssp_lum_linear)) deallocate (state%csp_ssp_lum_linear)

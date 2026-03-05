@@ -32,6 +32,7 @@ module fsps_context
     public :: fsps_context_prepare_pset
     public :: fsps_context_compute_ssp
     public :: fsps_context_compute_csp
+    public :: fsps_context_update_ssp_basis
     public :: fsps_context_prepare_csp_workspace
     public :: fsps_context_move_to_device
     public :: fsps_context_remove_from_device
@@ -509,8 +510,10 @@ contains
             call load_tabular_sfh(ctx, ctx%pset, nzin)
         end if
 
+        call fsps_context_update_ssp_basis(ctx, spec_ssp, mass_ssp, lbol_ssp, nzin)
+
         call fsps_context_prepare_csp_workspace(ctx)
-        call compute_csp_scenario(ctx, ctx%pset, nzin, spec_ssp, mass_ssp, lbol_ssp, results, status)
+        call compute_csp_scenario(ctx, ctx%pset, nzin, results, status)
         if (status /= 0) then
             return
         end if
@@ -525,6 +528,67 @@ contains
         end do
         deallocate (results)
     end subroutine fsps_context_compute_csp
+
+    !> @brief Update persistent SSP basis arrays used by CSP integration.
+    !> @param[inout] ctx Context to update.
+    !> @param[in] spec_ssp SSP spectra [nspec, nt, nz_in].
+    !> @param[in] mass_ssp SSP mass [nt, nz_in].
+    !> @param[in] lbol_ssp SSP bolometric luminosity [nt, nz_in].
+    !> @param[in] nzin Number of metallicity bins actively provided.
+    subroutine fsps_context_update_ssp_basis(ctx, spec_ssp, mass_ssp, lbol_ssp, nzin)
+        type(fsps_context_t), intent(inout) :: ctx
+        real(WP), intent(in) :: spec_ssp(:, :, :)
+        real(WP), intent(in) :: mass_ssp(:, :)
+        real(WP), intent(in) :: lbol_ssp(:, :)
+        integer, intent(in) :: nzin
+        logical :: mapped_new, needs_realloc
+
+        mapped_new = .false.
+        needs_realloc = .false.
+
+        if (nzin <= 0) return
+        if (size(spec_ssp, 3) < nzin .or. size(mass_ssp, 2) < nzin .or. size(lbol_ssp, 2) < nzin) return
+
+        if (.not. allocated(ctx%state%ssp_basis_spec) .or. &
+            .not. allocated(ctx%state%ssp_basis_mass) .or. &
+            .not. allocated(ctx%state%ssp_basis_lbol)) then
+            needs_realloc = .true.
+        else
+            ! Safe to check shape because we know they are all allocated
+            if (any(shape(ctx%state%ssp_basis_spec) /= shape(spec_ssp)) .or. &
+                any(shape(ctx%state%ssp_basis_mass) /= shape(mass_ssp)) .or. &
+                any(shape(ctx%state%ssp_basis_lbol) /= shape(lbol_ssp))) then
+                needs_realloc = .true.
+            end if
+        end if
+
+        if (needs_realloc) then
+                if (allocated(ctx%state%ssp_basis_spec)) then
+                    !$acc exit data delete(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+                end if
+                if (allocated(ctx%state%ssp_basis_spec)) deallocate(ctx%state%ssp_basis_spec)
+                if (allocated(ctx%state%ssp_basis_mass)) deallocate(ctx%state%ssp_basis_mass)
+                if (allocated(ctx%state%ssp_basis_lbol)) deallocate(ctx%state%ssp_basis_lbol)
+        end if
+
+        if (.not. allocated(ctx%state%ssp_basis_spec)) then
+            allocate(ctx%state%ssp_basis_spec(size(spec_ssp, 1), size(spec_ssp, 2), size(spec_ssp, 3)))
+            allocate(ctx%state%ssp_basis_mass(size(mass_ssp, 1), size(mass_ssp, 2)))
+            allocate(ctx%state%ssp_basis_lbol(size(lbol_ssp, 1), size(lbol_ssp, 2)))
+            mapped_new = .true.
+        end if
+
+        if (mapped_new) then
+            !$acc enter data copyin(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            !$acc enter data attach(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+        end if
+
+        ctx%state%ssp_basis_spec(:, :, 1:nzin) = spec_ssp(:, :, 1:nzin)
+        ctx%state%ssp_basis_mass(:, 1:nzin) = mass_ssp(:, 1:nzin)
+        ctx%state%ssp_basis_lbol(:, 1:nzin) = lbol_ssp(:, 1:nzin)
+
+        !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+    end subroutine fsps_context_update_ssp_basis
 
     !> @brief Set up workspace for the CSP hot path.
     !> @param[inout] ctx Context to prepare CSP workspace for.
@@ -1162,6 +1226,15 @@ contains
             end if
 
             ! --- Permanent CSP Workspace ---
+            if (allocated(s%ssp_basis_spec)) then
+                !$acc exit data delete(s%ssp_basis_spec)
+            end if
+            if (allocated(s%ssp_basis_mass)) then
+                !$acc exit data delete(s%ssp_basis_mass)
+            end if
+            if (allocated(s%ssp_basis_lbol)) then
+                !$acc exit data delete(s%ssp_basis_lbol)
+            end if
             if (allocated(s%csp_ssp_grid)) then
                 !$acc exit data delete(s%csp_ssp_grid)
             end if

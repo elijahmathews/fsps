@@ -75,15 +75,12 @@ contains
     !> @param[in,out] ctx       The main FSPS context.
     !> @param[in]     pset      User parameter set.
     !> @param[in]     nzin      Number of input metallicities to use (usually 1 or ctx%nz).
-    !> @param[in]     tspec_ssp Raw input SSP spectra [Lambda, Age, Z].
     !> @param[out]    results   Allocatable array of output structures.
     !> @param[out]    status    (Optional) Error status (0 = Success).
-    subroutine compute_csp_scenario(ctx, pset, nzin, tspec_ssp, mass_ssp, lbol_ssp, results, status)
+    subroutine compute_csp_scenario(ctx, pset, nzin, results, status)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
         integer, intent(in)                 :: nzin
-        real(WP), intent(in), contiguous    :: tspec_ssp(:,:,:)
-        real(WP), intent(in), contiguous    :: mass_ssp(:,:), lbol_ssp(:,:)
         type(compspout), allocatable, intent(out) :: results(:)
         integer, intent(out), optional      :: status
 
@@ -102,13 +99,16 @@ contains
         if (ctx%state%check_sps_setup == 0) then
             if (present(status)) status = 1; return
         end if
-        
-        ! Copy input arrays to device
-        !$acc enter data copyin(tspec_ssp, mass_ssp, lbol_ssp)
-        !$acc update device(tspec_ssp, mass_ssp, lbol_ssp)
+
+        if (.not. allocated(ctx%state%ssp_basis_spec) .or. &
+            .not. allocated(ctx%state%ssp_basis_mass) .or. &
+            .not. allocated(ctx%state%ssp_basis_lbol)) then
+            if (present(status)) status = 3
+            return
+        end if
         
         ! Initialize host-side working grids from SSP inputs.
-        ctx%state%csp_ssp_grid(:,:,1:nzin) = tspec_ssp
+        ctx%state%csp_ssp_grid(:,:,1:nzin) = ctx%state%ssp_basis_spec(:,:,1:nzin)
         ctx%state%csp_emlin_grid(:,:,1:nzin) = 0.0_wp
 
         ! Explicitly push the initialized grids to the device
@@ -119,7 +119,7 @@ contains
                  if (present(status)) status = 2; return
             end if
 
-            call apply_nebular_emission(ctx, pset, tspec_ssp(:,:,1), &
+            call apply_nebular_emission(ctx, pset, ctx%state%ssp_basis_spec(:,:,1), &
                                         ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
             
             ! Pull updated data to host for the integrator
@@ -130,8 +130,8 @@ contains
         ! -----------------------------------
         
         ! A. Linearize Luminosity (Avoids 10**x inside hot loops)
-        !$acc kernels present(ctx%state%csp_ssp_lum_linear, lbol_ssp)
-        ctx%state%csp_ssp_lum_linear(:,1:nzin) = 10.0_wp**lbol_ssp
+        !$acc kernels present(ctx%state%csp_ssp_lum_linear, ctx%state%ssp_basis_lbol)
+        ctx%state%csp_ssp_lum_linear(:,1:nzin) = 10.0_wp**ctx%state%ssp_basis_lbol(:,1:nzin)
         !$acc end kernels
         !$acc update host(ctx%state%csp_ssp_lum_linear)
 
@@ -139,7 +139,7 @@ contains
         if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR) then
             ctx%state%csp_igm_transmission = get_igm_transmission(ctx%state%spec_lambda, &
                                                                   pset%zred, pset%igm_factor)
-            !$acc enter data copyin(ctx%state%csp_igm_transmission)
+            !$acc update device(ctx%state%csp_igm_transmission)
         end if
 
         if (pset%tage > 0.0_wp) then
@@ -154,7 +154,7 @@ contains
 
         ! 3. MAIN GENERATION LOOP
         ! -----------------------
-        !$acc data present(ctx, mass_ssp)
+        !$acc data present(ctx)
         do i = 1, n_outputs
             ! Ensure output arrays are allocated
             if (.not. allocated(results(i)%mags)) then
@@ -181,7 +181,7 @@ contains
 
             ! Integration Kernel (Passes pre-calculated Linear Lum)
             call integrate_csp_step(ctx, pset, target_age, nzin, &
-                                    ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid, mass_ssp, &
+                                    ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid, ctx%state%ssp_basis_mass, &
                                     ctx%state%csp_ssp_lum_linear, &
                                     mass_csp, lbol_csp)
 
@@ -196,9 +196,6 @@ contains
                                        results(i))
         end do
         !$acc end data
-        
-        ! Remove inputs from device
-        !$acc exit data delete(tspec_ssp, mass_ssp, lbol_ssp)
 
     end subroutine compute_csp_scenario
 

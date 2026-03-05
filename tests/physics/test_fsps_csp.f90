@@ -3,7 +3,7 @@ module test_fsps_csp_mod
     use fsps_constants, only: SAFE_FLOOR, NEMLINE, C_LIGHT
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
-    use fsps_context, only: fsps_context_prepare_csp_workspace
+    use fsps_context, only: fsps_context_prepare_csp_workspace, fsps_context_update_ssp_basis
     use fsps_csp, only: compute_sfh_weights, convert_sfhparams, integrate_csp_step, apply_dust_physics, &
                         apply_post_processing, compute_csp_scenario
     use fsps_interpolation, only: find_interval
@@ -193,6 +193,15 @@ contains
     subroutine unmap_csp_workspace_from_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
         if (allocated(ctx%state%csp_weights)) then
+            if (allocated(ctx%state%ssp_basis_spec)) then
+                !$acc exit data delete(ctx%state%ssp_basis_spec)
+            end if
+            if (allocated(ctx%state%ssp_basis_mass)) then
+                !$acc exit data delete(ctx%state%ssp_basis_mass)
+            end if
+            if (allocated(ctx%state%ssp_basis_lbol)) then
+                !$acc exit data delete(ctx%state%ssp_basis_lbol)
+            end if
             !$acc exit data delete(ctx%state%csp_weights)
             !$acc exit data delete(ctx%state%spec_young, ctx%state%spec_old)
             !$acc exit data delete(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
@@ -896,20 +905,20 @@ contains
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
         call fsps_context_prepare_csp_workspace(ctx)
-        call map_csp_workspace_to_device(ctx)
-
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
-
         tspec_ssp = 1.0_wp
         mass_ssp = 1.0_wp
         lbol_ssp = 0.0_wp
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 0
         pset%tage = 5.0_wp
 
-        call compute_csp_scenario(ctx, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, results)
+        call compute_csp_scenario(ctx, pset, 1, results)
         call assert_int_equals(1, size(results), "Snapshot returns single output", total_tests, total_failures)
         call assert_float_equals(log10(5.0_wp * 1.0e9_wp), results(1)%age, 1.0e-5_wp, &
                                  "Snapshot age matches", total_tests, total_failures)
@@ -917,7 +926,7 @@ contains
         deallocate(results)
 
         pset%tage = 0.0_wp
-        call compute_csp_scenario(ctx, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, results)
+        call compute_csp_scenario(ctx, pset, 1, results)
         call assert_int_equals(n, size(results), "History returns ntfull outputs", total_tests, total_failures)
         call assert_float_equals(time_full(1), results(1)%age, 1.0e-5_wp, &
                                  "History age(1) matches grid", total_tests, total_failures)
@@ -951,21 +960,21 @@ contains
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
         call fsps_context_prepare_csp_workspace(ctx)
-        call map_csp_workspace_to_device(ctx)
-
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
-
         tspec_ssp = 1.0_wp
         mass_ssp = 1.0_wp
         lbol_ssp = 0.0_wp
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+
+        call map_csp_workspace_to_device(ctx)
 
         pset%sfh = 1
         pset%tau = 2.0_wp
         pset%tage = 13.0_wp
 
-        call compute_csp_scenario(ctx, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, results)
+        call compute_csp_scenario(ctx, pset, 1, results)
 
         call assert_true(results(1)%mass_csp < 1.0_wp, "Surviving mass < 1", total_tests, total_failures)
         call assert_relative_error(1.0_wp, results(1)%mformed, 1.0e-6_wp, &
@@ -1001,18 +1010,19 @@ contains
 
         call setup_nebular_line_context(ctx_yes)
 
-        call fsps_context_prepare_csp_workspace(ctx_no)
-        call map_csp_workspace_to_device(ctx_no)
-        call fsps_context_prepare_csp_workspace(ctx_yes)
-        call map_csp_workspace_to_device(ctx_yes)
-
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
-
         tspec_ssp = 1.0_wp
         mass_ssp = 1.0_wp
         lbol_ssp = 0.0_wp
+
+        call fsps_context_prepare_csp_workspace(ctx_no)
+        call fsps_context_update_ssp_basis(ctx_no, tspec_ssp, mass_ssp, lbol_ssp, 1)
+        call map_csp_workspace_to_device(ctx_no)
+        call fsps_context_prepare_csp_workspace(ctx_yes)
+        call fsps_context_update_ssp_basis(ctx_yes, tspec_ssp, mass_ssp, lbol_ssp, 1)
+        call map_csp_workspace_to_device(ctx_yes)
 
         pset%sfh = 0
         pset%tage = 5.0_wp
@@ -1022,8 +1032,8 @@ contains
         pset%frac_obrun = 0.0_wp
         ctx_yes%state%whlylim = 2
 
-        call compute_csp_scenario(ctx_no, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, res_no)
-        call compute_csp_scenario(ctx_yes, pset, 1, tspec_ssp, mass_ssp, lbol_ssp, res_yes)
+        call compute_csp_scenario(ctx_no, pset, 1, res_no)
+        call compute_csp_scenario(ctx_yes, pset, 1, res_yes)
 
         line_idx = nearest_index(spec_lambda, 6563.0_wp)
         

@@ -8,6 +8,7 @@ PROGRAM GENERATE_TEST_DATA
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
    USE fsps_csp, ONLY: compute_csp_scenario
+   use fsps_context, only: fsps_context_update_ssp_basis
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
@@ -181,7 +182,8 @@ PROGRAM GENERATE_TEST_DATA
    mass_ssp2(:,1) = mass_ssp
    lbol_ssp2(:,1) = lbol_ssp
    spec_ssp3(:,:,1) = spec_ssp
-   CALL compute_csp_scenario(ctx, pset, 1, spec_ssp3, mass_ssp2, lbol_ssp2, results)
+   call fsps_context_update_ssp_basis(ctx, spec_ssp3, mass_ssp2, lbol_ssp2, 1)
+   CALL compute_csp_scenario(ctx, pset, 1, results)
 
   ! Write CSP Data
   WRITE(*,*) 'Saving CSP results...'
