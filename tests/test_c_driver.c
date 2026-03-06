@@ -212,6 +212,15 @@ int main() {
     printf("[C] Spec[0]=%e Spec[last]=%e Lbol[0]=%e\n",
            spec_array[0], spec_array[spec_elements - 1], lbol[0]);
 
+    printf("[C] Simulating CSP-only parameter loop (dust2 updates)...\n");
+    for (int i = 0; i < 50; ++i) {
+        double dust2 = 0.05 + 0.002 * (double)i;
+        fsps_context_set_float(handle, "dust2", dust2, &status);
+        if (check_status(status, "set dust2 in CSP-only loop")) {
+            return 1;
+        }
+    }
+
     fsps_context_destroy(handle, &status);
     if (check_status(status, "failed to destroy context")) {
         return 1;

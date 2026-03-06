@@ -128,6 +128,7 @@ contains
             ctx%dust_type_name = trim(ctx%state%str_dustem)
         end if
         call fsps_context_prepare_pset(ctx)
+        ctx%state%ssp_basis_is_dirty = .true.
     end subroutine fsps_context_setup
 
     !> @brief Ensure the context is initialized with the current library selections.
@@ -202,6 +203,9 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(PARAMS), intent(in) :: pset_in
 
+        if (pset_changes_ssp_basis(ctx%pset, pset_in)) then
+            ctx%state%ssp_basis_is_dirty = .true.
+        end if
         ctx%pset = pset_in
     end subroutine fsps_context_set_pset
 
@@ -225,9 +229,11 @@ contains
         character(len=*), intent(in) :: key
         integer, intent(in) :: value
         integer, intent(out) :: status
+        character(len=64) :: key_norm
 
         status = 0
-        select case (trim(key))
+        key_norm = trim(key)
+        select case (key_norm)
         case ('sfh')
             ctx%pset%sfh = value
         case ('zmet')
@@ -297,6 +303,10 @@ contains
         case default
             status = FSPS_ERR_UNKNOWN_INT_PARAM
         end select
+
+        if (status == 0 .and. is_ssp_sensitive_int_param(key_norm)) then
+            ctx%state%ssp_basis_is_dirty = .true.
+        end if
     end subroutine fsps_context_set_param_int
 
     !> @brief Set a floating-point parameter by key.
@@ -309,9 +319,11 @@ contains
         character(len=*), intent(in) :: key
         real(WP), intent(in) :: value
         integer, intent(out) :: status
+        character(len=64) :: key_norm
 
         status = 0
-        select case (trim(key))
+        key_norm = trim(key)
+        select case (key_norm)
         case ('om0')
             ctx%om0_val = value
         case ('ol0')
@@ -429,6 +441,10 @@ contains
         case default
             status = FSPS_ERR_UNKNOWN_FLOAT_PARAM
         end select
+
+        if (status == 0 .and. is_ssp_sensitive_float_param(key_norm)) then
+            ctx%state%ssp_basis_is_dirty = .true.
+        end if
     end subroutine fsps_context_set_param_float
 
     !> @brief Set a string parameter by key.
@@ -441,9 +457,11 @@ contains
         character(len=*), intent(in) :: key
         character(len=*), intent(in) :: value
         integer, intent(out) :: status
+        character(len=64) :: key_norm
 
         status = 0
-        select case (trim(key))
+        key_norm = trim(key)
+        select case (key_norm)
         case ('imf_filename')
             ctx%pset%imf_filename = trim(value)
         case ('sfh_filename')
@@ -451,6 +469,10 @@ contains
         case default
             status = FSPS_ERR_UNKNOWN_STRING_PARAM
         end select
+
+        if (status == 0 .and. is_ssp_sensitive_str_param(key_norm)) then
+            ctx%state%ssp_basis_is_dirty = .true.
+        end if
     end subroutine fsps_context_set_param_str
 
     !> @brief Retrieve resolved FSPS data and output paths.
@@ -569,6 +591,7 @@ contains
                 if (allocated(ctx%state%ssp_basis_spec)) deallocate(ctx%state%ssp_basis_spec)
                 if (allocated(ctx%state%ssp_basis_mass)) deallocate(ctx%state%ssp_basis_mass)
                 if (allocated(ctx%state%ssp_basis_lbol)) deallocate(ctx%state%ssp_basis_lbol)
+            ctx%state%ssp_basis_is_dirty = .true.
         end if
 
         if (.not. allocated(ctx%state%ssp_basis_spec)) then
@@ -581,14 +604,99 @@ contains
         if (mapped_new) then
             !$acc enter data copyin(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
             !$acc enter data attach(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            ctx%state%ssp_basis_is_dirty = .true.
         end if
 
-        ctx%state%ssp_basis_spec(:, :, 1:nzin) = spec_ssp(:, :, 1:nzin)
-        ctx%state%ssp_basis_mass(:, 1:nzin) = mass_ssp(:, 1:nzin)
-        ctx%state%ssp_basis_lbol(:, 1:nzin) = lbol_ssp(:, 1:nzin)
+        if (ctx%state%ssp_basis_is_dirty) then
+            ctx%state%ssp_basis_spec(:, :, 1:nzin) = spec_ssp(:, :, 1:nzin)
+            ctx%state%ssp_basis_mass(:, 1:nzin) = mass_ssp(:, 1:nzin)
+            ctx%state%ssp_basis_lbol(:, 1:nzin) = lbol_ssp(:, 1:nzin)
 
-        !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            ctx%state%ssp_basis_is_dirty = .false.
+        end if
     end subroutine fsps_context_update_ssp_basis
+
+    logical function is_ssp_sensitive_int_param(key) result(is_sensitive)
+        character(len=*), intent(in) :: key
+
+        is_sensitive = .false.
+        select case (trim(key))
+        case ('zmet', 'wgp1', 'wgp2', 'wgp3', 'evtype', 'imf_type', 'tpagb_norm_type', &
+              'interpolation_type', 'use_wr_spectra', 'add_neb_emission', 'add_neb_continuum', &
+              'add_xrb_emission', 'add_stellar_remnants', 'smooth_velocity', 'smooth_lsf', &
+              'smoothspec_fast', 'vactoair_flag', 'use_isoc_mdot')
+            is_sensitive = .true.
+        end select
+    end function is_ssp_sensitive_int_param
+
+    logical function is_ssp_sensitive_float_param(key) result(is_sensitive)
+        character(len=*), intent(in) :: key
+
+        is_sensitive = .false.
+        select case (trim(key))
+        case ('tiny_logt', 'imf_upper_limit', 'imf_lower_limit', 'logt_wmb_hot', 'nebular_smooth_init', &
+              'imf1', 'imf2', 'imf3', 'vdmc', 'mdave', 'dell', 'delt', 'sbss', 'fbhb', 'pagb', &
+              'redgb', 'agb', 'masscut', 'fcstar', 'frac_xrb', 'sigma_smooth', 'min_wave_smooth', &
+              'max_wave_smooth', 'gas_logu', 'gas_logz')
+            is_sensitive = .true.
+        end select
+    end function is_ssp_sensitive_float_param
+
+    logical function is_ssp_sensitive_str_param(key) result(is_sensitive)
+        character(len=*), intent(in) :: key
+
+        is_sensitive = .false.
+        select case (trim(key))
+        case ('imf_filename')
+            is_sensitive = .true.
+        end select
+    end function is_ssp_sensitive_str_param
+
+    logical function pset_changes_ssp_basis(old_pset, new_pset) result(changed)
+        type(PARAMS), intent(in) :: old_pset
+        type(PARAMS), intent(in) :: new_pset
+
+        changed = .false.
+
+        if (old_pset%zmet /= new_pset%zmet) changed = .true.
+        if (old_pset%wgp1 /= new_pset%wgp1) changed = .true.
+        if (old_pset%wgp2 /= new_pset%wgp2) changed = .true.
+        if (old_pset%wgp3 /= new_pset%wgp3) changed = .true.
+        if (old_pset%evtype /= new_pset%evtype) changed = .true.
+
+        if (old_pset%imf1 /= new_pset%imf1) changed = .true.
+        if (old_pset%imf2 /= new_pset%imf2) changed = .true.
+        if (old_pset%imf3 /= new_pset%imf3) changed = .true.
+        if (old_pset%vdmc /= new_pset%vdmc) changed = .true.
+        if (old_pset%mdave /= new_pset%mdave) changed = .true.
+        if (old_pset%dell /= new_pset%dell) changed = .true.
+        if (old_pset%delt /= new_pset%delt) changed = .true.
+        if (old_pset%sbss /= new_pset%sbss) changed = .true.
+        if (old_pset%fbhb /= new_pset%fbhb) changed = .true.
+        if (old_pset%pagb /= new_pset%pagb) changed = .true.
+        if (old_pset%redgb /= new_pset%redgb) changed = .true.
+        if (old_pset%agb /= new_pset%agb) changed = .true.
+        if (old_pset%masscut /= new_pset%masscut) changed = .true.
+        if (old_pset%fcstar /= new_pset%fcstar) changed = .true.
+        if (old_pset%frac_xrb /= new_pset%frac_xrb) changed = .true.
+        if (old_pset%sigma_smooth /= new_pset%sigma_smooth) changed = .true.
+        if (old_pset%min_wave_smooth /= new_pset%min_wave_smooth) changed = .true.
+        if (old_pset%max_wave_smooth /= new_pset%max_wave_smooth) changed = .true.
+        if (old_pset%gas_logu /= new_pset%gas_logu) changed = .true.
+        if (old_pset%gas_logz /= new_pset%gas_logz) changed = .true.
+        if (trim(old_pset%imf_filename) /= trim(new_pset%imf_filename)) changed = .true.
+
+        if (allocated(old_pset%ssp_gen_age) .neqv. allocated(new_pset%ssp_gen_age)) then
+            changed = .true.
+        else if (allocated(old_pset%ssp_gen_age)) then
+            if (size(old_pset%ssp_gen_age) /= size(new_pset%ssp_gen_age)) then
+                changed = .true.
+            else if (any(old_pset%ssp_gen_age /= new_pset%ssp_gen_age)) then
+                changed = .true.
+            end if
+        end if
+    end function pset_changes_ssp_basis
 
     !> @brief Set up workspace for the CSP hot path.
     !> @param[inout] ctx Context to prepare CSP workspace for.

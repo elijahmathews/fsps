@@ -153,6 +153,7 @@ module fsps_context_types
         real(WP), allocatable :: ssp_basis_spec(:, :, :)
         real(WP), allocatable :: ssp_basis_mass(:, :)
         real(WP), allocatable :: ssp_basis_lbol(:, :)
+        logical :: ssp_basis_is_dirty = .true.
         real(WP), allocatable :: csp_ssp_grid(:,:,:)
         real(WP), allocatable :: csp_emlin_grid(:,:,:)
         real(WP), allocatable :: csp_ssp_lum_linear(:,:)
@@ -346,6 +347,7 @@ contains
         state%powell_data%logsmass = 0.0
         state%sedfit_data%zred = 0.0
         state%sedfit_data%logsmass = 0.0
+        state%ssp_basis_is_dirty = .true.
         
     end subroutine fsps_context_state_destroy
 

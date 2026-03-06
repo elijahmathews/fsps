@@ -16,6 +16,7 @@ program benchmark_hotpaths
     integer :: status
     integer :: arg_count, arg_i
     integer :: n_spec, n_times, n_z, n_bands, n_indx
+    integer :: csp_bypass_count
     real(c_double) :: val
     character(len=20) :: isoc_arg, spec_arg, dust_arg
     character(len=20) :: dust2_key, imf3_key
@@ -121,23 +122,42 @@ program benchmark_hotpaths
     spec_ssp_3d(:,:,1) = spec_ssp
     
     call fsps_compute_csp(ctx, 0, 1, "", mass_ssp_2d, lbol_ssp_2d, spec_ssp_3d, compsp)
+    if (ctx%state%ssp_basis_is_dirty) then
+        print *, "ERROR: SSP basis dirty flag expected false after initial CSP warmup"
+        stop 1
+    end if
 
     ! --- Benchmark 1: CSP Only ---
     print *, "Benchmarking CSP Only..."
     n_iter_csp = 100
+    csp_bypass_count = 0
     
     call system_clock(t1, rate)
     
     do i = 1, n_iter_csp
         val = 0.1d0 + dble(i)*0.01d0
         call fsps_set_param_float(ctx, dust2_key, val, status)
+        if (status /= 0) then
+            print *, "ERROR: fsps_set_param_float(dust2) failed with status=", status
+            stop 1
+        end if
+        if (ctx%state%ssp_basis_is_dirty) then
+            print *, "ERROR: dust2 update should not dirty SSP basis"
+            stop 1
+        end if
         
         call fsps_compute_csp(ctx, 0, 1, "", mass_ssp_2d, lbol_ssp_2d, spec_ssp_3d, compsp)
+        if (ctx%state%ssp_basis_is_dirty) then
+            print *, "ERROR: CSP-only iteration should keep SSP basis clean"
+            stop 1
+        end if
+        csp_bypass_count = csp_bypass_count + 1
     end do
     
     call system_clock(t2)
     total_time = real(t2 - t1, kind=c_double) / real(rate, kind=c_double)
     print *, "CSP Only Avg Time (s): ", total_time / real(n_iter_csp)
+    print *, "CSP-only iterations with SSP-basis bypass:", csp_bypass_count
 
     ! --- Benchmark 2: SSP + CSP ---
     print *, "Benchmarking SSP + CSP..."
@@ -148,6 +168,14 @@ program benchmark_hotpaths
     do i = 1, n_iter_ssp
         val = 1.3d0 + dble(i)*0.01d0
         call fsps_set_param_float(ctx, imf3_key, val, status)
+        if (status /= 0) then
+            print *, "ERROR: fsps_set_param_float(imf3) failed with status=", status
+            stop 1
+        end if
+        if (.not. ctx%state%ssp_basis_is_dirty) then
+            print *, "ERROR: imf3 update should dirty SSP basis"
+            stop 1
+        end if
         
         ! Recompute SSP
         call fsps_compute_ssp(ctx, mass_ssp, lbol_ssp, spec_ssp)
@@ -159,6 +187,10 @@ program benchmark_hotpaths
         
         ! Compute CSP
         call fsps_compute_csp(ctx, 0, 1, "", mass_ssp_2d, lbol_ssp_2d, spec_ssp_3d, compsp)
+        if (ctx%state%ssp_basis_is_dirty) then
+            print *, "ERROR: SSP basis dirty flag should reset after CSP basis update"
+            stop 1
+        end if
     end do
     
     call system_clock(t2)
