@@ -27,7 +27,7 @@ module fsps_sfh
     use fsps_precision, only: WP
     use fsps_context_types, only: fsps_context_t
     use fsps_types, only: params, sfhparams, compspout
-    use fsps_constants, only: SAFE_FLOOR
+    use fsps_constants, only: SAFE_FLOOR, NTABMAX
     use fsps_special_functions, only: expi, gammainc
     use fsps_interpolation, only: find_interval
     use fsps_integration, only: integrate_trapezoid_array
@@ -86,7 +86,7 @@ contains
         type(SFHPARAMS), intent(in) :: sfh
         integer, intent(in) :: idx_min, idx_max
         real(WP), dimension(:), intent(out), contiguous :: weights
-        
+
         integer :: j, nt
         integer :: j_start, j_end
         real(WP) :: dt_bin, inv_dt
@@ -511,7 +511,7 @@ contains
         real(WP) :: age_current_yr
         integer :: n_tab, idx_cut
         real(WP) :: slope_last, sfr_at_age
-        real(WP), allocatable :: t_calc(:), sfr_calc(:), age_integrand(:)
+        real(WP) :: t_calc(NTABMAX), sfr_calc(NTABMAX), age_integrand(NTABMAX)
         real(WP) :: total_mass, mass_in_window
         real(WP) :: t_start_win_yr
         integer :: idx_win_start
@@ -626,11 +626,6 @@ contains
                          slope_last * (age_current_yr - ctx%state%sfh_tab(1, idx_cut))
             sfr_at_age = max(sfr_at_age, 0.0_wp)
 
-            ! Allocate temporary computation arrays
-            ! Size is idx_cut (points before) + 1 (the exact point at age)
-            allocate(t_calc(idx_cut + 1))
-            allocate(sfr_calc(idx_cut + 1))
-            
             ! Fill arrays (converting strided table access to contiguous temp)
             do i = 1, idx_cut
                 t_calc(i)   = ctx%state%sfh_tab(1, i)
@@ -641,27 +636,25 @@ contains
             sfr_calc(idx_cut + 1) = sfr_at_age
 
             ! 2. Integrate Total Mass
-            total_mass = integrate_trapezoid_array(t_calc, sfr_calc)
+            total_mass = integrate_trapezoid_array(t_calc(1:idx_cut+1), sfr_calc(1:idx_cut+1))
             
             if (total_mass <= SAFE_FLOOR) then
                 mean_age = 0.0_wp
                 ssfr_log_out = -100.0_wp
-                deallocate(t_calc, sfr_calc)
                 return
             end if
 
             ! 3. Compute Mean Age
             ! Formula: Integral( (Age - t) * SFR(t) dt ) / TotalMass
-            allocate(age_integrand(size(t_calc)))
             
             ! Vectorized calculation of integrand
-            age_integrand = (age_current_yr - t_calc) * sfr_calc
+            do i = 1, idx_cut + 1
+                age_integrand(i) = (age_current_yr - t_calc(i)) * sfr_calc(i)
+            end do
             
-            mean_age = integrate_trapezoid_array(t_calc, age_integrand) / total_mass
+            mean_age = integrate_trapezoid_array(t_calc(1:idx_cut+1), age_integrand(1:idx_cut+1)) / total_mass
             mean_age = mean_age / 1.0e9_wp ! Convert yr -> Gyr
             
-            deallocate(age_integrand)
-
             ! 4. Compute sSFRs over windows
             do i = 1, 3
                 t_start_win_yr = age_current_yr - (lookback_windows(i) * 1.0e9_wp)
@@ -671,16 +664,14 @@ contains
                 ! Find index in our local t_calc array
                 idx_win_start = find_interval(t_calc, t_start_win_yr)
                 idx_win_start = max(1, idx_win_start)
-                
-                mass_in_window = integrate_trapezoid_array(t_calc(idx_win_start:size(t_calc)), &
-                                                           sfr_calc(idx_win_start:size(sfr_calc)))
+
+                mass_in_window = integrate_trapezoid_array(t_calc(idx_win_start:idx_cut+1), &
+                                                           sfr_calc(idx_win_start:idx_cut+1))
                 
                 ! Normalization: sSFR = (Mass_Window / Total_Mass) / Window_Size
                 ssfr_log_out(i) = log10(max(mass_in_window / max(model%mass_csp, SAFE_FLOOR) / &
                                             (lookback_windows(i) * 1.0e9_wp), SAFE_FLOOR))
             end do
-
-            deallocate(t_calc, sfr_calc)
 
         else
             ! Unsupported type
@@ -843,7 +834,7 @@ contains
         type(sfhparams), intent(in) :: sfh
         real(WP), intent(in) :: log_t
         real(WP), intent(out) :: m0, m1
-        
+
         real(WP) :: t_lin, t_tau, ei_val
         real(WP) :: term_const
         
@@ -907,7 +898,7 @@ contains
         type(sfhparams), intent(in) :: sfh
         real(WP), intent(in) :: t
         real(WP), intent(out) :: m0, m1
-        
+
         real(WP) :: t_tau
         ! Type 5 specific vars (must be declared at top)
         real(WP) :: trunc_off, slope_f

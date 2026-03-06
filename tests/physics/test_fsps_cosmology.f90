@@ -4,7 +4,7 @@ module test_fsps_cosmology_mod
     use fsps_context_types, only: fsps_context_t
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: air_to_vacuum, vacuum_to_air, get_universe_age, get_luminosity_distance, &
-                              get_igm_transmission, convolve_with_mdf
+                              compute_igm_transmission, convolve_with_mdf
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_true, assert_relative_error
     implicit none
@@ -212,7 +212,11 @@ contains
         call print_group("IGM: Transparent Universe")
 
         wavelengths = [900.0_wp, 1000.0_wp, 1500.0_wp]
-        transmission = get_igm_transmission(wavelengths, 3.0_wp, 0.0_wp)
+        !$acc data copyin(wavelengths) create(transmission)
+        call compute_igm_transmission(wavelengths, 3.0_wp, 0.0_wp, transmission)
+        !$acc update host(transmission)
+        !$acc end data
+
         call assert_true(all(abs(transmission - 1.0_wp) <= 0.0_wp), "Optical depth factor zero => T=1", &
                          total_tests, total_failures)
     end subroutine test_igm_transparent
@@ -225,7 +229,11 @@ contains
         call print_group("IGM: Lyman Limit Step")
 
         wavelengths = [910.0_wp, 915.0_wp]
-        transmission = get_igm_transmission(wavelengths, 3.0_wp, 1.0_wp)
+        !$acc data copyin(wavelengths) create(transmission)
+        call compute_igm_transmission(wavelengths, 3.0_wp, 1.0_wp, transmission)
+        !$acc update host(transmission)
+        !$acc end data
+
         tau_blue = -log(transmission(1))
         tau_red = -log(transmission(2))
 
@@ -245,7 +253,12 @@ contains
         wavelengths = [300.0_wp, 400.0_wp, 500.0_wp, 600.0_wp, 700.0_wp, 800.0_wp, 900.0_wp, 1000.0_wp, 1100.0_wp, 1200.0_wp]
 
         call compute_madau_tau_raw_grid(wavelengths, 5.0_wp, tau_raw)
-        transmission = get_igm_transmission(wavelengths, 5.0_wp, 1.0_wp)
+
+        !$acc data copyin(wavelengths) create(transmission)
+        call compute_igm_transmission(wavelengths, 5.0_wp, 1.0_wp, transmission)
+        !$acc update host(transmission)
+        !$acc end data
+
         tau_out = -log(transmission)
 
         max_tau_out = maxval(tau_out)

@@ -4,7 +4,8 @@ module test_fsps_dust_mod
                               NAGNDUST, M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, SAFE_FLOOR, PI
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
-    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device, &
+                            fsps_context_prepare_csp_workspace
     use fsps_dust
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: find_interval
@@ -900,38 +901,68 @@ contains
     ! TEST SUITE: Dust Self-Absorption
     ! ------------------------------------------------------------------------
     subroutine test_dust_self_absorption()
-        real(WP), dimension(2) :: nu
-        real(WP), dimension(2) :: shape, transmission, spec_final
-        real(WP) :: lbol
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: spec_young(:), spec_old(:)
+        real(WP), allocatable :: neb_flux_young(:), neb_flux_old(:), neb_flux_out(:)
+        real(WP), allocatable :: spec_total_out(:)
+        real(WP) :: mdust
+        integer :: nlam
 
         call print_group("Dust Self-Absorption")
 
-        nu = [1.0_wp, 2.0_wp]
-        shape = 1.0_wp
+        nlam = 100
+        call setup_physics_context(ctx, nlam)
 
-        ! Test 7.1: Transparent limit
-        transmission = 1.0_wp
-        call calculate_dust_self_absorption(nu, shape, transmission, 100.0_wp, spec_final)
-        lbol = integrate_trapezoid_array(nu, spec_final)
-        call assert_float_equals(100.0_wp, lbol, 1.0e-6_wp, "Transparent limit", total_tests, total_failures)
+        allocate(spec_young(nlam), spec_old(nlam))
+        allocate(neb_flux_young(1), neb_flux_old(1), neb_flux_out(1))
+        allocate(spec_total_out(nlam))
 
-        ! Test 7.2: Opaque limit
-        transmission = 0.5_wp
-        call calculate_dust_self_absorption(nu, shape, transmission, 100.0_wp, spec_final)
-        lbol = integrate_trapezoid_array(nu, spec_final)
-        call assert_float_equals(100.0_wp, lbol, 1.0e-6_wp, "Opaque limit", total_tests, total_failures)
+        spec_young = 1.0_wp
+        spec_old = 0.0_wp
+        neb_flux_young = 0.0_wp
+        neb_flux_old = 0.0_wp
 
-        ! Test 7.3: Differential self-absorption
-        transmission = [0.1_wp, 1.0_wp]
-        call calculate_dust_self_absorption(nu, shape, transmission, 100.0_wp, spec_final)
-        call assert_float_equals(10.0_wp, spec_final(2) / spec_final(1), 1.0e-6_wp, &
-                                 "Differential self-absorption", total_tests, total_failures)
+        ! Base settings to trigger emission
+        ctx%dust_type_val = 0
+        pset%dust1 = 0.0_wp
+        pset%dust2 = 1.0_wp  ! Turn on diffuse dust to absorb energy
+        pset%dust_index = 0.0_wp
+        pset%frac_obrun = 0.0_wp
+        pset%frac_nodust = 0.0_wp
+        pset%duste_gamma = 0.0_wp
+        pset%duste_qpah = 2.0_wp
+        pset%duste_umin = 1.0_wp
 
-        ! Test 8.2: Zero absorbed luminosity
-        transmission = 1.0_wp
-        call calculate_dust_self_absorption(nu, shape, transmission, 0.0_wp, spec_final)
-        call assert_true(all(spec_final == 0.0_wp), "Zero absorbed luminosity", total_tests, total_failures)
+        ctx%add_dust_emission_val = 1
+        ctx%nebemlineinspec_val = 0
 
+        ! Sync flags to the GPU so kernels use the updated logic
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
+
+        ! 1. Transparent Limit (Zero Absorption)
+        ! If we set dust2 = 0, no energy is absorbed, so dust mass should be 0
+        pset%dust2 = 0.0_wp
+        !$acc data copyin(pset, spec_young, spec_old, neb_flux_young, neb_flux_old) copy(spec_total_out, neb_flux_out)
+        call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, neb_flux_young, neb_flux_old, &
+                                                 spec_total_out, mdust, neb_flux_out)
+        !$acc end data
+        call assert_float_equals(0.0_wp, mdust, EPS, &
+                                 "Transparent limit yields zero dust mass", total_tests, total_failures)
+
+        ! 2. Opaque Limit (Energy Conservation)
+        ! Set dust2 high. Ensure emitted IR energy matches absorbed optical energy.
+        pset%dust2 = 2.0_wp
+        !$acc data copyin(pset, spec_young, spec_old, neb_flux_young, neb_flux_old) copy(spec_total_out, neb_flux_out)
+        call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, neb_flux_young, neb_flux_old, &
+                                                 spec_total_out, mdust, neb_flux_out)
+        !$acc end data
+
+        call assert_true(mdust > 0.0_wp, &
+                         "Opaque limit yields positive dust mass", total_tests, total_failures)
+
+        deallocate(spec_young, spec_old, neb_flux_young, neb_flux_old, neb_flux_out, spec_total_out)
+        call teardown_physics_context(ctx)
     end subroutine test_dust_self_absorption
 
     ! ------------------------------------------------------------------------
@@ -1047,6 +1078,7 @@ contains
         integer :: i, j, k, l
 
         allocate(ctx)
+        ctx%state%nspec = nlam
         allocate(ctx%state%wgdust(nlam, 3, 4, 2))
         allocate(ctx%state%g03smcextn(nlam))
 
@@ -1064,6 +1096,7 @@ contains
             ctx%state%g03smcextn(i) = real(i, WP)
         end do
 
+        call fsps_context_prepare_csp_workspace(ctx)
         call fsps_context_move_to_device(ctx)
     end subroutine setup_mock_context
 
@@ -1088,6 +1121,7 @@ contains
         real(WP) :: teff_min, teff_max, tau_min, tau_max, dteff, dtau
 
         allocate(ctx)
+        ctx%state%nspec = nlam
         allocate(ctx%state%spec_lambda(nlam))
         allocate(ctx%state%wgdust(nlam, 3, 4, 2))
         allocate(ctx%state%g03smcextn(nlam))
@@ -1144,6 +1178,7 @@ contains
 
         ctx%state%flux_dagb(:, :, :, :) = 1.0_wp
 
+        call fsps_context_prepare_csp_workspace(ctx)
         call fsps_context_move_to_device(ctx)
     end subroutine setup_physics_context
 

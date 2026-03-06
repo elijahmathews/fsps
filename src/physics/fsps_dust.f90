@@ -33,7 +33,6 @@ module fsps_dust
     public :: apply_agb_dust_screen
     public :: apply_agn_dust_emission
     public :: interpolate_draine_li_dust_model
-    public :: calculate_dust_self_absorption
     public :: compute_circumstellar_optical_depth
 
     ! ------------------------------------------------------------------------
@@ -214,7 +213,7 @@ contains
     !>    energy balance (absorbed UV/optical flux = emitted IR flux).
     !> 4. Handles self-absorption of IR dust emission iteratively.
     !>
-    !> @param[in]    ctx              FSPS context.
+    !> @param[inout] ctx              FSPS context.
     !> @param[in]    settings         FSPS parameter structure.
     !> @param[in]    spec_young       Spectrum of young stars (birth cloud + diffuse).
     !> @param[in]    spec_old         Spectrum of old stars (diffuse only).
@@ -228,7 +227,7 @@ contains
                                                    neb_flux_young, neb_flux_old, &
                                                    spec_total_out, dust_mass, neb_flux_out)
         
-        type(fsps_context_t), intent(in)       :: ctx
+        type(fsps_context_t), intent(inout)    :: ctx
         type(params), intent(in)               :: settings
         real(WP), dimension(:), intent(in)     :: spec_young, spec_old
         real(WP), dimension(:), intent(in)     :: neb_flux_young, neb_flux_old
@@ -237,13 +236,8 @@ contains
         real(WP), dimension(:), intent(out)    :: neb_flux_out
 
         ! Local Variables
-        real(WP), allocatable :: transmission_diffuse(:)
-        real(WP), allocatable :: frequencies(:)
-        real(WP), allocatable :: spec_total_work(:)
-        
-        real(WP)              :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
-        real(WP), allocatable :: dust_emission_shape(:), dust_emission_final(:)
-        real(WP)              :: emission_norm_factor
+        real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
+        real(WP) :: emission_norm_factor, lum_escaped_profile, normalization_factor
         
         integer  :: nspec, i
         real(WP) :: y1, y2
@@ -272,10 +266,6 @@ contains
         dust3           = settings%dust3
         dust_type_is3   = (ctx%dust_type_val == 3)
 
-        allocate(transmission_diffuse(nspec), frequencies(nspec), spec_total_work(nspec), &
-                 dust_emission_shape(nspec), dust_emission_final(nspec))
-        !$acc enter data create(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
-
         ! 1. Calculate Attenuation Curves & Transmissivities
         ! --------------------------------------------------
         ! We parallelize the array operations. compute_attenuation_curve needs to be !acc routine seq/vector.
@@ -283,17 +273,17 @@ contains
         ! A. Diffuse ISM (affects all stars)
         ! B. Birth Clouds (affects young stars only)
         ! 2. Apply Attenuation to Stellar Spectra
-        
-        !$acc parallel loop present(ctx, spec_young, spec_old, spec_total_work, transmission_diffuse)
+
+        !$acc parallel loop present(ctx, spec_young, spec_old)
         do i = 1, nspec
             ! A. Diffuse Curve (Inline call or routine seq)
             curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
                                                     ctx%dust_type_val, settings, ctx)
-            
+
             if (dust_type_is3) then
-                transmission_diffuse(i) = exp(-curve)
+                ctx%state%dust_transmission_diffuse(i) = exp(-curve)
             else
-                transmission_diffuse(i) = exp(-dust2 * curve)
+                ctx%state%dust_transmission_diffuse(i) = exp(-dust2 * curve)
             end if
 
             ! B. Birth Clouds
@@ -308,26 +298,26 @@ contains
             else
                 trans_old = exp(-dust3 * curve)
             end if
-                                       
+
             ! 2. Apply Attenuation
             spec_sum = (spec_young(i) * trans_birth * one_minus_obrun + spec_young(i) * frac_obrun) + &
                        (spec_old(i) * trans_old)
 
             ! Final diffuse screen
             if (one_minus_nodust <= SAFE_FLOOR) then
-                spec_total_work(i) = spec_sum
+                ctx%state%dust_spec_total_work(i) = spec_sum
             else
-                spec_total_work(i) = spec_sum * (transmission_diffuse(i) * one_minus_nodust + frac_nodust)
+                ctx%state%dust_spec_total_work(i) = spec_sum * &
+                                                    (ctx%state%dust_transmission_diffuse(i) * one_minus_nodust + frac_nodust)
             end if
         end do
-
 
         ! 3. Apply Attenuation to Nebular Lines
         ! -------------------------------------
         ! Note: We must interpolate the diffuse transmission to the line wavelengths
         ! interpolate_linear is now !acc routine seq
         
-        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out, transmission_diffuse)
+        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out)
         do i = 1, size(neb_flux_young)
             if (one_minus_nodust <= SAFE_FLOOR) then
                 trans_diffuse_neb = 1.0_wp
@@ -350,10 +340,11 @@ contains
                 search_lower = max(1, min(search_lower, nspec - 1))
 
                 ! Linear interpolation
-                search_slope = (transmission_diffuse(search_lower+1) - transmission_diffuse(search_lower)) / &
+                search_slope = (ctx%state%dust_transmission_diffuse(search_lower+1) - &
+                                ctx%state%dust_transmission_diffuse(search_lower)) / &
                                (ctx%state%spec_lambda(search_lower+1) - ctx%state%spec_lambda(search_lower))
                 
-                trans_diffuse_neb = transmission_diffuse(search_lower) + &
+                trans_diffuse_neb = ctx%state%dust_transmission_diffuse(search_lower) + &
                                     search_slope * (search_val - ctx%state%spec_lambda(search_lower))
             end if
                                                               
@@ -382,25 +373,20 @@ contains
         if (ctx%add_dust_emission_val == 1 .and. &
             (settings%dust1 > SAFE_FLOOR .or. settings%dust2 > SAFE_FLOOR)) then
             
-            !$acc parallel loop present(ctx, frequencies)
+            !$acc parallel loop present(ctx)
             do i = 1, nspec
-                frequencies(i) = C_LIGHT / ctx%state%spec_lambda(i)
+                ctx%state%dust_frequencies(i) = C_LIGHT / ctx%state%spec_lambda(i)
             end do
 
             ! Calculate Bolometric Luminosities (L_bol)
-            ! Assumes integrate_trapezoid_array is modified to take raw arrays?
-            ! No, it takes assumed-shape. This is hard on device if we want to avoid array creation.
-            ! But we can compute array expressions? spec_young + spec_old.
-            ! This creates temp array.
-            ! We should write a specialized kernel or loop for integration.
-            
             ! Intrinsic (Pre-Dust)
             lum_bol_intrinsic = 0.0_wp
-            !$acc parallel loop reduction(+:lum_bol_intrinsic) present(frequencies, spec_young, spec_old)
+            !$acc parallel loop reduction(+:lum_bol_intrinsic) present(ctx, spec_young, spec_old)
             do i = 1, nspec-1
                 y1 = spec_young(i) + spec_old(i)
                 y2 = spec_young(i+1) + spec_old(i+1)
-                lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+                lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
+                                    ctx%state%dust_frequencies(i)) * (y1 + y2)
             end do
             
             if (ctx%nebemlineinspec_val == 0) then
@@ -412,13 +398,14 @@ contains
 
             ! Attenuated (Post-Dust)
             lum_bol_attenuated = 0.0_wp
-            !$acc parallel loop reduction(+:lum_bol_attenuated) present(frequencies, spec_total_work)
+            !$acc parallel loop reduction(+:lum_bol_attenuated) present(ctx)
             do i = 1, nspec-1
-                y1 = spec_total_work(i)
-                y2 = spec_total_work(i+1)
-                lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+                y1 = ctx%state%dust_spec_total_work(i)
+                y2 = ctx%state%dust_spec_total_work(i+1)
+                lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
+                                     ctx%state%dust_frequencies(i)) * (y1 + y2)
             end do
-            
+
             if (ctx%nebemlineinspec_val == 0) then
                 !$acc parallel loop reduction(+:lum_bol_attenuated) present(neb_flux_out)
                 do i = 1, size(neb_flux_out)
@@ -431,32 +418,51 @@ contains
 
             ! Get Dust Emission Template (Draine & Li 2007)
             ! ---------------------------------------------
-            call interpolate_draine_li_dust_model(ctx, settings, dust_emission_shape)
-            !$acc update device(dust_emission_shape)
-            
+            call interpolate_draine_li_dust_model(ctx, settings, ctx%state%dust_emission_shape)
+            !$acc update device(ctx%state%dust_emission_shape)
+
             ! Normalize template area
             emission_norm_factor = 0.0_wp
-            !$acc parallel loop reduction(+:emission_norm_factor) present(frequencies, dust_emission_shape)
+            !$acc parallel loop reduction(+:emission_norm_factor) present(ctx)
             do i = 1, nspec-1
-                y1 = dust_emission_shape(i)
-                y2 = dust_emission_shape(i+1)
-                emission_norm_factor = emission_norm_factor + 0.5_wp * abs(frequencies(i+1) - frequencies(i)) * (y1 + y2)
+                y1 = ctx%state%dust_emission_shape(i)
+                y2 = ctx%state%dust_emission_shape(i+1)
+                emission_norm_factor = emission_norm_factor + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
+                                       ctx%state%dust_frequencies(i)) * (y1 + y2)
             end do
             
             if (emission_norm_factor <= SAFE_FLOOR) then
                 dust_mass = SAFE_FLOOR
             else
-                ! Calculate Self-Absorption & Final Emission
+                ! Calculate Self-Absorption & Final Emission (Inlined for GPU)
                 ! ------------------------------------------
-                !$acc update host(frequencies, transmission_diffuse, dust_emission_shape)
-                call calculate_dust_self_absorption(frequencies, dust_emission_shape, transmission_diffuse, &
-                                                    lum_absorbed_total, dust_emission_final)
-                !$acc update device(dust_emission_final)
+                lum_escaped_profile = 0.0_wp
+                !$acc parallel loop reduction(+:lum_escaped_profile) present(ctx)
+                do i = 1, nspec-1
+                    y1 = ctx%state%dust_emission_shape(i) * ctx%state%dust_transmission_diffuse(i)
+                    y2 = ctx%state%dust_emission_shape(i+1) * ctx%state%dust_transmission_diffuse(i+1)
+                    lum_escaped_profile = lum_escaped_profile + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
+                                          ctx%state%dust_frequencies(i)) * (y1 + y2)
+                end do
+
+                if (lum_escaped_profile > SAFE_FLOOR) then
+                    normalization_factor = lum_absorbed_total / lum_escaped_profile
+                else
+                    normalization_factor = 0.0_wp
+                end if
 
                 ! Add to total spectrum
-                !$acc parallel loop present(spec_total_work, dust_emission_final)
+                !$acc parallel loop present(ctx)
                 do i = 1, nspec
-                    spec_total_work(i) = spec_total_work(i) + dust_emission_final(i)
+                    if (lum_escaped_profile > SAFE_FLOOR) then
+                        ctx%state%dust_emission_final(i) = ctx%state%dust_emission_shape(i) * &
+                                                           ctx%state%dust_transmission_diffuse(i) * &
+                                                           normalization_factor
+                    else
+                        ctx%state%dust_emission_final(i) = 0.0_wp
+                    end if
+
+                    ctx%state%dust_spec_total_work(i) = ctx%state%dust_spec_total_work(i) + ctx%state%dust_emission_final(i)
                 end do
 
                 ! Estimate Dust Mass (Factor from Draine & Li MW3.1 model)
@@ -467,15 +473,12 @@ contains
         else
             dust_mass = SAFE_FLOOR
         end if
-        
-        !$acc parallel loop present(spec_total_out, spec_total_work)
+
+        !$acc parallel loop present(ctx, spec_total_out)
         do i = 1, nspec
-            spec_total_out(i) = spec_total_work(i)
+            spec_total_out(i) = ctx%state%dust_spec_total_work(i)
         end do
-
-        !$acc exit data delete(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
-        deallocate(transmission_diffuse, frequencies, dust_emission_shape, dust_emission_final, spec_total_work)
-
+        
     end subroutine apply_dust_attenuation_and_emission
 
     !> @brief
@@ -781,53 +784,6 @@ contains
         emission_spectrum = max(emission_spectrum, SAFE_FLOOR)
 
     end subroutine interpolate_draine_li_dust_model
-
-
-    !> @brief
-    !> Calculates the final dust emission spectrum analytically.
-    !>
-    !> @details
-    !> Replaces the iterative self-absorption loop with an exact analytical solution.
-    !> Since the dust emission shape is fixed and energy is conserved, the final 
-    !> spectrum is simply the attenuated dust shape (S_int * e^-tau) normalized 
-    !> such that its total integrated luminosity equals the total stellar energy 
-    !> absorbed.
-    !>
-    !> derivation:
-    !> Final Spectrum = (S_int * e^-tau) * (L_absorbed_stellar / Integrate(S_int * e^-tau))
-    !>
-    subroutine calculate_dust_self_absorption(nu, shape_intrinsic, transmission_ism, &
-                                              lum_absorbed_initial, spec_final)
-        
-        use fsps_integration, only: integrate_trapezoid_array
-        
-        real(WP), dimension(:), intent(in)  :: nu
-        real(WP), dimension(:), intent(in)  :: shape_intrinsic
-        real(WP), dimension(:), intent(in)  :: transmission_ism ! e^-tau
-        real(WP), intent(in)                :: lum_absorbed_initial
-        real(WP), dimension(:), intent(out) :: spec_final
-
-        real(WP), dimension(size(nu)) :: profile_escaped
-        real(WP) :: lum_escaped_profile, normalization_factor
-        
-        ! 1. Calculate the shape of the dust emission that actually escapes the galaxy.
-        !    This is the intrinsic dust emission curve attenuated by the dust itself.
-        profile_escaped = shape_intrinsic * transmission_ism
-        
-        ! 2. Integrate this profile to see how much luminosity it currently represents.
-        lum_escaped_profile = integrate_trapezoid_array(nu, profile_escaped)
-        
-        ! 3. Normalize to ensure Energy Conservation.
-        !    The total IR energy leaving the galaxy must equal the total UV/Optical 
-        !    energy absorbed by the dust (L_absorbed_stellar).
-        if (lum_escaped_profile > SAFE_FLOOR) then
-            normalization_factor = lum_absorbed_initial / lum_escaped_profile
-            spec_final = profile_escaped * normalization_factor
-        else
-            spec_final = 0.0_wp
-        end if
-
-    end subroutine calculate_dust_self_absorption
 
     !> Implementation of Cardelli, Clayton, & Mathis (1989) extinction curve.
     !> Includes the "hack" for smooth transitions used in the original FSPS.

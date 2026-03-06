@@ -3,7 +3,8 @@ module test_fsps_gas_mod
     use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
-    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device, &
+                            fsps_context_prepare_csp_workspace
     use fsps_gas
     use fsps_integration, only: integrate_trapezoid_array
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
@@ -74,6 +75,7 @@ contains
         allocate(ctx)
         n_wave = size(lambda)
         n_time = size(time_full)
+        ctx%state%nspec = n_wave
 
         allocate(ctx%state%spec_lambda(n_wave))
         allocate(ctx%state%spec_nu(n_wave))
@@ -112,6 +114,7 @@ contains
         ctx%add_xrb_emission_val = 0
         ctx%smooth_velocity_val = 0
 
+        call fsps_context_prepare_csp_workspace(ctx)
         call fsps_context_move_to_device(ctx)
     end subroutine setup_gas_context
 

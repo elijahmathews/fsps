@@ -77,16 +77,6 @@ contains
         logical :: use_xrb_grid
         logical :: calc_lines, calc_cont
 
-        ! Temporary "Reduced" Grids
-        ! We use allocatable arrays but manage them on device.
-        real(WP), allocatable, dimension(:,:) :: neb_cont_grid_reduced ! (n_wave, n_age_grid)
-        real(WP), allocatable, dimension(:,:) :: neb_line_grid_reduced ! (n_lines, n_age_grid)
-
-        ! Buffers for the current time step. 
-        ! We use !acc enter data create for these inside loop or allocate once.
-        real(WP), allocatable, dimension(:) :: current_step_cont
-        real(WP), allocatable, dimension(:) :: current_step_lines_log
-
         nspec = size(sspi, 1)
 
         !$acc data pcopyin(sspi) pcopy(sspo)
@@ -125,64 +115,51 @@ contains
 
         ! 2. Dimensionality Reduction
         ! ----------------------------------------------
-        
+
         if (calc_cont) then
-            allocate(neb_cont_grid_reduced(nspec, NEBNAGE))
-            neb_cont_grid_reduced = 0.0_wp
-            !$acc enter data copyin(neb_cont_grid_reduced)
+            ctx%state%gas_neb_cont_reduced = 0.0_wp
 
             do k = 1, NEBNAGE
                 do t = 1, nspec
-                    ! Inline interpolate_zu_slice logic or use routine seq
-                    ! interpolate_zu_slice needs to be routine seq if used here.
                     if (use_xrb_grid) then
-                       neb_cont_grid_reduced(t, k) = interpolate_zu_slice_point(ctx%state%xnebem_cont, &
+                       ctx%state%gas_neb_cont_reduced(t, k) = interpolate_zu_slice_point(ctx%state%xnebem_cont, &
                             t, k, idx_z, idx_u, w_z, w_u)
                     else
-                       neb_cont_grid_reduced(t, k) = interpolate_zu_slice_point(ctx%state%nebem_cont, &
+                        ctx%state%gas_neb_cont_reduced(t, k) = interpolate_zu_slice_point(ctx%state%nebem_cont, &
                             t, k, idx_z, idx_u, w_z, w_u)
                     end if
                 end do
             end do
-            !$acc update device(neb_cont_grid_reduced)
+            !$acc update device(ctx%state%gas_neb_cont_reduced)
         end if
 
         if (calc_lines) then
-            allocate(neb_line_grid_reduced(NEMLINE, NEBNAGE))
-            neb_line_grid_reduced = 0.0_wp
-            !$acc enter data copyin(neb_line_grid_reduced)
+            ctx%state%gas_neb_line_reduced = 0.0_wp
 
             do k = 1, NEBNAGE
                 do t = 1, NEMLINE
                     if (use_xrb_grid) then
-                       neb_line_grid_reduced(t, k) = interpolate_zu_slice_point(ctx%state%xnebem_line, &
+                       ctx%state%gas_neb_line_reduced(t, k) = interpolate_zu_slice_point(ctx%state%xnebem_line, &
                             t, k, idx_z, idx_u, w_z, w_u)
                     else
-                       neb_line_grid_reduced(t, k) = interpolate_zu_slice_point(ctx%state%nebem_line, &
+                       ctx%state%gas_neb_line_reduced(t, k) = interpolate_zu_slice_point(ctx%state%nebem_line, &
                             t, k, idx_z, idx_u, w_z, w_u)
                     end if
                 end do
             end do
-            !$acc update device(neb_line_grid_reduced)
+            !$acc update device(ctx%state%gas_neb_line_reduced)
         end if
-
+        
         ! 3. Main Time Loop
         ! -----------------
         max_neb_time_idx = find_interval(ctx%state%time_full, ctx%state%nebem_age(NEBNAGE))
-        
-        ! Scratch arrays
-        allocate(current_step_cont(nspec))
-        allocate(current_step_lines_log(NEMLINE))
-        current_step_cont = 0.0_wp
-        current_step_lines_log = log10(SAFE_FLOOR)
-        !$acc enter data copyin(current_step_cont, current_step_lines_log)
 
-        ! NOTE: The loop over time steps 't' must be sequential because process_ionizing_radiation
-        ! and integration might be heavy, and we are updating sspo(:, t).
-        ! Parallelizing over 't' is possible if independent.
-        ! But process_ionizing_radiation does integration.
-        ! We will keep the loop sequential but run kernels inside.
-        
+        ! Scratch arrays initialized directly on the device
+        !$acc kernels present(ctx)
+        ctx%state%gas_current_step_cont = 0.0_wp
+        ctx%state%gas_current_step_lines = log10(SAFE_FLOOR)
+        !$acc end kernels
+
         do t = 1, max_neb_time_idx
             
             ! A. Calculate Ionizing Photons
@@ -199,53 +176,39 @@ contains
             ! C. Add Continuum
             ! ----------------
             if (calc_cont) then
-                !$acc parallel loop present(sspo, neb_cont_grid_reduced, current_step_cont) &
+                !$acc parallel loop present(ctx, sspo) &
                 !$acc               firstprivate(idx_a, w_a, q_ionizing, t)
                 do k = 1, nspec
-                    current_step_cont(k) = (1.0_wp - w_a) * neb_cont_grid_reduced(k, idx_a) + &
-                                           (         w_a) * neb_cont_grid_reduced(k, idx_a + 1)
-                    
-                    sspo(k,t) = sspo(k,t) + (10.0_wp**current_step_cont(k)) * q_ionizing
+                    ctx%state%gas_current_step_cont(k) = (1.0_wp - w_a) * ctx%state%gas_neb_cont_reduced(k, idx_a) + &
+                                                         (         w_a) * ctx%state%gas_neb_cont_reduced(k, idx_a + 1)
+
+                    sspo(k,t) = sspo(k,t) + (10.0_wp**ctx%state%gas_current_step_cont(k)) * q_ionizing
                 end do
             end if
 
             ! D. Add Lines
             ! ------------
             if (calc_lines) then
-                !$acc parallel loop present(current_step_lines_log, neb_line_grid_reduced) &
+                !$acc parallel loop present(ctx) &
                 !$acc               firstprivate(idx_a, w_a)
                 do k = 1, NEMLINE
-                    current_step_lines_log(k) = (1.0_wp - w_a) * neb_line_grid_reduced(k, idx_a) + &
-                                                (         w_a) * neb_line_grid_reduced(k, idx_a + 1)
+                    ctx%state%gas_current_step_lines(k) = (1.0_wp - w_a) * ctx%state%gas_neb_line_reduced(k, idx_a) + &
+                                                          (         w_a) * ctx%state%gas_neb_line_reduced(k, idx_a + 1)
                 end do
-                !$acc update host(current_step_lines_log)
-                
+
                 if (present(nebemline)) then
-                    !$acc parallel loop present(current_step_lines_log, nebemline) firstprivate(t, q_ionizing)
+                    !$acc parallel loop present(ctx, nebemline) firstprivate(t, q_ionizing)
                     do k = 1, NEMLINE
-                        nebemline(k,t) = (10.0_wp**current_step_lines_log(k)) * q_ionizing
+                        nebemline(k,t) = (10.0_wp**ctx%state%gas_current_step_lines(k)) * q_ionizing
                     end do
                 end if
 
                 if (ctx%nebemlineinspec_val == 1) then
-                    call add_lines_to_spectrum(ctx, sspo, t, current_step_lines_log, q_ionizing)
+                    call add_lines_to_spectrum(ctx, sspo, t, ctx%state%gas_current_step_lines, q_ionizing)
                 end if
             end if
 
         end do
-
-        ! Cleanup
-        !$acc exit data delete(current_step_cont, current_step_lines_log)
-        deallocate(current_step_cont, current_step_lines_log)
-        
-        if (allocated(neb_cont_grid_reduced)) then
-            !$acc exit data delete(neb_cont_grid_reduced)
-            deallocate(neb_cont_grid_reduced)
-        end if
-        if (allocated(neb_line_grid_reduced)) then
-            !$acc exit data delete(neb_line_grid_reduced)
-            deallocate(neb_line_grid_reduced)
-        end if
 
         !$acc end data
 
@@ -378,13 +341,13 @@ contains
         integer, intent(in)                     :: t_idx
         real(WP), dimension(:), intent(in)      :: line_lum_log
         real(WP), intent(in)                    :: q_val
-        
+
         integer :: i, j
         real(WP) :: sum_val
 
         ! Manual Matmul
         ! spectrum(j) = sum(gauss(j, i) * flux(i))
-        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val) firstprivate(t_idx)
+        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val) firstprivate(t_idx, q_val)
         do j = 1, size(spectrum, 1)
             sum_val = 0.0_wp
             do i = 1, NEMLINE

@@ -7,7 +7,7 @@ module test_fsps_csp_mod
     use fsps_csp, only: compute_sfh_weights, convert_sfhparams, integrate_csp_step, apply_dust_physics, &
                         apply_post_processing, compute_csp_scenario
     use fsps_interpolation, only: find_interval
-    use fsps_cosmology, only: get_igm_transmission
+    use fsps_cosmology, only: compute_igm_transmission
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_true, assert_relative_error, assert_int_equals
     implicit none
@@ -178,16 +178,70 @@ contains
     subroutine map_csp_workspace_to_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
         if (allocated(ctx%state%csp_weights)) then
-            !$acc enter data copyin(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
-            !$acc enter data attach(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
-            !$acc enter data copyin(ctx%state%csp_ssp_lum_linear, ctx%state%csp_igm_transmission)
-            !$acc enter data attach(ctx%state%csp_ssp_lum_linear, ctx%state%csp_igm_transmission)
-            !$acc enter data copyin(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
-            !$acc enter data attach(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
-            !$acc enter data copyin(ctx%state%csp_weights, ctx%state%spec_young, ctx%state%spec_old)
-            !$acc enter data attach(ctx%state%csp_weights, ctx%state%spec_young, ctx%state%spec_old)
-            !$acc enter data copyin(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
-            !$acc enter data attach(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
+            !$acc enter data copyin(ctx%state%csp_ssp_grid)
+            !$acc enter data attach(ctx%state%csp_ssp_grid)
+            !$acc enter data copyin(ctx%state%csp_emlin_grid)
+            !$acc enter data attach(ctx%state%csp_emlin_grid)
+            !$acc enter data copyin(ctx%state%csp_ssp_lum_linear)
+            !$acc enter data attach(ctx%state%csp_ssp_lum_linear)
+            !$acc enter data copyin(ctx%state%csp_igm_transmission)
+            !$acc enter data attach(ctx%state%csp_igm_transmission)
+            !$acc enter data copyin(ctx%state%csp_spec_final)
+            !$acc enter data attach(ctx%state%csp_spec_final)
+            !$acc enter data copyin(ctx%state%csp_emlin_final)
+            !$acc enter data attach(ctx%state%csp_emlin_final)
+            !$acc enter data copyin(ctx%state%csp_weights)
+            !$acc enter data attach(ctx%state%csp_weights)
+            !$acc enter data copyin(ctx%state%spec_young)
+            !$acc enter data attach(ctx%state%spec_young)
+            !$acc enter data copyin(ctx%state%spec_old)
+            !$acc enter data attach(ctx%state%spec_old)
+            !$acc enter data copyin(ctx%state%csp_emlin_young)
+            !$acc enter data attach(ctx%state%csp_emlin_young)
+            !$acc enter data copyin(ctx%state%csp_emlin_old)
+            !$acc enter data attach(ctx%state%csp_emlin_old)
+        end if
+
+        ! Map Dust & Gas Workspaces
+        if (allocated(ctx%state%dust_transmission_diffuse)) then
+            !$acc enter data copyin(ctx%state%dust_transmission_diffuse)
+            !$acc enter data attach(ctx%state%dust_transmission_diffuse)
+        end if
+        if (allocated(ctx%state%dust_frequencies)) then
+            !$acc enter data copyin(ctx%state%dust_frequencies)
+            !$acc enter data attach(ctx%state%dust_frequencies)
+        end if
+        if (allocated(ctx%state%dust_spec_total_work)) then
+            !$acc enter data copyin(ctx%state%dust_spec_total_work)
+            !$acc enter data attach(ctx%state%dust_spec_total_work)
+        end if
+        if (allocated(ctx%state%dust_emission_shape)) then
+            !$acc enter data copyin(ctx%state%dust_emission_shape)
+            !$acc enter data attach(ctx%state%dust_emission_shape)
+        end if
+        if (allocated(ctx%state%dust_emission_final)) then
+            !$acc enter data copyin(ctx%state%dust_emission_final)
+            !$acc enter data attach(ctx%state%dust_emission_final)
+        end if
+        if (allocated(ctx%state%gas_neb_cont_reduced)) then
+            !$acc enter data copyin(ctx%state%gas_neb_cont_reduced)
+            !$acc enter data attach(ctx%state%gas_neb_cont_reduced)
+        end if
+        if (allocated(ctx%state%gas_neb_line_reduced)) then
+            !$acc enter data copyin(ctx%state%gas_neb_line_reduced)
+            !$acc enter data attach(ctx%state%gas_neb_line_reduced)
+        end if
+        if (allocated(ctx%state%gas_current_step_cont)) then
+            !$acc enter data copyin(ctx%state%gas_current_step_cont)
+            !$acc enter data attach(ctx%state%gas_current_step_cont)
+        end if
+        if (allocated(ctx%state%gas_current_step_lines)) then
+            !$acc enter data copyin(ctx%state%gas_current_step_lines)
+            !$acc enter data attach(ctx%state%gas_current_step_lines)
+        end if
+        if (allocated(ctx%state%scalar_reductions)) then
+            !$acc enter data copyin(ctx%state%scalar_reductions)
+            !$acc enter data attach(ctx%state%scalar_reductions)
         end if
     end subroutine map_csp_workspace_to_device
 
@@ -204,15 +258,51 @@ contains
                 !$acc exit data delete(ctx%state%ssp_basis_lbol)
             end if
             !$acc exit data delete(ctx%state%csp_weights)
-            !$acc exit data delete(ctx%state%spec_young, ctx%state%spec_old)
-            !$acc exit data delete(ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
-            !$acc exit data delete(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
+            !$acc exit data delete(ctx%state%spec_young)
+            !$acc exit data delete(ctx%state%spec_old)
+            !$acc exit data delete(ctx%state%csp_emlin_young)
+            !$acc exit data delete(ctx%state%csp_emlin_old)
+            !$acc exit data delete(ctx%state%csp_ssp_grid)
+            !$acc exit data delete(ctx%state%csp_emlin_grid)
             !$acc exit data delete(ctx%state%csp_ssp_lum_linear)
-            !$acc exit data delete(ctx%state%csp_spec_final, ctx%state%csp_emlin_final)
+            !$acc exit data delete(ctx%state%csp_spec_final)
+            !$acc exit data delete(ctx%state%csp_emlin_final)
         end if
 
         if (allocated(ctx%state%csp_igm_transmission)) then
             !$acc exit data delete(ctx%state%csp_igm_transmission)
+        end if
+
+        ! Unmap Dust & Gas Workspaces
+        if (allocated(ctx%state%dust_transmission_diffuse)) then
+            !$acc exit data delete(ctx%state%dust_transmission_diffuse)
+        end if
+        if (allocated(ctx%state%dust_frequencies)) then
+            !$acc exit data delete(ctx%state%dust_frequencies)
+        end if
+        if (allocated(ctx%state%dust_spec_total_work)) then
+            !$acc exit data delete(ctx%state%dust_spec_total_work)
+        end if
+        if (allocated(ctx%state%dust_emission_shape)) then
+            !$acc exit data delete(ctx%state%dust_emission_shape)
+        end if
+        if (allocated(ctx%state%dust_emission_final)) then
+            !$acc exit data delete(ctx%state%dust_emission_final)
+        end if
+        if (allocated(ctx%state%gas_neb_cont_reduced)) then
+            !$acc exit data delete(ctx%state%gas_neb_cont_reduced)
+        end if
+        if (allocated(ctx%state%gas_neb_line_reduced)) then
+            !$acc exit data delete(ctx%state%gas_neb_line_reduced)
+        end if
+        if (allocated(ctx%state%gas_current_step_cont)) then
+            !$acc exit data delete(ctx%state%gas_current_step_cont)
+        end if
+        if (allocated(ctx%state%gas_current_step_lines)) then
+            !$acc exit data delete(ctx%state%gas_current_step_lines)
+        end if
+        if (allocated(ctx%state%scalar_reductions)) then
+            !$acc exit data delete(ctx%state%scalar_reductions)
         end if
     end subroutine unmap_csp_workspace_from_device
 
@@ -536,7 +626,7 @@ contains
         pset%sfh = 0
         pset%dust_tesc = 3.0_wp
 
-        !$acc data copyin(ssp_grid, emlin_grid)
+        !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
         call unmap_csp_workspace_from_device(ctx)
@@ -584,7 +674,7 @@ contains
         pset%tau = 2.0_wp
         pset%dust_tesc = 10.15_wp
 
-        !$acc data copyin(ssp_grid, emlin_grid)
+        !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
         call unmap_csp_workspace_from_device(ctx)
@@ -633,7 +723,7 @@ contains
         pset%const = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
-        !$acc data copyin(ssp_grid, emlin_grid)
+        !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
         call unmap_csp_workspace_from_device(ctx)
@@ -687,7 +777,7 @@ contains
         pset%tau = 1.0_wp
         pset%dust_tesc = 7.0_wp
 
-        !$acc data copyin(ssp_grid, emlin_grid)
+        !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
         call unmap_csp_workspace_from_device(ctx)
@@ -780,6 +870,7 @@ contains
         allocate(spec_no(size(spec_lambda)))
         allocate(spec_yes(size(spec_lambda)))
         allocate(emlines(NEMLINE))
+        allocate(igm(size(spec_lambda)))
         spec_no = 1.0_wp
         spec_yes = 1.0_wp
         emlines = 0.0_wp
@@ -799,12 +890,18 @@ contains
         mdust = 0.0_wp
 
         ctx%add_igm_absorption_val = 0
+
         !$acc data copyin(pset) copy(spec_no, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_no, emlines, result=result_no)
         !$acc end data
 
         ctx%add_igm_absorption_val = 1
-        igm = get_igm_transmission(spec_lambda, pset%zred, pset%igm_factor)
+
+        ! Map the local mock arrays for the GPU subroutine call
+        !$acc data copyin(spec_lambda) copyout(igm)
+        call compute_igm_transmission(spec_lambda, pset%zred, pset%igm_factor, igm)
+        !$acc end data
+
         !$acc data copyin(pset, igm) copy(spec_yes, emlines)
         call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_yes, emlines, igm, result_yes)
         !$acc end data

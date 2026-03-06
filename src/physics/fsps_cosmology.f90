@@ -29,7 +29,7 @@ module fsps_cosmology
     public :: vacuum_to_air
     public :: get_universe_age
     public :: get_luminosity_distance
-    public :: get_igm_transmission
+    public :: compute_igm_transmission
     public :: convolve_with_mdf
 
     ! ------------------------------------------------------------------------
@@ -283,30 +283,25 @@ contains
     !> 2.  **Lyman Continuum Absorption:** Photoelectric absorption for photons with $\lambda < 912$ Å.
     !>     Uses the approximate analytic fits (Eq. 16) from Madau (1995).
     !>
-    !> **Optimization:**
-    !> This routine utilizes **Loop Fusion**: it iterates over the wavelength grid exactly once, accumulating
-    !> opacity contributions from all spectral lines and the continuum in a single pass. This maximizes
-    !> CPU cache locality and enables efficient GPU kernel generation.
-    !>
-    !> @param[in] wavelength_grid      Wavelength grid in Angstroms.
-    !> @param[in] source_redshift      Redshift of the source.
-    !> @param[in] optical_depth_factor Scaling factor for $\tau$ (e.g., to simulate different IGM densities). Default 1.0.
-    !> @return                         Transmission fraction array [0.0 - 1.0].
-    pure function get_igm_transmission(wavelength_grid, source_redshift, optical_depth_factor) result(transmission)
+    !> @param[in]    wavelength_grid      Wavelength grid in Angstroms.
+    !> @param[in]    source_redshift      Redshift of the source.
+    !> @param[in]    optical_depth_factor Scaling factor for $\tau$.
+    !> @param[out]   transmission         Transmission fraction array [0.0 - 1.0].
+    subroutine compute_igm_transmission(wavelength_grid, source_redshift, optical_depth_factor, transmission)
         real(WP), dimension(:), intent(in), contiguous :: wavelength_grid
         real(WP), intent(in) :: source_redshift
         real(WP), intent(in) :: optical_depth_factor
-        real(WP), dimension(size(wavelength_grid)) :: transmission
+        real(WP), dimension(:), intent(out), contiguous :: transmission
 
-        real(WP), dimension(size(wavelength_grid)) :: optical_depth
         real(WP) :: one_plus_z, observed_wavelength, lambda_ratio, tau_val
+        real(WP) :: max_tau
         integer :: i, j, max_valid_idx, num_wavelengths
 
         one_plus_z      = 1.0_wp + source_redshift
         num_wavelengths = size(wavelength_grid)
-        
-        ! 1. Calculate Tau (Single Pass over Wavelengths)
-        ! This loop structure is optimal for CPU cache and GPU kernel fusion.
+
+        ! 1. Calculate Tau directly into transmission array (Single Pass)
+        !$acc parallel loop present(wavelength_grid, transmission) private(observed_wavelength, lambda_ratio, tau_val, i)
         do j = 1, num_wavelengths
             observed_wavelength = wavelength_grid(j) * one_plus_z
             lambda_ratio        = observed_wavelength / LYMAN_LIMIT
@@ -316,7 +311,7 @@ contains
             do i = 1, N_LYMAN_LINES
                 if (wavelength_grid(j) < LY_WAVE(i)) then
                     tau_val = tau_val + LY_COEFF(i) * (observed_wavelength / LY_WAVE(i))**3.46_wp
-                    
+
                     ! Metal blanketing (only for Ly-alpha)
                     if (i == 1) then
                         tau_val = tau_val + A_METAL * (observed_wavelength / LY_WAVE(i))**1.68_wp
@@ -332,22 +327,36 @@ contains
                     (MADAU_C3 * lambda_ratio**3.0_wp * (lambda_ratio**(-MADAU_P3) - one_plus_z**(-MADAU_P3))) - &
                     (MADAU_C4 * (one_plus_z**MADAU_P4 - lambda_ratio**MADAU_P4))
             end if
-            
-            optical_depth(j) = tau_val
+
+            transmission(j) = tau_val
         end do
 
-        ! 2. Safety Cap for Short Wavelengths (Vectorized search)
-        ! Madau approximation can decrease physically incorrectly at very short wavelengths
-        max_valid_idx = maxloc(optical_depth, 1)
-        
+        ! 2. Safety Cap for Short Wavelengths
+        ! Serial device execution to avoid PCIe bounce while tracking maxloc
+        !$acc serial present(transmission)
+        max_tau = 0.0_wp
+        max_valid_idx = 1
+        do j = 1, num_wavelengths
+            if (transmission(j) > max_tau) then
+                max_tau = transmission(j)
+                max_valid_idx = j
+            end if
+        end do
+
         if (max_valid_idx > 1) then
-            optical_depth(1:max_valid_idx) = optical_depth(max_valid_idx)
+            do j = 1, max_valid_idx
+                transmission(j) = max_tau
+            end do
         end if
+        !$acc end serial
 
         ! 3. Convert to Transmission
-        transmission = exp(-optical_depth * optical_depth_factor)
+        !$acc parallel loop present(transmission)
+        do j = 1, num_wavelengths
+            transmission(j) = exp(-transmission(j) * optical_depth_factor)
+        end do
 
-    end function get_igm_transmission
+    end subroutine compute_igm_transmission
 
     !> @brief
     !> Convolves Single Stellar Populations (SSPs) with a Metallicity Distribution Function (MDF).

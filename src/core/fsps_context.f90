@@ -7,7 +7,7 @@ module fsps_context
     !> `fsps_context_t`, along with high-level SSP/CSP execution helpers.
 
     use fsps_precision, only: WP
-    use fsps_constants, only: NEMLINE
+    use fsps_constants, only: NEMLINE, NEBNAGE
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
     use fsps_environment, only: fsps_cleanup
@@ -717,55 +717,48 @@ contains
     subroutine fsps_context_prepare_csp_workspace(ctx)
         type(fsps_context_t), intent(inout) :: ctx
         integer :: nspec, nt, nz_max
-        
+
         nspec = ctx%state%nspec
         nt = ctx%state%ntfull
         nz_max = ctx%state%nz
 
-        if (nspec == 0 .or. nt == 0 .or. nz_max == 0) return
+        ! Always allocate size-independent or constant-sized buffers
+        if (.not. allocated(ctx%state%csp_emlin_old)) allocate(ctx%state%csp_emlin_old(NEMLINE))
+        if (.not. allocated(ctx%state%csp_emlin_young)) allocate(ctx%state%csp_emlin_young(NEMLINE))
+        if (.not. allocated(ctx%state%csp_emlin_final)) allocate(ctx%state%csp_emlin_final(NEMLINE))
+        if (.not. allocated(ctx%state%gas_current_step_lines)) allocate(ctx%state%gas_current_step_lines(NEMLINE))
+        if (.not. allocated(ctx%state%scalar_reductions)) allocate(ctx%state%scalar_reductions(2))
 
-        if (.not. allocated(ctx%state%csp_ssp_grid)) then
-            allocate(ctx%state%csp_ssp_grid(nspec, nt, nz_max))
+        ! Allocate spectrum-dependent arrays
+        if (nspec > 0) then
+            ! Dust Workspace
+            if (.not. allocated(ctx%state%dust_transmission_diffuse)) allocate(ctx%state%dust_transmission_diffuse(nspec))
+            if (.not. allocated(ctx%state%dust_frequencies)) allocate(ctx%state%dust_frequencies(nspec))
+            if (.not. allocated(ctx%state%dust_spec_total_work)) allocate(ctx%state%dust_spec_total_work(nspec))
+            if (.not. allocated(ctx%state%dust_emission_shape)) allocate(ctx%state%dust_emission_shape(nspec))
+            if (.not. allocated(ctx%state%dust_emission_final)) allocate(ctx%state%dust_emission_final(nspec))
+
+            ! Gas Workspace
+            if (.not. allocated(ctx%state%gas_neb_cont_reduced)) allocate(ctx%state%gas_neb_cont_reduced(nspec, NEBNAGE))
+            if (.not. allocated(ctx%state%gas_neb_line_reduced)) allocate(ctx%state%gas_neb_line_reduced(NEMLINE, NEBNAGE))
+            if (.not. allocated(ctx%state%gas_current_step_cont)) allocate(ctx%state%gas_current_step_cont(nspec))
+
+            ! CSP Spectrum Workspace
+            if (.not. allocated(ctx%state%csp_igm_transmission)) allocate(ctx%state%csp_igm_transmission(nspec))
+            if (.not. allocated(ctx%state%csp_spec_final)) allocate(ctx%state%csp_spec_final(nspec))
+            if (.not. allocated(ctx%state%spec_young)) allocate(ctx%state%spec_young(nspec))
+            if (.not. allocated(ctx%state%spec_old)) allocate(ctx%state%spec_old(nspec))
         end if
 
-        if (.not. allocated(ctx%state%csp_emlin_grid)) then
-            allocate(ctx%state%csp_emlin_grid(NEMLINE, nt, nz_max))
-        end if
+        ! Allocate age/metallicity dependent arrays
+        if (nt > 0 .and. nz_max > 0) then
+            if (.not. allocated(ctx%state%csp_weights)) allocate(ctx%state%csp_weights(nt, nz_max))
+            if (.not. allocated(ctx%state%csp_ssp_lum_linear)) allocate(ctx%state%csp_ssp_lum_linear(nt, nz_max))
+            if (.not. allocated(ctx%state%csp_emlin_grid)) allocate(ctx%state%csp_emlin_grid(NEMLINE, nt, nz_max))
 
-        if (.not. allocated(ctx%state%csp_ssp_lum_linear)) then
-            allocate(ctx%state%csp_ssp_lum_linear(nt, nz_max))
-        end if
-
-        if (.not. allocated(ctx%state%csp_igm_transmission)) then
-            allocate(ctx%state%csp_igm_transmission(nspec))
-        end if
-
-        if (.not. allocated(ctx%state%csp_spec_final)) then
-            allocate(ctx%state%csp_spec_final(nspec))
-        end if
-
-        if (.not. allocated(ctx%state%csp_emlin_final)) then
-            allocate(ctx%state%csp_emlin_final(NEMLINE))
-        end if
-
-        if (.not. allocated(ctx%state%csp_weights)) then
-            allocate(ctx%state%csp_weights(nt, nz_max))
-        end if
-
-        if (.not. allocated(ctx%state%csp_emlin_young)) then
-            allocate(ctx%state%csp_emlin_young(NEMLINE))
-        end if
-
-        if (.not. allocated(ctx%state%csp_emlin_old)) then
-            allocate(ctx%state%csp_emlin_old(NEMLINE))
-        end if
-
-        if (.not. allocated(ctx%state%spec_young)) then
-            allocate(ctx%state%spec_young(nspec))
-        end if
-
-        if (.not. allocated(ctx%state%spec_old)) then
-            allocate(ctx%state%spec_old(nspec))
+            if (nspec > 0) then
+                if (.not. allocated(ctx%state%csp_ssp_grid)) allocate(ctx%state%csp_ssp_grid(nspec, nt, nz_max))
+            end if
         end if
     end subroutine fsps_context_prepare_csp_workspace
 
@@ -1128,6 +1121,48 @@ contains
             !$acc enter data copyin(ctx%state%csp_emlin_old)
             !$acc enter data attach(ctx%state%csp_emlin_old)
         end if
+
+        ! --- Persistent Physics Workspaces ---
+        if (allocated(ctx%state%dust_transmission_diffuse)) then
+            !$acc enter data copyin(ctx%state%dust_transmission_diffuse)
+            !$acc enter data attach(ctx%state%dust_transmission_diffuse)
+        end if
+        if (allocated(ctx%state%dust_frequencies)) then
+            !$acc enter data copyin(ctx%state%dust_frequencies)
+            !$acc enter data attach(ctx%state%dust_frequencies)
+        end if
+        if (allocated(ctx%state%dust_spec_total_work)) then
+            !$acc enter data copyin(ctx%state%dust_spec_total_work)
+            !$acc enter data attach(ctx%state%dust_spec_total_work)
+        end if
+        if (allocated(ctx%state%dust_emission_shape)) then
+            !$acc enter data copyin(ctx%state%dust_emission_shape)
+            !$acc enter data attach(ctx%state%dust_emission_shape)
+        end if
+        if (allocated(ctx%state%dust_emission_final)) then
+            !$acc enter data copyin(ctx%state%dust_emission_final)
+            !$acc enter data attach(ctx%state%dust_emission_final)
+        end if
+        if (allocated(ctx%state%gas_neb_cont_reduced)) then
+            !$acc enter data copyin(ctx%state%gas_neb_cont_reduced)
+            !$acc enter data attach(ctx%state%gas_neb_cont_reduced)
+        end if
+        if (allocated(ctx%state%gas_neb_line_reduced)) then
+            !$acc enter data copyin(ctx%state%gas_neb_line_reduced)
+            !$acc enter data attach(ctx%state%gas_neb_line_reduced)
+        end if
+        if (allocated(ctx%state%gas_current_step_cont)) then
+            !$acc enter data copyin(ctx%state%gas_current_step_cont)
+            !$acc enter data attach(ctx%state%gas_current_step_cont)
+        end if
+        if (allocated(ctx%state%gas_current_step_lines)) then
+            !$acc enter data copyin(ctx%state%gas_current_step_lines)
+            !$acc enter data attach(ctx%state%gas_current_step_lines)
+        end if
+        if (allocated(ctx%state%scalar_reductions)) then
+            !$acc enter data copyin(ctx%state%scalar_reductions)
+            !$acc enter data attach(ctx%state%scalar_reductions)
+        end if
     end subroutine fsps_context_move_to_device
 
     !> @brief Removes the context and its data from the device.
@@ -1383,6 +1418,38 @@ contains
             end if
             if (allocated(s%csp_emlin_old)) then
                 !$acc exit data delete(s%csp_emlin_old)
+            end if
+
+            ! --- Persistent Physics Workspaces ---
+            if (allocated(s%dust_transmission_diffuse)) then
+                !$acc exit data delete(s%dust_transmission_diffuse)
+            end if
+            if (allocated(s%dust_frequencies)) then
+                !$acc exit data delete(s%dust_frequencies)
+            end if
+            if (allocated(s%dust_spec_total_work)) then
+                !$acc exit data delete(s%dust_spec_total_work)
+            end if
+            if (allocated(s%dust_emission_shape)) then
+                !$acc exit data delete(s%dust_emission_shape)
+            end if
+            if (allocated(s%dust_emission_final)) then
+                !$acc exit data delete(s%dust_emission_final)
+            end if
+            if (allocated(s%gas_neb_cont_reduced)) then
+                !$acc exit data delete(s%gas_neb_cont_reduced)
+            end if
+            if (allocated(s%gas_neb_line_reduced)) then
+                !$acc exit data delete(s%gas_neb_line_reduced)
+            end if
+            if (allocated(s%gas_current_step_cont)) then
+                !$acc exit data delete(s%gas_current_step_cont)
+            end if
+            if (allocated(s%gas_current_step_lines)) then
+                !$acc exit data delete(s%gas_current_step_lines)
+            end if
+            if (allocated(s%scalar_reductions)) then
+                !$acc exit data delete(s%scalar_reductions)
             end if
         end associate
 

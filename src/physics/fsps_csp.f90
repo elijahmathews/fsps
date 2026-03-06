@@ -32,7 +32,7 @@ module fsps_csp
     use fsps_dust, only: apply_dust_attenuation_and_emission, apply_agn_dust_emission
     use fsps_gas, only: apply_nebular_emission
     use fsps_smoothing, only: apply_smoothing
-    use fsps_cosmology, only: get_igm_transmission
+    use fsps_cosmology, only: compute_igm_transmission
 
     !> Math Modules
     use fsps_interpolation, only: find_interval, interpolate_linear
@@ -130,16 +130,15 @@ contains
         ! -----------------------------------
         
         ! A. Linearize Luminosity (Avoids 10**x inside hot loops)
-        !$acc kernels present(ctx%state%csp_ssp_lum_linear, ctx%state%ssp_basis_lbol)
+        !$acc kernels present(ctx)
         ctx%state%csp_ssp_lum_linear(:,1:nzin) = 10.0_wp**ctx%state%ssp_basis_lbol(:,1:nzin)
         !$acc end kernels
-        !$acc update host(ctx%state%csp_ssp_lum_linear)
 
         ! B. Pre-calculate IGM Transmission (Constant for this PSET)
         if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR) then
-            ctx%state%csp_igm_transmission = get_igm_transmission(ctx%state%spec_lambda, &
-                                                                  pset%zred, pset%igm_factor)
-            !$acc update device(ctx%state%csp_igm_transmission)
+            call compute_igm_transmission(ctx%state%spec_lambda, &
+                                          pset%zred, pset%igm_factor, &
+                                          ctx%state%csp_igm_transmission)
         end if
 
         if (pset%tage > 0.0_wp) then
@@ -235,6 +234,7 @@ contains
         real(WP) :: weight_ik
         real(WP) :: sum_young, sum_old
         real(WP) :: sum_em_young, sum_em_old
+        real(WP) :: dev_scalars(2)
         
         nt = ctx%state%ntfull
         nspec = size(ssp_grid, 1)
@@ -255,10 +255,10 @@ contains
         ctx%state%csp_emlin_old   = 0.0_wp
         !$acc end kernels
 
-        ! 2. Compute SFH Weights
+        ! 2. Compute SFH Weights on Host (Bypasses device stack overflow)
         call compute_sfh_weights(ctx, pset, tage, nzin, ctx%state%csp_weights)
 
-        ! Update full array to avoid subarray descriptor bugs
+        ! Update full array to device
         !$acc update device(ctx%state%csp_weights)
 
         ! 3. Determine Dust Separation Index
@@ -270,18 +270,34 @@ contains
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
         ! 4. Integration Loop for Scalars
-        ! Scalar reduction executed on host CPU
-        linear_lbol_sum = 0.0_wp
-        mass_csp        = 0.0_wp
+        ! Executed sequentially on the device using persistent context memory
+        ! to bypass NVHPC compiler bugs with dummy argument copyout and local register arrays.
+        !$acc serial present(ctx, mass_ssp, ssp_lum_linear)
+        ctx%state%scalar_reductions(1) = 0.0_wp
+        ctx%state%scalar_reductions(2) = 0.0_wp
 
         do k = 1, nzin
             do i = 1, nt
                 if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
-                    mass_csp = mass_csp + (ctx%state%csp_weights(i, k) * mass_ssp(i, k))
-                    linear_lbol_sum = linear_lbol_sum + (ctx%state%csp_weights(i, k) * ssp_lum_linear(i, k))
+                    ctx%state%scalar_reductions(1) = ctx%state%scalar_reductions(1) + &
+                                                     (ctx%state%csp_weights(i, k) * mass_ssp(i, k))
+                    ctx%state%scalar_reductions(2) = ctx%state%scalar_reductions(2) + &
+                                                     (ctx%state%csp_weights(i, k) * ssp_lum_linear(i, k))
                 end if
             end do
         end do
+        !$acc end serial
+
+        ! Fetch results safely back to the host. Explicit array bounds bypass dope-vector bugs.
+        !$acc update host(ctx%state%scalar_reductions(1:2))
+        mass_csp        = ctx%state%scalar_reductions(1)
+        linear_lbol_sum = ctx%state%scalar_reductions(2)
+
+        if (linear_lbol_sum > SAFE_FLOOR) then
+            lbol_csp = log10(linear_lbol_sum)
+        else
+            lbol_csp = 0.0_wp
+        end if
 
         ! 5. Integration Loop for Spectra
 #ifdef _OPENACC
@@ -431,17 +447,17 @@ contains
     !> 2. Applies diffuse ISM attenuation to both `spec_young` and `spec_old`.
     !> 3. Computes IR dust re-emission via energy balance.
     !>
-    !> @param[in]     ctx           Context.
+    !> @param[inout]  ctx           Context.
     !> @param[in]     pset          User parameters.
     !> @param[out]    spec_total    Final attenuated spectrum (L_sol/Hz).
     !> @param[out]    emlin_total   Final attenuated emission lines (L_sol).
     !> @param[out]    mdust_total   Total dust mass (M_sol).
     subroutine apply_dust_physics(ctx, pset, spec_total, emlin_total, mdust_total)
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: pset
-        real(WP), intent(out)            :: spec_total(:)
-        real(WP), intent(out)            :: emlin_total(:)
-        real(WP), intent(out)            :: mdust_total
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(out)               :: spec_total(:)
+        real(WP), intent(out)               :: emlin_total(:)
+        real(WP), intent(out)               :: mdust_total
 
         ! The fsps_dust routine handles all the heavy lifting, 
         ! including the combination of Young + Old components.

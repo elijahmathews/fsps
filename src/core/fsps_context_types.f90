@@ -165,6 +165,18 @@ module fsps_context_types
         real(WP), allocatable :: csp_weights(:,:)
         real(WP), allocatable :: csp_emlin_young(:)
         real(WP), allocatable :: csp_emlin_old(:)
+
+        ! --- Persistent Physics Workspaces (Dust & Gas) ---
+        real(WP), allocatable :: dust_transmission_diffuse(:)
+        real(WP), allocatable :: dust_frequencies(:)
+        real(WP), allocatable :: dust_spec_total_work(:)
+        real(WP), allocatable :: dust_emission_shape(:)
+        real(WP), allocatable :: dust_emission_final(:)
+        real(WP), allocatable :: gas_neb_cont_reduced(:,:)
+        real(WP), allocatable :: gas_neb_line_reduced(:,:)
+        real(WP), allocatable :: gas_current_step_cont(:)
+        real(WP), allocatable :: gas_current_step_lines(:)
+        real(WP), allocatable :: scalar_reductions(:)
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -308,6 +320,18 @@ contains
         if (allocated(state%csp_weights)) deallocate (state%csp_weights)
         if (allocated(state%csp_emlin_young)) deallocate (state%csp_emlin_young)
         if (allocated(state%csp_emlin_old)) deallocate (state%csp_emlin_old)
+
+        ! --- Persistent Physics Workspaces (Dust & Gas) ---
+        if (allocated(state%dust_transmission_diffuse)) deallocate(state%dust_transmission_diffuse)
+        if (allocated(state%dust_frequencies)) deallocate(state%dust_frequencies)
+        if (allocated(state%dust_spec_total_work)) deallocate(state%dust_spec_total_work)
+        if (allocated(state%dust_emission_shape)) deallocate(state%dust_emission_shape)
+        if (allocated(state%dust_emission_final)) deallocate(state%dust_emission_final)
+        if (allocated(state%gas_neb_cont_reduced)) deallocate(state%gas_neb_cont_reduced)
+        if (allocated(state%gas_neb_line_reduced)) deallocate(state%gas_neb_line_reduced)
+        if (allocated(state%gas_current_step_cont)) deallocate(state%gas_current_step_cont)
+        if (allocated(state%gas_current_step_lines)) deallocate(state%gas_current_step_lines)
+        if (allocated(state%scalar_reductions)) deallocate(state%scalar_reductions)
 
         state%nt = 0
         state%nz = 0
