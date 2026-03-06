@@ -232,6 +232,9 @@ contains
         integer :: nspec, nem
         real(WP) :: dust_age_log
         real(WP) :: linear_lbol_sum
+        real(WP) :: weight_ik
+        real(WP) :: sum_young, sum_old
+        real(WP) :: sum_em_young, sum_em_old
         
         nt = ctx%state%ntfull
         nspec = size(ssp_grid, 1)
@@ -266,7 +269,7 @@ contains
         end if
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
-        ! 4. Integration Loop
+        ! 4. Integration Loop for Scalars
         ! Scalar reduction executed on host CPU
         linear_lbol_sum = 0.0_wp
         mass_csp        = 0.0_wp
@@ -280,43 +283,132 @@ contains
             end do
         end do
 
-        ! Massive parallelization for spectra
-        !$acc parallel loop gang vector present(ctx, ssp_grid)
+        ! 5. Integration Loop for Spectra
+#ifdef _OPENACC
+
+        ! =====================================================================
+        ! GPU OPTIMIZED PATH (Max Occupancy, No Atomics, Coalesced Memory)
+        ! =====================================================================
+        !$acc parallel loop gang vector present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik)
         do i_spec = 1, nspec
+            sum_young = 0.0_wp
             do k = 1, nzin
-                do i = 1, nt
-                    if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
-                        if (i <= i_tesc) then
-                            ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + &
-                                ctx%state%csp_weights(i, k) * ssp_grid(i_spec, i, k)
-                        else
-                            ctx%state%spec_old(i_spec) = ctx%state%spec_old(i_spec) + &
-                                ctx%state%csp_weights(i, k) * ssp_grid(i_spec, i, k)
-                        end if
+                do i = 1, i_tesc
+                    weight_ik = ctx%state%csp_weights(i, k)
+                    if (weight_ik > SAFE_FLOOR) then
+                        sum_young = sum_young + (weight_ik * ssp_grid(i_spec, i, k))
                     end if
                 end do
             end do
+
+            sum_old = 0.0_wp
+            do k = 1, nzin
+                do i = i_tesc + 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k)
+                    if (weight_ik > SAFE_FLOOR) then
+                        sum_old = sum_old + (weight_ik * ssp_grid(i_spec, i, k))
+                    end if
+                end do
+            end do
+
+            ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + sum_young
+            ctx%state%spec_old(i_spec)   = ctx%state%spec_old(i_spec) + sum_old
         end do
 
-        ! More parallelization for nebular emission
-        !$acc parallel loop gang vector present(ctx, emlin_grid)
+#else
+
+        ! =====================================================================
+        ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
+        ! =====================================================================
+        do k = 1, nzin
+            ! Young stars
+            do i = 1, i_tesc
+                weight_ik = ctx%state%csp_weights(i, k)
+                if (weight_ik > SAFE_FLOOR) then
+                    ! Stride-1 inner loop for CPU vectorization/cache
+                    do i_spec = 1, nspec
+                        ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + &
+                            (weight_ik * ssp_grid(i_spec, i, k))
+                    end do
+                end if
+            end do
+            ! Old stars
+            do i = i_tesc + 1, nt
+                weight_ik = ctx%state%csp_weights(i, k)
+                if (weight_ik > SAFE_FLOOR) then
+                    do i_spec = 1, nspec
+                        ctx%state%spec_old(i_spec) = ctx%state%spec_old(i_spec) + &
+                            (weight_ik * ssp_grid(i_spec, i, k))
+                    end do
+                end if
+            end do
+        end do
+#endif
+
+        ! 6. Integration Loop for Emission Lines
+#ifdef _OPENACC
+
+        ! =====================================================================
+        ! GPU OPTIMIZED PATH (Max Occupancy, No Atomics, Coalesced Memory)
+        ! =====================================================================
+        !$acc parallel loop gang vector present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik)
         do i_em = 1, nem
+            sum_em_young = 0.0_wp
             do k = 1, nzin
-                do i = 1, nt
-                    if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
-                        if (i <= i_tesc) then
-                            ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + &
-                                ctx%state%csp_weights(i, k) * emlin_grid(i_em, i, k)
-                        else
-                            ctx%state%csp_emlin_old(i_em) = ctx%state%csp_emlin_old(i_em) + &
-                                ctx%state%csp_weights(i, k) * emlin_grid(i_em, i, k)
-                        end if
+                do i = 1, i_tesc
+                    weight_ik = ctx%state%csp_weights(i, k)
+                    if (weight_ik > SAFE_FLOOR) then
+                        sum_em_young = sum_em_young + (weight_ik * emlin_grid(i_em, i, k))
                     end if
                 end do
             end do
+
+            sum_em_old = 0.0_wp
+            do k = 1, nzin
+                do i = i_tesc + 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k)
+                    if (weight_ik > SAFE_FLOOR) then
+                        sum_em_old = sum_em_old + (weight_ik * emlin_grid(i_em, i, k))
+                    end if
+                end do
+            end do
+
+            ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + sum_em_young
+            ctx%state%csp_emlin_old(i_em)   = ctx%state%csp_emlin_old(i_em) + sum_em_old
         end do
 
-        ! Fetch results back to host for subsequent physics steps
+#else
+
+        ! =====================================================================
+        ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
+        ! =====================================================================
+        do k = 1, nzin
+            ! Young stars
+            do i = 1, i_tesc
+                weight_ik = ctx%state%csp_weights(i, k)
+                if (weight_ik > SAFE_FLOOR) then
+                    ! Stride-1 inner loop for CPU vectorization/cache
+                    do i_em = 1, nem
+                        ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + &
+                            (weight_ik * emlin_grid(i_em, i, k))
+                    end do
+                end if
+            end do
+            ! Old stars
+            do i = i_tesc + 1, nt
+                weight_ik = ctx%state%csp_weights(i, k)
+                if (weight_ik > SAFE_FLOOR) then
+                    do i_em = 1, nem
+                        ctx%state%csp_emlin_old(i_em) = ctx%state%csp_emlin_old(i_em) + &
+                            (weight_ik * emlin_grid(i_em, i, k))
+                    end do
+                end if
+            end do
+        end do
+        
+#endif
+
+        ! 7. Fetch results back to host for subsequent physics steps
         !$acc update host(ctx%state%spec_young, ctx%state%spec_old, ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
 
         if (linear_lbol_sum > 0.0_wp) then

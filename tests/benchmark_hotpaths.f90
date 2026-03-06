@@ -3,6 +3,7 @@ program benchmark_hotpaths
     use fsps_api
     use fsps_types, only: COMPSPOUT
     use fsps_context_types, only: fsps_context_t
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
     implicit none
 
     type(fsps_context_t) :: ctx
@@ -112,6 +113,12 @@ program benchmark_hotpaths
     call fsps_set_param_int(ctx, mags_key, 0, status)
     call fsps_set_param_int(ctx, indx_key, 0, status)
 
+    ! Migrate the fully-populated context to the device
+    call fsps_context_move_to_device(ctx)
+
+    ! Enable Fast Mode to bypass host post-processing and syncs
+    call fsps_context_set_fast_mode(ctx, .true.)
+
     ! Warmup
     print *, "Warming up..."
     call fsps_compute_ssp(ctx, mass_ssp, lbol_ssp, spec_ssp)
@@ -197,6 +204,7 @@ program benchmark_hotpaths
     total_time = real(t2 - t1, kind=c_double) / real(rate, kind=c_double)
     print *, "SSP + CSP Avg Time (s): ", total_time / real(n_iter_ssp)
 
+    call fsps_context_remove_from_device(ctx)
     call fsps_destroy(ctx)
 
 end program benchmark_hotpaths
