@@ -62,6 +62,7 @@ void fsps_context_setup(int zin, const char *isoc_type, const char *spec_type,
 void fsps_context_set_int(int handle, const char *key, int value, int *status);
 void fsps_context_set_float(int handle, const char *key, double value, int *status);
 void fsps_context_set_str(int handle, const char *key, const char *value, int *status);
+void fsps_context_set_fast_mode(int handle, int fast_mode, int *status);
 
 // Dimension Queries
 void fsps_context_get_dims(int handle, int *n_spec, int *n_time, int *status);

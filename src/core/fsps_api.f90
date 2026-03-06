@@ -13,7 +13,7 @@ module fsps_api
     use fsps_context, only: fsps_context_create, fsps_context_setup, fsps_context_destroy, &
                             fsps_context_set_param_int, fsps_context_set_param_float, &
                             fsps_context_set_param_str, fsps_context_get_paths, &
-                            fsps_context_prepare_pset, fsps_context_compute_ssp, &
+                            fsps_context_set_fast_mode, fsps_context_prepare_pset, fsps_context_compute_ssp, &
                             fsps_context_compute_csp
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup, fsps_print_env_info
 
@@ -28,6 +28,7 @@ module fsps_api
     public :: fsps_set_param_int
     public :: fsps_set_param_float
     public :: fsps_set_param_str
+    public :: fsps_set_fast_mode
     public :: fsps_get_paths
     public :: fsps_prepare_pset
     public :: fsps_compute_ssp
@@ -136,6 +137,14 @@ contains
 
         call fsps_context_set_param_str(ctx, key, value, status)
     end subroutine fsps_set_param_str
+
+    !> @brief Enable or disable CSP fast mode.
+    subroutine fsps_set_fast_mode(ctx, fast_mode)
+        type(fsps_context_t), intent(inout) :: ctx
+        logical, intent(in) :: fast_mode
+
+        call fsps_context_set_fast_mode(ctx, fast_mode)
+    end subroutine fsps_set_fast_mode
 
     !> @brief Retrieve context paths for data and outputs.
     subroutine fsps_get_paths(ctx, sps_home_out, data_home_out, output_home_out)

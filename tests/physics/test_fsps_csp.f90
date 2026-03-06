@@ -44,6 +44,7 @@ contains
         call test_snapshot_vs_history()
         call test_mass_normalization_surviving()
         call test_nebular_precalculation()
+        call test_fast_mode_skips_optional_outputs()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_csp_tests
@@ -1047,5 +1048,63 @@ contains
         call teardown_basic_context(ctx_no)
         call teardown_basic_context(ctx_yes)
     end subroutine test_nebular_precalculation
+
+    subroutine test_fast_mode_skips_optional_outputs()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:)
+        real(WP), allocatable :: spec_lambda(:)
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+        integer :: n, nspec, center_idx
+
+        call print_group("Driver: Fast Mode Output Gating")
+
+        n = 6
+        nspec = 9
+        allocate(time_full(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        allocate(spec_lambda(nspec))
+        spec_lambda = [800.0_wp, 1200.0_wp, 2500.0_wp, 4000.0_wp, 5500.0_wp, 6500.0_wp, 7500.0_wp, 8500.0_wp, 9500.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 1, 2)
+        ctx%state%nindx = 2
+        ctx%fast_mode = .true.
+
+        call fsps_context_prepare_csp_workspace(ctx)
+        allocate(tspec_ssp(nspec, n, 1))
+        allocate(mass_ssp(n, 1))
+        allocate(lbol_ssp(n, 1))
+        tspec_ssp = SAFE_FLOOR
+        center_idx = (nspec + 1)/2
+        tspec_ssp(center_idx, :, 1) = 1.0_wp
+        mass_ssp = 1.0_wp
+        lbol_ssp = 0.0_wp
+
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+        call map_csp_workspace_to_device(ctx)
+
+        pset%sfh = 0
+        pset%tage = 5.0_wp
+        pset%compute_mags = 1
+        pset%compute_indices = 1
+        pset%sigma_smooth = 300.0_wp
+        pset%min_wave_smooth = minval(spec_lambda)
+        pset%max_wave_smooth = maxval(spec_lambda)
+
+        call compute_csp_scenario(ctx, pset, 1, results)
+
+        call assert_int_equals(1, size(results), "Fast mode returns one snapshot", total_tests, total_failures)
+        call assert_true(allocated(results(1)%spec), "Spectrum is generated", total_tests, total_failures)
+        call assert_true(.not. allocated(results(1)%mags), "Magnitudes not allocated in fast mode", total_tests, total_failures)
+        call assert_true(.not. allocated(results(1)%indx), "Indices not allocated in fast mode", total_tests, total_failures)
+        call assert_true(results(1)%spec(center_idx) > 0.5_wp, &
+                 "Core spectrum remains unsmoothed in fast mode", total_tests, total_failures)
+
+        deallocate(results)
+        deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        call unmap_csp_workspace_from_device(ctx)
+        call teardown_basic_context(ctx)
+    end subroutine test_fast_mode_skips_optional_outputs
 
 end module test_fsps_csp_mod

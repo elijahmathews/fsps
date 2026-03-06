@@ -173,6 +173,15 @@ int main() {
         return 1;
     }
 
+    fsps_context_set_fast_mode(handle, 1, &status);
+    if (check_status(status, "set fast_mode=1")) {
+        return 1;
+    }
+    fsps_context_set_fast_mode(handle, 0, &status);
+    if (check_status(status, "set fast_mode=0")) {
+        return 1;
+    }
+
     fsps_context_set_int(handle, "not_a_param", 1, &status);
     if (status != FSPS_ERR_UNKNOWN_INT_PARAM) {
         fprintf(stderr, "[C] Error: expected unknown int param error, got status=%d\n", status);

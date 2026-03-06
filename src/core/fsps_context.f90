@@ -28,6 +28,7 @@ module fsps_context
     public :: fsps_context_set_param_int
     public :: fsps_context_set_param_float
     public :: fsps_context_set_param_str
+    public :: fsps_context_set_fast_mode
     public :: fsps_context_get_paths
     public :: fsps_context_prepare_pset
     public :: fsps_context_compute_ssp
@@ -53,6 +54,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
 
         ctx%initialized = .false.
+        ctx%fast_mode = .false.
         ctx%zin = 0
         ctx%isoc_type_name = ''
         ctx%spec_type_name = ''
@@ -300,6 +302,8 @@ contains
             ctx%pset%compute_mags = value
         case ('compute_indices')
             ctx%pset%compute_indices = value
+        case ('fast_mode')
+            call fsps_context_set_fast_mode(ctx, value /= 0)
         case default
             status = FSPS_ERR_UNKNOWN_INT_PARAM
         end select
@@ -308,6 +312,16 @@ contains
             ctx%state%ssp_basis_is_dirty = .true.
         end if
     end subroutine fsps_context_set_param_int
+
+    !> @brief Enable or disable CSP fast mode.
+    !> @param[inout] ctx Context to update.
+    !> @param[in] fast_mode_in Fast mode flag.
+    subroutine fsps_context_set_fast_mode(ctx, fast_mode_in)
+        type(fsps_context_t), intent(inout) :: ctx
+        logical, intent(in) :: fast_mode_in
+
+        ctx%fast_mode = fast_mode_in
+    end subroutine fsps_context_set_fast_mode
 
     !> @brief Set a floating-point parameter by key.
     !> @param[inout] ctx Context to update.
@@ -540,7 +554,7 @@ contains
             return
         end if
 
-        if (write_compsp > 0) then
+        if (write_compsp > 0 .and. .not. ctx%fast_mode) then
             call write_csp_output_files(ctx, ctx%pset, results, outfile, write_compsp)
         end if
 

@@ -157,12 +157,6 @@ contains
         !$acc data present(ctx)
         do i = 1, n_outputs
             ! Ensure output arrays are allocated
-            if (.not. allocated(results(i)%mags)) then
-                allocate(results(i)%mags(ctx%state%nbands))
-            end if
-            if (.not. allocated(results(i)%indx)) then
-                allocate(results(i)%indx(ctx%state%nindx))
-            end if
             if (.not. allocated(results(i)%spec)) then
                 allocate(results(i)%spec(nspec))
             end if
@@ -405,10 +399,15 @@ contains
 
         real(WP) :: mass_frac, sfr_norm, frac_linear
         real(WP) :: current_mass_surviving, lbol_final, z_effective
+        logical :: do_full_post
 
-        ! 0. Allocate output arrays (required because intent(out) deallocates them)
-        allocate(result%mags(ctx%state%nbands))
-        allocate(result%indx(ctx%state%nindx))
+        do_full_post = .not. ctx%fast_mode
+
+        ! 0. Allocate optional output arrays only in full post-processing mode.
+        if (do_full_post) then
+            allocate(result%mags(ctx%state%nbands))
+            allocate(result%indx(ctx%state%nindx))
+        end if
 
         ! 1. Calculate Mass/SFR Properties (Renormalization)
         call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr_norm, frac_linear)
@@ -432,7 +431,7 @@ contains
         end if
 
         ! 3. Instrumental Smoothing
-        if (pset%sigma_smooth > 0.0_wp) then
+        if (do_full_post .and. pset%sigma_smooth > 0.0_wp) then
             !$acc update host(spec)
             call apply_smoothing(ctx, ctx%state%spec_lambda, spec, &
                                  pset%sigma_smooth, &
@@ -453,33 +452,35 @@ contains
                                          lbol_final, spec)
         end if
 
-        ! 6. Calculate Magnitudes and Spectral Indices
-        ! ---------------------------------
-        ! Redshift for magnitudes calculation
-        !$acc update host(spec)
-        if (ctx%redshift_colors_val == 1) then
-             ! Inverse lookup from Age (tage) to Redshift using pre-computed spline.
-             ! cosmospl(:,2) is Age(Gyr), cosmospl(:,1) is Redshift.
-             z_effective = interpolate_linear(ctx%state%cosmospl(:,2), &
-                                              ctx%state%cosmospl(:,1), &
-                                              tage)
-             z_effective = min(max(z_effective, 0.0_wp), 20.0_wp)
-        else
-             z_effective = pset%zred
-        end if
+        ! 6. Calculate Magnitudes and Spectral Indices (full post-processing only)
+        if (do_full_post) then
+            !$acc update host(spec)
 
-        ! Compute Magnitudes
-        if (pset%compute_mags == 1) then
-            call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
-        else
-            result%mags = -99.0_wp
-        end if
-        
-        ! Compute Spectral Indices
-        if (pset%compute_indices == 1) then
-            call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
-        else
-            result%indx = -99.0_wp
+            ! Redshift for magnitudes calculation
+            if (ctx%redshift_colors_val == 1) then
+                 ! Inverse lookup from Age (tage) to Redshift using pre-computed spline.
+                 ! cosmospl(:,2) is Age(Gyr), cosmospl(:,1) is Redshift.
+                 z_effective = interpolate_linear(ctx%state%cosmospl(:,2), &
+                                                  ctx%state%cosmospl(:,1), &
+                                                  tage)
+                 z_effective = min(max(z_effective, 0.0_wp), 20.0_wp)
+            else
+                 z_effective = pset%zred
+            end if
+
+            ! Compute Magnitudes
+            if (pset%compute_mags == 1) then
+                call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
+            else
+                result%mags = -99.0_wp
+            end if
+
+            ! Compute Spectral Indices
+            if (pset%compute_indices == 1) then
+                call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
+            else
+                result%indx = -99.0_wp
+            end if
         end if
 
         ! 7. Populate Output Structure

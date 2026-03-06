@@ -12,7 +12,7 @@ module fsps_c_driver
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy, &
                         fsps_set_param_int, fsps_set_param_float, fsps_set_param_str, &
-                        fsps_get_paths, fsps_prepare_pset, fsps_compute_ssp, fsps_compute_csp
+                        fsps_set_fast_mode, fsps_get_paths, fsps_prepare_pset, fsps_compute_ssp, fsps_compute_csp
     use fsps_csp, only: compute_csp_scenario
     use fsps_io, only: load_tabular_sfh, write_isochrone_cmd
     use fsps_ssp, only: generate_ssp_grid, compute_interpolated_ssp
@@ -198,10 +198,20 @@ contains
             global_ocompsp(i)%sfr = results(i)%sfr
             global_ocompsp(i)%mdust = results(i)%mdust
             global_ocompsp(i)%mformed = results(i)%mformed
-            global_ocompsp(i)%mags = results(i)%mags
             global_ocompsp(i)%spec = results(i)%spec
-            global_ocompsp(i)%indx = results(i)%indx
             global_ocompsp(i)%emlines = results(i)%emlines
+
+            if (allocated(results(i)%mags)) then
+                global_ocompsp(i)%mags = results(i)%mags
+            else
+                if (allocated(global_ocompsp(i)%mags)) deallocate (global_ocompsp(i)%mags)
+            end if
+
+            if (allocated(results(i)%indx)) then
+                global_ocompsp(i)%indx = results(i)%indx
+            else
+                if (allocated(global_ocompsp(i)%indx)) deallocate (global_ocompsp(i)%indx)
+            end if
 
             if (PRESENT(f_spec)) then
                 if (i <= n_time .and. n_spec == SIZE(f_spec, 1)) then
@@ -412,6 +422,25 @@ contains
         call c_to_f_string(c_val, val)
         call fsps_set_param_str(ctx_pool(handle), TRIM(key), TRIM(val), status)
     end subroutine fsps_context_set_str_handle
+
+    subroutine fsps_context_set_fast_mode_handle(handle, fast_mode, status) &
+        bind(C, name="fsps_context_set_fast_mode")
+        integer(c_int), value :: handle
+        integer(c_int), value :: fast_mode
+        integer(c_int), intent(OUT) :: status
+
+        status = 0
+        if (handle < 1 .or. .not. ALLOCATED(ctx_pool) .or. handle > SIZE(ctx_pool)) then
+            status = 1
+            return
+        end if
+        if (.not. ctx_inuse(handle)) then
+            status = 1
+            return
+        end if
+
+        call fsps_set_fast_mode(ctx_pool(handle), fast_mode /= 0)
+    end subroutine fsps_context_set_fast_mode_handle
 
     subroutine fsps_context_compute_ssp_handle(handle, c_spec, c_mass, c_lbol, status) &
         bind(C, name="fsps_context_compute_ssp")
@@ -752,6 +781,8 @@ contains
             fsps_default_ctx%use_isoc_mdot_val = val
         case ('setup_nebular_gaussians')
             fsps_default_ctx%setup_nebular_gaussians_val = val
+        case ('fast_mode')
+            fsps_default_ctx%fast_mode = (val /= 0)
 
             ! PARAMS Members
         case ('evtype')

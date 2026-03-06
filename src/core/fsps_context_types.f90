@@ -169,6 +169,7 @@ module fsps_context_types
 
     type :: fsps_context_t
         logical :: initialized = .false.
+        logical :: fast_mode = .false.
         integer :: zin = 0
         character(len=64) :: isoc_type_name = ''
         character(len=64) :: spec_type_name = ''
