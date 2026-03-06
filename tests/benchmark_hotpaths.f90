@@ -3,7 +3,7 @@ program benchmark_hotpaths
     use fsps_api
     use fsps_types, only: COMPSPOUT
     use fsps_context_types, only: fsps_context_t
-    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device
+    use fsps_context, only: fsps_context_move_to_device, fsps_context_remove_from_device, fsps_context_set_fast_mode
     implicit none
 
     type(fsps_context_t) :: ctx
