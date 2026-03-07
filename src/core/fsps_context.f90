@@ -723,8 +723,8 @@ contains
         nz_max = ctx%state%nz
 
         ! Always allocate size-independent or constant-sized buffers
-        if (.not. allocated(ctx%state%csp_emlin_old)) allocate(ctx%state%csp_emlin_old(NEMLINE))
-        if (.not. allocated(ctx%state%csp_emlin_young)) allocate(ctx%state%csp_emlin_young(NEMLINE))
+        if (.not. allocated(ctx%state%csp_emlin_old)) allocate(ctx%state%csp_emlin_old(NEMLINE, nt))
+        if (.not. allocated(ctx%state%csp_emlin_young)) allocate(ctx%state%csp_emlin_young(NEMLINE, nt))
         if (.not. allocated(ctx%state%csp_emlin_final)) allocate(ctx%state%csp_emlin_final(NEMLINE))
         if (.not. allocated(ctx%state%gas_current_step_lines)) allocate(ctx%state%gas_current_step_lines(NEMLINE))
         if (.not. allocated(ctx%state%scalar_reductions)) allocate(ctx%state%scalar_reductions(2))
@@ -737,9 +737,9 @@ contains
             ! Dust Workspace
             if (.not. allocated(ctx%state%dust_transmission_diffuse)) allocate(ctx%state%dust_transmission_diffuse(nspec))
             if (.not. allocated(ctx%state%dust_frequencies)) allocate(ctx%state%dust_frequencies(nspec))
-            if (.not. allocated(ctx%state%dust_spec_total_work)) allocate(ctx%state%dust_spec_total_work(nspec))
+            if (.not. allocated(ctx%state%dust_spec_total_work)) allocate(ctx%state%dust_spec_total_work(nspec, nt))
             if (.not. allocated(ctx%state%dust_emission_shape)) allocate(ctx%state%dust_emission_shape(nspec))
-            if (.not. allocated(ctx%state%dust_emission_final)) allocate(ctx%state%dust_emission_final(nspec))
+            if (.not. allocated(ctx%state%dust_emission_final)) allocate(ctx%state%dust_emission_final(nspec, nt))
 
             ! Gas Workspace
             if (.not. allocated(ctx%state%gas_neb_cont_reduced)) allocate(ctx%state%gas_neb_cont_reduced(nspec, NEBNAGE))
@@ -749,15 +749,21 @@ contains
             ! CSP Spectrum Workspace
             if (.not. allocated(ctx%state%csp_igm_transmission)) allocate(ctx%state%csp_igm_transmission(nspec))
             if (.not. allocated(ctx%state%csp_spec_final)) allocate(ctx%state%csp_spec_final(nspec))
-            if (.not. allocated(ctx%state%spec_young)) allocate(ctx%state%spec_young(nspec))
-            if (.not. allocated(ctx%state%spec_old)) allocate(ctx%state%spec_old(nspec))
+            if (.not. allocated(ctx%state%spec_young)) allocate(ctx%state%spec_young(nspec, nt))
+            if (.not. allocated(ctx%state%spec_old)) allocate(ctx%state%spec_old(nspec, nt))
+
+            ! Fused Loop Output Buffers
+            if (.not. allocated(ctx%state%out_csp_spec)) allocate(ctx%state%out_csp_spec(nspec, nt))
+            if (.not. allocated(ctx%state%out_csp_emlin)) allocate(ctx%state%out_csp_emlin(NEMLINE, nt))
+            if (.not. allocated(ctx%state%out_mass_csp)) allocate(ctx%state%out_mass_csp(nt))
+            if (.not. allocated(ctx%state%out_lbol_csp)) allocate(ctx%state%out_lbol_csp(nt))
         end if
 
         ! Allocate age/metallicity dependent arrays
         if (nt > 0 .and. nz_max > 0) then
-            if (.not. allocated(ctx%state%csp_weights)) allocate(ctx%state%csp_weights(nt, nz_max))
-            if (.not. allocated(ctx%state%sfh_w_tmp1)) allocate(ctx%state%sfh_w_tmp1(nt))
-            if (.not. allocated(ctx%state%sfh_w_tmp2)) allocate(ctx%state%sfh_w_tmp2(nt))
+            if (.not. allocated(ctx%state%csp_weights)) allocate(ctx%state%csp_weights(nt, nz_max, nt))
+            if (.not. allocated(ctx%state%sfh_w_tmp1)) allocate(ctx%state%sfh_w_tmp1(max(nt, 3), nt))
+            if (.not. allocated(ctx%state%sfh_w_tmp2)) allocate(ctx%state%sfh_w_tmp2(max(nt, 3), nt))
             if (.not. allocated(ctx%state%csp_ssp_lum_linear)) allocate(ctx%state%csp_ssp_lum_linear(nt, nz_max))
             if (.not. allocated(ctx%state%csp_emlin_grid)) allocate(ctx%state%csp_emlin_grid(NEMLINE, nt, nz_max))
 
@@ -1188,6 +1194,24 @@ contains
             !$acc enter data copyin(ctx%state%sfh_w_tmp2)
             !$acc enter data attach(ctx%state%sfh_w_tmp2)
         end if
+
+        ! --- Fused Loop Output Buffers ---
+        if (allocated(ctx%state%out_csp_spec)) then
+            !$acc enter data copyin(ctx%state%out_csp_spec)
+            !$acc enter data attach(ctx%state%out_csp_spec)
+        end if
+        if (allocated(ctx%state%out_csp_emlin)) then
+            !$acc enter data copyin(ctx%state%out_csp_emlin)
+            !$acc enter data attach(ctx%state%out_csp_emlin)
+        end if
+        if (allocated(ctx%state%out_mass_csp)) then
+            !$acc enter data copyin(ctx%state%out_mass_csp)
+            !$acc enter data attach(ctx%state%out_mass_csp)
+        end if
+        if (allocated(ctx%state%out_lbol_csp)) then
+            !$acc enter data copyin(ctx%state%out_lbol_csp)
+            !$acc enter data attach(ctx%state%out_lbol_csp)
+        end if
     end subroutine fsps_context_move_to_device
 
     !> @brief Removes the context and its data from the device.
@@ -1490,6 +1514,20 @@ contains
             end if
             if (allocated(s%sfh_w_tmp2)) then
                 !$acc exit data delete(s%sfh_w_tmp2)
+            end if
+
+            ! --- Fused Loop Output Buffers ---
+            if (allocated(s%out_csp_spec)) then
+                !$acc exit data delete(s%out_csp_spec)
+            end if
+            if (allocated(s%out_csp_emlin)) then
+                !$acc exit data delete(s%out_csp_emlin)
+            end if
+            if (allocated(s%out_mass_csp)) then
+                !$acc exit data delete(s%out_mass_csp)
+            end if
+            if (allocated(s%out_lbol_csp)) then
+                !$acc exit data delete(s%out_lbol_csp)
             end if
         end associate
 

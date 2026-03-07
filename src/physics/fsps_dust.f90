@@ -222,25 +222,19 @@ contains
     !> @param[out]   spec_total_out   Final combined spectrum (L_sol/Hz).
     !> @param[out]   dust_mass        Total dust mass (M_sol).
     !> @param[out]   neb_flux_out     Final attenuated nebular line fluxes.
-    subroutine apply_dust_attenuation_and_emission(ctx, settings, &
-                                                   spec_young, spec_old, &
-                                                   neb_flux_young, neb_flux_old, &
-                                                   spec_total_out, dust_mass, neb_flux_out)
-        
+    subroutine apply_dust_attenuation_and_emission(ctx, settings, n_outputs)
         type(fsps_context_t), intent(inout)    :: ctx
         type(params), intent(in)               :: settings
-        real(WP), dimension(:), intent(in)     :: spec_young, spec_old
-        real(WP), dimension(:), intent(in)     :: neb_flux_young, neb_flux_old
-        real(WP), dimension(:), intent(out)    :: spec_total_out
-        real(WP), intent(out)                  :: dust_mass
-        real(WP), dimension(:), intent(out)    :: neb_flux_out
+        integer, intent(in)                    :: n_outputs
 
         ! Local Variables
         real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
         real(WP) :: emission_norm_factor, lum_escaped_profile, normalization_factor
-        
-        integer  :: nspec, i
-        real(WP) :: y1, y2
+        real(WP) :: sum_neb_intrinsic, sum_neb_attenuated
+        real(WP) :: intrinsic_flux, att_young, att_old
+
+        integer  :: nspec, nem, i, i_out
+        real(WP) :: y1, y2, y1_att, y2_att
         real(WP) :: curve, trans_birth, trans_old, spec_sum, trans_diffuse_neb, neb_birth
         real(WP) :: frac_obrun, one_minus_obrun, frac_nodust, one_minus_nodust
         real(WP) :: dust1, dust1_index, dust2, dust3
@@ -249,201 +243,177 @@ contains
         integer  :: search_lower, search_upper, search_mid
         real(WP) :: search_val, search_slope
 
-        nspec = size(spec_young)
+        nspec = ctx%state%nspec
+        nem   = size(ctx%state%csp_emlin_young, 1)
 
         ! 0. Input Validation
-        ! -------------------
-        if (settings%uvb < 0.0_wp) return ! Should trigger error handling upstream
-        if (settings%wgp1 < 1 .or. settings%wgp2 < 1) return 
+        if (settings%uvb < 0.0_wp) return
+        if (settings%wgp1 < 1 .or. settings%wgp2 < 1) return
 
-        frac_obrun      = settings%frac_obrun
-        one_minus_obrun = 1.0_wp - frac_obrun
-        frac_nodust     = settings%frac_nodust
+        frac_obrun       = settings%frac_obrun
+        one_minus_obrun  = 1.0_wp - frac_obrun
+        frac_nodust      = settings%frac_nodust
         one_minus_nodust = 1.0_wp - frac_nodust
-        dust1           = settings%dust1
-        dust1_index     = settings%dust1_index
-        dust2           = settings%dust2
-        dust3           = settings%dust3
-        dust_type_is3   = (ctx%dust_type_val == 3)
+        dust1            = settings%dust1
+        dust1_index      = settings%dust1_index
+        dust2            = settings%dust2
+        dust3            = settings%dust3
+        dust_type_is3    = (ctx%dust_type_val == 3)
 
-        ! 1. Calculate Attenuation Curves & Transmissivities
-        ! --------------------------------------------------
-        ! We parallelize the array operations. compute_attenuation_curve needs to be !acc routine seq/vector.
-        
-        ! A. Diffuse ISM (affects all stars)
-        ! B. Birth Clouds (affects young stars only)
-        ! 2. Apply Attenuation to Stellar Spectra
-
-        !$acc parallel loop present(ctx, spec_young, spec_old)
+        ! 1. Pre-calculate Age-Independent Quantities (Diffuse Curve & Emission Template)
+        !$acc parallel loop present(ctx) private(curve) async(1)
         do i = 1, nspec
-            ! A. Diffuse Curve (Inline call or routine seq)
-            curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, &
-                                                    ctx%dust_type_val, settings, ctx)
-
+            curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
             if (dust_type_is3) then
                 ctx%state%dust_transmission_diffuse(i) = exp(-curve)
             else
                 ctx%state%dust_transmission_diffuse(i) = exp(-dust2 * curve)
             end if
-
-            ! B. Birth Clouds
-            if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
-                trans_birth = 1.0_wp
-            else
-                trans_birth = exp(-dust1 * (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**dust1_index)
-            end if
-
-            if (abs(dust3) <= SAFE_FLOOR) then
-                trans_old = 1.0_wp
-            else
-                trans_old = exp(-dust3 * curve)
-            end if
-
-            ! 2. Apply Attenuation
-            spec_sum = (spec_young(i) * trans_birth * one_minus_obrun + spec_young(i) * frac_obrun) + &
-                       (spec_old(i) * trans_old)
-
-            ! Final diffuse screen
-            if (one_minus_nodust <= SAFE_FLOOR) then
-                ctx%state%dust_spec_total_work(i) = spec_sum
-            else
-                ctx%state%dust_spec_total_work(i) = spec_sum * &
-                                                    (ctx%state%dust_transmission_diffuse(i) * one_minus_nodust + frac_nodust)
-            end if
+            ctx%state%dust_frequencies(i) = C_LIGHT / ctx%state%spec_lambda(i)
         end do
 
-        ! 3. Apply Attenuation to Nebular Lines
-        ! -------------------------------------
-        ! Note: We must interpolate the diffuse transmission to the line wavelengths
-        ! interpolate_linear is now !acc routine seq
-        
-        !$acc parallel loop present(ctx, neb_flux_young, neb_flux_old, neb_flux_out)
-        do i = 1, size(neb_flux_young)
-            if (one_minus_nodust <= SAFE_FLOOR) then
-                trans_diffuse_neb = 1.0_wp
-            else
-                ! Inlined interpolation to bypass device array descriptor allocation
-                search_val = ctx%state%nebem_line_pos(i)
-                search_lower = 1
-                search_upper = nspec + 1
-
-                ! Binary search
-                do while (search_upper - search_lower > 1)
-                    search_mid = (search_lower + search_upper) / 2
-                    if (search_val >= ctx%state%spec_lambda(search_mid)) then
-                        search_lower = search_mid
-                    else
-                        search_upper = search_mid
-                    end if
-                end do
-
-                search_lower = max(1, min(search_lower, nspec - 1))
-
-                ! Linear interpolation
-                search_slope = (ctx%state%dust_transmission_diffuse(search_lower+1) - &
-                                ctx%state%dust_transmission_diffuse(search_lower)) / &
-                               (ctx%state%spec_lambda(search_lower+1) - ctx%state%spec_lambda(search_lower))
-                
-                trans_diffuse_neb = ctx%state%dust_transmission_diffuse(search_lower) + &
-                                    search_slope * (search_val - ctx%state%spec_lambda(search_lower))
-            end if
-                                                              
-            if (trans_diffuse_neb /= trans_diffuse_neb) trans_diffuse_neb = 1.0_wp
-
-            if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
-                neb_birth = 1.0_wp
-            else
-                neb_birth = exp(-dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**dust1_index)
-            end if
-             
-            neb_flux_out(i) = (neb_flux_young(i) * &
-                               neb_birth * &
-                               one_minus_obrun + &
-                               neb_flux_young(i) * frac_obrun + &
-                               neb_flux_old(i))
-                        
-            if (one_minus_nodust > SAFE_FLOOR) then
-                neb_flux_out(i) = neb_flux_out(i) * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
-            end if
-        end do
-
-
-        ! 4. Add Dust Emission (Energy Balance)
-        ! -------------------------------------
-        if (ctx%add_dust_emission_val == 1 .and. &
-            (settings%dust1 > SAFE_FLOOR .or. settings%dust2 > SAFE_FLOOR)) then
-            
-            !$acc parallel loop present(ctx)
-            do i = 1, nspec
-                ctx%state%dust_frequencies(i) = C_LIGHT / ctx%state%spec_lambda(i)
-            end do
-
-            ! Calculate Bolometric Luminosities (L_bol)
-            ! Intrinsic (Pre-Dust)
-            lum_bol_intrinsic = 0.0_wp
-            !$acc parallel loop reduction(+:lum_bol_intrinsic) present(ctx, spec_young, spec_old)
-            do i = 1, nspec-1
-                y1 = spec_young(i) + spec_old(i)
-                y2 = spec_young(i+1) + spec_old(i+1)
-                lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
-                                    ctx%state%dust_frequencies(i)) * (y1 + y2)
-            end do
-            
-            if (ctx%nebemlineinspec_val == 0) then
-                !$acc parallel loop reduction(+:lum_bol_intrinsic) present(neb_flux_young, neb_flux_old)
-                do i = 1, size(neb_flux_young)
-                    lum_bol_intrinsic = lum_bol_intrinsic + neb_flux_young(i) + neb_flux_old(i)
-                end do
-            end if
-
-            ! Attenuated (Post-Dust)
-            lum_bol_attenuated = 0.0_wp
-            !$acc parallel loop reduction(+:lum_bol_attenuated) present(ctx)
-            do i = 1, nspec-1
-                y1 = ctx%state%dust_spec_total_work(i)
-                y2 = ctx%state%dust_spec_total_work(i+1)
-                lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
-                                     ctx%state%dust_frequencies(i)) * (y1 + y2)
-            end do
-
-            if (ctx%nebemlineinspec_val == 0) then
-                !$acc parallel loop reduction(+:lum_bol_attenuated) present(neb_flux_out)
-                do i = 1, size(neb_flux_out)
-                    lum_bol_attenuated = lum_bol_attenuated + neb_flux_out(i)
-                end do
-            end if
-            
-            ! Total Energy Absorbed by Dust
-            lum_absorbed_total = lum_bol_intrinsic - lum_bol_attenuated
-
-            ! Get Dust Emission Template (Draine & Li 2007)
-            ! ---------------------------------------------
+        if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
             call interpolate_draine_li_dust_model(ctx, settings, ctx%state%dust_emission_shape)
-            !$acc update device(ctx%state%dust_emission_shape)
+            !$acc update device(ctx%state%dust_emission_shape) async(1)
 
-            ! Normalize template area
             emission_norm_factor = 0.0_wp
-            !$acc parallel loop reduction(+:emission_norm_factor) present(ctx)
+            lum_escaped_profile  = 0.0_wp
+            !$acc parallel loop reduction(+:emission_norm_factor, lum_escaped_profile) &
+            !$acc present(ctx) private(y1, y2, y1_att, y2_att) async(1)
             do i = 1, nspec-1
                 y1 = ctx%state%dust_emission_shape(i)
                 y2 = ctx%state%dust_emission_shape(i+1)
                 emission_norm_factor = emission_norm_factor + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
                                        ctx%state%dust_frequencies(i)) * (y1 + y2)
+
+                y1_att = y1 * ctx%state%dust_transmission_diffuse(i)
+                y2_att = y2 * ctx%state%dust_transmission_diffuse(i+1)
+                lum_escaped_profile = lum_escaped_profile + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
+                                      ctx%state%dust_frequencies(i)) * (y1_att + y2_att)
             end do
-            
-            if (emission_norm_factor <= SAFE_FLOOR) then
-                dust_mass = SAFE_FLOOR
-            else
-                ! Calculate Self-Absorption & Final Emission (Inlined for GPU)
-                ! ------------------------------------------
-                lum_escaped_profile = 0.0_wp
-                !$acc parallel loop reduction(+:lum_escaped_profile) present(ctx)
+            !$acc wait(1)
+        end if
+
+        ! 2. Apply Attenuation to Stellar Spectra
+        !$acc parallel loop collapse(2) present(ctx) private(curve, trans_birth, trans_old, spec_sum) async(1)
+        do i_out = 1, n_outputs
+            do i = 1, nspec
+                curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
+
+                if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                    trans_birth = 1.0_wp
+                else
+                    trans_birth = exp(-dust1 * (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**dust1_index)
+                end if
+
+                if (abs(dust3) <= SAFE_FLOOR) then
+                    trans_old = 1.0_wp
+                else
+                    trans_old = exp(-dust3 * curve)
+                end if
+
+                spec_sum = (ctx%state%spec_young(i, i_out) * trans_birth * one_minus_obrun + &
+                            ctx%state%spec_young(i, i_out) * frac_obrun) + &
+                           (ctx%state%spec_old(i, i_out) * trans_old)
+
+                if (one_minus_nodust <= SAFE_FLOOR) then
+                    ctx%state%dust_spec_total_work(i, i_out) = spec_sum
+                else
+                    ctx%state%dust_spec_total_work(i, i_out) = spec_sum * &
+                                        (ctx%state%dust_transmission_diffuse(i) * one_minus_nodust + frac_nodust)
+                end if
+            end do
+        end do
+
+        ! 3. Apply Attenuation to Nebular Lines & Compute Line Reductions
+        !$acc parallel loop gang present(ctx) private(sum_neb_intrinsic, sum_neb_attenuated) async(1)
+        do i_out = 1, n_outputs
+            sum_neb_intrinsic  = 0.0_wp
+            sum_neb_attenuated = 0.0_wp
+
+            !$acc loop vector reduction(+:sum_neb_intrinsic, sum_neb_attenuated) &
+            !$acc private(search_val, search_lower, search_upper, search_mid, search_slope, trans_diffuse_neb, neb_birth, intrinsic_flux, att_young, att_old)
+            do i = 1, nem
+                if (one_minus_nodust <= SAFE_FLOOR) then
+                    trans_diffuse_neb = 1.0_wp
+                else
+                    search_val = ctx%state%nebem_line_pos(i)
+                    search_lower = 1
+                    search_upper = nspec + 1
+                    do while (search_upper - search_lower > 1)
+                        search_mid = (search_lower + search_upper) / 2
+                        if (search_val >= ctx%state%spec_lambda(search_mid)) then
+                            search_lower = search_mid
+                        else
+                            search_upper = search_mid
+                        end if
+                    end do
+                    search_lower = max(1, min(search_lower, nspec - 1))
+                    search_slope = (ctx%state%dust_transmission_diffuse(search_lower+1) - &
+                                    ctx%state%dust_transmission_diffuse(search_lower)) / &
+                                   (ctx%state%spec_lambda(search_lower+1) - ctx%state%spec_lambda(search_lower))
+                    trans_diffuse_neb = ctx%state%dust_transmission_diffuse(search_lower) + &
+                                        search_slope * (search_val - ctx%state%spec_lambda(search_lower))
+                end if
+
+                if (trans_diffuse_neb /= trans_diffuse_neb) trans_diffuse_neb = 1.0_wp
+
+                if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                    neb_birth = 1.0_wp
+                else
+                    neb_birth = exp(-dust1 * (ctx%state%nebem_line_pos(i) / V_BAND_ANGSTROMS)**dust1_index)
+                end if
+
+                intrinsic_flux = ctx%state%csp_emlin_young(i, i_out) + ctx%state%csp_emlin_old(i, i_out)
+
+                ! Apply to Young and Old
+                att_young = ctx%state%csp_emlin_young(i, i_out) * (neb_birth * one_minus_obrun + frac_obrun)
+                att_old   = ctx%state%csp_emlin_old(i, i_out)
+
+                if (one_minus_nodust > SAFE_FLOOR) then
+                    att_young = att_young * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
+                    att_old   = att_old   * (trans_diffuse_neb * one_minus_nodust + frac_nodust)
+                end if
+
+                sum_neb_intrinsic  = sum_neb_intrinsic + intrinsic_flux
+                sum_neb_attenuated = sum_neb_attenuated + (att_young + att_old)
+
+                ctx%state%csp_emlin_young(i, i_out) = att_young
+                ctx%state%csp_emlin_old(i, i_out)   = att_old
+            end do
+
+            ! Store line reductions in scratch space
+            ctx%state%sfh_w_tmp1(1, i_out) = sum_neb_intrinsic
+            ctx%state%sfh_w_tmp1(2, i_out) = sum_neb_attenuated
+        end do
+
+        ! 4. Add Dust Emission (Energy Balance)
+        if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
+            !$acc parallel loop gang present(ctx) &
+            !$acc private(lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total, normalization_factor) async(1)
+            do i_out = 1, n_outputs
+                lum_bol_intrinsic = 0.0_wp
+                lum_bol_attenuated = 0.0_wp
+
+                !$acc loop vector reduction(+:lum_bol_intrinsic, lum_bol_attenuated) private(y1, y2)
                 do i = 1, nspec-1
-                    y1 = ctx%state%dust_emission_shape(i) * ctx%state%dust_transmission_diffuse(i)
-                    y2 = ctx%state%dust_emission_shape(i+1) * ctx%state%dust_transmission_diffuse(i+1)
-                    lum_escaped_profile = lum_escaped_profile + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
-                                          ctx%state%dust_frequencies(i)) * (y1 + y2)
+                    y1 = ctx%state%spec_young(i, i_out) + ctx%state%spec_old(i, i_out)
+                    y2 = ctx%state%spec_young(i+1, i_out) + ctx%state%spec_old(i+1, i_out)
+                    lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * &
+                                        abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)) * (y1 + y2)
+
+                    y1 = ctx%state%dust_spec_total_work(i, i_out)
+                    y2 = ctx%state%dust_spec_total_work(i+1, i_out)
+                    lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * &
+                                         abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)) * (y1 + y2)
                 end do
+
+                if (ctx%nebemlineinspec_val == 0) then
+                    lum_bol_intrinsic  = lum_bol_intrinsic  + ctx%state%sfh_w_tmp1(1, i_out)
+                    lum_bol_attenuated = lum_bol_attenuated + ctx%state%sfh_w_tmp1(2, i_out)
+                end if
+
+                lum_absorbed_total = lum_bol_intrinsic - lum_bol_attenuated
 
                 if (lum_escaped_profile > SAFE_FLOOR) then
                     normalization_factor = lum_absorbed_total / lum_escaped_profile
@@ -451,36 +421,35 @@ contains
                     normalization_factor = 0.0_wp
                 end if
 
-                ! Add to total spectrum
-                !$acc parallel loop present(ctx)
+                !$acc loop vector
                 do i = 1, nspec
                     if (lum_escaped_profile > SAFE_FLOOR) then
-                        ctx%state%dust_emission_final(i) = ctx%state%dust_emission_shape(i) * &
-                                                           ctx%state%dust_transmission_diffuse(i) * &
-                                                           normalization_factor
+                        ctx%state%dust_emission_final(i, i_out) = ctx%state%dust_emission_shape(i) * &
+                                                                  ctx%state%dust_transmission_diffuse(i) * &
+                                                                  normalization_factor
                     else
-                        ctx%state%dust_emission_final(i) = 0.0_wp
+                        ctx%state%dust_emission_final(i, i_out) = 0.0_wp
                     end if
 
-                    ctx%state%dust_spec_total_work(i) = ctx%state%dust_spec_total_work(i) + ctx%state%dust_emission_final(i)
+                    ctx%state%dust_spec_total_work(i, i_out) = ctx%state%dust_spec_total_work(i, i_out) + &
+                                                               ctx%state%dust_emission_final(i, i_out)
                 end do
 
-                ! Estimate Dust Mass (Factor from Draine & Li MW3.1 model)
-                ! 3.21e-3 converts Luminosity/Norm to Mass (Solar Units) roughly
-                dust_mass = 3.21e-3_wp / (4.0_wp * PI) * (lum_absorbed_total / emission_norm_factor)
-            end if
-
+                ! Compute mdust and safely store in scratch space
+                if (emission_norm_factor > SAFE_FLOOR) then
+                    ctx%state%sfh_w_tmp1(3, i_out) = 3.21e-3_wp / (4.0_wp * PI) * (lum_absorbed_total / emission_norm_factor)
+                else
+                    ctx%state%sfh_w_tmp1(3, i_out) = SAFE_FLOOR
+                end if
+            end do
         else
-            dust_mass = SAFE_FLOOR
+            !$acc parallel loop present(ctx) async(1)
+            do i_out = 1, n_outputs
+                ctx%state%sfh_w_tmp1(3, i_out) = SAFE_FLOOR
+            end do
         end if
-
-        !$acc parallel loop present(ctx, spec_total_out)
-        do i = 1, nspec
-            spec_total_out(i) = ctx%state%dust_spec_total_work(i)
-        end do
-        
     end subroutine apply_dust_attenuation_and_emission
-
+    
     !> @brief
     !> Computes the attenuation curve (optical depth shape) for a given dust type.
     !>

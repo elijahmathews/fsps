@@ -71,6 +71,11 @@ contains
         allocate(ctx%state%spec_ssp_zz(1, n_t, n_z)) ! 1 wavelength for simplicity in tests
         allocate(ctx%state%time_full(n_t))
 
+        if (allocated(ctx%state%ssp_temp_grid)) then
+            !$acc exit data delete(ctx%state%ssp_temp_grid)
+            deallocate(ctx%state%ssp_temp_grid)
+        end if
+
         ctx%state%mini_isoc = 0.0_wp
         ctx%state%mact_isoc = 0.0_wp
         ctx%state%logl_isoc = 0.0_wp
@@ -158,6 +163,11 @@ contains
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
         if (associated(ctx%state%spec_nu)) deallocate(ctx%state%spec_nu)
         if (associated(ctx%state%speclib)) deallocate(ctx%state%speclib)
+
+        if (allocated(ctx%state%ssp_temp_grid)) then
+            !$acc exit data delete(ctx%state%ssp_temp_grid)
+            deallocate(ctx%state%ssp_temp_grid)
+        end if
     end subroutine teardown_spectral_context
 
     ! --------------------------------------------------------------------

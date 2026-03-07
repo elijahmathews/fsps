@@ -750,8 +750,8 @@ contains
         allocate (ctx%state%weight_ssp(ctx%state%ntfull, ctx%state%nz))
 
         ! Allocate Component Spectral Buffers
-        allocate (ctx%state%spec_young(ctx%state%nspec))
-        allocate (ctx%state%spec_old(ctx%state%nspec))
+        allocate (ctx%state%spec_young(ctx%state%nspec, ctx%state%ntfull))
+        allocate (ctx%state%spec_old(ctx%state%nspec, ctx%state%ntfull))
 
         ! Allocate Line Spread Function Buffer
         allocate (ctx%state%lsfinfo%lsf(ctx%state%nspec))

@@ -85,10 +85,11 @@ contains
         integer, intent(out), optional      :: status
 
         ! Local variables
-        real(WP) :: mass_csp, lbol_csp, mdust_total
         real(WP) :: target_age
-        
+        real(WP) :: mass_frac, sfr_norm, frac_linear, z_effective
+
         integer :: i, nt, nspec, n_outputs, start_idx
+        integer :: k, i_spec, i_em
         
         if (present(status)) status = 0
 
@@ -106,13 +107,28 @@ contains
             if (present(status)) status = 3
             return
         end if
-        
-        ! Initialize host-side working grids from SSP inputs.
-        ctx%state%csp_ssp_grid(:,:,1:nzin) = ctx%state%ssp_basis_spec(:,:,1:nzin)
-        ctx%state%csp_emlin_grid(:,:,1:nzin) = 0.0_wp
 
-        ! Explicitly push the initialized grids to the device
-        !$acc update device(ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid)
+        ! Initialize working grids from SSP inputs natively on the device (Explicit loops to bypass NVHPC kernels bug)
+        nt = ctx%state%ntfull
+        nspec = ctx%state%nspec
+
+        !$acc parallel loop collapse(3) present(ctx)
+        do k = 1, nzin
+            do i = 1, nt
+                do i_spec = 1, nspec
+                    ctx%state%csp_ssp_grid(i_spec, i, k) = ctx%state%ssp_basis_spec(i_spec, i, k)
+                end do
+            end do
+        end do
+
+        !$acc parallel loop collapse(3) present(ctx)
+        do k = 1, nzin
+            do i = 1, nt
+                do i_em = 1, NEMLINE
+                    ctx%state%csp_emlin_grid(i_em, i, k) = 0.0_wp
+                end do
+            end do
+        end do
 
         if (ctx%add_neb_emission_val == 1) then
             if (nzin > 1) then
@@ -121,11 +137,8 @@ contains
 
             call apply_nebular_emission(ctx, pset, ctx%state%ssp_basis_spec(:,:,1), &
                                         ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
-            
-            ! Pull updated data to host for the integrator
-            !$acc update host(ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
         end if
-
+        
         ! 2. OPTIMIZATIONS (Pre-calculations)
         ! -----------------------------------
         
@@ -151,44 +164,125 @@ contains
         
         allocate(results(n_outputs))
 
-        ! 3. MAIN GENERATION LOOP
+        ! 3. PRE-CALCULATE TARGET AGES
         ! -----------------------
         !$acc data present(ctx)
+
+        ! Store target ages in a scratch array so the GPU can access them in the fused kernels
         do i = 1, n_outputs
-            ! Ensure output arrays are allocated
-            if (.not. allocated(results(i)%spec)) then
-                allocate(results(i)%spec(nspec))
-            end if
-            if (.not. allocated(results(i)%emlines)) then
-                allocate(results(i)%emlines(NEMLINE))
-            end if
-            
-            ! Determine Target Age
             if (pset%tage > 0.0_wp) then
-                target_age = pset%tage
+                ctx%state%sfh_t_calc(i) = pset%tage
             elseif (start_idx == -99) then
-                target_age = maxval(ctx%state%sfh_tab(1, 1:ctx%state%ntabsfh)) / 1.0e9_wp
+                ctx%state%sfh_t_calc(i) = maxval(ctx%state%sfh_tab(1, 1:ctx%state%ntabsfh)) / 1.0e9_wp
             else
-                target_age = 10.0_wp**(ctx%state%time_full(i) - 9.0_wp)
+                ctx%state%sfh_t_calc(i) = 10.0_wp**(ctx%state%time_full(i) - 9.0_wp)
+            end if
+        end do
+        !$acc update device(ctx%state%sfh_t_calc(1:n_outputs)) async(1)
+
+        ! 4. MASSIVE FUSED GENERATION (100% Device Resident)
+        ! -----------------------
+
+        ! Fused Integration Kernel
+        call integrate_csp_step(ctx, pset, n_outputs, nzin, &
+                                ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid, &
+                                ctx%state%ssp_basis_mass, ctx%state%csp_ssp_lum_linear)
+
+        ! Fused Dust Physics
+        call apply_dust_physics(ctx, pset, n_outputs)
+
+        ! Fused Post-Processing (Writes directly to ctx%state%out_* buffers)
+        call apply_post_processing(ctx, pset, n_outputs, ctx%state%csp_igm_transmission)
+
+        ! 5. SINGLE BULK PCIE TRANSFER
+        ! -----------------------
+        !$acc update host(ctx%state%out_csp_spec(:, 1:n_outputs), &
+        !$acc             ctx%state%out_csp_emlin(:, 1:n_outputs), &
+        !$acc             ctx%state%out_mass_csp(1:n_outputs), &
+        !$acc             ctx%state%out_lbol_csp(1:n_outputs), &
+        !$acc             ctx%state%sfh_w_tmp1(:, 1:n_outputs)) async(1)
+
+        ! Block host here until the entire device pipeline finishes
+        !$acc wait(1)
+
+        !$acc end data
+
+        ! 6. POPULATE DERIVED TYPES ON HOST CPU (Cache-Coherent)
+        ! -----------------------
+        do i = 1, n_outputs
+            if (.not. allocated(results(i)%spec)) allocate(results(i)%spec(nspec))
+            if (.not. allocated(results(i)%emlines)) allocate(results(i)%emlines(NEMLINE))
+
+            ! Fast scalar CPU packing for arrays
+            results(i)%spec(:)    = ctx%state%out_csp_spec(:, i)
+            results(i)%emlines(:) = ctx%state%out_csp_emlin(:, i)
+
+            ! Recalculate scalar properties on CPU to pack into struct
+            target_age = ctx%state%sfh_t_calc(i)
+            call get_sfh_properties_at_age(ctx, pset, target_age, mass_frac, sfr_norm, frac_linear)
+
+            if (pset%tage <= 0.0_wp) then
+                results(i)%lbol_csp = ctx%state%out_lbol_csp(i) + log10(max(mass_frac, SAFE_FLOOR))
+                results(i)%mformed  = mass_frac
+            else
+                results(i)%lbol_csp = ctx%state%out_lbol_csp(i)
+                if (mass_frac > SAFE_FLOOR) sfr_norm = sfr_norm / mass_frac
+                results(i)%mformed  = 1.0_wp
             end if
 
-            ! Integration Kernel (Passes pre-calculated Linear Lum)
-            call integrate_csp_step(ctx, pset, target_age, nzin, &
-                                    ctx%state%csp_ssp_grid, ctx%state%csp_emlin_grid, ctx%state%ssp_basis_mass, &
-                                    ctx%state%csp_ssp_lum_linear, &
-                                    mass_csp, lbol_csp)
+            results(i)%age      = log10(target_age * 1.0e9_wp)
+            results(i)%mass_csp = ctx%state%out_mass_csp(i) * mass_frac
+            results(i)%sfr      = sfr_norm
+            results(i)%mdust    = ctx%state%sfh_w_tmp1(3, i) * mass_frac
 
-            ! Dust Physics
-            call apply_dust_physics(ctx, pset, ctx%state%csp_spec_final, ctx%state%csp_emlin_final, mdust_total)
+            ! Perform heavy post-processing only if not in fast_mode
+            if (.not. ctx%fast_mode) then
+                if (.not. allocated(results(i)%mags)) allocate(results(i)%mags(ctx%state%nbands))
+                if (.not. allocated(results(i)%indx)) allocate(results(i)%indx(ctx%state%nindx))
 
-            ! Post-Processing (Passes pre-calculated IGM)
-            call apply_post_processing(ctx, pset, target_age, &
-                                       mass_csp, lbol_csp, mdust_total, &
-                                       ctx%state%csp_spec_final, ctx%state%csp_emlin_final, &
-                                       ctx%state%csp_igm_transmission, &
-                                       results(i))
+                ! Safely route the spectrum into the mapped device scratchpad
+                ctx%state%csp_spec_final(:) = results(i)%spec(:)
+                !$acc update device(ctx%state%csp_spec_final)
+
+                ! AGN Dust Emission
+                if (ctx%add_agn_dust_val == 1 .and. pset%fagn > SAFE_FLOOR) then
+                    call apply_agn_dust_emission(ctx, pset, ctx%state%spec_lambda, &
+                                                 results(i)%lbol_csp, ctx%state%csp_spec_final)
+                end if
+
+                ! Instrumental Smoothing
+                if (pset%sigma_smooth > 0.0_wp) then
+                    call apply_smoothing(ctx, ctx%state%spec_lambda, ctx%state%csp_spec_final, &
+                                         pset%sigma_smooth, pset%min_wave_smooth, pset%max_wave_smooth)
+                end if
+
+                ! Redshift for magnitudes calculation
+                if (ctx%redshift_colors_val == 1) then
+                    z_effective = interpolate_linear(ctx%state%cosmospl(:,2), ctx%state%cosmospl(:,1), target_age)
+                    z_effective = min(max(z_effective, 0.0_wp), 20.0_wp)
+                else
+                    z_effective = pset%zred
+                end if
+
+                ! Compute Magnitudes
+                if (pset%compute_mags == 1) then
+                    call compute_magnitudes(ctx, z_effective, ctx%state%csp_spec_final, results(i)%mags, pset%mag_compute)
+                else
+                    results(i)%mags = -99.0_wp
+                end if
+
+                ! Compute Spectral Indices
+                if (pset%compute_indices == 1) then
+                    call compute_spectral_indices(ctx, ctx%state%spec_lambda, ctx%state%csp_spec_final, results(i)%indx)
+                else
+                    results(i)%indx = -99.0_wp
+                end if
+
+                ! Pull the modified spectrum back to the host struct
+                !$acc update host(ctx%state%csp_spec_final)
+                results(i)%spec(:) = ctx%state%csp_spec_final(:)
+            end if
         end do
-        !$acc end data
 
     end subroutine compute_csp_scenario
 
@@ -214,19 +308,17 @@ contains
     !> @param[in]     emlin_grid Input Emission Line grid [Line, Age, Z].
     !> @param[out]    mass_csp   Total stellar mass formed (normalized).
     !> @param[out]    lbol_csp   Total bolometric luminosity [log10(L_sol)].
-    subroutine integrate_csp_step(ctx, pset, tage, nzin, ssp_grid, emlin_grid, &
-                                  mass_ssp, ssp_lum_linear, mass_csp, lbol_csp)
+    subroutine integrate_csp_step(ctx, pset, n_outputs, nzin, ssp_grid, emlin_grid, &
+                                  mass_ssp, ssp_lum_linear)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
-        real(WP), intent(in)                :: tage
-        integer, intent(in)                 :: nzin
+        integer, intent(in)                 :: n_outputs, nzin
         real(WP), intent(in), contiguous    :: ssp_grid(:,:,:)
         real(WP), intent(in), contiguous    :: emlin_grid(:,:,:)
         real(WP), intent(in), contiguous    :: mass_ssp(:,:)
         real(WP), intent(in), contiguous    :: ssp_lum_linear(:,:)
-        real(WP), intent(out)               :: mass_csp, lbol_csp
 
-        integer :: i, k, nt, i_tesc
+        integer :: i, k, nt, i_tesc, i_out
         integer :: i_spec, i_em
         integer :: nspec, nem
         real(WP) :: dust_age_log
@@ -234,33 +326,12 @@ contains
         real(WP) :: weight_ik
         real(WP) :: sum_young, sum_old
         real(WP) :: sum_em_young, sum_em_old
-        real(WP) :: dev_scalars(2)
-        
-        nt = ctx%state%ntfull
+
+        nt    = ctx%state%ntfull
         nspec = size(ssp_grid, 1)
         nem   = size(emlin_grid, 1)
 
-        ! 1. Clear Accumulators
-        ! Clear host arrays
-        ctx%state%spec_young  = 0.0_wp
-        ctx%state%spec_old    = 0.0_wp
-        ctx%state%csp_emlin_young = 0.0_wp
-        ctx%state%csp_emlin_old   = 0.0_wp
-
-        ! Clear device arrays
-        !$acc kernels present(ctx)
-        ctx%state%spec_young  = 0.0_wp
-        ctx%state%spec_old    = 0.0_wp
-        ctx%state%csp_emlin_young = 0.0_wp
-        ctx%state%csp_emlin_old   = 0.0_wp
-        !$acc end kernels
-
-        ! 2. Compute SFH Weights
-        !$acc serial present(ctx)
-        call compute_sfh_weights(ctx, pset, tage, nzin, ctx%state%csp_weights)
-        !$acc end serial
-
-        ! 3. Determine Dust Separation Index
+        ! 0. Determine Dust Separation Index (Host-Side)
         if (pset%dust_tesc > SAFE_FLOOR) then
             dust_age_log = pset%dust_tesc
         else
@@ -268,169 +339,175 @@ contains
         end if
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
-        ! 4. Integration Loop for Scalars
-        ! Executed sequentially on the device using persistent context memory
-        ! to bypass NVHPC compiler bugs with dummy argument copyout and local register arrays.
-        !$acc serial present(ctx, mass_ssp, ssp_lum_linear)
-        ctx%state%scalar_reductions(1) = 0.0_wp
-        ctx%state%scalar_reductions(2) = 0.0_wp
-
-        do k = 1, nzin
-            do i = 1, nt
-                if (ctx%state%csp_weights(i, k) > SAFE_FLOOR) then
-                    ctx%state%scalar_reductions(1) = ctx%state%scalar_reductions(1) + &
-                                                     (ctx%state%csp_weights(i, k) * mass_ssp(i, k))
-                    ctx%state%scalar_reductions(2) = ctx%state%scalar_reductions(2) + &
-                                                     (ctx%state%csp_weights(i, k) * ssp_lum_linear(i, k))
-                end if
+        ! 1. Clear Accumulators (Fused)
+        !$acc parallel loop collapse(2) present(ctx) private(i_Spec) async(1)
+        do i_out = 1, n_outputs
+            do i_spec = 1, nspec
+                ctx%state%spec_young(i_spec, i_out) = 0.0_wp
+                ctx%state%spec_old(i_spec, i_out)   = 0.0_wp
             end do
         end do
-        !$acc end serial
+        !$acc parallel loop collapse(2) present(ctx) private(i_Spec) async(1)
+        do i_out = 1, n_outputs
+            do i_em = 1, nem
+                ctx%state%csp_emlin_young(i_em, i_out) = 0.0_wp
+                ctx%state%csp_emlin_old(i_em, i_out)   = 0.0_wp
+            end do
+        end do
 
-        ! Fetch results safely back to the host. Explicit array bounds bypass dope-vector bugs.
-        !$acc update host(ctx%state%scalar_reductions(1:2))
-        mass_csp        = ctx%state%scalar_reductions(1)
-        linear_lbol_sum = ctx%state%scalar_reductions(2)
+        ! 2. Compute SFH Weights (Gang Parallel over Time)
+        !$acc parallel loop gang present(ctx) async(1)
+        do i_out = 1, n_outputs
+            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
+        end do
 
-        if (linear_lbol_sum > SAFE_FLOOR) then
-            lbol_csp = log10(linear_lbol_sum)
-        else
-            lbol_csp = 0.0_wp
-        end if
+        ! 3. Integration Loop for Scalars (Vector Reduction mapped to out buffers)
+        !$acc parallel loop gang present(ctx, mass_ssp, ssp_lum_linear) private(linear_lbol_sum, k, i, weight_ik) async(1)
+        do i_out = 1, n_outputs
+            ctx%state%out_mass_csp(i_out) = 0.0_wp
+            linear_lbol_sum               = 0.0_wp
+            do k = 1, nzin
+                do i = 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        ctx%state%out_mass_csp(i_out) = ctx%state%out_mass_csp(i_out) + (weight_ik * mass_ssp(i, k))
+                        linear_lbol_sum               = linear_lbol_sum + (weight_ik * ssp_lum_linear(i, k))
+                    end if
+                end do
+            end do
 
-        ! 5. Integration Loop for Spectra
+            if (linear_lbol_sum > SAFE_FLOOR) then
+                ctx%state%out_lbol_csp(i_out) = log10(linear_lbol_sum)
+            else
+                ctx%state%out_lbol_csp(i_out) = 0.0_wp
+            end if
+        end do
+
+        ! 4. Integration Loop for Spectra
 #ifdef _OPENACC
-
         ! =====================================================================
-        ! GPU OPTIMIZED PATH (Max Occupancy, No Atomics, Coalesced Memory)
+        ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
         ! =====================================================================
-        !$acc parallel loop gang vector present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik)
-        do i_spec = 1, nspec
-            sum_young = 0.0_wp
+        !$acc parallel loop gang present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i, i_spec) async(1)
+        do i_out = 1, n_outputs
             do k = 1, nzin
+                ! Young stars
                 do i = 1, i_tesc
-                    weight_ik = ctx%state%csp_weights(i, k)
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
-                        sum_young = sum_young + (weight_ik * ssp_grid(i_spec, i, k))
+                        !$acc loop vector
+                        do i_spec = 1, nspec
+                            ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
+                                (weight_ik * ssp_grid(i_spec, i, k))
+                        end do
                     end if
                 end do
-            end do
-
-            sum_old = 0.0_wp
-            do k = 1, nzin
+                ! Old stars
                 do i = i_tesc + 1, nt
-                    weight_ik = ctx%state%csp_weights(i, k)
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
-                        sum_old = sum_old + (weight_ik * ssp_grid(i_spec, i, k))
+                        !$acc loop vector
+                        do i_spec = 1, nspec
+                            ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
+                                (weight_ik * ssp_grid(i_spec, i, k))
+                        end do
                     end if
                 end do
             end do
-
-            ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + sum_young
-            ctx%state%spec_old(i_spec)   = ctx%state%spec_old(i_spec) + sum_old
         end do
-
 #else
-
         ! =====================================================================
         ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
         ! =====================================================================
-        do k = 1, nzin
-            ! Young stars
-            do i = 1, i_tesc
-                weight_ik = ctx%state%csp_weights(i, k)
-                if (weight_ik > SAFE_FLOOR) then
-                    ! Stride-1 inner loop for CPU vectorization/cache
-                    do i_spec = 1, nspec
-                        ctx%state%spec_young(i_spec) = ctx%state%spec_young(i_spec) + &
-                            (weight_ik * ssp_grid(i_spec, i, k))
-                    end do
-                end if
-            end do
-            ! Old stars
-            do i = i_tesc + 1, nt
-                weight_ik = ctx%state%csp_weights(i, k)
-                if (weight_ik > SAFE_FLOOR) then
-                    do i_spec = 1, nspec
-                        ctx%state%spec_old(i_spec) = ctx%state%spec_old(i_spec) + &
-                            (weight_ik * ssp_grid(i_spec, i, k))
-                    end do
-                end if
+        do i_out = 1, n_outputs
+            do k = 1, nzin
+                ! Young stars
+                do i = 1, i_tesc
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        ! Stride-1 inner loop for CPU vectorization/cache
+                        do i_spec = 1, nspec
+                            ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
+                                (weight_ik * ssp_grid(i_spec, i, k))
+                        end do
+                    end if
+                end do
+                ! Old stars
+                do i = i_tesc + 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        do i_spec = 1, nspec
+                            ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
+                                (weight_ik * ssp_grid(i_spec, i, k))
+                        end do
+                    end if
+                end do
             end do
         end do
 #endif
-
-        ! 6. Integration Loop for Emission Lines
-#ifdef _OPENACC
-
-        ! =====================================================================
-        ! GPU OPTIMIZED PATH (Max Occupancy, No Atomics, Coalesced Memory)
-        ! =====================================================================
-        !$acc parallel loop gang vector present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik)
-        do i_em = 1, nem
-            sum_em_young = 0.0_wp
-            do k = 1, nzin
-                do i = 1, i_tesc
-                    weight_ik = ctx%state%csp_weights(i, k)
-                    if (weight_ik > SAFE_FLOOR) then
-                        sum_em_young = sum_em_young + (weight_ik * emlin_grid(i_em, i, k))
-                    end if
-                end do
-            end do
-
-            sum_em_old = 0.0_wp
-            do k = 1, nzin
-                do i = i_tesc + 1, nt
-                    weight_ik = ctx%state%csp_weights(i, k)
-                    if (weight_ik > SAFE_FLOOR) then
-                        sum_em_old = sum_em_old + (weight_ik * emlin_grid(i_em, i, k))
-                    end if
-                end do
-            end do
-
-            ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + sum_em_young
-            ctx%state%csp_emlin_old(i_em)   = ctx%state%csp_emlin_old(i_em) + sum_em_old
-        end do
-
-#else
-
-        ! =====================================================================
-        ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
-        ! =====================================================================
-        do k = 1, nzin
-            ! Young stars
-            do i = 1, i_tesc
-                weight_ik = ctx%state%csp_weights(i, k)
-                if (weight_ik > SAFE_FLOOR) then
-                    ! Stride-1 inner loop for CPU vectorization/cache
-                    do i_em = 1, nem
-                        ctx%state%csp_emlin_young(i_em) = ctx%state%csp_emlin_young(i_em) + &
-                            (weight_ik * emlin_grid(i_em, i, k))
-                    end do
-                end if
-            end do
-            ! Old stars
-            do i = i_tesc + 1, nt
-                weight_ik = ctx%state%csp_weights(i, k)
-                if (weight_ik > SAFE_FLOOR) then
-                    do i_em = 1, nem
-                        ctx%state%csp_emlin_old(i_em) = ctx%state%csp_emlin_old(i_em) + &
-                            (weight_ik * emlin_grid(i_em, i, k))
-                    end do
-                end if
-            end do
-        end do
         
+        ! 5. Integration Loop for Emission Lines
+#ifdef _OPENACC
+        ! =====================================================================
+        ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
+        ! =====================================================================
+        !$acc parallel loop gang present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i, i_em) async(1)
+        do i_out = 1, n_outputs
+            do k = 1, nzin
+                ! Young stars
+                do i = 1, i_tesc
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        !$acc loop vector
+                        do i_em = 1, nem
+                            ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
+                                (weight_ik * emlin_grid(i_em, i, k))
+                        end do
+                    end if
+                end do
+                ! Old stars
+                do i = i_tesc + 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        !$acc loop vector
+                        do i_em = 1, nem
+                            ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
+                                (weight_ik * emlin_grid(i_em, i, k))
+                        end do
+                    end if
+                end do
+            end do
+        end do
+#else
+        ! =====================================================================
+        ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
+        ! =====================================================================
+        do i_out = 1, n_outputs
+            do k = 1, nzin
+                ! Young stars
+                do i = 1, i_tesc
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        ! Stride-1 inner loop for CPU vectorization/cache
+                        do i_em = 1, nem
+                            ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
+                                (weight_ik * emlin_grid(i_em, i, k))
+                        end do
+                    end if
+                end do
+                ! Old stars
+                do i = i_tesc + 1, nt
+                    weight_ik = ctx%state%csp_weights(i, k, i_out)
+                    if (weight_ik > SAFE_FLOOR) then
+                        do i_em = 1, nem
+                            ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
+                                (weight_ik * emlin_grid(i_em, i, k))
+                        end do
+                    end if
+                end do
+            end do
+        end do
 #endif
-
-        ! 7. Fetch results back to host for subsequent physics steps
-        !$acc update host(ctx%state%spec_young, ctx%state%spec_old, ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
-
-        if (linear_lbol_sum > 0.0_wp) then
-            lbol_csp = log10(linear_lbol_sum)
-        else
-            lbol_csp = -99.0_wp
-        end if
 
     end subroutine integrate_csp_step
 
@@ -446,31 +523,17 @@ contains
     !> 2. Applies diffuse ISM attenuation to both `spec_young` and `spec_old`.
     !> 3. Computes IR dust re-emission via energy balance.
     !>
-    !> @param[inout]  ctx           Context.
-    !> @param[in]     pset          User parameters.
-    !> @param[out]    spec_total    Final attenuated spectrum (L_sol/Hz).
-    !> @param[out]    emlin_total   Final attenuated emission lines (L_sol).
-    !> @param[out]    mdust_total   Total dust mass (M_sol).
-    subroutine apply_dust_physics(ctx, pset, spec_total, emlin_total, mdust_total)
+    !> @param[inout] ctx           Context.
+    !> @param[in]    pset          User parameters.
+    !> @param[in]    n_outputs     Number of outputs.
+    subroutine apply_dust_physics(ctx, pset, n_outputs)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
-        real(WP), intent(out)               :: spec_total(:)
-        real(WP), intent(out)               :: emlin_total(:)
-        real(WP), intent(out)               :: mdust_total
+        integer, intent(in)                 :: n_outputs
 
-        ! The fsps_dust routine handles all the heavy lifting, 
-        ! including the combination of Young + Old components.
-        call apply_dust_attenuation_and_emission( &
-            ctx, &
-            pset, &
-            ctx%state%spec_young, &
-            ctx%state%spec_old, &
-            ctx%state%csp_emlin_young, &
-            ctx%state%csp_emlin_old, &
-            spec_total, &    ! Output
-            mdust_total, &   ! Output
-            emlin_total)     ! Output
-
+        ! Call the massively fused dust kernel. It will process all ages and wavelengths,
+        ! writing directly to ctx%state%dust_spec_total_work.
+        call apply_dust_attenuation_and_emission(ctx, pset, n_outputs)
     end subroutine apply_dust_physics
 
     !> @brief Applies final physical corrections and populates output.
@@ -483,127 +546,58 @@ contains
     !> 4. **AGN:** Adds AGN dust torus emission.
     !> 5. **Output:** Packages everything into the `compspout` structure.
     !>
-    !> @param[in]     ctx      Context.
-    !> @param[in]     pset     User parameters.
-    !> @param[in]     tage     Current age [Gyr].
-    !> @param[in]     mass_csp Total formed stellar mass (from integration).
-    !> @param[in]     lbol_csp Total bolometric luminosity (log L_sol).
-    !> @param[in]     mdust    Total dust mass.
-    !> @param[in,out] spec     The spectrum (Input: attenuated; Output: final).
-    !> @param[in]     emlines  Emission lines.
-    !> @param[out]    result   The output structure to populate.
-    subroutine apply_post_processing(ctx, pset, tage, mass_csp, lbol_csp, mdust, &
-                                     spec, emlines, igm_transmission, result)
-        
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: pset
-        real(WP), intent(in)             :: tage
-        real(WP), intent(in)             :: mass_csp, lbol_csp, mdust
-        real(WP), intent(inout)          :: spec(:)
-        real(WP), intent(in)             :: emlines(:)
-        real(WP), intent(in), optional   :: igm_transmission(:)
-        type(compspout), intent(out)     :: result
+    !> @param[inout] ctx              Context.
+    !> @param[in]    pset             User parameters.
+    !> @param[in]    n_outputs        Number of outputs.
+    !> @param[in]    igm_transmission TODO: Add description
+    subroutine apply_post_processing(ctx, pset, n_outputs, igm_transmission)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        integer, intent(in)                 :: n_outputs
+        real(WP), intent(in), optional      :: igm_transmission(:)
 
-        real(WP) :: mass_frac, sfr_norm, frac_linear
-        real(WP) :: current_mass_surviving, lbol_final, z_effective
-        logical :: do_full_post
+        integer  :: i_out, i_spec, i_em
+        integer  :: nspec, nem
+        real(WP) :: tage, mass_frac, sfr_norm, frac_linear
 
-        do_full_post = .not. ctx%fast_mode
+        nspec = ctx%state%nspec
+        nem   = NEMLINE
 
-        ! 0. Allocate optional output arrays only in full post-processing mode.
-        if (do_full_post) then
-            allocate(result%mags(ctx%state%nbands))
-            allocate(result%indx(ctx%state%nindx))
-        end if
+        ! 1. Post-process Spectra (Mass Renormalization & IGM)
+        !$acc parallel loop collapse(2) present(ctx, igm_transmission) private(tage, mass_frac, sfr_norm, frac_linear) async(1)
+        do i_out = 1, n_outputs
+            do i_spec = 1, nspec
+                ! Recalculate scalars locally on device to bypass temp arrays
+                tage = ctx%state%sfh_t_calc(i_out)
+                call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr_norm, frac_linear)
 
-        ! 1. Calculate Mass/SFR Properties (Renormalization)
-        call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr_norm, frac_linear)
-        
-        current_mass_surviving = mass_csp * mass_frac
-        
-        ! 2. Handle History vs Snapshot Normalization
-        if (pset%tage <= 0.0_wp) then
-            ! History Mode: Output represents the total galaxy luminosity at time T.
-            !$acc kernels present(spec)
-            spec       = spec * mass_frac
-            !$acc end kernels
-            lbol_final = lbol_csp + log10(max(mass_frac, SAFE_FLOOR))
-        else
-            ! Snapshot Mode: Output is normalized to 1 M_sol formed *total*.
-            lbol_final = lbol_csp
-            if (mass_frac > SAFE_FLOOR) then
-                sfr_norm = sfr_norm / mass_frac
-            end if
-            mass_frac = 1.0_wp 
-        end if
+                ctx%state%out_csp_spec(i_spec, i_out) = ctx%state%dust_spec_total_work(i_spec, i_out)
 
-        ! 3. Instrumental Smoothing
-        if (do_full_post .and. pset%sigma_smooth > 0.0_wp) then
-            !$acc update host(spec)
-            call apply_smoothing(ctx, ctx%state%spec_lambda, spec, &
-                                 pset%sigma_smooth, &
-                                 pset%min_wave_smooth, pset%max_wave_smooth)
-            !$acc update device(spec)
-        end if
+                if (pset%tage <= 0.0_wp) then
+                    ctx%state%out_csp_spec(i_spec, i_out) = ctx%state%out_csp_spec(i_spec, i_out) * mass_frac
+                end if
 
-        ! 4. IGM Absorption
-        if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR .and. present(igm_transmission)) then
-            !$acc kernels present(spec, igm_transmission)
-            spec = spec * igm_transmission
-            !$acc end kernels
-        end if
+                if (ctx%add_igm_absorption_val == 1 .and. pset%zred > SAFE_FLOOR .and. present(igm_transmission)) then
+                    ctx%state%out_csp_spec(i_spec, i_out) = ctx%state%out_csp_spec(i_spec, i_out) * igm_transmission(i_spec)
+                end if
+            end do
+        end do
 
-        ! 5. AGN Dust Emission
-        if (ctx%add_agn_dust_val == 1 .and. pset%fagn > SAFE_FLOOR) then
-            call apply_agn_dust_emission(ctx, pset, ctx%state%spec_lambda, &
-                                         lbol_final, spec)
-        end if
+        ! 2. Post-process Emission Lines (Combination & Mass Renormalization)
+        !$acc parallel loop collapse(2) present(ctx) private(tage, mass_frac, sfr_norm, frac_linear) async(1)
+        do i_out = 1, n_outputs
+            do i_em = 1, nem
+                tage = ctx%state%sfh_t_calc(i_out)
+                call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr_norm, frac_linear)
 
-        ! 6. Calculate Magnitudes and Spectral Indices (full post-processing only)
-        if (do_full_post) then
-            !$acc update host(spec)
+                ctx%state%out_csp_emlin(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
+                                                       ctx%state%csp_emlin_old(i_em, i_out)
 
-            ! Redshift for magnitudes calculation
-            if (ctx%redshift_colors_val == 1) then
-                 ! Inverse lookup from Age (tage) to Redshift using pre-computed spline.
-                 ! cosmospl(:,2) is Age(Gyr), cosmospl(:,1) is Redshift.
-                 z_effective = interpolate_linear(ctx%state%cosmospl(:,2), &
-                                                  ctx%state%cosmospl(:,1), &
-                                                  tage)
-                 z_effective = min(max(z_effective, 0.0_wp), 20.0_wp)
-            else
-                 z_effective = pset%zred
-            end if
-
-            ! Compute Magnitudes
-            if (pset%compute_mags == 1) then
-                call compute_magnitudes(ctx, z_effective, spec, result%mags, pset%mag_compute)
-            else
-                result%mags = -99.0_wp
-            end if
-
-            ! Compute Spectral Indices
-            if (pset%compute_indices == 1) then
-                call compute_spectral_indices(ctx, ctx%state%spec_lambda, spec, result%indx)
-            else
-                result%indx = -99.0_wp
-            end if
-        end if
-
-        ! 7. Populate Output Structure
-        ! Update scalars/arrays modified on device
-        !$acc update host(spec, emlines)
-
-        result%age      = log10(tage * 1.0e9_wp)
-        result%mass_csp = current_mass_surviving
-        result%lbol_csp = lbol_final
-        result%sfr      = sfr_norm
-        result%mdust    = mdust * mass_frac
-        result%mformed  = mass_frac
-        result%spec     = max(spec, SAFE_FLOOR)
-        result%emlines  = emlines * mass_frac
-        ! result%mags and result%indx populated above
-
+                if (pset%tage <= 0.0_wp) then
+                    ctx%state%out_csp_emlin(i_em, i_out) = ctx%state%out_csp_emlin(i_em, i_out) * mass_frac
+                end if
+            end do
+        end do
     end subroutine apply_post_processing
 
     ! ------------------------------------------------------------------------
@@ -626,15 +620,14 @@ contains
     !> @param[in]    pset    User parameters.
     !> @param[in]    tage    Age of the galaxy [Gyr].
     !> @param[in]    nzin    Number of metallicity bins.
+    !> @param[in]    i_out   Output age index.
     !> @param[inout] weights Weights [ntfull, nzin].
-    subroutine compute_sfh_weights(ctx, pset, tage, nzin, weights)
+    subroutine compute_sfh_weights(ctx, pset, tage, nzin, i_out, weights)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
         real(WP), intent(in)                :: tage
-        integer, intent(in)                 :: nzin
-        ! Note: weights is intent(inout) rather than intent(out) to bypass
-        ! NVHPC array descriptor reallocation bugs on the device.
-        real(WP), intent(inout), contiguous :: weights(:,:)
+        integer, intent(in)                 :: nzin, i_out
+        real(WP), intent(inout), contiguous :: weights(:,:,:)
 
         !$acc routine seq
 
@@ -650,12 +643,12 @@ contains
         nt = ctx%state%ntfull
         do k = 1, nzin
             do i = 1, nt
-                weights(i, k) = 0.0_wp
+                weights(i, k, i_out) = 0.0_wp
             end do
         end do
         do i = 1, nt
-            ctx%state%sfh_w_tmp1(i) = 0.0_wp
-            ctx%state%sfh_w_tmp2(i) = 0.0_wp
+            ctx%state%sfh_w_tmp1(i, i_out) = 0.0_wp
+            ctx%state%sfh_w_tmp2(i, i_out) = 0.0_wp
         end do
 
         ! Initialize SFH struct with unit conversions (Gyr -> Yr)
@@ -673,7 +666,7 @@ contains
             sfh%tb   = sfh%tage  ! Burst at 'now' (lookback time = tage)
             
             imin = max(imax - 2, 1) ! Optimization: SSP is local
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1))
+            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
             return
         end if
 
@@ -684,32 +677,32 @@ contains
             ! A. Main Exponential Component
             sfh%type = pset%sfh
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1))
+            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
 
             ! Normalize to 1.0 mass
-            mass1 = sum(weights(1:imax, 1))
+            mass1 = sum(weights(1:imax, 1, i_out))
             if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
-            weights(:, 1) = weights(:, 1) / mass1
+            weights(:, 1, i_out) = weights(:, 1, i_out) / mass1
 
             ! B. Add Constant and Burst (if requested)
             if (pset%const > 0.0_wp .or. pset%fburst > SAFE_FLOOR) then
                 
                 ! Constant Component
                 sfh%type = 0 ! Constant
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
+                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
                 mass1 = 0.0_wp
                 do i = 1, imax
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
                 ! Burst Component
-                ctx%state%sfh_w_tmp2 = 0.0_wp
+                ctx%state%sfh_w_tmp2(:,i_out) = 0.0_wp
                 fburst_val = 0.0_wp
                 
                 if (sfh%tb >= 0.0_wp) then
                     sfh%type = -1 ! Burst
-                    call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2)
+                    call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
                     fburst_val = pset%fburst
                     
                     ! Extend imax to include burst if it happened earlier
@@ -718,9 +711,9 @@ contains
 
                 ! Combine: (1 - C - B) * Tau + C * Const + B * Burst
                 do i = 1, nt
-                    weights(i, 1) = (1.0_wp - pset%const - fburst_val) * weights(i, 1) + &
-                                    pset%const * (ctx%state%sfh_w_tmp1(i) / mass1) + &
-                                    fburst_val * ctx%state%sfh_w_tmp2(i)
+                    weights(i, 1, i_out) = (1.0_wp - pset%const - fburst_val) * weights(i, 1, i_out) + &
+                                           pset%const * (ctx%state%sfh_w_tmp1(i, i_out) / mass1) + &
+                                           fburst_val * ctx%state%sfh_w_tmp2(i, i_out)
                 end do
             end if
             return
@@ -733,20 +726,20 @@ contains
             ! A. Delayed Tau Portion
             sfh%type = 4
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
+            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
             mass1 = 0.0_wp
             do i = 1, imax
-                mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+                mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
             end do
 
             ! B. Linear Cutoff Portion
             sfh%type = 5
             sfh%use_simha_limits = 1
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2)
+            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
             sfh%use_simha_limits = 0
             mass2 = 0.0_wp
             do i = 1, imax
-                mass2 = mass2 + ctx%state%sfh_w_tmp2(i)
+                mass2 = mass2 + ctx%state%sfh_w_tmp2(i, i_out)
             end do
 
             ! Normalize
@@ -758,8 +751,8 @@ contains
 
             ! Combine
             do i = 1, nt
-                weights(i, 1) = (ctx%state%sfh_w_tmp1(i) / mass1) * (1.0_wp - frac_linear) + &
-                                (ctx%state%sfh_w_tmp2(i) / mass2) * frac_linear
+                weights(i, 1, i_out) = (ctx%state%sfh_w_tmp1(i, i_out) / mass1) * (1.0_wp - frac_linear) + &
+                                       (ctx%state%sfh_w_tmp2(i, i_out) / mass2) * frac_linear
             end do
             return
         end if
@@ -809,11 +802,11 @@ contains
                 imin = min(max(find_interval(ctx%state%time_full, log10(max(t1, SAFE_FLOOR))) - 1, 0), nt)
                 imax = min(max(find_interval(ctx%state%time_full, log10(max(t2, SAFE_FLOOR))) + 2, 0), nt)
                 
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
+                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
                 
                 mass1 = 0.0_wp
                 do i = 1, nt
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
@@ -829,13 +822,15 @@ contains
                     
                     ! Vectorized Add
                     do i = 1, nt
-                        weights(i, k)   = weights(i, k)   + (1.0_wp - dz) * ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
-                        weights(i, k+1) = weights(i, k+1) + dz            * ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
+                        weights(i, k, i_out)   = weights(i, k,   i_out) + &
+                                                 (1.0_wp - dz) * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
+                        weights(i, k+1, i_out) = weights(i, k+1, i_out) + &
+                                                 dz            * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
                     end do
                 else
                     ! Single Z
                     do i = 1, nt
-                        weights(i, 1) = weights(i, 1) + ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
+                        weights(i, 1, i_out) = weights(i, 1, i_out) + ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
                     end do
                 end if
             end do

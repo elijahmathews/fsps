@@ -678,7 +678,6 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        integer :: tmp_dust_type, tmp_add_dust, tmp_nebemline
         real(WP) :: tmp_nebem_line_pos1
         real(WP), dimension(nlam) :: spec_young, spec_old, spec_out
         real(WP), dimension(NEMLINE) :: neb_young, neb_old, neb_out
@@ -687,15 +686,11 @@ contains
         call print_group("Differential Attenuation")
 
         call setup_physics_context(ctx, nlam)
+        !$acc enter data create(settings)
+
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 0
         ctx%nebemlineinspec_val = 1
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
         !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
@@ -704,118 +699,85 @@ contains
         settings%frac_obrun = 0.0_wp
         settings%dust3 = 0.0_wp
 
-        neb_young = 0.0_wp
-        neb_old = 0.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
 
-        spec_young = 0.0_wp
-        spec_old = 100.0_wp
+        ctx%state%spec_young(:, 1) = 0.0_wp
+        ctx%state%spec_old(:, 1) = 100.0_wp
         settings%dust1 = 5.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_true(all(abs(spec_out - 100.0_wp * exp(-1.0_wp)) <= EPS), &
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), ctx%state%csp_emlin_young(:, 1), &
+        !$acc               ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+
+        call assert_true(all(abs(ctx%state%dust_spec_total_work(:, 1) - 100.0_wp * exp(-1.0_wp)) <= EPS), &
                          "Old stars diffuse only", total_tests, total_failures)
 
-        spec_young = 100.0_wp
-        spec_old = 0.0_wp
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
         settings%dust1 = 1.0_wp
         settings%dust2 = 1.0_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_true(all(abs(spec_out - 100.0_wp * exp(-2.0_wp)) <= EPS), &
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+
+        call assert_true(all(abs(ctx%state%dust_spec_total_work(:, 1) - 100.0_wp * exp(-2.0_wp)) <= EPS), &
                          "Young stars birth+diffuse", total_tests, total_failures)
 
-        spec_young = 100.0_wp
-        spec_old = 0.0_wp
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
         settings%dust1 = 100.0_wp
         settings%dust2 = 0.0_wp
         settings%frac_obrun = 0.25_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_true(all(abs(spec_out - 25.0_wp) <= LESS_SMALL_DELTA), &
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+
+        call assert_true(all(abs(ctx%state%dust_spec_total_work(:, 1) - 25.0_wp) <= LESS_SMALL_DELTA), &
                          "OB runaways", total_tests, total_failures)
 
-        spec_young = 0.0_wp
-        spec_old = 100.0_wp
+        ctx%state%spec_young(:, 1) = 0.0_wp
+        ctx%state%spec_old(:, 1) = 100.0_wp
         settings%frac_obrun = 0.0_wp
         settings%dust2 = 100.0_wp
         settings%frac_nodust = 0.10_wp
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_true(all(abs(spec_out - 10.0_wp) <= LESS_SMALL_DELTA), &
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+
+        call assert_true(all(abs(ctx%state%dust_spec_total_work(:, 1) - 10.0_wp) <= LESS_SMALL_DELTA), &
                          "Patchy ISM", total_tests, total_failures)
 
         settings%frac_nodust = 0.0_wp
         settings%dust2 = 0.0_wp
         settings%dust1 = 1.0_wp
         settings%dust1_index = -1.0_wp
-        neb_young = 0.0_wp
-        neb_old = 0.0_wp
-        neb_young(1) = 1.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_young(1, 1) = 1.0_wp
         ctx%state%nebem_line_pos = 5500.0_wp
         tmp_nebem_line_pos1 = ctx%state%nebem_line_pos(1)
         ctx%state%nebem_line_pos(1) = tmp_nebem_line_pos1
-        !$acc update device(ctx%state%nebem_line_pos(1))
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_float_equals(exp(-1.0_wp), neb_out(1), 1.0e-6_wp, &
+        !$acc update device(ctx%state%nebem_line_pos(1), ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
+
+        call assert_float_equals(exp(-1.0_wp), ctx%state%csp_emlin_young(1, 1) + ctx%state%csp_emlin_old(1, 1), 1.0e-6_wp, &
                                  "Nebular line attenuation", total_tests, total_failures)
 
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
         call teardown_physics_context(ctx)
 
     end subroutine test_differential_attenuation
@@ -827,7 +789,6 @@ contains
         type(fsps_context_t), allocatable :: ctx
         type(params) :: settings
         integer, parameter :: nlam = 5
-        integer :: tmp_dust_type, tmp_add_dust, tmp_nebemline
         real(WP), dimension(nlam) :: spec_young, spec_old, spec_out
         real(WP), dimension(nlam) :: freqs, dust_shape
         real(WP), dimension(NEMLINE) :: neb_young, neb_old, neb_out
@@ -839,15 +800,11 @@ contains
         call print_group("Draine & Li Energy Balance")
 
         call setup_physics_context(ctx, nlam)
+        !$acc enter data create(settings)
+
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 1
         ctx%nebemlineinspec_val = 1
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
         !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
 
         settings%dust_index = 0.0_wp
@@ -860,28 +817,23 @@ contains
         settings%duste_qpah = 1.0_wp
         settings%duste_umin = 0.5_wp
 
-        spec_young = 100.0_wp
-        spec_old = 0.0_wp
-        neb_young = 0.0_wp
-        neb_old = 0.0_wp
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
 
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, neb_young, &
-                                                 neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), ctx%state%csp_emlin_young(:, 1), &
+        !$acc               ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1), ctx%state%sfh_w_tmp1(3:3, 1))
+
+        dust_mass = ctx%state%sfh_w_tmp1(3, 1)
 
         freqs = C_LIGHT / ctx%state%spec_lambda
-        lbol_in = integrate_trapezoid_array(freqs, spec_young)
-        lbol_out = integrate_trapezoid_array(freqs, spec_out)
+        lbol_in = integrate_trapezoid_array(freqs, ctx%state%spec_young(:, 1))
+        lbol_out = integrate_trapezoid_array(freqs, ctx%state%dust_spec_total_work(:, 1))
         call assert_relative_error(lbol_in, lbol_out, 1.0e-6_wp, "Energy conservation", total_tests, total_failures)
 
         call interpolate_draine_li_dust_model(ctx, settings, dust_shape)
@@ -893,6 +845,8 @@ contains
         expected_mass = 3.21e-3_wp / (4.0_wp * PI) * (lbol_abs / emission_norm)
         call assert_float_equals(expected_mass, dust_mass, 1.0e-6_wp, "Dust mass scaling", total_tests, total_failures)
 
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
         call teardown_physics_context(ctx)
 
     end subroutine test_draine_li_energy_balance
@@ -903,9 +857,6 @@ contains
     subroutine test_dust_self_absorption()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec_young(:), spec_old(:)
-        real(WP), allocatable :: neb_flux_young(:), neb_flux_old(:), neb_flux_out(:)
-        real(WP), allocatable :: spec_total_out(:)
         real(WP) :: mdust
         integer :: nlam
 
@@ -913,15 +864,14 @@ contains
 
         nlam = 100
         call setup_physics_context(ctx, nlam)
+        !$acc enter data create(pset)
 
-        allocate(spec_young(nlam), spec_old(nlam))
-        allocate(neb_flux_young(1), neb_flux_old(1), neb_flux_out(1))
-        allocate(spec_total_out(nlam))
-
-        spec_young = 1.0_wp
-        spec_old = 0.0_wp
-        neb_flux_young = 0.0_wp
-        neb_flux_old = 0.0_wp
+        ctx%state%spec_young(:, 1) = 1.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), &
+        !$acc               ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
 
         ! Base settings to trigger emission
         ctx%dust_type_val = 0
@@ -943,25 +893,28 @@ contains
         ! 1. Transparent Limit (Zero Absorption)
         ! If we set dust2 = 0, no energy is absorbed, so dust mass should be 0
         pset%dust2 = 0.0_wp
-        !$acc data copyin(pset, spec_young, spec_old, neb_flux_young, neb_flux_old) copy(spec_total_out, neb_flux_out)
-        call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, neb_flux_young, neb_flux_old, &
-                                                 spec_total_out, mdust, neb_flux_out)
-        !$acc end data
+        !$acc update device(pset)
+        call apply_dust_attenuation_and_emission(ctx, pset, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%sfh_w_tmp1(3:3, 1))
+        mdust = ctx%state%sfh_w_tmp1(3, 1)
+
         call assert_float_equals(0.0_wp, mdust, EPS, &
                                  "Transparent limit yields zero dust mass", total_tests, total_failures)
 
         ! 2. Opaque Limit (Energy Conservation)
         ! Set dust2 high. Ensure emitted IR energy matches absorbed optical energy.
         pset%dust2 = 2.0_wp
-        !$acc data copyin(pset, spec_young, spec_old, neb_flux_young, neb_flux_old) copy(spec_total_out, neb_flux_out)
-        call apply_dust_attenuation_and_emission(ctx, pset, spec_young, spec_old, neb_flux_young, neb_flux_old, &
-                                                 spec_total_out, mdust, neb_flux_out)
-        !$acc end data
+        !$acc update device(pset)
+        call apply_dust_attenuation_and_emission(ctx, pset, 1)
+        !$acc update host(ctx%state%sfh_w_tmp1(3:3, 1))
+        mdust = ctx%state%sfh_w_tmp1(3, 1)
 
         call assert_true(mdust > 0.0_wp, &
                          "Opaque limit yields positive dust mass", total_tests, total_failures)
 
-        deallocate(spec_young, spec_old, neb_flux_young, neb_flux_old, neb_flux_out, spec_total_out)
+        !$acc exit data delete(pset)
+        call fsps_context_remove_from_device(ctx)
         call teardown_physics_context(ctx)
     end subroutine test_dust_self_absorption
 
@@ -974,8 +927,6 @@ contains
         integer :: tmp_dust_type, tmp_add_dust, tmp_nebemline
         real(WP), dimension(:), allocatable :: w
         real(WP), dimension(:), allocatable :: res
-        real(WP), dimension(:), allocatable :: spec_young, spec_old, spec_out
-        real(WP), dimension(:), allocatable :: neb_young, neb_old, neb_out
         real(WP) :: dust_mass
         integer :: n
         integer :: i
@@ -997,6 +948,8 @@ contains
 
         ! Test 8.1: No dust (output equals input, dust mass ~ 0)
         call setup_physics_context(ctx, 5)
+        !$acc enter data create(settings)
+
         ctx%dust_type_val = 0
         ctx%add_dust_emission_val = 0
         ctx%nebemlineinspec_val = 1
@@ -1016,30 +969,26 @@ contains
         settings%frac_obrun = 0.0_wp
 
         n = size(ctx%state%spec_lambda)
-        allocate(spec_young(n), spec_old(n), spec_out(n))
-        allocate(neb_young(NEMLINE), neb_old(NEMLINE), neb_out(NEMLINE))
-        spec_young = 100.0_wp
-        spec_old = 0.0_wp
-        neb_young = 0.0_wp
-        neb_old = 0.0_wp
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
 
-        !$acc data copyin(spec_young, spec_old, neb_young, neb_old, settings) copy(spec_out, neb_out)
-        !$acc update device(settings)
-        tmp_dust_type = ctx%dust_type_val
-        tmp_add_dust = ctx%add_dust_emission_val
-        tmp_nebemline = ctx%nebemlineinspec_val
-        ctx%dust_type_val = tmp_dust_type
-        ctx%add_dust_emission_val = tmp_add_dust
-        ctx%nebemlineinspec_val = tmp_nebemline
-        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
-        call apply_dust_attenuation_and_emission(ctx, settings, spec_young, spec_old, &
-                             neb_young, neb_old, spec_out, dust_mass, neb_out)
-        !$acc update self(spec_out, neb_out)
-        !$acc end data
-        call assert_true(all(abs(spec_out - 100.0_wp) <= EPS), "No dust spectrum unchanged", total_tests, total_failures)
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), ctx%state%csp_emlin_young(:, 1), &
+        !$acc               ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1), ctx%state%sfh_w_tmp1(3:3, 1))
+
+        dust_mass = ctx%state%sfh_w_tmp1(3, 1)
+
+        call assert_true(all(abs(ctx%state%dust_spec_total_work(:, 1) - 100.0_wp) <= EPS), &
+                         "No dust spectrum unchanged", total_tests, total_failures)
         call assert_true(dust_mass <= SAFE_FLOOR, "No dust mass ~ 0", total_tests, total_failures)
 
-        deallocate(spec_young, spec_old, spec_out, neb_young, neb_old, neb_out)
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
         call teardown_physics_context(ctx)
 
         ! Test 7.2: Array shape conformance
@@ -1079,6 +1028,8 @@ contains
 
         allocate(ctx)
         ctx%state%nspec = nlam
+        ctx%state%ntfull = 1
+        ctx%state%nz = 1
         allocate(ctx%state%wgdust(nlam, 3, 4, 2))
         allocate(ctx%state%g03smcextn(nlam))
 
@@ -1122,6 +1073,8 @@ contains
 
         allocate(ctx)
         ctx%state%nspec = nlam
+        ctx%state%ntfull = 1
+        ctx%state%nz = 1
         allocate(ctx%state%spec_lambda(nlam))
         allocate(ctx%state%wgdust(nlam, 3, 4, 2))
         allocate(ctx%state%g03smcextn(nlam))

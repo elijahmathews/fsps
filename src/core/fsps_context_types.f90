@@ -132,8 +132,8 @@ module fsps_context_types
         real(WP), allocatable :: lbol_ssp_zz(:, :)
         real(WP), pointer :: time_full(:) => null()
         real(WP), allocatable :: weight_ssp(:, :)
-        real(WP), allocatable :: spec_young(:)
-        real(WP), allocatable :: spec_old(:)
+        real(WP), allocatable :: spec_young(:,:)
+        real(WP), allocatable :: spec_old(:,:)
         real(WP), allocatable :: ssp_temp_grid(:, :)
         integer, allocatable :: ssp_active_idx(:)
         real(WP), allocatable :: ssp_active_w(:)
@@ -162,16 +162,16 @@ module fsps_context_types
         real(WP), allocatable :: csp_emlin_final(:)
 
         ! --- Replacements for csp_buffer_t ---
-        real(WP), allocatable :: csp_weights(:,:)
-        real(WP), allocatable :: csp_emlin_young(:)
-        real(WP), allocatable :: csp_emlin_old(:)
+        real(WP), allocatable :: csp_weights(:,:,:)
+        real(WP), allocatable :: csp_emlin_young(:,:)
+        real(WP), allocatable :: csp_emlin_old(:,:)
 
         ! --- Persistent Physics Workspaces (Dust & Gas) ---
         real(WP), allocatable :: dust_transmission_diffuse(:)
         real(WP), allocatable :: dust_frequencies(:)
-        real(WP), allocatable :: dust_spec_total_work(:)
+        real(WP), allocatable :: dust_spec_total_work(:,:)
         real(WP), allocatable :: dust_emission_shape(:)
-        real(WP), allocatable :: dust_emission_final(:)
+        real(WP), allocatable :: dust_emission_final(:,:)
         real(WP), allocatable :: gas_neb_cont_reduced(:,:)
         real(WP), allocatable :: gas_neb_line_reduced(:,:)
         real(WP), allocatable :: gas_current_step_cont(:)
@@ -180,8 +180,14 @@ module fsps_context_types
         real(WP), allocatable :: sfh_t_calc(:)
         real(WP), allocatable :: sfh_sfr_calc(:)
         real(WP), allocatable :: sfh_age_integrand(:)
-        real(WP), allocatable :: sfh_w_tmp1(:)
-        real(WP), allocatable :: sfh_w_tmp2(:)
+        real(WP), allocatable :: sfh_w_tmp1(:,:)
+        real(WP), allocatable :: sfh_w_tmp2(:,:)
+
+        ! --- Fused Loop Output Buffers ---
+        real(WP), allocatable :: out_csp_spec(:,:)     ! (nspec, n_outputs)
+        real(WP), allocatable :: out_csp_emlin(:,:)    ! (nemline, n_outputs)
+        real(WP), allocatable :: out_mass_csp(:)       ! (n_outputs)
+        real(WP), allocatable :: out_lbol_csp(:)       ! (n_outputs)
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -342,6 +348,12 @@ contains
         if (allocated(state%sfh_age_integrand)) deallocate(state%sfh_age_integrand)
         if (allocated(state%sfh_w_tmp1)) deallocate(state%sfh_w_tmp1)
         if (allocated(state%sfh_w_tmp2)) deallocate(state%sfh_w_tmp2)
+
+        ! --- Fused Loop Output Buffers ---
+        if (allocated(state%out_csp_spec)) deallocate(state%out_csp_spec)
+        if (allocated(state%out_csp_emlin)) deallocate(state%out_csp_emlin)
+        if (allocated(state%out_mass_csp)) deallocate(state%out_mass_csp)
+        if (allocated(state%out_lbol_csp)) deallocate(state%out_lbol_csp)
 
         state%nt = 0
         state%nz = 0

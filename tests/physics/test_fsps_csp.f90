@@ -8,6 +8,7 @@ module test_fsps_csp_mod
                         apply_post_processing, compute_csp_scenario
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: compute_igm_transmission
+    use fsps_smoothing, only: apply_smoothing
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_true, assert_relative_error, assert_int_equals
     implicit none
@@ -80,8 +81,8 @@ contains
         allocate(ctx)
 
         allocate(ctx%state%time_full(size(time_full)))
-        allocate(ctx%state%sfh_w_tmp1(size(time_full)))
-        allocate(ctx%state%sfh_w_tmp2(size(time_full)))
+        allocate(ctx%state%sfh_w_tmp1(max(size(time_full), 3), size(time_full)))
+        allocate(ctx%state%sfh_w_tmp2(max(size(time_full), 3), size(time_full)))
         allocate(ctx%state%sfh_t_calc(NTABMAX))
         allocate(ctx%state%sfh_sfr_calc(NTABMAX))
         allocate(ctx%state%sfh_age_integrand(NTABMAX))
@@ -165,6 +166,9 @@ contains
         if (associated(ctx%state%gaussnebarr)) then
             !$acc exit data delete(ctx%state%gaussnebarr)
         end if
+        if (allocated(ctx%state%ssp_temp_grid)) then
+            !$acc exit data delete(ctx%state%ssp_temp_grid)
+        end if
         !$acc exit data delete(ctx%state)
         !$acc exit data delete(ctx)
 
@@ -211,6 +215,17 @@ contains
             !$acc enter data attach(ctx%state%csp_emlin_young)
             !$acc enter data copyin(ctx%state%csp_emlin_old)
             !$acc enter data attach(ctx%state%csp_emlin_old)
+
+            if (allocated(ctx%state%out_csp_spec)) then
+                !$acc enter data copyin(ctx%state%out_csp_spec)
+                !$acc enter data attach(ctx%state%out_csp_spec)
+                !$acc enter data copyin(ctx%state%out_csp_emlin)
+                !$acc enter data attach(ctx%state%out_csp_emlin)
+                !$acc enter data copyin(ctx%state%out_mass_csp)
+                !$acc enter data attach(ctx%state%out_mass_csp)
+                !$acc enter data copyin(ctx%state%out_lbol_csp)
+                !$acc enter data attach(ctx%state%out_lbol_csp)
+            end if
         end if
 
         ! Map Dust & Gas Workspaces
@@ -298,6 +313,13 @@ contains
             !$acc exit data delete(ctx%state%csp_ssp_lum_linear)
             !$acc exit data delete(ctx%state%csp_spec_final)
             !$acc exit data delete(ctx%state%csp_emlin_final)
+
+            if (allocated(ctx%state%out_csp_spec)) then
+                !$acc exit data delete(ctx%state%out_csp_spec)
+                !$acc exit data delete(ctx%state%out_csp_emlin)
+                !$acc exit data delete(ctx%state%out_mass_csp)
+                !$acc exit data delete(ctx%state%out_lbol_csp)
+            end if
         end if
 
         if (allocated(ctx%state%csp_igm_transmission)) then
@@ -430,7 +452,7 @@ contains
     subroutine test_single_ssp_dirac()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: time_full(:), weights(:,:)
+        real(WP), allocatable :: time_full(:), weights(:,:,:)
         real(WP), allocatable :: spec_lambda(:)
         integer :: n, idx_max, idx_tage
         real(WP) :: log_tage
@@ -445,19 +467,19 @@ contains
         spec_lambda = [5500.0_wp, 5600.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        allocate(weights(n, 1))
+        allocate(weights(n, 1, 1))
 
         pset%sfh = 0
         log_tage = log10(5.0_wp * 1.0e9_wp)
 
-        call compute_sfh_weights(ctx, pset, 5.0_wp, 1, weights)
+        call compute_sfh_weights(ctx, pset, 5.0_wp, 1, 1, weights)
 
-        call assert_float_equals(1.0_wp, sum(weights(:,1)), EPS, &
+        call assert_float_equals(1.0_wp, sum(weights(:,1,1)), EPS, &
                                  "SSP weights sum to 1", total_tests, total_failures)
-        call assert_true(count(weights(:,1) > 1.0e-8_wp) <= 2, &
+        call assert_true(count(weights(:,1,1) > 1.0e-8_wp) <= 2, &
                          "SSP weights localized to one/two bins", total_tests, total_failures)
 
-        idx_max = maxloc(weights(:,1), dim=1)
+        idx_max = maxloc(weights(:,1,1), dim=1)
         idx_tage = find_interval(time_full, log_tage)
         call assert_true(idx_max == idx_tage .or. idx_max == idx_tage + 1, &
                          "SSP peak at target age bin", total_tests, total_failures)
@@ -469,7 +491,7 @@ contains
     subroutine test_exponential_tau_ratio()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: time_full(:), weights(:,:)
+        real(WP), allocatable :: time_full(:), weights(:,:,:)
         real(WP), allocatable :: spec_lambda(:)
         integer :: n, i1, i2
         real(WP) :: ratio
@@ -484,23 +506,23 @@ contains
         spec_lambda = [5500.0_wp, 5600.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        allocate(weights(n, 1))
+        allocate(weights(n, 1, 1))
 
         pset%sfh = 1
         pset%tau = 1.0_wp
 
-        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, weights)
+        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, 1, weights)
 
-        call assert_float_equals(1.0_wp, sum(weights(:,1)), EPS, &
+        call assert_float_equals(1.0_wp, sum(weights(:,1,1)), EPS, &
                                  "Tau weights sum to 1", total_tests, total_failures)
 
         i1 = nearest_index(time_full, log10(1.0e9_wp))
         i2 = nearest_index(time_full, log10(2.0e9_wp))
 
-        call assert_true(weights(i1,1) > SAFE_FLOOR .and. weights(i2,1) > SAFE_FLOOR, &
+        call assert_true(weights(i1,1,1) > SAFE_FLOOR .and. weights(i2,1,1) > SAFE_FLOOR, &
                          "Non-zero tau weights", total_tests, total_failures)
 
-        ratio = weights(i1,1) / weights(i2,1)
+        ratio = weights(i1,1,1) / weights(i2,1,1)
         call assert_relative_error(0.5_wp * exp(-1.0_wp), ratio, 0.2_wp, &
                                    "Tau ratio ~ 0.5 * e^-1", total_tests, total_failures)
 
@@ -511,7 +533,7 @@ contains
     subroutine test_delayed_tau_peak()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: time_full(:), weights(:,:)
+        real(WP), allocatable :: time_full(:), weights(:,:,:)
         real(WP), allocatable :: spec_lambda(:)
         integer :: n, i_peak
 
@@ -525,18 +547,18 @@ contains
         spec_lambda = [5500.0_wp, 5600.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        allocate(weights(n, 1))
+        allocate(weights(n, 1, 1))
 
         pset%sfh = 4
         pset%tau = 2.0_wp
 
-        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, weights)
+        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, 1, weights)
 
         i_peak = nearest_index(time_full, log10(8.0e9_wp))
 
-        call assert_true(weights(i_peak,1) > weights(1,1), &
+        call assert_true(weights(i_peak,1,1) > weights(1,1,1), &
                          "Delayed tau: Peak > Start", total_tests, total_failures)
-        call assert_true(weights(i_peak,1) > weights(n,1), &
+        call assert_true(weights(i_peak,1,1) > weights(n,1,1), &
                          "Delayed tau: Peak > End", total_tests, total_failures)
 
         deallocate(time_full, weights, spec_lambda)
@@ -546,7 +568,7 @@ contains
     subroutine test_burst_addition()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: time_full(:), weights_base(:,:), weights_burst(:,:)
+        real(WP), allocatable :: time_full(:), weights_base(:,:,:), weights_burst(:,:,:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP) :: fburst, excess_mass
         integer :: n, i_burst
@@ -561,7 +583,7 @@ contains
         spec_lambda = [5500.0_wp, 5600.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        allocate(weights_base(n, 1), weights_burst(n, 1))
+        allocate(weights_base(n, 1, 1), weights_burst(n, 1, 1))
 
         pset%sfh = 1
         pset%tau = 1.0_wp
@@ -569,20 +591,20 @@ contains
         fburst = 0.1_wp
 
         pset%fburst = 0.0_wp
-        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, weights_base)
+        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, 1, weights_base)
 
         pset%fburst = fburst
-        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, weights_burst)
+        call compute_sfh_weights(ctx, pset, 10.0_wp, 1, 1, weights_burst)
 
-        call assert_float_equals(1.0_wp, sum(weights_burst(:,1)), EPS, &
+        call assert_float_equals(1.0_wp, sum(weights_burst(:,1,1)), EPS, &
                                  "Burst weights sum to 1", total_tests, total_failures)
 
-        excess_mass = sum(weights_burst(:,1) - (1.0_wp - fburst) * weights_base(:,1))
+        excess_mass = sum(weights_burst(:,1,1) - (1.0_wp - fburst) * weights_base(:,1,1))
         call assert_relative_error(fburst, excess_mass, 1.0e-3_wp, &
                                    "Burst excess mass ~ fburst", total_tests, total_failures)
 
         i_burst = nearest_index(time_full, log10(1.0e9_wp))
-        call assert_true(weights_burst(i_burst,1) > weights_base(i_burst,1), &
+        call assert_true(weights_burst(i_burst,1,1) > weights_base(i_burst,1,1), &
                          "Burst creates localized spike", total_tests, total_failures)
 
         deallocate(time_full, weights_base, weights_burst, spec_lambda)
@@ -592,7 +614,7 @@ contains
     subroutine test_tabular_zmix_interpolation()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: time_full(:), weights(:,:)
+        real(WP), allocatable :: time_full(:), weights(:,:,:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP) :: mass_z1, mass_z2, ratio, dz, zbin
         integer :: n
@@ -614,13 +636,13 @@ contains
         ctx%state%sfh_tab(:, 1) = [0.0_wp, 1.0_wp, 0.019_wp]
         ctx%state%sfh_tab(:, 2) = [1.0e9_wp, 1.0_wp, 0.019_wp]
 
-        allocate(weights(n, 2))
+        allocate(weights(n, 2, 1))
 
         pset%sfh = 3
-        call compute_sfh_weights(ctx, pset, 1.0_wp, 2, weights)
+        call compute_sfh_weights(ctx, pset, 1.0_wp, 2, 1, weights)
 
-        mass_z1 = sum(weights(:,1))
-        mass_z2 = sum(weights(:,2))
+        mass_z1 = sum(weights(:,1,1))
+        mass_z2 = sum(weights(:,2,1))
         ratio = mass_z2 / max(mass_z1 + mass_z2, SAFE_FLOOR)
 
         zbin = 0.019_wp
@@ -643,7 +665,6 @@ contains
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
-        real(WP) :: mass_csp, lbol_csp
         integer :: n
 
         call print_group("CSP Integrator: All Old Limit")
@@ -673,12 +694,17 @@ contains
         pset%dust_tesc = 3.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:1))
+        call integrate_csp_step(ctx, pset, 1, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
         !$acc end data
+
+        !$acc update host(ctx%state%spec_young, ctx%state%spec_old)
         call unmap_csp_workspace_from_device(ctx)
 
-        call assert_true(all(abs(ctx%state%spec_young) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
-        call assert_true(sum(ctx%state%spec_old) > 0.0_wp, "Old component carries flux", total_tests, total_failures)
+        call assert_true(all(abs(ctx%state%spec_young(:, 1)) <= 1.0e-8_wp), "Young component ~0", total_tests, total_failures)
+        call assert_true(sum(ctx%state%spec_old(:, 1)) > 0.0_wp, "Old component carries flux", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
@@ -690,7 +716,6 @@ contains
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
-        real(WP) :: mass_csp, lbol_csp
         integer :: n
 
         call print_group("CSP Integrator: All Young Limit")
@@ -721,12 +746,17 @@ contains
         pset%dust_tesc = 10.15_wp
 
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:1))
+        call integrate_csp_step(ctx, pset, 1, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
         !$acc end data
+
+        !$acc update host(ctx%state%spec_young, ctx%state%spec_old)
         call unmap_csp_workspace_from_device(ctx)
 
-        call assert_true(all(abs(ctx%state%spec_old) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
-        call assert_true(sum(ctx%state%spec_young) > 0.0_wp, "Young component carries flux", total_tests, total_failures)
+        call assert_true(all(abs(ctx%state%spec_old(:, 1)) <= 1.0e-8_wp), "Old component ~0", total_tests, total_failures)
+        call assert_true(sum(ctx%state%spec_young(:, 1)) > 0.0_wp, "Young component carries flux", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
@@ -738,7 +768,7 @@ contains
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
-        real(WP) :: mass_csp, lbol_csp, expected_young, expected_old
+        real(WP) :: expected_young, expected_old
         integer :: n, k
 
         call print_group("CSP Integrator: Split Boundary")
@@ -770,19 +800,22 @@ contains
         pset%dust_tesc = 7.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:1))
+        call integrate_csp_step(ctx, pset, 1, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
         !$acc end data
 
-        !$acc update host(ctx%state%csp_weights)
+        !$acc update host(ctx%state%csp_weights, ctx%state%spec_young, ctx%state%spec_old)
         call unmap_csp_workspace_from_device(ctx)
 
         k = find_interval(time_full, 7.0_wp)
-        expected_young = sum(ctx%state%csp_weights(1:k, 1))
-        expected_old = sum(ctx%state%csp_weights(k+1:n, 1))
+        expected_young = sum(ctx%state%csp_weights(1:k, 1, 1))
+        expected_old = sum(ctx%state%csp_weights(k+1:n, 1, 1))
 
-        call assert_relative_error(expected_young, ctx%state%spec_young(1), REL_EPS, &
+        call assert_relative_error(expected_young, ctx%state%spec_young(1, 1), REL_EPS, &
                                    "Young sum matches weights", total_tests, total_failures)
-        call assert_relative_error(expected_old, ctx%state%spec_old(1), REL_EPS, &
+        call assert_relative_error(expected_old, ctx%state%spec_old(1, 1), REL_EPS, &
                                    "Old sum matches weights", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
@@ -795,7 +828,6 @@ contains
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
-        real(WP) :: mass_csp, lbol_csp
         integer :: n
 
         call print_group("CSP Integrator: Mass Sum Consistency")
@@ -826,15 +858,18 @@ contains
         pset%dust_tesc = 7.0_wp
 
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
-        call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:1))
+        call integrate_csp_step(ctx, pset, 1, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
         !$acc end data
 
-        !$acc update host(ctx%state%csp_weights)
+        !$acc update host(ctx%state%csp_weights, ctx%state%out_mass_csp(1:1))
         call unmap_csp_workspace_from_device(ctx)
 
-        call assert_relative_error(sum(ctx%state%csp_weights(:,1)), mass_csp, REL_EPS, &
+        call assert_relative_error(sum(ctx%state%csp_weights(:,1,1)), ctx%state%out_mass_csp(1), REL_EPS, &
                                    "Mass matches sum of weights", total_tests, total_failures)
-        call assert_relative_error(1.0_wp, mass_csp, 1.0e-3_wp, &
+        call assert_relative_error(1.0_wp, ctx%state%out_mass_csp(1), 1.0e-3_wp, &
                                    "Mass ~1 for normalized weights", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
@@ -862,13 +897,15 @@ contains
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
         call fsps_context_prepare_csp_workspace(ctx)
-
-        ctx%state%spec_young = 1.0_wp
-        ctx%state%spec_old = 1.0_wp
-        ctx%state%csp_emlin_young = 0.0_wp
-        ctx%state%csp_emlin_old = 0.0_wp
-
         call map_csp_workspace_to_device(ctx)
+        !$acc enter data create(pset)
+
+        ctx%state%spec_young(:, 1) = 1.0_wp
+        ctx%state%spec_old(:, 1) = 1.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), &
+        !$acc               ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
 
         allocate(spec_total(size(spec_lambda)))
         allocate(emlin_total(NEMLINE))
@@ -884,17 +921,19 @@ contains
         pset%wgp2 = 1
         pset%wgp3 = 1
 
-        !$acc data copyin(pset) copy(spec_total, emlin_total)
-        call apply_dust_physics(ctx, pset, spec_total, emlin_total, mdust)
-        !$acc end data
+        !$acc update device(pset)
+        call apply_dust_physics(ctx, pset, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
 
-        call assert_true(spec_total(1) > 1.0_wp .and. spec_total(1) < 2.0_wp, &
+        call assert_true(ctx%state%dust_spec_total_work(1, 1) > 1.0_wp .and. ctx%state%dust_spec_total_work(1, 1) < 2.0_wp, &
                          "Young attenuated, old unattenuated", total_tests, total_failures)
-        call assert_relative_error(exp(-1.0_wp), spec_total(1) - 1.0_wp, 1.0e-3_wp, &
+        call assert_relative_error(exp(-1.0_wp), ctx%state%dust_spec_total_work(1, 1) - 1.0_wp, 1.0e-3_wp, &
                                    "Young component attenuated", total_tests, total_failures)
 
-        deallocate(time_full, spec_lambda, spec_total, emlin_total)
+        deallocate(time_full, spec_lambda)
         call unmap_csp_workspace_from_device(ctx)
+        !$acc exit data delete(pset)
         call teardown_basic_context(ctx)
     end subroutine test_dust_screen_logic
 
@@ -905,7 +944,6 @@ contains
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
         real(WP), allocatable :: spec_no(:), spec_yes(:), emlines(:), igm(:)
-        real(WP) :: mass_csp, lbol_csp, mdust
         integer :: i_blue, i_red
 
         call print_group("IGM: Absorption Toggle")
@@ -917,44 +955,48 @@ contains
         spec_lambda = [900.0_wp, 1100.0_wp, 1300.0_wp, 1500.0_wp]
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
-        allocate(spec_no(size(spec_lambda)))
-        allocate(spec_yes(size(spec_lambda)))
-        allocate(emlines(NEMLINE))
         allocate(igm(size(spec_lambda)))
-        spec_no = 1.0_wp
-        spec_yes = 1.0_wp
-        emlines = 0.0_wp
-
-        allocate(result_no%mags(ctx%state%nbands))
-        allocate(result_no%indx(ctx%state%nindx))
-        allocate(result_yes%mags(ctx%state%nbands))
-        allocate(result_yes%indx(ctx%state%nindx))
+        allocate(result_no%spec(size(spec_lambda)))
+        allocate(result_yes%spec(size(spec_lambda)))
 
         pset%sfh = 0
         pset%tage = 5.0_wp
         pset%zred = 3.0_wp
         pset%igm_factor = 1.0_wp
 
-        mass_csp = 1.0_wp
-        lbol_csp = 0.0_wp
-        mdust = 0.0_wp
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
+        !$acc enter data create(pset)
+
+        ctx%state%dust_spec_total_work(:, 1) = 1.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+        ctx%state%sfh_t_calc(1) = pset%tage
+        !$acc update device(ctx%state%dust_spec_total_work(:, 1), ctx%state%csp_emlin_young(:, 1), &
+        !$acc               ctx%state%csp_emlin_old(:, 1), ctx%state%sfh_t_calc(1:1))
 
         ctx%add_igm_absorption_val = 0
+        !$acc update device(ctx%add_igm_absorption_val, pset)
 
-        !$acc data copyin(pset) copy(spec_no, emlines)
-        call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_no, emlines, result=result_no)
-        !$acc end data
+        call apply_post_processing(ctx, pset, 1)
+        !$acc wait(1)
+        !$acc update host(ctx%state%out_csp_spec(:, 1))
+        result_no%spec = ctx%state%out_csp_spec(:, 1)
 
+        ctx%state%dust_spec_total_work(:, 1) = 1.0_wp
         ctx%add_igm_absorption_val = 1
+        !$acc update device(ctx%state%dust_spec_total_work(:, 1), ctx%add_igm_absorption_val)
 
-        ! Map the local mock arrays for the GPU subroutine call
         !$acc data copyin(spec_lambda) copyout(igm)
         call compute_igm_transmission(spec_lambda, pset%zred, pset%igm_factor, igm)
         !$acc end data
 
-        !$acc data copyin(pset, igm) copy(spec_yes, emlines)
-        call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec_yes, emlines, igm, result_yes)
+        !$acc data copyin(igm)
+        call apply_post_processing(ctx, pset, 1, igm)
+        !$acc wait(1)
         !$acc end data
+        !$acc update host(ctx%state%out_csp_spec(:, 1))
+        result_yes%spec = ctx%state%out_csp_spec(:, 1)
 
         i_blue = 1
         i_red = 4
@@ -964,18 +1006,18 @@ contains
         call assert_relative_error(result_no%spec(i_red), result_yes%spec(i_red), 1.0e-6_wp, &
                                    "Redward flux unchanged", total_tests, total_failures)
 
-        deallocate(time_full, spec_lambda, spec_no, spec_yes, emlines, igm)
+        deallocate(time_full, spec_lambda, igm)
+        !$acc exit data delete(pset)
+        call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_igm_absorption_toggle
 
     subroutine test_smoothing_conserves_flux()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        type(compspout) :: result
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: spec(:), emlines(:)
-        real(WP) :: mass_csp, lbol_csp, mdust
+        real(WP), allocatable :: spec(:)
         real(WP) :: area_before, area_after, peak_before, peak_after
         integer :: n
 
@@ -992,16 +1034,9 @@ contains
         call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
 
         allocate(spec(n))
-        allocate(emlines(NEMLINE))
         spec = 0.0_wp
         spec(n/2) = 1.0_wp
-        emlines = 0.0_wp
 
-        allocate(result%mags(ctx%state%nbands))
-        allocate(result%indx(ctx%state%nindx))
-
-        pset%sfh = 0
-        pset%tage = 5.0_wp
         pset%sigma_smooth = 200.0_wp
         pset%min_wave_smooth = minval(spec_lambda)
         pset%max_wave_smooth = maxval(spec_lambda)
@@ -1011,21 +1046,17 @@ contains
         area_before = sum(spec)
         peak_before = maxval(spec)
 
-        mass_csp = 1.0_wp
-        lbol_csp = 0.0_wp
-        mdust = 0.0_wp
+        ! Call smoothing directly (operates on the host arrays)
+        call apply_smoothing(ctx, spec_lambda, spec, &
+                             pset%sigma_smooth, pset%min_wave_smooth, pset%max_wave_smooth)
 
-        !$acc data copyin(pset) copy(spec, emlines)
-        call apply_post_processing(ctx, pset, pset%tage, mass_csp, lbol_csp, mdust, spec, emlines, result=result)
-        !$acc end data
-
-        area_after = sum(result%spec)
-        peak_after = maxval(result%spec)
+        area_after = sum(spec)
+        peak_after = maxval(spec)
 
         call assert_true(peak_after < peak_before, "Smoothing lowers peak", total_tests, total_failures)
         call assert_relative_error(area_before, area_after, 1.0e-2_wp, "Smoothing conserves flux", total_tests, total_failures)
 
-        deallocate(time_full, spec_lambda, spec, emlines)
+        deallocate(time_full, spec_lambda, spec)
         call teardown_basic_context(ctx)
     end subroutine test_smoothing_conserves_flux
 
