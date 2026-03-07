@@ -177,6 +177,11 @@ module fsps_context_types
         real(WP), allocatable :: gas_current_step_cont(:)
         real(WP), allocatable :: gas_current_step_lines(:)
         real(WP), allocatable :: scalar_reductions(:)
+        real(WP), allocatable :: sfh_t_calc(:)
+        real(WP), allocatable :: sfh_sfr_calc(:)
+        real(WP), allocatable :: sfh_age_integrand(:)
+        real(WP), allocatable :: sfh_w_tmp1(:)
+        real(WP), allocatable :: sfh_w_tmp2(:)
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -332,6 +337,11 @@ contains
         if (allocated(state%gas_current_step_cont)) deallocate(state%gas_current_step_cont)
         if (allocated(state%gas_current_step_lines)) deallocate(state%gas_current_step_lines)
         if (allocated(state%scalar_reductions)) deallocate(state%scalar_reductions)
+        if (allocated(state%sfh_t_calc)) deallocate(state%sfh_t_calc)
+        if (allocated(state%sfh_sfr_calc)) deallocate(state%sfh_sfr_calc)
+        if (allocated(state%sfh_age_integrand)) deallocate(state%sfh_age_integrand)
+        if (allocated(state%sfh_w_tmp1)) deallocate(state%sfh_w_tmp1)
+        if (allocated(state%sfh_w_tmp2)) deallocate(state%sfh_w_tmp2)
 
         state%nt = 0
         state%nz = 0

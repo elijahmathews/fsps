@@ -7,7 +7,7 @@ module fsps_context
     !> `fsps_context_t`, along with high-level SSP/CSP execution helpers.
 
     use fsps_precision, only: WP
-    use fsps_constants, only: NEMLINE, NEBNAGE
+    use fsps_constants, only: NEMLINE, NEBNAGE, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
     use fsps_environment, only: fsps_cleanup
@@ -728,6 +728,9 @@ contains
         if (.not. allocated(ctx%state%csp_emlin_final)) allocate(ctx%state%csp_emlin_final(NEMLINE))
         if (.not. allocated(ctx%state%gas_current_step_lines)) allocate(ctx%state%gas_current_step_lines(NEMLINE))
         if (.not. allocated(ctx%state%scalar_reductions)) allocate(ctx%state%scalar_reductions(2))
+        if (.not. allocated(ctx%state%sfh_t_calc)) allocate(ctx%state%sfh_t_calc(NTABMAX))
+        if (.not. allocated(ctx%state%sfh_sfr_calc)) allocate(ctx%state%sfh_sfr_calc(NTABMAX))
+        if (.not. allocated(ctx%state%sfh_age_integrand)) allocate(ctx%state%sfh_age_integrand(NTABMAX))
 
         ! Allocate spectrum-dependent arrays
         if (nspec > 0) then
@@ -753,6 +756,8 @@ contains
         ! Allocate age/metallicity dependent arrays
         if (nt > 0 .and. nz_max > 0) then
             if (.not. allocated(ctx%state%csp_weights)) allocate(ctx%state%csp_weights(nt, nz_max))
+            if (.not. allocated(ctx%state%sfh_w_tmp1)) allocate(ctx%state%sfh_w_tmp1(nt))
+            if (.not. allocated(ctx%state%sfh_w_tmp2)) allocate(ctx%state%sfh_w_tmp2(nt))
             if (.not. allocated(ctx%state%csp_ssp_lum_linear)) allocate(ctx%state%csp_ssp_lum_linear(nt, nz_max))
             if (.not. allocated(ctx%state%csp_emlin_grid)) allocate(ctx%state%csp_emlin_grid(NEMLINE, nt, nz_max))
 
@@ -1163,6 +1168,26 @@ contains
             !$acc enter data copyin(ctx%state%scalar_reductions)
             !$acc enter data attach(ctx%state%scalar_reductions)
         end if
+        if (allocated(ctx%state%sfh_t_calc)) then
+            !$acc enter data copyin(ctx%state%sfh_t_calc)
+            !$acc enter data attach(ctx%state%sfh_t_calc)
+        end if
+        if (allocated(ctx%state%sfh_sfr_calc)) then
+            !$acc enter data copyin(ctx%state%sfh_sfr_calc)
+            !$acc enter data attach(ctx%state%sfh_sfr_calc)
+        end if
+        if (allocated(ctx%state%sfh_age_integrand)) then
+            !$acc enter data copyin(ctx%state%sfh_age_integrand)
+            !$acc enter data attach(ctx%state%sfh_age_integrand)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp1)) then
+            !$acc enter data copyin(ctx%state%sfh_w_tmp1)
+            !$acc enter data attach(ctx%state%sfh_w_tmp1)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp2)) then
+            !$acc enter data copyin(ctx%state%sfh_w_tmp2)
+            !$acc enter data attach(ctx%state%sfh_w_tmp2)
+        end if
     end subroutine fsps_context_move_to_device
 
     !> @brief Removes the context and its data from the device.
@@ -1450,6 +1475,21 @@ contains
             end if
             if (allocated(s%scalar_reductions)) then
                 !$acc exit data delete(s%scalar_reductions)
+            end if
+            if (allocated(s%sfh_t_calc)) then
+                !$acc exit data delete(s%sfh_t_calc)
+            end if
+            if (allocated(s%sfh_sfr_calc)) then
+                !$acc exit data delete(s%sfh_sfr_calc)
+            end if
+            if (allocated(s%sfh_age_integrand)) then
+                !$acc exit data delete(s%sfh_age_integrand)
+            end if
+            if (allocated(s%sfh_w_tmp1)) then
+                !$acc exit data delete(s%sfh_w_tmp1)
+            end if
+            if (allocated(s%sfh_w_tmp2)) then
+                !$acc exit data delete(s%sfh_w_tmp2)
             end if
         end associate
 

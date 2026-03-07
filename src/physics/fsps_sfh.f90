@@ -76,16 +76,20 @@ contains
     !> 2. **Vectorized Math:** Node values are computed once per step to determine `dt`,
     !>    avoiding redundant power/log calls.
     !>
-    !> @param[in]  ctx      The FSPS context (contains time grids `time_full`).
-    !> @param[in]  sfh      The SFH parameters structure.
-    !> @param[in]  idx_min  Index of the youngest SSP to consider (optimization floor).
-    !> @param[in]  idx_max  Index of the oldest SSP to consider (optimization ceiling).
-    !> @param[out] weights  The calculated weights for each SSP (size: `ntfull`).
+    !> @param[in]    ctx      The FSPS context (contains time grids `time_full`).
+    !> @param[in]    sfh      The SFH parameters structure.
+    !> @param[in]    idx_min  Index of the youngest SSP to consider (optimization floor).
+    !> @param[in]    idx_max  Index of the oldest SSP to consider (optimization ceiling).
+    !> @param[inout] weights  The calculated weights for each SSP (size: `ntfull`).
     pure subroutine compute_ssp_weights(ctx, sfh, idx_min, idx_max, weights)
         type(fsps_context_t), intent(in) :: ctx
         type(SFHPARAMS), intent(in) :: sfh
         integer, intent(in) :: idx_min, idx_max
-        real(WP), dimension(:), intent(out), contiguous :: weights
+        ! Note: weights is intent(inout) rather than intent(out) to bypass
+        ! NVHPC array descriptor reallocation bugs on the device.
+        real(WP), dimension(:), intent(inout), contiguous :: weights
+
+        !$acc routine seq
 
         integer :: j, nt
         integer :: j_start, j_end
@@ -273,6 +277,8 @@ contains
         type(params), intent(in) :: pset
         real(WP), intent(in) :: age_gyr
         real(WP), intent(out) :: mass_frac, sfr_norm, frac_linear
+
+        !$acc routine seq
 
         ! Local variables
         real(WP) :: t_max_gyr, t_prime_gyr, t_trunc_gyr, t_zero_sfr_gyr
@@ -471,6 +477,8 @@ contains
 
     end subroutine get_sfh_properties_at_age
 
+    !> 
+
     !> @brief Computes derived SFH statistics (Mean Age, recent sSFRs).
     !>
     !> @details
@@ -485,13 +493,13 @@ contains
     !> * **Numerical:** For Types 2 & 3 (Tabular), uses robust trapezoidal integration 
     !>   (`fsps_integration`) over the lookup table.
     !>
-    !> @param[in]  ctx          FSPS context (required for Tabular SFH data).
-    !> @param[in]  pset         User parameters.
-    !> @param[in]  model        Output model structure (contains current age).
-    !> @param[out] ssfr_log_out Array of log10(sSFR) for [1Myr, 10Myr, 100Myr]. Units: log(yr^-1).
-    !> @param[out] mean_age     Mass-weighted average age (Gyr).
-    pure subroutine compute_sfh_statistics(ctx, pset, model, ssfr_log_out, mean_age)
-        type(fsps_context_t), intent(in) :: ctx
+    !> @param[inout] ctx          FSPS context (required for Tabular SFH data).
+    !> @param[in]    pset         User parameters.
+    !> @param[in]    model        Output model structure (contains current age).
+    !> @param[out]   ssfr_log_out Array of log10(sSFR) for [1Myr, 10Myr, 100Myr]. Units: log(yr^-1).
+    !> @param[out]   mean_age     Mass-weighted average age (Gyr).
+    subroutine compute_sfh_statistics(ctx, pset, model, ssfr_log_out, mean_age)
+        type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in) :: pset
         type(compspout), intent(in) :: model
         real(WP), dimension(3), intent(out) :: ssfr_log_out
@@ -511,7 +519,6 @@ contains
         real(WP) :: age_current_yr
         integer :: n_tab, idx_cut
         real(WP) :: slope_last, sfr_at_age
-        real(WP) :: t_calc(NTABMAX), sfr_calc(NTABMAX), age_integrand(NTABMAX)
         real(WP) :: total_mass, mass_in_window
         real(WP) :: t_start_win_yr
         integer :: idx_win_start
@@ -628,15 +635,15 @@ contains
 
             ! Fill arrays (converting strided table access to contiguous temp)
             do i = 1, idx_cut
-                t_calc(i)   = ctx%state%sfh_tab(1, i)
-                sfr_calc(i) = ctx%state%sfh_tab(2, i)
+                ctx%state%sfh_t_calc(i)   = ctx%state%sfh_tab(1, i)
+                ctx%state%sfh_sfr_calc(i) = ctx%state%sfh_tab(2, i)
             end do
             ! Add the exact endpoint
-            t_calc(idx_cut + 1)   = age_current_yr
-            sfr_calc(idx_cut + 1) = sfr_at_age
+            ctx%state%sfh_t_calc(idx_cut + 1)   = age_current_yr
+            ctx%state%sfh_sfr_calc(idx_cut + 1) = sfr_at_age
 
             ! 2. Integrate Total Mass
-            total_mass = integrate_trapezoid_array(t_calc(1:idx_cut+1), sfr_calc(1:idx_cut+1))
+            total_mass = integrate_trapezoid_array(ctx%state%sfh_t_calc(1:idx_cut+1), ctx%state%sfh_sfr_calc(1:idx_cut+1))
             
             if (total_mass <= SAFE_FLOOR) then
                 mean_age = 0.0_wp
@@ -649,30 +656,30 @@ contains
             
             ! Vectorized calculation of integrand
             do i = 1, idx_cut + 1
-                age_integrand(i) = (age_current_yr - t_calc(i)) * sfr_calc(i)
+                ctx%state%sfh_age_integrand(i) = (age_current_yr - ctx%state%sfh_t_calc(i)) * ctx%state%sfh_sfr_calc(i)
             end do
             
-            mean_age = integrate_trapezoid_array(t_calc(1:idx_cut+1), age_integrand(1:idx_cut+1)) / total_mass
+            mean_age = integrate_trapezoid_array(ctx%state%sfh_t_calc(1:idx_cut+1), ctx%state%sfh_age_integrand(1:idx_cut+1)) / &
+                       total_mass
             mean_age = mean_age / 1.0e9_wp ! Convert yr -> Gyr
-            
+
             ! 4. Compute sSFRs over windows
-            do i = 1, 3
-                t_start_win_yr = age_current_yr - (lookback_windows(i) * 1.0e9_wp)
-                
-                if (t_start_win_yr < 0.0_wp) t_start_win_yr = 0.0_wp
+             do i = 1, 3
+                 t_start_win_yr = age_current_yr - (lookback_windows(i) * 1.0e9_wp)
+                 if (t_start_win_yr < 0.0_wp) t_start_win_yr = 0.0_wp
 
-                ! Find index in our local t_calc array
-                idx_win_start = find_interval(t_calc, t_start_win_yr)
-                idx_win_start = max(1, idx_win_start)
+                 ! Find index in our local array
+                 idx_win_start = find_interval(ctx%state%sfh_t_calc(1:idx_cut+1), t_start_win_yr)
+                 idx_win_start = max(1, idx_win_start)
 
-                mass_in_window = integrate_trapezoid_array(t_calc(idx_win_start:idx_cut+1), &
-                                                           sfr_calc(idx_win_start:idx_cut+1))
-                
-                ! Normalization: sSFR = (Mass_Window / Total_Mass) / Window_Size
-                ssfr_log_out(i) = log10(max(mass_in_window / max(model%mass_csp, SAFE_FLOOR) / &
-                                            (lookback_windows(i) * 1.0e9_wp), SAFE_FLOOR))
-            end do
+                 mass_in_window = integrate_trapezoid_array(ctx%state%sfh_t_calc(idx_win_start:idx_cut+1), &
+                                                            ctx%state%sfh_sfr_calc(idx_win_start:idx_cut+1))
 
+                 ! Normalization: sSFR = (Mass_Window / Total_Mass) / Window_Size
+                 ssfr_log_out(i) = log10(max(mass_in_window / max(model%mass_csp, SAFE_FLOOR) / &
+                                             (lookback_windows(i) * 1.0e9_wp), SAFE_FLOOR))
+             end do
+            
         else
             ! Unsupported type
             ssfr_log_out = -99.0_wp
@@ -745,6 +752,8 @@ contains
         type(fsps_context_t), intent(in) :: ctx
         real(WP), dimension(2), intent(in) :: limits
         real(WP), intent(out) :: m0, m1
+
+        !$acc routine seq
 
         integer :: idx_start, idx_end, i
         real(WP) :: t_start_yr, t_end_yr

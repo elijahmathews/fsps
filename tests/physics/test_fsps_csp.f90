@@ -1,6 +1,6 @@
 module test_fsps_csp_mod
     use fsps_precision, only: WP
-    use fsps_constants, only: SAFE_FLOOR, NEMLINE, C_LIGHT
+    use fsps_constants, only: SAFE_FLOOR, NEMLINE, C_LIGHT, NTABMAX
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
     use fsps_context, only: fsps_context_prepare_csp_workspace, fsps_context_update_ssp_basis
@@ -80,6 +80,11 @@ contains
         allocate(ctx)
 
         allocate(ctx%state%time_full(size(time_full)))
+        allocate(ctx%state%sfh_w_tmp1(size(time_full)))
+        allocate(ctx%state%sfh_w_tmp2(size(time_full)))
+        allocate(ctx%state%sfh_t_calc(NTABMAX))
+        allocate(ctx%state%sfh_sfr_calc(NTABMAX))
+        allocate(ctx%state%sfh_age_integrand(NTABMAX))
         ctx%state%time_full = time_full
         ctx%state%ntfull = size(time_full)
         ctx%state%nspec = size(spec_lambda)
@@ -164,6 +169,11 @@ contains
         !$acc exit data delete(ctx)
 
         if (associated(ctx%state%time_full)) deallocate(ctx%state%time_full)
+        if (allocated(ctx%state%sfh_w_tmp1)) deallocate(ctx%state%sfh_w_tmp1)
+        if (allocated(ctx%state%sfh_w_tmp2)) deallocate(ctx%state%sfh_w_tmp2)
+        if (allocated(ctx%state%sfh_t_calc)) deallocate(ctx%state%sfh_t_calc)
+        if (allocated(ctx%state%sfh_sfr_calc)) deallocate(ctx%state%sfh_sfr_calc)
+        if (allocated(ctx%state%sfh_age_integrand)) deallocate(ctx%state%sfh_age_integrand)
         if (associated(ctx%state%spec_lambda)) deallocate(ctx%state%spec_lambda)
         if (associated(ctx%state%spec_nu)) deallocate(ctx%state%spec_nu)
         if (associated(ctx%state%bands)) deallocate(ctx%state%bands)
@@ -177,6 +187,7 @@ contains
 
     subroutine map_csp_workspace_to_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+
         if (allocated(ctx%state%csp_weights)) then
             !$acc enter data copyin(ctx%state%csp_ssp_grid)
             !$acc enter data attach(ctx%state%csp_ssp_grid)
@@ -243,6 +254,26 @@ contains
             !$acc enter data copyin(ctx%state%scalar_reductions)
             !$acc enter data attach(ctx%state%scalar_reductions)
         end if
+        if (allocated(ctx%state%sfh_t_calc)) then
+            !$acc enter data copyin(ctx%state%sfh_t_calc)
+            !$acc enter data attach(ctx%state%sfh_t_calc)
+        end if
+        if (allocated(ctx%state%sfh_sfr_calc)) then
+            !$acc enter data copyin(ctx%state%sfh_sfr_calc)
+            !$acc enter data attach(ctx%state%sfh_sfr_calc)
+        end if
+        if (allocated(ctx%state%sfh_age_integrand)) then
+            !$acc enter data copyin(ctx%state%sfh_age_integrand)
+            !$acc enter data attach(ctx%state%sfh_age_integrand)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp1)) then
+            !$acc enter data copyin(ctx%state%sfh_w_tmp1)
+            !$acc enter data attach(ctx%state%sfh_w_tmp1)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp2)) then
+            !$acc enter data copyin(ctx%state%sfh_w_tmp2)
+            !$acc enter data attach(ctx%state%sfh_w_tmp2)
+        end if
     end subroutine map_csp_workspace_to_device
 
     subroutine unmap_csp_workspace_from_device(ctx)
@@ -303,6 +334,21 @@ contains
         end if
         if (allocated(ctx%state%scalar_reductions)) then
             !$acc exit data delete(ctx%state%scalar_reductions)
+        end if
+        if (allocated(ctx%state%sfh_t_calc)) then
+            !$acc exit data delete(ctx%state%sfh_t_calc)
+        end if
+        if (allocated(ctx%state%sfh_sfr_calc)) then
+            !$acc exit data delete(ctx%state%sfh_sfr_calc)
+        end if
+        if (allocated(ctx%state%sfh_age_integrand)) then
+            !$acc exit data delete(ctx%state%sfh_age_integrand)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp1)) then
+            !$acc exit data delete(ctx%state%sfh_w_tmp1)
+        end if
+        if (allocated(ctx%state%sfh_w_tmp2)) then
+            !$acc exit data delete(ctx%state%sfh_w_tmp2)
         end if
     end subroutine unmap_csp_workspace_from_device
 
@@ -726,6 +772,8 @@ contains
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
+
+        !$acc update host(ctx%state%csp_weights)
         call unmap_csp_workspace_from_device(ctx)
 
         k = find_interval(time_full, 7.0_wp)
@@ -780,6 +828,8 @@ contains
         !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call integrate_csp_step(ctx, pset, 10.0_wp, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum, mass_csp, lbol_csp)
         !$acc end data
+
+        !$acc update host(ctx%state%csp_weights)
         call unmap_csp_workspace_from_device(ctx)
 
         call assert_relative_error(sum(ctx%state%csp_weights(:,1)), mass_csp, REL_EPS, &

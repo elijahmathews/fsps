@@ -255,11 +255,10 @@ contains
         ctx%state%csp_emlin_old   = 0.0_wp
         !$acc end kernels
 
-        ! 2. Compute SFH Weights on Host (Bypasses device stack overflow)
+        ! 2. Compute SFH Weights
+        !$acc serial present(ctx)
         call compute_sfh_weights(ctx, pset, tage, nzin, ctx%state%csp_weights)
-
-        ! Update full array to device
-        !$acc update device(ctx%state%csp_weights)
+        !$acc end serial
 
         ! 3. Determine Dust Separation Index
         if (pset%dust_tesc > SAFE_FLOOR) then
@@ -623,32 +622,41 @@ contains
     !> Ensures that the final weights sum to 1.0 M_sol formed (or appropriate 
     !> mass fraction) so that the resulting spectrum is per unit mass formed.
     !>
-    !> @param[in]  ctx     Context.
-    !> @param[in]  pset    User parameters.
-    !> @param[in]  tage    Age of the galaxy [Gyr].
-    !> @param[in]  nzin    Number of metallicity bins.
-    !> @param[out] weights Output weights [ntfull, nzin].
+    !> @param[inout] ctx     Context.
+    !> @param[in]    pset    User parameters.
+    !> @param[in]    tage    Age of the galaxy [Gyr].
+    !> @param[in]    nzin    Number of metallicity bins.
+    !> @param[inout] weights Weights [ntfull, nzin].
     subroutine compute_sfh_weights(ctx, pset, tage, nzin, weights)
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: pset
-        real(WP), intent(in)             :: tage
-        integer, intent(in)              :: nzin
-        real(WP), intent(out), contiguous:: weights(:,:)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: tage
+        integer, intent(in)                 :: nzin
+        ! Note: weights is intent(inout) rather than intent(out) to bypass
+        ! NVHPC array descriptor reallocation bugs on the device.
+        real(WP), intent(inout), contiguous :: weights(:,:)
+
+        !$acc routine seq
 
         ! Local variables
         type(sfhparams) :: sfh
-        real(WP), dimension(size(weights, 1)) :: w_tmp1, w_tmp2
         real(WP) :: mass1, mass2
         real(WP) :: frac_linear, mass_frac, sfr, fburst_val
         real(WP) :: t1, t2, dt, zbin, dz
-        integer :: k, imin, imax
+        integer :: i, k, imin, imax
         integer :: nt, j
 
         ! 1. Setup
         nt = ctx%state%ntfull
-        weights = 0.0_wp
-        w_tmp1  = 0.0_wp
-        w_tmp2  = 0.0_wp
+        do k = 1, nzin
+            do i = 1, nt
+                weights(i, k) = 0.0_wp
+            end do
+        end do
+        do i = 1, nt
+            ctx%state%sfh_w_tmp1(i) = 0.0_wp
+            ctx%state%sfh_w_tmp2(i) = 0.0_wp
+        end do
 
         ! Initialize SFH struct with unit conversions (Gyr -> Yr)
         call convert_sfhparams(pset, tage, sfh)
@@ -688,17 +696,20 @@ contains
                 
                 ! Constant Component
                 sfh%type = 0 ! Constant
-                call compute_ssp_weights(ctx, sfh, imin, imax, w_tmp1)
-                mass1 = sum(w_tmp1(1:imax))
+                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
+                mass1 = 0.0_wp
+                do i = 1, imax
+                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+                end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
                 ! Burst Component
-                w_tmp2 = 0.0_wp
+                ctx%state%sfh_w_tmp2 = 0.0_wp
                 fburst_val = 0.0_wp
                 
                 if (sfh%tb >= 0.0_wp) then
                     sfh%type = -1 ! Burst
-                    call compute_ssp_weights(ctx, sfh, imin, imax, w_tmp2)
+                    call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2)
                     fburst_val = pset%fburst
                     
                     ! Extend imax to include burst if it happened earlier
@@ -706,10 +717,11 @@ contains
                 end if
 
                 ! Combine: (1 - C - B) * Tau + C * Const + B * Burst
-                weights(:, 1) = (1.0_wp - pset%const - fburst_val) * weights(:, 1) + &
-                                pset%const * (w_tmp1 / mass1) + &
-                                fburst_val * w_tmp2 
-                                ! Note: w_tmp2 (Burst) comes pre-normalized
+                do i = 1, nt
+                    weights(i, 1) = (1.0_wp - pset%const - fburst_val) * weights(i, 1) + &
+                                    pset%const * (ctx%state%sfh_w_tmp1(i) / mass1) + &
+                                    fburst_val * ctx%state%sfh_w_tmp2(i)
+                end do
             end if
             return
         end if
@@ -721,15 +733,21 @@ contains
             ! A. Delayed Tau Portion
             sfh%type = 4
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, w_tmp1)
-            mass1 = sum(w_tmp1(1:imax))
+            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
+            mass1 = 0.0_wp
+            do i = 1, imax
+                mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+            end do
 
             ! B. Linear Cutoff Portion
             sfh%type = 5
             sfh%use_simha_limits = 1
-            call compute_ssp_weights(ctx, sfh, imin, imax, w_tmp2)
+            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2)
             sfh%use_simha_limits = 0
-            mass2 = sum(w_tmp2(1:imax))
+            mass2 = 0.0_wp
+            do i = 1, imax
+                mass2 = mass2 + ctx%state%sfh_w_tmp2(i)
+            end do
 
             ! Normalize
             if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
@@ -739,8 +757,10 @@ contains
             call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr, frac_linear)
 
             ! Combine
-            weights(:, 1) = (w_tmp1 / mass1) * (1.0_wp - frac_linear) + &
-                            (w_tmp2 / mass2) * frac_linear
+            do i = 1, nt
+                weights(i, 1) = (ctx%state%sfh_w_tmp1(i) / mass1) * (1.0_wp - frac_linear) + &
+                                (ctx%state%sfh_w_tmp2(i) / mass2) * frac_linear
+            end do
             return
         end if
 
@@ -789,9 +809,12 @@ contains
                 imin = min(max(find_interval(ctx%state%time_full, log10(max(t1, SAFE_FLOOR))) - 1, 0), nt)
                 imax = min(max(find_interval(ctx%state%time_full, log10(max(t2, SAFE_FLOOR))) + 2, 0), nt)
                 
-                call compute_ssp_weights(ctx, sfh, imin, imax, w_tmp1)
+                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1)
                 
-                mass1 = sum(w_tmp1)
+                mass1 = 0.0_wp
+                do i = 1, nt
+                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i)
+                end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
                 ! Distribute to Metallicities
@@ -805,11 +828,15 @@ contains
                     dz = max(min(dz, 1.0_wp), -1.0_wp) ! Clamp extrapolation
                     
                     ! Vectorized Add
-                    weights(:, k)   = weights(:, k)   + (1.0_wp - dz) * w_tmp1 * (mass2 / mass1)
-                    weights(:, k+1) = weights(:, k+1) + dz            * w_tmp1 * (mass2 / mass1)
+                    do i = 1, nt
+                        weights(i, k)   = weights(i, k)   + (1.0_wp - dz) * ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
+                        weights(i, k+1) = weights(i, k+1) + dz            * ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
+                    end do
                 else
                     ! Single Z
-                    weights(:, 1) = weights(:, 1) + w_tmp1 * (mass2 / mass1)
+                    do i = 1, nt
+                        weights(i, 1) = weights(i, 1) + ctx%state%sfh_w_tmp1(i) * (mass2 / mass1)
+                    end do
                 end if
             end do
         end if
