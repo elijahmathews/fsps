@@ -295,7 +295,7 @@ contains
         end if
 
         ! 2. Apply Attenuation to Stellar Spectra
-        !$acc parallel loop collapse(2) present(ctx) private(curve, trans_birth, trans_old, spec_sum) async(1)
+        !$acc parallel loop collapse(2) present(ctx) private(i, curve, trans_birth, trans_old, spec_sum) async(1)
         do i_out = 1, n_outputs
             do i = 1, nspec
                 curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
@@ -332,7 +332,8 @@ contains
             sum_neb_attenuated = 0.0_wp
 
             !$acc loop vector reduction(+:sum_neb_intrinsic, sum_neb_attenuated) &
-            !$acc private(search_val, search_lower, search_upper, search_mid, search_slope, trans_diffuse_neb, neb_birth, intrinsic_flux, att_young, att_old)
+            !$acc private(search_val, search_lower, search_upper, search_mid, search_slope, &
+            !$acc         trans_diffuse_neb, neb_birth, intrinsic_flux, att_young, att_old)
             do i = 1, nem
                 if (one_minus_nodust <= SAFE_FLOOR) then
                     trans_diffuse_neb = 1.0_wp

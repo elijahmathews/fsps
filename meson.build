@@ -38,15 +38,18 @@ datadir = get_option('datadir')
 
 accel_target = get_option('accel')
 accel_args = []
+accel_defs = []
 if accel_target != 'none'
     if fc_id != 'nvidia_hpc'
         warning('Hardware acceleration requested but compiler does not support OpenACC. Ignoring accel option.')
     else
         if accel_target == 'multicore'
             accel_args = ['-acc=multicore']
+            accel_defs = ['-DACC_MULTICORE']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
             accel_args = ['-acc=gpu', '-gpu=cc70,cc80,cc90,ptx']
+            accel_defs = ['-DACC_GPU']
         endif
     endif
 endif
@@ -54,7 +57,7 @@ endif
 # Create a dependency object that explicitly propagates these flags
 # to both compile and link stages across all consuming targets.
 accel_dep = declare_dependency(
-    compile_args : accel_args,
+    compile_args : accel_args + accel_defs,
     link_args : accel_args
 )
 

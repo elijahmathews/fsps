@@ -347,7 +347,7 @@ contains
 
         ! Manual Matmul
         ! spectrum(j) = sum(gauss(j, i) * flux(i))
-        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val) firstprivate(t_idx, q_val)
+        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val, i) firstprivate(t_idx, q_val)
         do j = 1, size(spectrum, 1)
             sum_val = 0.0_wp
             do i = 1, NEMLINE

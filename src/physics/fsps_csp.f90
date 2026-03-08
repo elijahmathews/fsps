@@ -112,7 +112,7 @@ contains
         nt = ctx%state%ntfull
         nspec = ctx%state%nspec
 
-        !$acc parallel loop collapse(3) present(ctx)
+        !$acc parallel loop collapse(3) present(ctx) private(i, i_spec)
         do k = 1, nzin
             do i = 1, nt
                 do i_spec = 1, nspec
@@ -121,7 +121,7 @@ contains
             end do
         end do
 
-        !$acc parallel loop collapse(3) present(ctx)
+        !$acc parallel loop collapse(3) present(ctx) private(i, i_em)
         do k = 1, nzin
             do i = 1, nt
                 do i_em = 1, NEMLINE
@@ -340,14 +340,14 @@ contains
         i_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
 
         ! 1. Clear Accumulators (Fused)
-        !$acc parallel loop collapse(2) present(ctx) private(i_Spec) async(1)
+        !$acc parallel loop collapse(2) present(ctx) private(i_spec) async(1)
         do i_out = 1, n_outputs
             do i_spec = 1, nspec
                 ctx%state%spec_young(i_spec, i_out) = 0.0_wp
                 ctx%state%spec_old(i_spec, i_out)   = 0.0_wp
             end do
         end do
-        !$acc parallel loop collapse(2) present(ctx) private(i_Spec) async(1)
+        !$acc parallel loop collapse(2) present(ctx) private(i_em) async(1)
         do i_out = 1, n_outputs
             do i_em = 1, nem
                 ctx%state%csp_emlin_young(i_em, i_out) = 0.0_wp
@@ -356,17 +356,25 @@ contains
         end do
 
         ! 2. Compute SFH Weights (Gang Parallel over Time)
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
         !$acc parallel loop gang present(ctx) async(1)
         do i_out = 1, n_outputs
             call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
         end do
+#else
+        do i_out = 1, n_outputs
+            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
+        end do
+#endif
 
         ! 3. Integration Loop for Scalars (Vector Reduction mapped to out buffers)
         !$acc parallel loop gang present(ctx, mass_ssp, ssp_lum_linear) private(linear_lbol_sum, k, i, weight_ik) async(1)
         do i_out = 1, n_outputs
             ctx%state%out_mass_csp(i_out) = 0.0_wp
             linear_lbol_sum               = 0.0_wp
+            !$acc loop seq
             do k = 1, nzin
+                !$acc loop seq
                 do i = 1, nt
                     weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
@@ -390,8 +398,10 @@ contains
         ! =====================================================================
         !$acc parallel loop gang present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i, i_spec) async(1)
         do i_out = 1, n_outputs
+            !$acc loop seq
             do k = 1, nzin
                 ! Young stars
+                !$acc loop seq
                 do i = 1, i_tesc
                     weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
@@ -403,6 +413,7 @@ contains
                     end if
                 end do
                 ! Old stars
+                !$acc loop seq
                 do i = i_tesc + 1, nt
                     weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
@@ -453,8 +464,10 @@ contains
         ! =====================================================================
         !$acc parallel loop gang present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i, i_em) async(1)
         do i_out = 1, n_outputs
+            !$acc loop seq
             do k = 1, nzin
                 ! Young stars
+                !$acc loop seq
                 do i = 1, i_tesc
                     weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
@@ -466,6 +479,7 @@ contains
                     end if
                 end do
                 ! Old stars
+                !$acc loop seq
                 do i = i_tesc + 1, nt
                     weight_ik = ctx%state%csp_weights(i, k, i_out)
                     if (weight_ik > SAFE_FLOOR) then
@@ -564,7 +578,8 @@ contains
         nem   = NEMLINE
 
         ! 1. Post-process Spectra (Mass Renormalization & IGM)
-        !$acc parallel loop collapse(2) present(ctx, igm_transmission) private(tage, mass_frac, sfr_norm, frac_linear) async(1)
+        !$acc parallel loop collapse(2) present(ctx, igm_transmission) &
+        !$acc private(tage, mass_frac, sfr_norm, frac_linear, i_spec) async(1)
         do i_out = 1, n_outputs
             do i_spec = 1, nspec
                 ! Recalculate scalars locally on device to bypass temp arrays
@@ -584,7 +599,8 @@ contains
         end do
 
         ! 2. Post-process Emission Lines (Combination & Mass Renormalization)
-        !$acc parallel loop collapse(2) present(ctx) private(tage, mass_frac, sfr_norm, frac_linear) async(1)
+        !$acc parallel loop collapse(2) present(ctx) &
+        !$acc private(tage, mass_frac, sfr_norm, frac_linear, i_em) async(1)
         do i_out = 1, n_outputs
             do i_em = 1, nem
                 tage = ctx%state%sfh_t_calc(i_out)
