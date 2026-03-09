@@ -288,10 +288,10 @@ contains
     !> @param[in]    optical_depth_factor Scaling factor for $\tau$.
     !> @param[out]   transmission         Transmission fraction array [0.0 - 1.0].
     subroutine compute_igm_transmission(wavelength_grid, source_redshift, optical_depth_factor, transmission)
-        real(WP), dimension(:), intent(in), contiguous :: wavelength_grid
+        real(WP), dimension(:), intent(in) :: wavelength_grid
         real(WP), intent(in) :: source_redshift
         real(WP), intent(in) :: optical_depth_factor
-        real(WP), dimension(:), intent(out), contiguous :: transmission
+        real(WP), dimension(:), intent(out) :: transmission
 
         real(WP) :: one_plus_z, observed_wavelength, lambda_ratio, tau_val
         real(WP) :: max_tau

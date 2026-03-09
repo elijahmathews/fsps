@@ -21,7 +21,7 @@ program benchmark_hotpaths
     real(c_double) :: val
     character(len=20) :: isoc_arg, spec_arg, dust_arg
     character(len=20) :: dust2_key, imf3_key
-    character(len=20) :: mags_key, indx_key
+    character(len=20) :: mags_key, indx_key, tage_key
     character(len=255) :: arg_val
 
     ! Initialize keys
@@ -29,6 +29,7 @@ program benchmark_hotpaths
     imf3_key  = "imf3"
     mags_key  = "compute_mags"
     indx_key  = "compute_indices"
+    tage_key  = "tage"
 
     ! Defaults match test_runner-style usage
     isoc_arg = "mist"
@@ -113,6 +114,13 @@ program benchmark_hotpaths
     call fsps_set_param_int(ctx, mags_key, 0, status)
     call fsps_set_param_int(ctx, indx_key, 0, status)
 
+    ! Explicitly set tage > 0 to trigger the n_outputs == 1 hot path
+    call fsps_set_param_float(ctx, tage_key, 13.7d0, status)
+    if (status /= 0) then
+        print *, "ERROR: fsps_set_param_float(tage) failed"
+        stop 1
+    end if
+
     ! Migrate the fully-populated context to the device
     call fsps_context_move_to_device(ctx)
 
@@ -136,7 +144,7 @@ program benchmark_hotpaths
 
     ! --- Benchmark 1: CSP Only ---
     print *, "Benchmarking CSP Only..."
-    n_iter_csp = 100
+    n_iter_csp = 1000
     csp_bypass_count = 0
     
     call system_clock(t1, rate)

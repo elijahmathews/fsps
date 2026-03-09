@@ -32,11 +32,14 @@ contains
         call test_delayed_tau_peak()
         call test_burst_addition()
         call test_tabular_zmix_interpolation()
+        call test_tabular_single_z()
+        call test_simha_sfh_mixing()
 
         call test_all_old_limit()
         call test_all_young_limit()
         call test_split_boundary()
         call test_mass_sum_consistency()
+        call test_hotpath_equivalence()
 
         call test_dust_screen_logic()
         call test_igm_absorption_toggle()
@@ -46,6 +49,10 @@ contains
         call test_mass_normalization_surviving()
         call test_nebular_precalculation()
         call test_fast_mode_skips_optional_outputs()
+
+        call test_driver_status_codes()
+        call test_driver_igm_precalc()
+        call test_driver_tabular_tage_99()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_csp_tests
@@ -656,6 +663,95 @@ contains
         call teardown_basic_context(ctx)
     end subroutine test_tabular_zmix_interpolation
 
+    subroutine test_tabular_single_z()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: time_full(:), weights(:,:,:)
+        real(WP), allocatable :: spec_lambda(:)
+        integer :: n
+
+        call print_group("SFH Weights: Tabular Single Z")
+
+        n = 100
+        allocate(time_full(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        allocate(spec_lambda(2))
+        spec_lambda = [5500.0_wp, 5600.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+
+        ! Setup a simple constant SFR table to make the integral easy to verify
+        ctx%state%ntabsfh = 3
+        ! Forward time [years], SFR [M/yr], Z
+        ctx%state%sfh_tab(1, 1:3) = [0.0_wp, 1.0e9_wp, 2.0e9_wp]
+        ctx%state%sfh_tab(2, 1:3) = [2.0_wp, 2.0_wp, 2.0_wp]
+        ctx%state%sfh_tab(3, 1:3) = [0.02_wp, 0.02_wp, 0.02_wp]
+
+        allocate(weights(n, 1, 1))
+
+        pset%sfh = 3
+
+        ! Evaluate at tage = 1.5 Gyr.
+        ! Because the SFR is exactly 2.0 M_sol/yr constantly, the total formed
+        ! mass by 1.5 Gyr should be exactly 3.0e9 M_sol.
+        call compute_sfh_weights(ctx, pset, 1.5_wp, 1, 1, weights)
+
+        call assert_relative_error(3.0e9_wp, sum(weights(:,1,1)), REL_EPS, &
+                                   "Tabular single Z mass matches analytic integral", total_tests, total_failures)
+
+        deallocate(time_full, weights, spec_lambda)
+        call teardown_basic_context(ctx)
+    end subroutine test_tabular_single_z
+
+    subroutine test_simha_sfh_mixing()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: time_full(:), weights_early(:,:,:), weights_late(:,:,:), weights_pure_tau(:,:,:)
+        real(WP), allocatable :: spec_lambda(:)
+        integer :: n
+
+        call print_group("SFH Weights: Simha (sfh=5) Mixing")
+
+        n = 100
+        allocate(time_full(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        allocate(spec_lambda(2))
+        spec_lambda = [5500.0_wp, 5600.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+
+        allocate(weights_early(n, 1, 1), weights_late(n, 1, 1), weights_pure_tau(n, 1, 1))
+
+        pset%sfh = 5
+        pset%tau = 2.0_wp
+        pset%sf_start = 1.0_wp
+        pset%sf_trunc = 5.0_wp
+        pset%sf_slope = 0.5_wp
+
+        ! Test 1: Before truncation (tage = 3.0 Gyr). Should be purely delayed tau.
+        call compute_sfh_weights(ctx, pset, 3.0_wp, 1, 1, weights_early)
+
+        ! Test 2: After truncation (tage = 7.0 Gyr). Should be a mixed profile.
+        call compute_sfh_weights(ctx, pset, 7.0_wp, 1, 1, weights_late)
+
+        ! Reference pure delayed tau for comparison
+        pset%sfh = 4
+        call compute_sfh_weights(ctx, pset, 7.0_wp, 1, 1, weights_pure_tau)
+
+        ! Assertions: Simha handles its own normalization to 1.0 M_sol formed.
+        call assert_float_equals(1.0_wp, sum(weights_early(:,1,1)), EPS, &
+                                 "Early Simha weights sum to 1", total_tests, total_failures)
+        call assert_float_equals(1.0_wp, sum(weights_late(:,1,1)), EPS, &
+                                 "Late Simha weights sum to 1", total_tests, total_failures)
+
+        ! Ensure the linear mixing actually activated
+        call assert_true(any(abs(weights_late(:,1,1) - weights_pure_tau(:,1,1)) > 1.0e-4_wp), &
+                         "Late Simha differs from pure delayed tau", total_tests, total_failures)
+
+        deallocate(time_full, weights_early, weights_late, weights_pure_tau, spec_lambda)
+        call teardown_basic_context(ctx)
+    end subroutine test_simha_sfh_mixing
+
     ! ---------------------------------------------------------------------
     ! Group 2: Integration & Young/Old Split
     ! ---------------------------------------------------------------------
@@ -875,6 +971,148 @@ contains
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
         call teardown_basic_context(ctx)
     end subroutine test_mass_sum_consistency
+
+    subroutine test_hotpath_equivalence()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: time_full(:)
+        real(WP), allocatable :: spec_lambda(:)
+        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        integer :: n, k, i, ispec, iem
+        integer, parameter :: nz_mock = 3  ! Test multiple metallicities
+
+        real(WP) :: mass_1, lbol_1
+        real(WP), allocatable :: spec_young_1(:), spec_old_1(:), em_young_1(:), em_old_1(:)
+        real(WP) :: max_err
+
+        call print_group("CSP Integrator: Hotpath Equivalence (N=1 vs N>1)")
+
+        n = 60
+        allocate(time_full(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        allocate(spec_lambda(100))
+        call fill_log_grid(spec_lambda, 3.0_wp, 4.0_wp)
+        spec_lambda = 10.0_wp**spec_lambda
+
+        ! Setup context with multiple metallicities
+        call setup_basic_context(ctx, time_full, spec_lambda, nz_mock, 1)
+
+        ! Allocate dummy inputs with nz_mock
+        allocate(ssp_grid(size(spec_lambda), n, nz_mock))
+        allocate(emlin_grid(NEMLINE, n, nz_mock))
+        allocate(mass_ssp(n, nz_mock))
+        allocate(ssp_lum(n, nz_mock))
+
+        ! Fill the arrays with structured, non-uniform mock data
+        do k = 1, nz_mock
+            do i = 1, n
+                mass_ssp(i, k) = real(i, WP) * 0.1_wp * real(k, WP)
+                ssp_lum(i, k)  = real(i, WP) * 0.2_wp * real(k, WP)
+                do ispec = 1, size(spec_lambda)
+                    ssp_grid(ispec, i, k) = real(ispec, WP) + real(i, WP)*0.01_wp + real(k, WP)
+                end do
+                do iem = 1, NEMLINE
+                    emlin_grid(iem, i, k) = real(iem, WP)*0.5_wp + real(i, WP)*0.01_wp + real(k, WP)
+                end do
+            end do
+        end do
+
+        call fsps_context_prepare_csp_workspace(ctx)
+        call map_csp_workspace_to_device(ctx)
+
+        pset%sfh = 1
+        pset%tau = 2.0_wp
+        pset%dust_tesc = 7.0_wp
+
+        ! Mock weights so they aren't zero
+        ctx%state%csp_weights = 0.5_wp
+        !$acc update device(ctx%state%csp_weights)
+
+        ! ==========================================================
+        ! CALL 1: Run the `n_outputs == 1` hot path
+        ! ==========================================================
+        !$acc data copyin(ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:1))
+
+        call integrate_csp_step(ctx, pset, 1, 1, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
+
+        ! Fetch results back to the host
+        !$acc update host(ctx%state%out_mass_csp(1:1), ctx%state%out_lbol_csp(1:1))
+        !$acc update host(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1))
+        !$acc update host(ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
+
+        mass_1 = ctx%state%out_mass_csp(1)
+        lbol_1 = ctx%state%out_lbol_csp(1)
+
+        allocate(spec_young_1(size(spec_lambda)))
+        allocate(spec_old_1(size(spec_lambda)))
+        allocate(em_young_1(NEMLINE))
+        allocate(em_old_1(NEMLINE))
+
+        spec_young_1 = ctx%state%spec_young(:, 1)
+        spec_old_1   = ctx%state%spec_old(:, 1)
+        em_young_1   = ctx%state%csp_emlin_young(:, 1)
+        em_old_1     = ctx%state%csp_emlin_old(:, 1)
+
+        ! ==========================================================
+        ! CALL 2: Run the generic `n_outputs > 1` path
+        ! ==========================================================
+        ctx%state%out_mass_csp    = 0.0_wp
+        ctx%state%out_lbol_csp    = 0.0_wp
+        ctx%state%spec_young      = 0.0_wp
+        ctx%state%spec_old        = 0.0_wp
+        ctx%state%csp_emlin_young = 0.0_wp
+        ctx%state%csp_emlin_old   = 0.0_wp
+        !$acc update device(ctx%state%out_mass_csp, ctx%state%out_lbol_csp, ctx%state%spec_young)
+        !$acc update device(ctx%state%spec_old, ctx%state%csp_emlin_young, ctx%state%csp_emlin_old)
+
+        ! Give it a dummy second output to force `n_outputs = 2`
+        ctx%state%sfh_t_calc(1) = 10.0_wp
+        ctx%state%sfh_t_calc(2) = 5.0_wp
+        !$acc update device(ctx%state%sfh_t_calc(1:2))
+
+        ! Integrate with `n_outputs = 2`
+        call integrate_csp_step(ctx, pset, 1, 2, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        !$acc wait(1)
+        !$acc end data
+
+        ! Fetch results back to the host
+        !$acc update host(ctx%state%out_mass_csp(1:1), ctx%state%out_lbol_csp(1:1))
+        !$acc update host(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1))
+        !$acc update host(ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
+
+        ! ==========================================================
+        ! Strict Element-Wise Verifications
+        ! ==========================================================
+        call assert_float_equals(mass_1, ctx%state%out_mass_csp(1), REL_EPS, &
+                                 "Scalars: Mass matches N>1 path", total_tests, total_failures)
+        call assert_float_equals(lbol_1, ctx%state%out_lbol_csp(1), REL_EPS, &
+                                 "Scalars: Lbol matches N>1 path", total_tests, total_failures)
+
+        max_err = maxval(abs(spec_young_1 - ctx%state%spec_young(:, 1)))
+        call assert_float_equals(0.0_wp, max_err, REL_EPS, &
+                                 "Spectra: Young bin-by-bin match N>1", total_tests, total_failures)
+
+        max_err = maxval(abs(spec_old_1 - ctx%state%spec_old(:, 1)))
+        call assert_float_equals(0.0_wp, max_err, REL_EPS, &
+                                 "Spectra: Old bin-by-bin match N>1", total_tests, total_failures)
+
+        max_err = maxval(abs(em_young_1 - ctx%state%csp_emlin_young(:, 1)))
+        call assert_float_equals(0.0_wp, max_err, REL_EPS, &
+                                 "Emission: Young lines bin-by-bin match N>1", total_tests, total_failures)
+
+        max_err = maxval(abs(em_old_1 - ctx%state%csp_emlin_old(:, 1)))
+        call assert_float_equals(0.0_wp, max_err, REL_EPS, &
+                                 "Emission: Old lines bin-by-bin match N>1", total_tests, total_failures)
+
+        deallocate(spec_young_1, spec_old_1, em_young_1, em_old_1)
+        deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
+        call unmap_csp_workspace_from_device(ctx)
+        call teardown_basic_context(ctx)
+    end subroutine test_hotpath_equivalence
 
     ! ---------------------------------------------------------------------
     ! Group 3: Physics & Post-Processing
@@ -1284,5 +1522,150 @@ contains
         call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_fast_mode_skips_optional_outputs
+
+    ! ---------------------------------------------------------------------
+    ! Group 5: Conditional Branching & Edge Cases
+    ! ---------------------------------------------------------------------
+    subroutine test_driver_status_codes()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:), spec_lambda(:)
+        ! Add temporary variables to feed the basis updater
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+        integer :: status
+
+        call print_group("Driver: Error Status Codes")
+
+        allocate(time_full(2), spec_lambda(2))
+        time_full = [6.0_wp, 10.0_wp]
+        spec_lambda = [5500.0_wp, 5600.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 2, 1)
+
+        pset%sfh = 0
+        pset%tage = 1.0_wp
+
+        ! 1. Test Status 1: Setup not checked
+        ctx%state%check_sps_setup = 0
+        call compute_csp_scenario(ctx, pset, 1, results, status)
+        call assert_int_equals(1, status, "Status 1: SPS setup unchecked", total_tests, total_failures)
+        ctx%state%check_sps_setup = 1 ! Restore for next checks
+
+        ! 2. Test Status 3: SSP basis arrays unallocated
+        ! (setup_basic_context does not allocate ssp_basis_* arrays)
+        call compute_csp_scenario(ctx, pset, 1, results, status)
+        call assert_int_equals(3, status, "Status 3: SSP basis unallocated", total_tests, total_failures)
+
+        ! 3. Test Status 2: Nebular emission requested with multiple metallicities
+        call fsps_context_prepare_csp_workspace(ctx)
+
+        ! Properly allocate and map the basis arrays to the device using the context API
+        allocate(tspec_ssp(2, 2, 2), mass_ssp(2, 2), lbol_ssp(2, 2))
+        tspec_ssp = 1.0_wp; mass_ssp = 1.0_wp; lbol_ssp = 0.0_wp
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 2)
+        call map_csp_workspace_to_device(ctx)
+
+        ctx%add_neb_emission_val = 1
+
+        ! Pass nzin=2 to trigger the error branch
+        call compute_csp_scenario(ctx, pset, 2, results, status)
+        call assert_int_equals(2, status, "Status 2: Nebular emission with nzin > 1", total_tests, total_failures)
+
+        ! Cleanup
+        deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        if (allocated(results)) deallocate(results)
+        call unmap_csp_workspace_from_device(ctx)
+        call teardown_basic_context(ctx)
+    end subroutine test_driver_status_codes
+
+    subroutine test_driver_igm_precalc()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:), spec_lambda(:)
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+
+        call print_group("Driver: IGM Pre-calculation Branch")
+
+        allocate(time_full(2), spec_lambda(2))
+        time_full = [6.0_wp, 10.0_wp]
+        spec_lambda = [1000.0_wp, 1500.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+
+        call fsps_context_prepare_csp_workspace(ctx)
+        allocate(tspec_ssp(2, 2, 1), mass_ssp(2, 1), lbol_ssp(2, 1))
+        tspec_ssp = 1.0_wp; mass_ssp = 1.0_wp; lbol_ssp = 0.0_wp
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+        call map_csp_workspace_to_device(ctx)
+
+        pset%sfh = 0
+        pset%tage = 5.0_wp
+
+        ! Force the IGM precalc condition to evaluate as True
+        pset%zred = 2.0_wp
+        pset%igm_factor = 1.0_wp
+        ctx%add_igm_absorption_val = 1
+
+        ! Initialize to a dummy value (-1) to guarantee the conditional block executes and overwrites it
+        ctx%state%csp_igm_transmission = -1.0_wp
+        !$acc update device(ctx%state%csp_igm_transmission)
+
+        call compute_csp_scenario(ctx, pset, 1, results)
+
+        !$acc update host(ctx%state%csp_igm_transmission)
+        call assert_true(all(ctx%state%csp_igm_transmission >= 0.0_wp), &
+                         "IGM transmission array populated", total_tests, total_failures)
+
+        deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        if (allocated(results)) deallocate(results)
+        call unmap_csp_workspace_from_device(ctx)
+        call teardown_basic_context(ctx)
+    end subroutine test_driver_igm_precalc
+
+    subroutine test_driver_tabular_tage_99()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:), spec_lambda(:)
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+        real(WP) :: max_tab_age
+
+        call print_group("Driver: Tabular SFH with tage=-99")
+
+        allocate(time_full(2), spec_lambda(2))
+        time_full = [6.0_wp, 10.0_wp]
+        spec_lambda = [5500.0_wp, 5600.0_wp]
+        call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+
+        call fsps_context_prepare_csp_workspace(ctx)
+        allocate(tspec_ssp(2, 2, 1), mass_ssp(2, 1), lbol_ssp(2, 1))
+        tspec_ssp = 1.0_wp; mass_ssp = 1.0_wp; lbol_ssp = 0.0_wp
+        call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+        call map_csp_workspace_to_device(ctx)
+
+        ! Trigger the tabular/array SFH pathway
+        pset%sfh = 3
+        ! Set the special "Evaluate at end of table" flag
+        pset%tage = -99.0_wp
+
+        ! Mock up a dummy tabular SFH
+        ctx%state%ntabsfh = 2
+        ctx%state%sfh_tab(1, 1:2) = [0.0_wp, 2.5e9_wp]
+        ctx%state%sfh_tab(2, 1:2) = [1.0_wp, 1.0_wp]
+        ctx%state%sfh_tab(3, 1:2) = [0.02_wp, 0.02_wp]
+
+        max_tab_age = 2.5_wp ! (Gyr)
+
+        call compute_csp_scenario(ctx, pset, 1, results)
+
+        call assert_int_equals(1, size(results), "Only 1 output generated for tage=-99", total_tests, total_failures)
+        call assert_float_equals(log10(max_tab_age * 1.0e9_wp), results(1)%age, 1.0e-5_wp, &
+                                 "Output age evaluates exactly at max tabular age", total_tests, total_failures)
+
+        deallocate(time_full, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+        if (allocated(results)) deallocate(results)
+        call unmap_csp_workspace_from_device(ctx)
+        call teardown_basic_context(ctx)
+    end subroutine test_driver_tabular_tage_99
 
 end module test_fsps_csp_mod
