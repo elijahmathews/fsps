@@ -88,8 +88,8 @@ endif
 # ===================================
 
 lib_sources = files(
-    # ABI Modules
-    'src/abi/fsps_c_driver.f90',
+    # Language Binding Modules
+    'src/bindings/c/fsps_c_api.f90',
 
     # Core FSPS Modules
     'src/core/fsps_cache.f90',

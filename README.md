@@ -12,7 +12,7 @@ This repository contains a modernized, thread-safe implementation of the **Flexi
 
 1. **No Global State:** All simulation state is encapsulated in `fsps_context_t` handles.
 2. **Thread Safety:** Multiple FSPS contexts can run simultaneously on different threads (OpenMP/pthreads compatible).
-3. **Stable C ABI:** A standardized C driver (`fsps_c_driver`) allows direct linking from C, C++, Rust, Julia, and Python (via `ctypes`/`cffi`) without relying on `f2py`.
+3. **Stable C bindings:** Standardized C bindings (`fsps_c_api`) allow direct linking from C, C++, Rust, Julia, and Python (via `ctypes`/`cffi`) without relying on `f2py`.
 4. **Modern Build System:** Streamlined Meson build system supporting shared libraries, `pkg-config`, and standard installation paths.
 
 ## Installation

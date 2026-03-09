@@ -1,9 +1,9 @@
-module fsps_c_driver
+module fsps_c_api
     !> @brief
     !> C/Fortran interoperability layer for FSPS.
     !>
     !> @details
-    !> Exposes a stable C ABI for driving FSPS from C/C++ and other languages.
+    !> Exposes stable C bindings for driving FSPS from C/C++ and other languages.
     !> This module owns the legacy global state and handle-based context pool.
 
     use iso_c_binding
@@ -1954,4 +1954,4 @@ contains
         if (ncopy + 2 <= c_len) c_ptr(ncopy + 2:c_len) = c_null_char
     end subroutine f_to_c_string
 
-end module FSPS_C_DRIVER
+end module fsps_c_api
