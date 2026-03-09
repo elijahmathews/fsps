@@ -164,6 +164,12 @@ test_utils_dep = declare_dependency(link_with : test_utils_lib)
 
 # 2. Unit Tests
 unit_test_sources = files(
+    'tests/core/test_fsps_cache.f90',
+    'tests/core/test_fsps_context.f90',
+    'tests/core/test_fsps_context_types.f90',
+    'tests/core/test_fsps_strings.f90',
+    'tests/core/test_fsps_types.f90',
+
     'tests/io/test_fsps_io.f90',
 
     'tests/math/test_fsps_integration.f90',

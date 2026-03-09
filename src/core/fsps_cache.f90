@@ -15,6 +15,7 @@ module fsps_cache
     private
 
     public :: fsps_setup_cache_t
+    public :: fsps_setup_cache_ptr_t
     public :: fsps_cache_get_setup
     public :: fsps_cache_release_setup
 
@@ -103,7 +104,11 @@ module fsps_cache
         real(WP), pointer :: time_full(:) => null()
     end type fsps_setup_cache_t
 
-    type(fsps_setup_cache_t), target, allocatable :: setup_cache(:)
+    type :: fsps_setup_cache_ptr_t
+        type(fsps_setup_cache_t), pointer :: p => null()
+    end type fsps_setup_cache_ptr_t
+
+    type(fsps_setup_cache_ptr_t), allocatable :: setup_cache(:)
 
 contains
 
@@ -117,7 +122,7 @@ contains
         logical, intent(out) :: is_new
 
         integer :: i, empty_slot
-        type(fsps_setup_cache_t), allocatable :: tmp(:)
+        type(fsps_setup_cache_ptr_t), allocatable :: tmp(:)
 
         is_new = .false.
         empty_slot = 0
@@ -125,23 +130,23 @@ contains
 
         if (allocated(setup_cache)) then
             do i = 1, size(setup_cache)
-                if (len_trim(setup_cache(i)%key) == 0) then
+                if (.not. associated(setup_cache(i)%p)) cycle
+                if (len_trim(setup_cache(i)%p%key) == 0) then
                     if (empty_slot == 0) empty_slot = i
-                else if (trim(setup_cache(i)%key) == trim(key)) then
-                    setup_cache(i)%refcount = setup_cache(i)%refcount + 1
-                    entry => setup_cache(i)
+                else if (trim(setup_cache(i)%p%key) == trim(key)) then
+                    setup_cache(i)%p%refcount = setup_cache(i)%p%refcount + 1
+                    entry => setup_cache(i)%p
                     return
                 end if
             end do
         end if
 
         is_new = .true.
-
         if (allocated(setup_cache)) then
             if (empty_slot > 0) then
-                setup_cache(empty_slot)%key = trim(key)
-                setup_cache(empty_slot)%refcount = 1
-                entry => setup_cache(empty_slot)
+                setup_cache(empty_slot)%p%key = trim(key)
+                setup_cache(empty_slot)%p%refcount = 1
+                entry => setup_cache(empty_slot)%p
                 return
             end if
             allocate (tmp(size(setup_cache) + 1))
@@ -151,9 +156,11 @@ contains
             allocate (setup_cache(1))
         end if
 
-        setup_cache(size(setup_cache))%key = trim(key)
-        setup_cache(size(setup_cache))%refcount = 1
-        entry => setup_cache(size(setup_cache))
+        ! Explicitly allocate the cache object on the heap
+        allocate(setup_cache(size(setup_cache))%p)
+        setup_cache(size(setup_cache))%p%key = trim(key)
+        setup_cache(size(setup_cache))%p%refcount = 1
+        entry => setup_cache(size(setup_cache))%p
     end subroutine fsps_cache_get_setup
 
     !> @brief Release a setup cache entry and free it when refcount hits zero.
