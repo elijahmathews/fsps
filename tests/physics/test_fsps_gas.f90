@@ -56,6 +56,9 @@ contains
         call test_old_universe_clamp()
         call test_toggle_switches()
 
+        call test_xrb_switch_lines()
+        call test_no_ionizing_wavelengths()
+
         call test_weight_continuity()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
@@ -708,8 +711,97 @@ contains
         call teardown_gas_context(ctx)
     end subroutine test_toggle_switches
 
+
     ! ------------------------------------------------------------------------
-    ! GROUP 4: Automatic Differentiation (AD) Safety
+    ! GROUP 4: Edge Cases
+    ! ------------------------------------------------------------------------
+    subroutine test_xrb_switch_lines()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), dimension(4) :: lambda
+        real(WP), dimension(1) :: time_full
+        real(WP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        integer :: tmp_add_neb_cont, tmp_nebemlineinspec, tmp_add_xrb
+
+        call print_group("XRB Switch for Lines (BPSS grid)")
+
+        lambda = [500.0_wp, 700.0_wp, 900.0_wp, 1200.0_wp]
+        time_full = [1.0_wp]
+        call setup_gas_context(ctx, lambda, time_full)
+
+        allocate(sspi(4,1), sspo(4,1), nebemline(NEMLINE,1))
+        sspo = 0.0_wp
+        nebemline = 0.0_wp
+        sspi(:,1) = 0.0_wp
+        sspi(1:3,1) = 1.0_wp ! Provide ionizing flux
+
+        pset%frac_obrun = 0.0_wp
+        pset%gas_logz = 0.0_wp
+        pset%gas_logu = 0.0_wp
+
+        ! Request lines AND use BPSS XRB grid
+        ctx%add_neb_continuum_val = 0
+        ctx%nebemlineinspec_val = 1
+        ctx%add_xrb_emission_val = 1
+        ctx%state%isoc_type = 'bpss'
+
+        ! Set xnebem_line to a distinct valid value to ensure it processes
+        ctx%state%nebem_line = -100.0_wp
+        ctx%state%xnebem_line = -20.0_wp
+
+        !$acc update device(ctx%state%nebem_line, ctx%state%xnebem_line)
+
+        !$acc data copyin(sspi, pset) copy(sspo, nebemline)
+        !$acc update device(pset)
+        tmp_add_neb_cont = ctx%add_neb_continuum_val
+        tmp_nebemlineinspec = ctx%nebemlineinspec_val
+        tmp_add_xrb = ctx%add_xrb_emission_val
+        ctx%add_neb_continuum_val = tmp_add_neb_cont
+        ctx%nebemlineinspec_val = tmp_nebemlineinspec
+        ctx%add_xrb_emission_val = tmp_add_xrb
+        !$acc update device(ctx%add_neb_continuum_val, ctx%nebemlineinspec_val, ctx%add_xrb_emission_val)
+
+        call apply_nebular_emission(ctx, pset, sspi, sspo, nebemline)
+
+        !$acc update self(sspo, nebemline)
+        !$acc end data
+
+        ! If the xnebem_line grid was accessed, we should get emission based on -20.0
+        call assert_true(nebemline(1,1) > 0.0_wp, "Uses XRB grid for lines successfully", total_tests, total_failures)
+
+        deallocate(sspi, sspo, nebemline)
+        call teardown_gas_context(ctx)
+    end subroutine test_xrb_switch_lines
+
+    subroutine test_no_ionizing_wavelengths()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), dimension(3) :: lambda
+        real(WP), dimension(1) :: time_full
+        real(WP), dimension(3,1) :: spec_in, spec_out
+        real(WP) :: q_val
+
+        call print_group("No Ionizing Wavelengths (whlylim < 2)")
+
+        ! All wavelengths are > 912 A (Lyman Limit)
+        lambda = [1000.0_wp, 1500.0_wp, 2000.0_wp]
+        time_full = [1.0_wp]
+        call setup_gas_context(ctx, lambda, time_full)
+
+        spec_in = 1.0_wp
+        spec_out = spec_in
+        pset%frac_obrun = 0.0_wp
+
+        ! Process radiation; because there are no wavelengths < 912A, whlylim < 2
+        call process_ionizing_radiation(ctx, pset, spec_in, spec_out, 1, q_val)
+
+        call assert_float_equals(0.0_wp, q_val, EPS, "Q(H) strictly 0.0 when whlylim < 2", total_tests, total_failures)
+
+        call teardown_gas_context(ctx)
+    end subroutine test_no_ionizing_wavelengths
+
+    ! ------------------------------------------------------------------------
+    ! GROUP 5: Automatic Differentiation (AD) Safety
     ! ------------------------------------------------------------------------
     subroutine test_weight_continuity()
         real(WP), dimension(3) :: grid

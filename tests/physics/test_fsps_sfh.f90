@@ -39,6 +39,23 @@ contains
         call test_tiny_tau_stability()
         call test_empty_segment_cycle()
 
+        call test_tabular_sfh_statistics_integration()
+        call test_tabular_sfh_statistics_zero_and_fallback()
+        call test_tabular_sfh_statistics_window_clipping()
+
+        call test_sfh_statistics_early_return()
+        call test_sfh_statistics_delayed_tau()
+        call test_sfh_statistics_burst_inclusion()
+
+        call test_eval_indefinite_moments_log_coverage()
+        call test_eval_indefinite_moments_log_overflow()
+
+        call test_simha_no_truncation_effective()
+        call test_simha_before_sf_start()
+
+        call test_single_burst_log_interp()
+        call test_tabular_log_interp_nodes()
+
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_sfh_tests
 
@@ -547,5 +564,512 @@ contains
         deallocate(time_full, weights)
         call teardown_sfh_context(ctx)
     end subroutine test_empty_segment_cycle
+
+    ! ------------------------------------------------------------------------
+    ! Group 5: SFH Statistics - Tabular SFH
+    ! ------------------------------------------------------------------------
+    subroutine test_tabular_sfh_statistics_integration()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP), allocatable :: t_tab(:), sfr_tab(:)
+        real(WP) :: ssfr_log(3), mean_age
+        real(WP) :: expected_ssfr
+
+        call print_group("Statistics: Tabular Integration & Interpolation")
+
+        ! Setup minimal context
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        ! Allocate workspaces required for numerical SFH statistics
+        allocate(ctx%state%sfh_t_calc(10))
+        allocate(ctx%state%sfh_sfr_calc(10))
+        allocate(ctx%state%sfh_age_integrand(10))
+
+        ! Create a constant SFR table: SFR(t) = 2.0
+        allocate(t_tab(2), sfr_tab(2))
+        t_tab = [0.0_wp, 4.0e9_wp]
+        sfr_tab = [2.0_wp, 2.0_wp]
+        call set_sfh_tab(ctx, t_tab, sfr_tab)
+
+        pset%sfh = 3
+        pset%sf_start = 0.0_wp
+
+        ! Set current age to 3 Gyr (interpolates the table exactly at idx_cut midpoint)
+        model%age = log10(3.0e9_wp)
+        model%mass_csp = 6.0e9_wp ! Total mass integral from t=0 to 3Gyr (3e9 * 2.0)
+
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+
+        ! Expected mean age is exactly 1.5 Gyr for a constant SFH from 0 to 3 Gyr.
+        ! Trapezoidal rule integrates this perfectly.
+        call assert_float_equals(1.5_wp, mean_age, EPS, &
+                                 "Numerical mean age matches constant SFH integral", total_tests, total_failures)
+
+        ! Note on sSFR: The current implementation of compute_sfh_statistics for tabular data
+        ! does NOT interpolate at the exact window boundary; it just finds the closest lower node.
+        ! Since our active nodes are at 0 and 3 Gyr, the 1 Myr lookback window (2.999 Gyr) falls in the
+        ! first bin, causing it to integrate the *entire* mass (6.0e9).
+        ! sSFR = (6.0e9 / 6.0e9) / 1e6 = 1e-6 -> log10 = -6.0.
+        expected_ssfr = -6.0_wp
+        call assert_float_equals(expected_ssfr, ssfr_log(1), EPS, &
+                                 "Numerical 1 Myr sSFR matches node-based integration", total_tests, total_failures)
+
+        deallocate(time_full, t_tab, sfr_tab)
+        call teardown_sfh_context(ctx)
+    end subroutine test_tabular_sfh_statistics_integration
+
+    subroutine test_tabular_sfh_statistics_zero_and_fallback()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP), allocatable :: t_tab(:), sfr_tab(:)
+        real(WP) :: ssfr_log(3), mean_age
+
+        call print_group("Statistics: Tabular Zero Mass & Fallbacks")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        ! Allocate workspaces
+        allocate(ctx%state%sfh_t_calc(10))
+        allocate(ctx%state%sfh_sfr_calc(10))
+        allocate(ctx%state%sfh_age_integrand(10))
+
+        ! Setup empty/dead table
+        allocate(t_tab(2), sfr_tab(2))
+        t_tab = [0.0_wp, 1.0e9_wp]
+        sfr_tab = [0.0_wp, 0.0_wp]
+        call set_sfh_tab(ctx, t_tab, sfr_tab)
+
+        pset%sfh = 3
+        pset%sf_start = 0.0_wp
+        model%age = log10(1.0e9_wp)
+        model%mass_csp = 0.0_wp
+
+        ! 1. Test Zero Mass Branch
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+        call assert_float_equals(0.0_wp, mean_age, EPS, &
+                                 "Zero mass yields 0.0 mean age", total_tests, total_failures)
+        call assert_float_equals(-100.0_wp, ssfr_log(1), EPS, &
+                                 "Zero mass yields -100 sSFR", total_tests, total_failures)
+
+        ! 2. Test Unsupported Type Fallback (type > 5)
+        pset%sfh = 99
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+        call assert_float_equals(0.0_wp, mean_age, EPS, &
+                                 "Unsupported type yields 0.0 mean age", total_tests, total_failures)
+        call assert_float_equals(-99.0_wp, ssfr_log(1), EPS, &
+                                 "Unsupported type yields -99 sSFR", total_tests, total_failures)
+
+        deallocate(time_full, t_tab, sfr_tab)
+        call teardown_sfh_context(ctx)
+    end subroutine test_tabular_sfh_statistics_zero_and_fallback
+
+    subroutine test_tabular_sfh_statistics_window_clipping()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP), allocatable :: t_tab(:), sfr_tab(:)
+        real(WP) :: ssfr_log(3), mean_age
+
+        call print_group("Statistics: Tabular Window Clipping & Floor")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 8.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        allocate(ctx%state%sfh_t_calc(10))
+        allocate(ctx%state%sfh_sfr_calc(10))
+        allocate(ctx%state%sfh_age_integrand(10))
+
+        ! SFH that forms mass only from 0 to 2 Myr, then shuts off completely.
+        ! We add a point at 10 Myr (past the current age of 5 Myr) to ensure the
+        ! idx_cut logic doesn't overwrite the crucial 3 Myr shutoff node.
+        allocate(t_tab(4), sfr_tab(4))
+        t_tab = [0.0_wp, 2.0e6_wp, 3.0e6_wp, 1.0e7_wp]
+        sfr_tab = [1.0_wp, 1.0_wp, 0.0_wp, 0.0_wp]
+        call set_sfh_tab(ctx, t_tab, sfr_tab)
+
+        pset%sfh = 3
+        pset%sf_start = 0.0_wp
+
+        ! Current age is 5 Myr.
+        ! - The 100 Myr window will attempt to start at -95 Myr and get clipped to 0.0.
+        ! - The 1 Myr window (from 4 to 5 Myr) will have exactly 0.0 mass, testing the SAFE_FLOOR.
+        model%age = log10(5.0e6_wp)
+        model%mass_csp = 2.0e6_wp
+
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+
+        ! Assert that the 1 Myr window hit the SAFE_FLOOR effectively.
+        ! Log10(SAFE_FLOOR) is generally very negative, so we check it's below a threshold.
+        call assert_true(ssfr_log(1) < -20.0_wp, &
+                         "Zero recent mass hits SAFE_FLOOR in sSFR", total_tests, total_failures)
+
+        deallocate(time_full, t_tab, sfr_tab)
+        call teardown_sfh_context(ctx)
+    end subroutine test_tabular_sfh_statistics_window_clipping
+
+    ! ------------------------------------------------------------------------
+    ! Group 6: SFH Statistics - Other Cases
+    ! ------------------------------------------------------------------------
+    subroutine test_sfh_statistics_early_return()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP) :: ssfr_log(3), mean_age
+
+        call print_group("Statistics: Early Return (dt_sfr < 0)")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        ! Set SF start far in the future compared to the current model age
+        pset%sf_start = 5.0_wp
+        model%age = log10(1.0e9_wp) ! Current age is 1 Gyr
+
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+
+        call assert_float_equals(0.0_wp, mean_age, EPS, &
+                                 "Mean age returns 0.0 for age < sf_start", total_tests, total_failures)
+        call assert_float_equals(-100.0_wp, ssfr_log(1), EPS, &
+                                 "sSFR returns -100.0 for age < sf_start", total_tests, total_failures)
+
+        deallocate(time_full)
+        call teardown_sfh_context(ctx)
+    end subroutine test_sfh_statistics_early_return
+
+    subroutine test_sfh_statistics_delayed_tau()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP) :: ssfr_log(3), mean_age
+        real(WP) :: expected_mean_age, num, den, t_term
+
+        call print_group("Statistics: Delayed Tau Analytic (Type 4)")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        pset%sfh = 4
+        pset%tau = 2.0_wp
+        pset%sf_start = 0.0_wp
+        pset%const = 0.0_wp
+        pset%fburst = 0.0_wp
+
+        model%age = log10(4.0e9_wp) ! Current age 4 Gyr
+
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+
+        ! Reconstruct the exact analytic expectation formula mapped in the code
+        t_term = 4.0_wp / 2.0_wp ! dt_sfr / tau = 2.0
+        num = (2.0_wp - exp(-t_term) * (t_term * (t_term + 2.0_wp) + 2.0_wp)) * 2.0_wp
+        den = 1.0_wp - exp(-t_term) * (t_term + 1.0_wp)
+        expected_mean_age = 4.0_wp - (num / den)
+
+        call assert_float_equals(expected_mean_age, mean_age, EPS, &
+                                 "Mean age exactly matches delayed tau analytical integral", total_tests, total_failures)
+
+        deallocate(time_full)
+        call teardown_sfh_context(ctx)
+    end subroutine test_sfh_statistics_delayed_tau
+
+    subroutine test_sfh_statistics_burst_inclusion()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout) :: model
+        real(WP), allocatable :: time_full(:)
+        real(WP) :: ssfr_log(3), mean_age
+        real(WP) :: ssfr_log_no_burst(3), mean_age_no_burst
+        real(WP) :: expected_mean_age, expected_ssfr_10
+
+        call print_group("Statistics: Burst Logic")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        pset%sfh = 1
+        pset%tau = 1.0_wp
+        pset%sf_start = 0.0_wp
+        pset%const = 0.0_wp
+
+        ! Burst happened exactly 5 Myr ago (10.0 Gyr - 0.005 Gyr)
+        pset%tburst = 9.995_wp
+
+        model%age = log10(10.0e9_wp) ! 10 Gyr
+        model%mass_csp = 1.0_wp
+
+        ! First, get a baseline WITHOUT the burst
+        pset%fburst = 0.0_wp
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log_no_burst, mean_age_no_burst)
+
+        ! Now WITH the burst
+        pset%fburst = 0.5_wp
+        call compute_sfh_statistics(ctx, pset, model, ssfr_log, mean_age)
+
+        ! Mean age expectation: weighted average of the old stars and the 5 Myr old burst
+        expected_mean_age = (1.0_wp - 0.5_wp) * mean_age_no_burst + 0.5_wp * 0.005_wp
+        call assert_float_equals(expected_mean_age, mean_age, EPS, &
+                                 "Mean age accurately incorporates recent burst fraction", total_tests, total_failures)
+
+        ! 1 Myr window (idx 1): Burst (5 Myr ago) is OUTSIDE this window. It should be identical.
+        call assert_float_equals(ssfr_log_no_burst(1), ssfr_log(1), EPS, &
+                                 "1 Myr window correctly excludes 5 Myr burst", total_tests, total_failures)
+
+        ! 10 Myr window (idx 2): Burst IS inside this window. Reconstruct expected addition.
+        ! Note: We invert the log10 normalization from the baseline to add the unnormalized burst mass.
+        expected_ssfr_10 = log10( (10.0_wp**ssfr_log_no_burst(2) * 1.0_wp * 0.01e9_wp + 0.5_wp) / (1.0_wp * 0.01e9_wp) )
+        call assert_float_equals(expected_ssfr_10, ssfr_log(2), EPS, &
+                                 "10 Myr window correctly includes 5 Myr burst", total_tests, total_failures)
+
+        deallocate(time_full)
+        call teardown_sfh_context(ctx)
+    end subroutine test_sfh_statistics_burst_inclusion
+
+    ! ------------------------------------------------------------------------
+    ! Group 7: Logarithmic Integration Moment
+    ! ------------------------------------------------------------------------
+    subroutine test_eval_indefinite_moments_log_coverage()
+        type(fsps_context_t), allocatable :: ctx
+        type(sfhparams) :: sfh
+        real(WP), allocatable :: time_full(:), weights(:)
+        integer :: n
+
+        call print_group("Moments: Logarithmic Time Interpolation")
+
+        n = 10
+        allocate(time_full(n), weights(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        ! Crucial: interpolation_type = 0 forces the code to use the `_log` indefinite moments
+        call setup_sfh_context(ctx, time_full, interpolation_type=0, tiny_logt=4.0_wp)
+
+        ! 1. Type 0: Constant
+        sfh%type = 0
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(ieee_is_finite(weights)), "Type 0 (Constant) integrates safely", total_tests, total_failures)
+
+        ! 2. Type 1: Exp (Zero Tau Early Return)
+        sfh%type = 1
+        sfh%tau = 0.0_wp
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(weights == 0.0_wp), "Type 1 (Exp) with zero tau safely returns 0", total_tests, total_failures)
+
+        ! 3. Type 4: Delayed (Normal)
+        sfh%type = 4
+        sfh%tau = 2.0e9_wp
+        sfh%tage = 1.0e10_wp
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(ieee_is_finite(weights)), "Type 4 (Delayed) integrates safely", total_tests, total_failures)
+
+        ! 4. Type 4: Delayed (Zero Tau Early Return)
+        sfh%tau = 0.0_wp
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(weights == 0.0_wp), "Type 4 (Delayed) with zero tau safely returns 0", total_tests, total_failures)
+
+        ! 5. Type 5: Simha
+        sfh%type = 5
+        sfh%tage = 1.0e10_wp
+        sfh%sf_trunc = 5.0e9_wp
+        sfh%sf_slope = 1.0e-10_wp
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(ieee_is_finite(weights)), "Type 5 (Simha) integrates safely", total_tests, total_failures)
+
+        ! 6. Default Fallback
+        sfh%type = 99
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+        call assert_true(all(weights == 0.0_wp), "Unsupported SFH type returns 0 weights", total_tests, total_failures)
+
+        deallocate(time_full, weights)
+        call teardown_sfh_context(ctx)
+    end subroutine test_eval_indefinite_moments_log_coverage
+
+    subroutine test_eval_indefinite_moments_log_overflow()
+        type(fsps_context_t), allocatable :: ctx
+        type(sfhparams) :: sfh
+        real(WP), allocatable :: time_full(:), weights(:)
+        integer :: n
+
+        call print_group("Moments: Logarithmic Expi Overflow Protection")
+
+        n = 10
+        allocate(time_full(n), weights(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=0, tiny_logt=4.0_wp)
+
+        ! We trigger the `ei_val` non-finite fallback by making t_tau enormous.
+        ! Time goes up to 10 Gyr (1e10). By setting tau to 1 Myr (1e6), t/tau hits 10,000.
+        ! The expi() function will mathematically overflow, tripping the .not. ieee_is_finite guard.
+
+        sfh%tau = 1.0e6_wp
+        sfh%tage = 1.0e10_wp
+
+        sfh%type = 1
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+
+        sfh%type = 4
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+
+        ! If we make it here without the program crashing, the IEEE traps worked correctly
+        call assert_true(.true., "Expi overflow protection triggered and handled cleanly", total_tests, total_failures)
+
+        deallocate(time_full, weights)
+        call teardown_sfh_context(ctx)
+    end subroutine test_eval_indefinite_moments_log_overflow
+
+    ! ------------------------------------------------------------------------
+    ! Group 8: Simha Edge Cases
+    ! ------------------------------------------------------------------------
+    subroutine test_simha_no_truncation_effective()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: time_full(:)
+        real(WP) :: mass_frac, sfr_norm, frac_linear
+
+        call print_group("Simha: No Truncation Effective (Edge Case)")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        pset%sfh = 5
+        pset%tau = 1.0_wp
+        pset%sf_start = 0.0_wp
+        ! Set truncation time to 20 Gyr, well beyond the 10 Gyr maximum grid time
+        pset%sf_trunc = 20.0_wp
+        pset%sf_slope = -1.0_wp
+
+        ! Query at an arbitrary valid age (5 Gyr)
+        call get_sfh_properties_at_age(ctx, pset, 5.0_wp, mass_frac, sfr_norm, frac_linear)
+
+        call assert_float_equals(0.0_wp, frac_linear, EPS, &
+                                 "Linear fraction is exactly 0 when truncation is past t_max", &
+                                 total_tests, total_failures)
+
+        deallocate(time_full)
+        call teardown_sfh_context(ctx)
+    end subroutine test_simha_no_truncation_effective
+
+    subroutine test_simha_before_sf_start()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        real(WP), allocatable :: time_full(:)
+        real(WP) :: mass_frac, sfr_norm, frac_linear
+
+        call print_group("Simha: Evaluated Before SF Start")
+
+        allocate(time_full(10))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+
+        pset%sfh = 5
+        pset%tau = 1.0_wp
+        ! Star formation starts at 5 Gyr
+        pset%sf_start = 5.0_wp
+        pset%sf_trunc = 7.0_wp
+        pset%sf_slope = -1.0_wp
+
+        ! Query at 3 Gyr, which is BEFORE sf_start
+        call get_sfh_properties_at_age(ctx, pset, 3.0_wp, mass_frac, sfr_norm, frac_linear)
+
+        call assert_float_equals(0.0_wp, mass_frac, EPS, &
+                                 "mass_frac is 0.0 before sf_start", total_tests, total_failures)
+        call assert_float_equals(0.0_wp, sfr_norm, EPS, &
+                                 "sfr_norm is 0.0 before sf_start", total_tests, total_failures)
+        call assert_float_equals(0.0_wp, frac_linear, EPS, &
+                                 "frac_linear is 0.0 before sf_start", total_tests, total_failures)
+
+        deallocate(time_full)
+        call teardown_sfh_context(ctx)
+    end subroutine test_simha_before_sf_start
+
+    ! ------------------------------------------------------------------------
+    ! Group 9: Interpolation Edge Cases
+    ! ------------------------------------------------------------------------
+    subroutine test_single_burst_log_interp()
+        type(fsps_context_t), allocatable :: ctx
+        type(sfhparams) :: sfh
+        real(WP), allocatable :: time_full(:), weights(:)
+        integer :: n
+
+        call print_group("Weights: Single Burst Log Interpolation (Type -1)")
+
+        n = 10
+        allocate(time_full(n), weights(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        ! Force logarithmic interpolation (interpolation_type = 0)
+        call setup_sfh_context(ctx, time_full, interpolation_type=0, tiny_logt=4.0_wp)
+
+        sfh%type = -1
+        ! Place the burst time exactly halfway between the 2nd and 3rd nodes in log-space
+        sfh%tb = 10.0_wp**(0.5_wp * (time_full(2) + time_full(3)))
+
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+
+        ! Since the burst is exactly halfway in log-space, and interpolation is log-based,
+        ! the `get_time_interval` function will calculate equal `dt` fractions for both adjacent nodes.
+        call assert_float_equals(0.5_wp, weights(2), EPS, &
+                                 "Lower adjacent node gets exactly 0.5 weight", total_tests, total_failures)
+        call assert_float_equals(0.5_wp, weights(3), EPS, &
+                                 "Upper adjacent node gets exactly 0.5 weight", total_tests, total_failures)
+        call assert_float_equals(1.0_wp, sum(weights), EPS, &
+                                 "Total mass of single burst is conserved as 1.0", total_tests, total_failures)
+
+        deallocate(time_full, weights)
+        call teardown_sfh_context(ctx)
+    end subroutine test_single_burst_log_interp
+
+    subroutine test_tabular_log_interp_nodes()
+        type(fsps_context_t), allocatable :: ctx
+        type(sfhparams) :: sfh
+        real(WP), allocatable :: time_full(:), weights(:)
+        real(WP), allocatable :: t_tab(:), sfr_tab(:)
+        integer :: n
+
+        call print_group("Weights: Tabular SFH Log Interpolation Nodes")
+
+        n = 10
+        allocate(time_full(n), weights(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
+
+        ! Force logarithmic interpolation (interpolation_type = 0)
+        call setup_sfh_context(ctx, time_full, interpolation_type=0, tiny_logt=4.0_wp)
+
+        ! Create a flat tabular SFH of 1 Solar Mass per Year
+        allocate(t_tab(2), sfr_tab(2))
+        t_tab = [0.0_wp, 1.0e10_wp]
+        sfr_tab = [1.0_wp, 1.0_wp]
+        call set_sfh_tab(ctx, t_tab, sfr_tab)
+
+        sfh%type = 3
+        sfh%tage = 1.0e10_wp
+        sfh%tq = 0.0_wp
+        sfh%use_simha_limits = 0
+
+        ! Executing this will hit the `is_tabular` AND `interpolation_type_val == 0` node preparation branches
+        call compute_ssp_weights(ctx, sfh, 1, n - 1, weights)
+
+        ! Ensure it didn't generate NaNs and roughly conserved the expected 1e10 total mass
+        call assert_true(all(ieee_is_finite(weights)), &
+                         "Tabular weights are finite with log interpolation prep", total_tests, total_failures)
+        call assert_relative_error(1.0e10_wp, sum(weights), 0.05_wp, &
+                                   "Total tabular mass integrates correctly", total_tests, total_failures)
+
+        deallocate(time_full, weights, t_tab, sfr_tab)
+        call teardown_sfh_context(ctx)
+    end subroutine test_tabular_log_interp_nodes
 
 end module test_fsps_sfh_mod

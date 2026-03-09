@@ -108,6 +108,10 @@ contains
         call test_draine_li_energy_balance()
         call test_dust_self_absorption()
         call test_robustness()
+        call test_dust_early_returns()
+        call test_dust_branches_and_type3()
+        call test_dust_emission_zero_norm()
+        call test_compute_attenuation_type5_point()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
 
@@ -1017,6 +1021,187 @@ contains
         deallocate(w, res)
 
     end subroutine test_robustness
+
+
+    ! ------------------------------------------------------------------------
+    ! TEST SUITE: Edge Cases
+    ! ------------------------------------------------------------------------
+    subroutine test_dust_early_returns()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: settings
+
+        call print_group("Dust Early Returns")
+        call setup_physics_context(ctx, 5)
+        !$acc enter data create(settings)
+
+        ! Set up a recognizable baseline
+        ctx%state%dust_spec_total_work(:, 1) = 99.0_wp
+        !$acc update device(ctx%state%dust_spec_total_work(:, 1))
+
+        ! 1. uvb < 0
+        settings%uvb = -1.0_wp
+        settings%wgp1 = 1
+        settings%wgp2 = 1
+        !$acc update device(settings)
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+        call assert_float_equals(99.0_wp, ctx%state%dust_spec_total_work(1, 1), EPS, &
+                                 "Early return triggered for uvb < 0", total_tests, total_failures)
+
+        ! 2. wgp1 < 1
+        settings%uvb = 1.0_wp
+        settings%wgp1 = 0
+        settings%wgp2 = 1
+        !$acc update device(settings)
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+        call assert_float_equals(99.0_wp, ctx%state%dust_spec_total_work(1, 1), EPS, &
+                                 "Early return triggered for wgp1 < 1", total_tests, total_failures)
+
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
+        call teardown_physics_context(ctx)
+    end subroutine test_dust_early_returns
+
+    subroutine test_dust_branches_and_type3()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: settings
+        integer :: tmp_dust_type, tmp_add_dust, tmp_nebemline
+
+        call print_group("Dust Branches & Type 3")
+        call setup_physics_context(ctx, 5)
+        !$acc enter data create(settings)
+
+        ! Activate Type 3
+        ctx%dust_type_val = 3
+        ctx%add_dust_emission_val = 0
+        ctx%nebemlineinspec_val = 0
+
+        tmp_dust_type = ctx%dust_type_val
+        tmp_add_dust = ctx%add_dust_emission_val
+        tmp_nebemline = ctx%nebemlineinspec_val
+        ctx%dust_type_val = tmp_dust_type
+        ctx%add_dust_emission_val = tmp_add_dust
+        ctx%nebemlineinspec_val = tmp_nebemline
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
+
+        settings%uvb = 1.0_wp
+        settings%wgp1 = 2
+        settings%wgp2 = 3
+        settings%wgp3 = 1
+
+        ! Variables to trigger the missing if/else blocks:
+        settings%dust3 = 2.0_wp       ! Hits trans_old = exp(-dust3 * curve)
+        settings%dust1 = 5.0_wp
+        settings%dust1_index = -1.0_wp
+        settings%frac_obrun = 1.0_wp  ! Hits trans_birth = 1.0_wp
+        settings%frac_nodust = 1.0_wp ! Hits the `one_minus_nodust <= SAFE_FLOOR` branch
+
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 100.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), &
+        !$acc               ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+
+        !$acc wait(1)
+        !$acc update host(ctx%state%dust_spec_total_work(:, 1))
+
+        ! Because frac_nodust = 1.0, the calculation skips diffuse geometry completely.
+        ! Output evaluates purely to: spec_young * trans_birth + spec_old * trans_old
+        ! With obrun=1.0, trans_birth=1.0. With W&G, curve=1.0, so trans_old=exp(-2.0*1.0)
+        call assert_float_equals(100.0_wp + 100.0_wp * exp(-2.0_wp), &
+                                 ctx%state%dust_spec_total_work(1, 1), EPS, &
+                                 "Evaluates correct fallback logic with nodust=1 and obrun=1", &
+                                 total_tests, total_failures)
+
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
+        call teardown_physics_context(ctx)
+    end subroutine test_dust_branches_and_type3
+
+    subroutine test_dust_emission_zero_norm()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: settings
+        integer :: tmp_dust_type, tmp_add_dust, tmp_nebemline
+
+        call print_group("Dust Emission Zero Norm Edge Cases")
+        call setup_physics_context(ctx, 5)
+        !$acc enter data create(settings)
+
+        ctx%dust_type_val = 0
+        ctx%add_dust_emission_val = 1
+        ctx%nebemlineinspec_val = 0
+
+        tmp_dust_type = ctx%dust_type_val
+        tmp_add_dust = ctx%add_dust_emission_val
+        tmp_nebemline = ctx%nebemlineinspec_val
+        ctx%dust_type_val = tmp_dust_type
+        ctx%add_dust_emission_val = tmp_add_dust
+        ctx%nebemlineinspec_val = tmp_nebemline
+
+        ! Force df = 0 by making all wavelengths identical.
+        ! This guarantees emission_norm_factor and lum_escaped_profile stay exactly 0.0.
+        ctx%state%spec_lambda(:) = 5000.0_wp
+
+        !$acc update device(ctx%dust_type_val, ctx%add_dust_emission_val, ctx%nebemlineinspec_val)
+        !$acc update device(ctx%state%spec_lambda)
+
+        settings%dust_index = 0.0_wp
+        settings%dust1 = 0.0_wp
+        settings%dust2 = 1.0_wp
+
+        ! Critical: must be 1.0 to avoid divide-by-zero in the nebular diffuse interpolation
+        ! since all wavelengths are now identically 5000.0
+        settings%frac_nodust = 1.0_wp
+
+        settings%frac_obrun = 0.0_wp
+        settings%duste_gamma = 0.1_wp
+        settings%duste_qpah = 1.0_wp
+        settings%duste_umin = 0.5_wp
+
+        ctx%state%spec_young(:, 1) = 100.0_wp
+        ctx%state%spec_old(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_young(:, 1) = 0.0_wp
+        ctx%state%csp_emlin_old(:, 1) = 0.0_wp
+
+        !$acc update device(ctx%state%spec_young(:, 1), ctx%state%spec_old(:, 1), &
+        !$acc               ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1), settings)
+
+        call apply_dust_attenuation_and_emission(ctx, settings, 1)
+
+        !$acc wait(1)
+        !$acc update host(ctx%state%sfh_w_tmp1(3:3, 1), ctx%state%dust_emission_final(:, 1))
+
+        call assert_float_equals(SAFE_FLOOR, ctx%state%sfh_w_tmp1(3, 1), EPS, &
+                                 "Zero emission norm cleanly falls back to SAFE_FLOOR mdust", total_tests, total_failures)
+        call assert_true(all(ctx%state%dust_emission_final(:, 1) == 0.0_wp), &
+                         "Zero escaped lum cleanly falls back to 0.0 emission", total_tests, total_failures)
+
+        !$acc exit data delete(settings)
+        call fsps_context_remove_from_device(ctx)
+        call teardown_physics_context(ctx)
+    end subroutine test_dust_emission_zero_norm
+
+    subroutine test_compute_attenuation_type5_point()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: settings
+        real(WP) :: res
+
+        call print_group("Type 5 Attenuation Point (SMC direct)")
+        call setup_mock_context(ctx, 5)
+
+        ! Bypass the vectorized testing wrapper and hit the point subroutine natively
+        ! For idx=3, our mock ctx%state%g03smcextn(3) is 3.0_wp
+        res = compute_attenuation_curve_point(1000.0_wp, 3, 5, settings, ctx)
+
+        call assert_float_equals(3.0_wp, res, EPS, "Type 5 directly via point function", total_tests, total_failures)
+
+        call teardown_mock_context(ctx)
+    end subroutine test_compute_attenuation_type5_point
 
     ! ------------------------------------------------------------------------
     ! Helper: mock context setup
