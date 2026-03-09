@@ -23,12 +23,18 @@ module fsps_initialization
     use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup
     use fsps_io, only: load_zlegend_file, load_wavelength_grid, load_spectral_resolution, &
-                       read_isochrone_database, read_spectral_binary, read_bpass_data, &
-                       load_dust_emission_table, load_nebular_grid, load_filter_definitions, &
-                       load_standard_sed, load_index_definitions, load_wr_spectra, &
-                       load_agb_spectra, load_post_agb_spectra, load_attenuation_curves, &
-                       load_wmbasic_spectra, load_lsf_data, load_agn_dust_models, &
-                       apply_legacy_filter_norm
+                       read_bpass_data, &
+                       load_filter_definitions, &
+                       load_standard_sed, load_index_definitions, &
+                       load_lsf_data, &
+                       apply_legacy_filter_norm, fsps_data_open, fsps_data_close, &
+                       fsps_data_load_spectral_library, fsps_data_load_isochrones, &
+                       fsps_data_load_nebular, fsps_data_load_wmbasic, fsps_data_load_pagb, &
+                       fsps_data_load_wr, fsps_data_load_agb, fsps_data_load_dust_emission, &
+                       fsps_data_load_agn_dust, fsps_data_load_dust_attenuation, fsps_data_load_xrb
+    use fsps_data_backend, only: backend_status_t
+    use fsps_data_schema, only: spectral_grid_t, isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, aux_wr_t, aux_agb_t, &
+                                dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
@@ -43,6 +49,7 @@ module fsps_initialization
     ! ---------------------------------------------------------------------
     ! Module constants
     ! ---------------------------------------------------------------------
+    integer, parameter :: NZWMB = 12
 
 contains
 
@@ -109,7 +116,6 @@ contains
         call load_interstellar_physics(ctx)
         call load_photometry_data(ctx)
         call compute_filter_leff(ctx)
-        call load_attenuation_curves(ctx)
         call load_agn_dust_models(ctx)
         call load_index_definitions(ctx)
         call build_time_grid(ctx)
@@ -308,8 +314,8 @@ contains
     !>
     !> @details
     !> This is the core loading routine for stellar physics. It handles:
-    !> 1. **Isochrones:** Evolution tracks (MIST, Padova, etc.) via `read_isochrone_database`.
-    !> 2. **Spectral Libraries:** Base stellar spectra (MILES, BaSeL, C3K) via `read_spectral_binary`.
+    !> 1. **Isochrones:** Evolution tracks (MIST, Padova, etc.) via backend dataset loading.
+    !> 2. **Spectral Libraries:** Base stellar spectra (MILES, BaSeL, C3K) via backend dataset loading.
     !> 3. **Auxiliary Spectra:** Special handling for O-stars (WMBasic),
     !>    Wolf-Rayet stars (CMFGEN), and AGB stars (Lancon & Wood).
     !>
@@ -318,9 +324,18 @@ contains
     subroutine load_stellar_data(ctx, zin)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: zin
-        integer :: z, zmin, zmax, i, i1, j, k, nzinit
+        integer :: z, zmin, zmax, i, i1, j, k, nzinit, nm_data
         real(WP) :: dz, log_spec_val
-        real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
+        real(WP), allocatable :: speclibinit(:, :, :, :)
+        type(backend_status_t) :: io_status
+        type(spectral_grid_t) :: base_grid
+        type(isochrone_grid_t) :: iso_grid
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
 
         call load_zlegend_file(ctx, ctx%state%isoc_type, .false.)
 
@@ -355,13 +370,61 @@ contains
 
         nzinit = ctx%state%nzinit
         allocate (speclibinit(ctx%state%nspec, nzinit, NDIM_LOGT, NDIM_LOGG))
-        allocate (speclib_slice(ctx%state%nspec, NDIM_LOGT, NDIM_LOGG))
         speclibinit = 0.0_wp
 
-        do z = 1, nzinit
-            call read_spectral_binary(ctx, ctx%state%spec_type, z, speclib_slice)
-            speclibinit(:, z, :, :) = speclib_slice
-        end do
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
+
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        select case (trim(backend_mode))
+        case ('hdf5')
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        case default
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        end select
+
+        call fsps_data_open(uri, backend_mode, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_open failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call fsps_data_load_spectral_library('spectral_base', base_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_spectral_library failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
+
+        if (.not. allocated(base_grid%flux)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: base spectral grid is unallocated.'
+            error stop 1
+        end if
+
+        if (size(base_grid%flux, 1) /= ctx%state%nspec .or. size(base_grid%flux, 2) /= nzinit .or. &
+            size(base_grid%flux, 3) < 1 .or. size(base_grid%flux, 4) /= NDIM_LOGT .or. &
+            size(base_grid%flux, 5) /= NDIM_LOGG) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: base spectral grid shape mismatch.'
+            error stop 1
+        end if
+
+        speclibinit(:, :, :, :) = base_grid%flux(:, :, 1, :, :)
 
         do z = 1, ctx%state%nz
             i1 = min(max(find_interval(log10(ctx%state%zlegendinit/ctx%state%zsol_spec), &
@@ -383,7 +446,6 @@ contains
             end do
         end do
 
-        deallocate (speclib_slice)
         deallocate (speclibinit)
 
         call load_wmbasic_spectra(ctx)
@@ -391,9 +453,68 @@ contains
         call load_post_agb_spectra(ctx)
         call load_wr_spectra(ctx)
 
+        call fsps_data_load_isochrones(iso_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_isochrones failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
+
+        if (.not. allocated(iso_grid%nmass) .or. .not. allocated(iso_grid%timestep_logyr) .or. &
+            .not. allocated(iso_grid%mini) .or. .not. allocated(iso_grid%mact) .or. &
+            .not. allocated(iso_grid%logl) .or. .not. allocated(iso_grid%logt) .or. &
+            .not. allocated(iso_grid%logg) .or. .not. allocated(iso_grid%phase) .or. &
+            .not. allocated(iso_grid%ffco) .or. .not. allocated(iso_grid%lmdot)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: isochrone grid is not fully allocated.'
+            error stop 1
+        end if
+
+        if (size(iso_grid%nmass, 1) /= ctx%state%nt .or. &
+            size(iso_grid%nmass, 2) /= ctx%state%nz .or. &
+            size(iso_grid%timestep_logyr, 1) /= ctx%state%nt .or. &
+            size(iso_grid%timestep_logyr, 2) /= ctx%state%nz .or. &
+            size(iso_grid%mini, 1) > NM .or. &
+            size(iso_grid%mini, 2) /= ctx%state%nt .or. &
+            size(iso_grid%mini, 3) /= ctx%state%nz) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: isochrone grid shape mismatch.'
+            error stop 1
+        end if
+
+        nm_data = size(iso_grid%mini, 1)
+
         do z = zmin, zmax
-            call read_isochrone_database(ctx, ctx%state%isoc_type, z)
+            ctx%state%nmass_isoc(z, :) = iso_grid%nmass(:, z)
+            ctx%state%timestep_isoc(z, :) = real(iso_grid%timestep_logyr(:, z), kind(ctx%state%timestep_isoc))
+            ctx%state%mini_isoc(z, :, :) = 0.0
+            ctx%state%mact_isoc(z, :, :) = 0.0
+            ctx%state%logl_isoc(z, :, :) = 0.0
+            ctx%state%logt_isoc(z, :, :) = 0.0
+            ctx%state%logg_isoc(z, :, :) = 0.0
+            ctx%state%phase_isoc(z, :, :) = 0.0
+            ctx%state%ffco_isoc(z, :, :) = 0.0
+            ctx%state%lmdot_isoc(z, :, :) = -99.0
+            ctx%state%mini_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%mini(:, :, z)), kind(ctx%state%mini_isoc))
+            ctx%state%mact_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%mact(:, :, z)), kind(ctx%state%mact_isoc))
+            ctx%state%logl_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%logl(:, :, z)), kind(ctx%state%logl_isoc))
+            ctx%state%logt_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%logt(:, :, z)), kind(ctx%state%logt_isoc))
+            ctx%state%logg_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%logg(:, :, z)), kind(ctx%state%logg_isoc))
+            ctx%state%phase_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%phase(:, :, z)), kind(ctx%state%phase_isoc))
+            ctx%state%ffco_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%ffco(:, :, z)), kind(ctx%state%ffco_isoc))
+            ctx%state%lmdot_isoc(z, :, 1:nm_data) = real(transpose(iso_grid%lmdot(:, :, z)), kind(ctx%state%lmdot_isoc))
         end do
+
+        call fsps_data_close(io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_close failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call base_grid%clear()
+        call iso_grid%clear()
 
         if (ctx%state%isoc_type == 'gnva') then
             ctx%state%imf_lower_bound = minval(ctx%state%mini_isoc(zmin, 1, 1:ctx%state%nmass_isoc(zmin, 1)))*0.99_wp
@@ -417,13 +538,78 @@ contains
     !> @param[inout] cache The cache object to populate.
     subroutine load_interstellar_physics(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+        type(backend_status_t) :: io_status
+        type(nebular_grid_t) :: neb_grid
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
 
         call load_dust_emission_table(ctx, ctx%state%str_dustem)
+        call load_dust_attenuation_curves(ctx)
         call load_dusty_agb_spectra(ctx)
 
         if (ctx%state%isoc_type == 'mist' .or. ctx%state%isoc_type == 'pdva' .or. &
             ctx%state%isoc_type == 'prsc' .or. ctx%state%isoc_type == 'bpss') then
-            call load_nebular_grid(ctx, ctx%state%isoc_type, ctx%cloudy_dust_val == 1)
+            backend_mode = 'legacy'
+            backend_mode_env = ''
+            call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+            if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+                backend_mode = trim(to_lower(trim(backend_mode_env)))
+            end if
+
+            hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+            hdf5_file_path_env = ''
+            call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+            if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+                hdf5_file_path = trim(hdf5_file_path_env)
+            end if
+
+            select case (trim(backend_mode))
+            case ('hdf5')
+                uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                      trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+            case default
+                uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                      trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+            end select
+
+            call fsps_data_open(uri, backend_mode, io_status)
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_open failed for nebular load', io_status%code, trim(io_status%message)
+                error stop 1
+            end if
+
+            if (ctx%cloudy_dust_val == 1) then
+                call fsps_data_load_nebular('WD', neb_grid, io_status)
+            else
+                call fsps_data_load_nebular('ND', neb_grid, io_status)
+            end if
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_load_nebular failed', io_status%code, trim(io_status%message)
+                call fsps_data_close(io_status)
+                error stop 1
+            end if
+
+            if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
+            if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
+            if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
+            if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
+            if (allocated(neb_grid%age)) ctx%state%nebem_age = neb_grid%age
+            if (allocated(neb_grid%logu)) ctx%state%nebem_logu = neb_grid%logu
+
+            call fsps_data_close(io_status)
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_close failed for nebular load', io_status%code, trim(io_status%message)
+                error stop 1
+            end if
+
+            call neb_grid%clear()
             call compute_nebular_kernels(ctx)
         end if
 
@@ -434,6 +620,538 @@ contains
         call load_xrb_spectra(ctx)
 
     end subroutine load_interstellar_physics
+
+    subroutine load_dust_emission_table(ctx, dust_type)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: dust_type
+
+        type(dust_emission_t) :: em_grid
+        type(backend_status_t) :: io_status
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
+        integer :: i_spec, k, start_idx, nqpah, numin_cols
+
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
+
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        select case (trim(backend_mode))
+        case ('hdf5')
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(dust_type)
+        case default
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(dust_type)
+        end select
+
+        call fsps_data_open(uri, backend_mode, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_open failed for dust emission load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call fsps_data_load_dust_emission(em_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_dust_emission failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
+
+        if (.not. allocated(em_grid%qpah) .or. .not. allocated(em_grid%umin) .or. &
+            .not. allocated(em_grid%lam) .or. .not. allocated(em_grid%spec)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: dust emission grid is not fully allocated.'
+            error stop 1
+        end if
+
+        nqpah = size(em_grid%qpah)
+        numin_cols = size(em_grid%spec, 3)
+
+        if (size(em_grid%spec, 2) /= nqpah .or. numin_cols /= 2*size(em_grid%umin)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: dust emission grid shape mismatch.'
+            error stop 1
+        end if
+
+        if (nqpah > size(ctx%state%dustem2_dustem, 2) .or. numin_cols > size(ctx%state%dustem2_dustem, 3)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: dust emission output array is too small for loaded grid.'
+            error stop 1
+        end if
+
+        ctx%state%qpaharr(1:nqpah) = em_grid%qpah
+        ctx%state%uminarr(1:size(em_grid%umin)) = em_grid%umin
+
+        ctx%state%dustem2_dustem = 0.0_wp
+        start_idx = max(find_interval(ctx%state%spec_lambda, 1.0e4_wp), 1)
+        do k = 1, nqpah
+            do i_spec = 1, numin_cols
+                ctx%state%dustem2_dustem(start_idx:ctx%state%nspec, k, i_spec) = interpolate_linear( &
+                    em_grid%lam, em_grid%spec(:, k, i_spec), ctx%state%spec_lambda(start_idx:ctx%state%nspec))
+            end do
+        end do
+
+        call fsps_data_close(io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_close failed for dust emission load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call em_grid%clear()
+    end subroutine load_dust_emission_table
+
+    subroutine load_dust_attenuation_curves(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(dust_attenuation_t) :: att_grid
+        type(backend_status_t) :: io_status
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
+        integer :: n, i, j, k
+
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
+
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        select case (trim(backend_mode))
+        case ('hdf5')
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        case default
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        end select
+
+        call fsps_data_open(uri, backend_mode, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_open failed for attenuation load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call fsps_data_load_dust_attenuation(att_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_dust_attenuation failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
+
+        if (.not. allocated(att_grid%wg_lam) .or. .not. allocated(att_grid%wg_spec) .or. &
+            .not. allocated(att_grid%smc_lam) .or. .not. allocated(att_grid%smc_ext)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: dust attenuation grid is not fully allocated.'
+            error stop 1
+        end if
+
+        if (size(att_grid%wg_spec, 2) /= 18 .or. size(att_grid%wg_spec, 3) /= 6 .or. size(att_grid%wg_spec, 4) /= 2) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: dust attenuation WG grid shape mismatch.'
+            error stop 1
+        end if
+
+        do k = 1, 2
+            do i = 1, 18
+                do j = 1, 6
+                    do n = 1, ctx%state%nspec
+                        if (ctx%state%spec_lambda(n) > att_grid%wg_lam(size(att_grid%wg_lam))) then
+                            ctx%state%wgdust(n, i, j, k) = 0.0_wp
+                        else if (ctx%state%spec_lambda(n) < att_grid%wg_lam(1)) then
+                            ctx%state%wgdust(n, i, j, k) = att_grid%wg_spec(1, i, j, k)
+                        else
+                            ctx%state%wgdust(n, i, j, k) = interpolate_linear( &
+                                att_grid%wg_lam, att_grid%wg_spec(:, i, j, k), ctx%state%spec_lambda(n))
+                        end if
+                    end do
+                end do
+            end do
+        end do
+
+        do n = 1, ctx%state%nspec
+            if (ctx%state%spec_lambda(n) > att_grid%smc_lam(size(att_grid%smc_lam))) then
+                ctx%state%g03smcextn(n) = 0.0_wp
+            else if (ctx%state%spec_lambda(n) < att_grid%smc_lam(1)) then
+                ctx%state%g03smcextn(n) = att_grid%smc_ext(1)
+            else
+                ctx%state%g03smcextn(n) = interpolate_linear(att_grid%smc_lam, att_grid%smc_ext, ctx%state%spec_lambda(n))
+            end if
+        end do
+
+        call fsps_data_close(io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_close failed for attenuation load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call att_grid%clear()
+    end subroutine load_dust_attenuation_curves
+
+    subroutine load_agn_dust_models(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(agn_dust_t) :: agn_grid
+        type(backend_status_t) :: io_status
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
+        integer :: i, i1, i2
+
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
+
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        select case (trim(backend_mode))
+        case ('hdf5')
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        case default
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        end select
+
+        call fsps_data_open(uri, backend_mode, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_open failed for AGN dust load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call fsps_data_load_agn_dust(agn_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_agn_dust failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
+
+        if (.not. allocated(agn_grid%tau) .or. .not. allocated(agn_grid%lam) .or. .not. allocated(agn_grid%spec)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGN dust grid is not fully allocated.'
+            error stop 1
+        end if
+
+        if (size(agn_grid%spec, 2) /= size(agn_grid%tau)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGN dust grid shape mismatch.'
+            error stop 1
+        end if
+
+        if (size(agn_grid%tau) > size(ctx%state%agndust_tau) .or. size(agn_grid%spec, 2) > size(ctx%state%agndust_spec, 2)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGN dust output arrays are too small for loaded grid.'
+            error stop 1
+        end if
+
+        ctx%state%agndust_tau(1:size(agn_grid%tau)) = agn_grid%tau
+        ctx%state%agndust_spec = 0.0_wp
+
+        i1 = max(find_interval(ctx%state%spec_lambda, agn_grid%lam(1)), 1)
+        i2 = max(find_interval(ctx%state%spec_lambda, agn_grid%lam(size(agn_grid%lam))), 1)
+        if (i2 < i1) then
+            i = i1
+            i1 = i2
+            i2 = i
+        end if
+
+        do i = 1, size(agn_grid%tau)
+            ctx%state%agndust_spec(i1:i2, i) = 10.0_wp**interpolate_linear( &
+                log10(agn_grid%lam), log10(agn_grid%spec(:, i) + SAFE_FLOOR), &
+                log10(ctx%state%spec_lambda(i1:i2))) - SAFE_FLOOR
+        end do
+
+        call fsps_data_close(io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_close failed for AGN dust load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call agn_grid%clear()
+    end subroutine load_agn_dust_models
+
+    subroutine load_wmbasic_spectra(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(aux_wmbasic_t) :: wmb_grid
+        type(backend_status_t) :: io_status
+        integer :: z, i, j, i1, nzwmb
+        real(WP) :: dz
+        real(WP), allocatable :: wmbsi(:, :, :, :)
+
+        call fsps_data_load_wmbasic(wmb_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_wmbasic failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        if (.not. allocated(wmb_grid%lam) .or. .not. allocated(wmb_grid%logt) .or. &
+            .not. allocated(wmb_grid%z) .or. .not. allocated(wmb_grid%spec)) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: WMBasic grid is not fully allocated.'
+            error stop 1
+        end if
+
+        nzwmb = size(wmb_grid%z)
+        if (size(wmb_grid%logt) /= NDIM_WMB_LOGT .or. size(wmb_grid%spec, 2) /= NDIM_WMB_LOGT .or. &
+            size(wmb_grid%spec, 3) /= NDIM_WMB_LOGG .or. size(wmb_grid%spec, 4) /= nzwmb) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: WMBasic grid shape mismatch.'
+            error stop 1
+        end if
+
+        ctx%state%wmb_logt = wmb_grid%logt
+        ctx%state%wmb_logg = [3.5_wp, 4.0_wp, 4.5_wp]
+
+        allocate(wmbsi(ctx%state%nspec, nzwmb, NDIM_WMB_LOGT, NDIM_WMB_LOGG))
+
+        do z = 1, nzwmb
+            do j = 1, NDIM_WMB_LOGG
+                do i = 1, NDIM_WMB_LOGT
+                    wmbsi(:, z, i, j) = max(interpolate_linear(wmb_grid%lam, wmb_grid%spec(:, i, j, z), &
+                                                              ctx%state%spec_lambda), SAFE_FLOOR)
+                end do
+            end do
+        end do
+
+        do z = 1, ctx%state%nz
+            i1 = min(max(find_interval(log10(wmb_grid%z/ctx%state%zsol_spec), &
+                                       log10(ctx%state%zlegend(z)/ctx%state%zsol)), 1), nzwmb - 1)
+
+            dz = (log10(ctx%state%zlegend(z)/ctx%state%zsol) - log10(wmb_grid%z(i1)/ctx%state%zsol_spec)) / &
+                 (log10(wmb_grid%z(i1 + 1)/ctx%state%zsol_spec) - log10(wmb_grid%z(i1)/ctx%state%zsol_spec))
+            dz = min(max(dz, 0.0_wp), 1.0_wp)
+
+            ctx%state%wmb_spec(:, z, :, :) = real(10.0_wp**((1.0_wp - dz)*log10(wmbsi(:, i1, :, :) + SAFE_FLOOR) + &
+                                                             dz*log10(wmbsi(:, i1 + 1, :, :) + SAFE_FLOOR)), &
+                                                  kind=kind(ctx%state%wmb_spec))
+        end do
+
+        deallocate(wmbsi)
+        call wmb_grid%clear()
+    end subroutine load_wmbasic_spectra
+
+    subroutine load_post_agb_spectra(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(aux_pagb_t) :: pagb_grid
+        type(backend_status_t) :: io_status
+        integer :: i, j
+
+        call fsps_data_load_pagb(pagb_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_pagb failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        if (.not. allocated(pagb_grid%lam) .or. .not. allocated(pagb_grid%logt) .or. .not. allocated(pagb_grid%spec)) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: Post-AGB grid is not fully allocated.'
+            error stop 1
+        end if
+
+        if (size(pagb_grid%logt) /= NDIM_PAGB .or. size(pagb_grid%spec, 2) /= NDIM_PAGB .or. size(pagb_grid%spec, 3) /= 2) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: Post-AGB grid shape mismatch.'
+            error stop 1
+        end if
+
+        ctx%state%pagb_logt = pagb_grid%logt
+
+        do j = 1, 2
+            do i = 1, NDIM_PAGB
+                ctx%state%pagb_spec(:, i, j) = max(interpolate_linear(pagb_grid%lam, pagb_grid%spec(:, i, j), &
+                                                                      ctx%state%spec_lambda), SAFE_FLOOR)
+            end do
+        end do
+
+        call pagb_grid%clear()
+    end subroutine load_post_agb_spectra
+
+    subroutine load_wr_spectra(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(aux_wr_t) :: wr_grid
+        type(backend_status_t) :: io_status
+        integer :: i, j, i1, nz_wr, nlam_wr
+        real(WP) :: dz
+        real(WP) :: target_logz
+        real(WP), allocatable :: wrn_interp(:, :, :), wrc_interp(:, :, :)
+        real(WP), allocatable :: wr_z_log(:), wr_lam_log(:), target_lam_log(:)
+
+        call fsps_data_load_wr(wr_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_wr failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        if (.not. allocated(wr_grid%logt_wn) .or. .not. allocated(wr_grid%logt_wc) .or. .not. allocated(wr_grid%z) .or. &
+            .not. allocated(wr_grid%lam) .or. .not. allocated(wr_grid%spec_wn) .or. .not. allocated(wr_grid%spec_wc)) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: WR grid is not fully allocated.'
+            error stop 1
+        end if
+
+        nz_wr = size(wr_grid%z)
+        nlam_wr = size(wr_grid%lam)
+        if (size(wr_grid%logt_wn) /= NDIM_WR .or. size(wr_grid%logt_wc) /= NDIM_WR .or. &
+            size(wr_grid%spec_wn, 1) /= nlam_wr .or. size(wr_grid%spec_wn, 2) /= NDIM_WR .or. &
+            size(wr_grid%spec_wn, 3) /= nz_wr .or. size(wr_grid%spec_wc, 1) /= nlam_wr .or. &
+            size(wr_grid%spec_wc, 2) /= NDIM_WR .or. size(wr_grid%spec_wc, 3) /= nz_wr) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: WR grid shape mismatch.'
+            error stop 1
+        end if
+
+        ctx%state%wrn_logt = wr_grid%logt_wn
+        ctx%state%wrc_logt = wr_grid%logt_wc
+
+        allocate(wrn_interp(ctx%state%nspec, NDIM_WR, nz_wr))
+        allocate(wrc_interp(ctx%state%nspec, NDIM_WR, nz_wr))
+        allocate(wr_z_log(nz_wr), wr_lam_log(nlam_wr), target_lam_log(ctx%state%nspec))
+
+        wr_z_log = log10(wr_grid%z / ctx%state%zsol_spec)
+        wr_lam_log = log10(wr_grid%lam)
+        target_lam_log = log10(ctx%state%spec_lambda)
+
+        do j = 1, nz_wr
+            do i = 1, NDIM_WR
+                wrn_interp(:, i, j) = 10.0_wp**interpolate_linear( &
+                    wr_lam_log, log10(wr_grid%spec_wn(:, i, j) + SAFE_FLOOR), target_lam_log) - SAFE_FLOOR
+                wrc_interp(:, i, j) = 10.0_wp**interpolate_linear( &
+                    wr_lam_log, log10(wr_grid%spec_wc(:, i, j) + SAFE_FLOOR), target_lam_log) - SAFE_FLOOR
+            end do
+        end do
+
+        do j = 1, ctx%state%nz
+            target_logz = log10(ctx%state%zlegend(j) / ctx%state%zsol_spec)
+            i1 = min(max(find_interval(wr_z_log, target_logz), 1), nz_wr - 1)
+            dz = (target_logz - wr_z_log(i1)) / (wr_z_log(i1 + 1) - wr_z_log(i1))
+            dz = min(max(dz, 0.0_wp), 1.0_wp)
+
+            ctx%state%wrn_spec(:, :, j) = real(10.0_wp**((1.0_wp - dz)*log10(wrn_interp(:, :, i1) + SAFE_FLOOR) + &
+                                                          dz*log10(wrn_interp(:, :, i1 + 1) + SAFE_FLOOR)), &
+                                               kind=kind(ctx%state%wrn_spec))
+            ctx%state%wrc_spec(:, :, j) = real(10.0_wp**((1.0_wp - dz)*log10(wrc_interp(:, :, i1) + SAFE_FLOOR) + &
+                                                          dz*log10(wrc_interp(:, :, i1 + 1) + SAFE_FLOOR)), &
+                                               kind=kind(ctx%state%wrc_spec))
+        end do
+
+        deallocate(wrn_interp, wrc_interp, wr_z_log, wr_lam_log, target_lam_log)
+        call wr_grid%clear()
+    end subroutine load_wr_spectra
+
+    subroutine load_agb_spectra(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(aux_agb_t) :: agb_grid
+        type(backend_status_t) :: io_status
+        integer :: i, iz, i1, nz_o
+        real(WP) :: dz
+        real(WP), allocatable :: z_o_log(:)
+
+        call fsps_data_load_agb(agb_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_agb failed', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        if (.not. allocated(agb_grid%z_o) .or. .not. allocated(agb_grid%logt_o) .or. .not. allocated(agb_grid%logt_c) .or. &
+            .not. allocated(agb_grid%logt_car) .or. .not. allocated(agb_grid%lam_o) .or. .not. allocated(agb_grid%lam_c) .or. &
+            .not. allocated(agb_grid%lam_car) .or. .not. allocated(agb_grid%spec_o) .or. .not. allocated(agb_grid%spec_c) .or. &
+            .not. allocated(agb_grid%spec_car)) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGB grid is not fully allocated.'
+            error stop 1
+        end if
+
+        if (size(agb_grid%logt_o, 2) /= N_AGB_O .or. size(agb_grid%logt_c) /= N_AGB_C .or. &
+            size(agb_grid%logt_car) /= N_AGB_CAR .or. size(agb_grid%spec_o, 2) /= N_AGB_O .or. &
+            size(agb_grid%spec_c, 2) /= N_AGB_C .or. size(agb_grid%spec_car, 2) /= N_AGB_CAR) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGB grid shape mismatch.'
+            error stop 1
+        end if
+
+        nz_o = size(agb_grid%z_o)
+        if (size(agb_grid%logt_o, 1) /= nz_o) then
+            write(error_unit, '(A)') '[FSPS_INIT] Error: AGB O-rich logT grid mismatch.'
+            error stop 1
+        end if
+
+        allocate(z_o_log(nz_o))
+        z_o_log = agb_grid%z_o
+
+        do iz = 1, ctx%state%nz
+              i1 = min(max(find_interval(z_o_log, log10(ctx%state%zlegend(iz)/ctx%state%zsol_spec)), 1), nz_o - 1)
+              dz = (log10(ctx%state%zlegend(iz)/ctx%state%zsol_spec) - z_o_log(i1)) / &
+                  (z_o_log(i1+1) - z_o_log(i1))
+            dz = min(max(dz, 0.0_wp), 1.0_wp)
+              ctx%state%agb_logt_o(iz, :) = (1.0_wp - dz) * agb_grid%logt_o(i1, :) + &
+                                      dz * agb_grid%logt_o(i1+1, :)
+        end do
+
+        ctx%state%agb_logt_c = agb_grid%logt_c
+        ctx%state%agb_logt_car = agb_grid%logt_car
+
+        do i = 1, N_AGB_O
+            ctx%state%agb_spec_o(:, i) = max(interpolate_linear(agb_grid%lam_o, agb_grid%spec_o(:, i), &
+                                                                 ctx%state%spec_lambda), SAFE_FLOOR)
+        end do
+
+        do i = 1, N_AGB_C
+            ctx%state%agb_spec_c(:, i) = max(interpolate_linear(agb_grid%lam_c, agb_grid%spec_c(:, i), &
+                                                                 ctx%state%spec_lambda), SAFE_FLOOR)
+        end do
+
+        do i = 1, N_AGB_CAR
+            ctx%state%agb_spec_car(:, i) = max(interpolate_linear(agb_grid%lam_car, agb_grid%spec_car(:, i), &
+                                                                   ctx%state%spec_lambda), SAFE_FLOOR)
+        end do
+
+        deallocate(z_o_log)
+        call agb_grid%clear()
+    end subroutine load_agb_spectra
 
     !> @brief Loads Filter Curves, Solar/Vega SEDs, and Spectral Indices.
     !>
@@ -1160,49 +1878,89 @@ contains
     subroutine load_xrb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, stat, i_spec
-        character(len=5), allocatable :: zz_str(:)
-        real(WP), allocatable :: tspec(:)
+        type(xrb_spectra_t) :: xrb_grid
+        type(backend_status_t) :: io_status
+        character(len=32) :: backend_mode
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=:), allocatable :: uri
+        integer :: env_stat
+        integer :: i, j
 
-        allocate (tspec(ctx%state%nspec_xrb))
-        allocate (zz_str(ctx%state%nz_xrb))
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
 
-        open (98, file=trim(ctx%sps_home)//'/data/spectra/xrb/xsp.lambda', status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: xrb lambda file missing'
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        select case (trim(backend_mode))
+        case ('hdf5')
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        case default
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
+        end select
+
+        call fsps_data_open(uri, backend_mode, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_open failed for XRB load', io_status%code, trim(io_status%message)
             error stop 1
         end if
 
-        do i = 1, ctx%state%nspec_xrb
-            read (98, *) ctx%state%lam_xrb(i)
-        end do
-        close (98)
+        call fsps_data_load_xrb(xrb_grid, io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_load_xrb failed', io_status%code, trim(io_status%message)
+            call fsps_data_close(io_status)
+            error stop 1
+        end if
 
-        ctx%state%ages_xrb = log10((/1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp, 5.0_wp, 8.0_wp, 10.0_wp, 12.6_wp, 16.0_wp, 20.0_wp/)) + 6.0_wp
-        ctx%state%zmet_xrb = (/-1.3_wp, -1.0_wp, -0.8_wp, -0.7_wp, -0.5_wp, -0.4_wp, -0.3_wp, -0.2_wp, 0.0_wp, 0.2_wp, 0.3_wp/)
-        zz_str = (/'-1.30', '-1.00', '-0.80', '-0.70', '-0.50', '-0.40', '-0.30', '-0.20', '+0.00', '+0.20', '+0.30'/)
+        if (.not. allocated(xrb_grid%lam) .or. .not. allocated(xrb_grid%age) .or. &
+            .not. allocated(xrb_grid%z) .or. .not. allocated(xrb_grid%spec)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: XRB grid is not fully allocated.'
+            error stop 1
+        end if
 
-        do j = 1, ctx%state%nz_xrb
-            open (98, file=trim(ctx%sps_home)// &
-                  '/data/spectra/xrb/xsp_feh'//zz_str(j)//'.spec', &
-                  status='old', action='read', iostat=stat)
-            if (stat /= 0) then
-                write (error_unit, '(A,A)') '[FSPS_INIT] Error: xrb spec missing for ', zz_str(j)
-                error stop 1
-            end if
-            do i = 1, ctx%state%nt_xrb
-                read (98, *) tspec
-                do i_spec = 1, ctx%state%nspec
-                    ctx%state%spec_xrb(i_spec, i, j) = max(interpolate_linear(ctx%state%lam_xrb, tspec, &
-                                                           ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
-                end do
+        if (size(xrb_grid%spec, 1) /= size(xrb_grid%lam) .or. size(xrb_grid%spec, 2) /= size(xrb_grid%age) .or. &
+            size(xrb_grid%spec, 3) /= size(xrb_grid%z)) then
+            call fsps_data_close(io_status)
+            write(error_unit, '(A)') '[FSPS_INIT] Error: XRB grid shape mismatch.'
+            error stop 1
+        end if
+
+        ctx%state%lam_xrb = xrb_grid%lam
+        ctx%state%ages_xrb = xrb_grid%age
+        ctx%state%zmet_xrb = xrb_grid%z
+
+        do j = 1, size(xrb_grid%z)
+            do i = 1, size(xrb_grid%age)
+                ctx%state%spec_xrb(:, i, j) = max(interpolate_linear( &
+                    xrb_grid%lam, xrb_grid%spec(:, i, j), ctx%state%spec_lambda), SAFE_FLOOR)
             end do
-            close (98)
         end do
 
-        ctx%state%spec_xrb = ctx%state%spec_xrb*L_SOL
+        ctx%state%spec_xrb = ctx%state%spec_xrb * L_SOL
 
-        deallocate (tspec, zz_str)
+        call fsps_data_close(io_status)
+        if (io_status%code /= 0) then
+            write(error_unit, '(A,1x,I0,1x,A)') &
+                '[FSPS_INIT] Error: fsps_data_close failed for XRB load', io_status%code, trim(io_status%message)
+            error stop 1
+        end if
+
+        call xrb_grid%clear()
     end subroutine load_xrb_spectra
 
     subroutine convert_to_vega_system(ctx)

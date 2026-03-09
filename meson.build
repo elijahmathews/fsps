@@ -18,8 +18,12 @@ fc = meson.get_compiler('fortran')
 fc_id = fc.get_id()
 host_cpu = host_machine.cpu_family()
 
+# Build-time config header for CPP defines consumed by Fortran sources.
+conf_data = configuration_data()
+
 # Universal arguments
 add_project_arguments('-cpp', language : 'fortran')
+add_project_arguments('-I' + meson.current_build_dir(), language : 'fortran')
 
 # GFortran-specific arguments
 if fc_id == 'gcc'
@@ -83,6 +87,64 @@ if get_option('buildtype') == 'release' and fc_id == 'gcc'
     endif
 endif
 
+# -----------------------------------
+# Data backend selection (legacy/hdf5/auto)
+# -----------------------------------
+data_backend_opt = get_option('data_backend')
+hdf5_fortran_incdir = get_option('hdf5_fortran_incdir')
+hdf5_fortran_link_args = get_option('hdf5_fortran_link_args')
+
+hdf5_dep = disabler()
+hdf5_backend_enabled = false
+
+# Primary probe: Meson HDF5 Fortran discovery
+hdf5_probe = dependency('hdf5', language: 'fortran', required: false)
+
+if hdf5_probe.found()
+    hdf5_dep = hdf5_probe
+    hdf5_backend_enabled = true
+elif hdf5_fortran_incdir != '' or hdf5_fortran_link_args.length() > 0
+    # Manual fallback for systems where HDF5 Fortran modules are in non-standard paths
+    hdf5_compile_args = []
+    if hdf5_fortran_incdir != ''
+        hdf5_compile_args += ['-I' + hdf5_fortran_incdir]
+    endif
+
+    hdf5_dep = declare_dependency(
+        compile_args : hdf5_compile_args,
+        link_args : hdf5_fortran_link_args
+    )
+    hdf5_backend_enabled = true
+endif
+
+if data_backend_opt == 'hdf5' and not hdf5_backend_enabled
+    error('data_backend=hdf5 requested, but HDF5 Fortran dependency was not found. ' +
+          'Provide -Dhdf5_fortran_incdir and/or -Dhdf5_fortran_link_args as fallback.')
+endif
+
+if data_backend_opt == 'auto'
+    if hdf5_backend_enabled
+        message('FSPS data backend: auto -> enabling HDF5 backend')
+    else
+        message('FSPS data backend: auto -> HDF5 unavailable, falling back to legacy backend')
+    endif
+endif
+
+if data_backend_opt == 'legacy'
+    hdf5_backend_enabled = false
+endif
+
+if hdf5_backend_enabled
+    conf_data.set('FSPS_HAS_HDF5', 1)
+else
+    conf_data.set('FSPS_HAS_HDF5', 0)
+endif
+
+configure_file(
+    output : 'fsps_build_config.h',
+    configuration : conf_data
+)
+
 # ===================================
 # Source Definitions
 # ===================================
@@ -104,6 +166,11 @@ lib_sources = files(
     'src/core/fsps_types.f90',
 
     # IO Module
+    'src/io/fsps_data_schema.f90',
+    'src/io/fsps_data_backend.f90',
+    'src/io/fsps_data_backend_legacy.f90',
+    'src/io/fsps_data_registry.f90',
+    'src/io/fsps_data_mapper.f90',
     'src/io/fsps_io.f90',
 
     # Math Modules
@@ -128,6 +195,15 @@ lib_sources = files(
     'src/spectra/fsps_spectral_library.f90',
 )
 
+if hdf5_backend_enabled
+    lib_sources += files('src/io/fsps_data_backend_hdf5.f90')
+endif
+
+backend_deps = []
+if hdf5_backend_enabled
+    backend_deps += hdf5_dep
+endif
+
 # ===================================
 # Main Library Target
 # ===================================
@@ -138,7 +214,8 @@ libfsps = library('fsps',
     version : meson.project_version(),
     soversion : '3',
     install : true,
-    dependencies : [omp_dep, accel_dep],
+    dependencies : [omp_dep, accel_dep] + backend_deps,
+    include_directories : include_directories('.'),
 )
 
 # Declare a dependency object for executables/tests to use
@@ -146,7 +223,7 @@ libfsps = library('fsps',
 fsps_dep = declare_dependency(
     link_with : libfsps,
     include_directories : include_directories('include'),
-    dependencies : [omp_dep, accel_dep]
+    dependencies : [omp_dep, accel_dep] + backend_deps
 )
 
 # ===================================

@@ -19,7 +19,7 @@ module fsps_interpolation
     private
     
     ! Publicly expose the generic name and the utility
-    public :: find_interval, interpolate_linear
+    public :: find_interval, find_bounds, interpolate_linear
     
     !> @brief
     !> Abstract interface for a generic linear interpolation function.
@@ -141,6 +141,51 @@ contains
 
         idx = find_interval_no_hint(array, value)
     end function find_interval
+
+    !> @brief Finds index bounds in sorted `grid` for [val_min, val_max].
+    pure subroutine find_bounds(grid, val_min, val_max, start_idx, end_idx)
+        !$acc routine seq
+        real(WP), dimension(:), intent(in), contiguous :: grid
+        real(WP), intent(in) :: val_min, val_max
+        integer, intent(out) :: start_idx, end_idx
+
+        integer :: n
+        logical :: is_ascending
+
+        n = size(grid)
+        is_ascending = (grid(n) >= grid(1))
+
+        if (is_ascending) then
+            if (val_min <= grid(1)) then
+                start_idx = 1
+            else
+                start_idx = max(find_interval(grid, val_min), 1)
+            end if
+
+            if (val_max >= grid(n)) then
+                end_idx = n
+            else
+                end_idx = min(find_interval(grid, val_max), n)
+            end if
+        else
+            if (val_min >= grid(1)) then
+                start_idx = 1
+            else
+                start_idx = max(find_interval(grid, val_min), 1)
+            end if
+
+            if (val_max <= grid(n)) then
+                end_idx = n
+            else
+                end_idx = min(find_interval(grid, val_max), n)
+            end if
+        end if
+
+        if (start_idx > end_idx) then
+            start_idx = 1
+            end_idx = 0
+        end if
+    end subroutine find_bounds
 
     !> @brief
     !> Finds the index `i` in an array such that `array(i) <= value < array(i+1)`.

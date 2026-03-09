@@ -9,3 +9,12 @@ option('cpu_baseline', type: 'combo', choices: ['generic', 'native', 'x86-64-v3'
 
 option('enable_stress_testing', type: 'boolean', value: false,
   description: 'Build and register stress-test executables for CI and profiling')
+
+option('data_backend', type: 'combo', choices: ['legacy', 'hdf5', 'auto'], value: 'legacy',
+  description: 'Data backend selection for standardized FSDS I/O')
+
+option('hdf5_fortran_incdir', type: 'string', value: '',
+  description: 'Manual include directory for HDF5 Fortran modules (e.g. /usr/lib64/gfortran/modules/hdf5)')
+
+option('hdf5_fortran_link_args', type: 'array', value: [],
+  description: 'Manual linker arguments for HDF5 Fortran (e.g. -lhdf5_fortran -lhdf5)')
