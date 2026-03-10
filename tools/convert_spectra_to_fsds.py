@@ -96,6 +96,8 @@ UMIN_ARR_THEMIS = np.array(
 
 def _spectra_dir(sps_home: Path, spec_lib: str) -> Path:
     spec = spec_lib.lower()
+    if spec == "bpass":
+        return sps_home / "data" / "isochrones" / "BPASS"
     if spec == "miles":
         return sps_home / "data" / "spectra" / "MILES"
     if spec == "basel":
@@ -109,6 +111,8 @@ def _spectra_dir(sps_home: Path, spec_lib: str) -> Path:
 
 def _lambda_filename(spec_lib: str) -> str:
     spec = spec_lib.lower()
+    if spec == "bpass":
+        return "bpass.lambda"
     if spec == "miles":
         return "miles.lambda"
     if spec == "basel":
@@ -123,6 +127,9 @@ def _lambda_filename(spec_lib: str) -> str:
 def _binary_filename(spec_lib: str, z: float, spectra_dir: Path) -> Path:
     zstr = f"{z:0.4f}"
     spec = spec_lib.lower()
+
+    if spec == "bpass":
+        return spectra_dir / "bpass_v2.2_salpeter100.ssp.bin"
 
     if spec == "miles":
         return spectra_dir / f"imiles_z{zstr}.spectra.bin"
@@ -146,6 +153,8 @@ def _binary_filename(spec_lib: str, z: float, spectra_dir: Path) -> Path:
 
 def _isoc_dir(sps_home: Path, isoc_lib: str) -> Path:
     lib = isoc_lib.lower()
+    if lib == "bpss":
+        return sps_home / "data" / "isochrones" / "BPASS"
     if lib == "mist":
         return sps_home / "data" / "isochrones" / "MIST"
     if lib == "pdva":
@@ -161,6 +170,8 @@ def _isoc_dir(sps_home: Path, isoc_lib: str) -> Path:
 
 def _isoc_zsol(isoc_lib: str) -> float:
     lib = isoc_lib.lower()
+    if lib == "bpss":
+        return 0.020
     if lib == "mist":
         return 0.0142
     if lib == "pdva":
@@ -285,9 +296,104 @@ def _read_legacy_cube(
     return data.reshape((n_logg, n_logt, n_lam))
 
 
+def _read_bpass_mass_table(mass_path: Path, n_z: int) -> tuple[np.ndarray, np.ndarray]:
+    if not mass_path.exists():
+        raise FileNotFoundError(f"Missing BPASS mass file: {mass_path}")
+
+    raw = np.fromstring(mass_path.read_text(), sep=" ", dtype=np.float64)
+    n_cols = n_z + 1
+    if raw.size == 0 or raw.size % n_cols != 0:
+        raise ValueError(
+            f"Unexpected BPASS mass table size in {mass_path}: got {raw.size}, expected multiple of {n_cols}"
+        )
+
+    arr = raw.reshape((-1, n_cols))
+    time_full = arr[:, 0].astype(np.float64, copy=False)
+    mass_ssp = arr[:, 1:].astype(np.float64, copy=False)
+    return time_full, mass_ssp
+
+
+def _read_bpass_cube(bin_path: Path, n_lam: int, n_t: int, n_z: int) -> np.ndarray:
+    if not bin_path.exists():
+        raise FileNotFoundError(f"Missing BPASS spectral binary file: {bin_path}")
+
+    expected = n_lam * n_t * n_z
+    data = np.fromfile(bin_path, dtype=np.float64)
+    if data.size != expected:
+        raise ValueError(
+            f"Unexpected BPASS binary size in {bin_path}: got {data.size}, expected {expected}"
+        )
+
+    return data.reshape((n_lam, n_t, n_z), order="F")
+
+
+def _write_bpss_isochrones(
+    h5: h5py.File, isoc_lib: str, axis_z: np.ndarray, time_full: np.ndarray, mass_ssp: np.ndarray
+) -> None:
+    n_t = int(time_full.size)
+    n_z = int(axis_z.size)
+    if mass_ssp.shape != (n_t, n_z):
+        raise ValueError(
+            f"BPASS mass table shape mismatch: got {mass_ssp.shape}, expected {(n_t, n_z)}"
+        )
+
+    nmass = np.ones((n_z, n_t), dtype=np.int32)
+    timestep_logyr = np.repeat(time_full[np.newaxis, :], n_z, axis=0).astype(
+        np.float64, copy=False
+    )
+
+    missing64 = np.float64(-1.0e30)
+    mini = np.full((n_z, n_t, 1), missing64, dtype=np.float64)
+    mact = np.full((n_z, n_t, 1), missing64, dtype=np.float64)
+    logl = np.full((n_z, n_t, 1), 0.0, dtype=np.float64)
+    logt = np.full((n_z, n_t, 1), 0.0, dtype=np.float64)
+    logg = np.full((n_z, n_t, 1), 0.0, dtype=np.float64)
+    phase = np.full((n_z, n_t, 1), 0.0, dtype=np.float64)
+    ffco = np.full((n_z, n_t, 1), 0.0, dtype=np.float64)
+    lmdot = np.full((n_z, n_t, 1), -99.0, dtype=np.float64)
+
+    mini[:, :, 0] = mass_ssp.T
+    mact[:, :, 0] = mass_ssp.T
+
+    tracks_grp = h5.require_group(f"/libraries/isochrones/{isoc_lib}/tracks")
+
+    d_nmass = tracks_grp.create_dataset("nmass", data=nmass, dtype=np.int32)
+    d_nmass.attrs["role"] = "isoc_nmass"
+    d_nmass.attrs["dims_csv"] = "nt,nz"
+    d_nmass.attrs["representation"] = "dense_nd"
+
+    d_tstep = tracks_grp.create_dataset(
+        "timestep", data=timestep_logyr, dtype=np.float64
+    )
+    d_tstep.attrs["role"] = "isoc_timestep"
+    d_tstep.attrs["dims_csv"] = "nt,nz"
+    d_tstep.attrs["representation"] = "dense_nd"
+
+    def _write_3d(name: str, arr: np.ndarray) -> None:
+        ds = tracks_grp.create_dataset(name, data=arr, dtype=np.float64)
+        ds.attrs["role"] = f"isoc_{name}"
+        ds.attrs["dims_csv"] = "nm,nt,nz"
+        ds.attrs["representation"] = "dense_nd"
+
+    _write_3d("mini", mini)
+    _write_3d("mact", mact)
+    _write_3d("logl", logl)
+    _write_3d("logt", logt)
+    _write_3d("logg", logg)
+    _write_3d("phase", phase)
+    _write_3d("ffco", ffco)
+    _write_3d("lmdot", lmdot)
+
+
 def _write_isochrones(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
     isoc_dir = _isoc_dir(sps_home, isoc_lib)
     zlegend = _read_isoc_zlegend(isoc_dir, isoc_lib)
+
+    if isoc_lib.lower() == "bpss":
+        time_full, mass_ssp = _read_bpass_mass_table(isoc_dir / "bpass.mass", int(zlegend.size))
+        _write_bpss_isochrones(h5, isoc_lib, zlegend, time_full, mass_ssp)
+        return
+
     n_z = int(zlegend.size)
     is_mist = isoc_lib.lower() == "mist"
 
@@ -379,6 +485,25 @@ def _read_nebular_file_lines(path: Path) -> list[str]:
     return [ln for ln in lines if ln]
 
 
+def _interp_linear_extrap(
+    x_in: np.ndarray, y_in: np.ndarray, x_out: np.ndarray
+) -> np.ndarray:
+    if x_in.ndim != 1 or y_in.ndim != 1 or x_out.ndim != 1:
+        raise ValueError("Interpolation inputs must be 1D arrays")
+    if x_in.size < 2 or y_in.size != x_in.size:
+        raise ValueError("Interpolation input sizes are invalid")
+
+    idx = np.searchsorted(x_in, x_out, side="right") - 1
+    idx = np.clip(idx, 0, x_in.size - 2)
+
+    x0 = x_in[idx]
+    x1 = x_in[idx + 1]
+    y0 = y_in[idx]
+    y1 = y_in[idx + 1]
+    slope = (y1 - y0) / (x1 - x0)
+    return y0 + slope * (x_out - x0)
+
+
 def _read_nebular_continuum(
     sps_home: Path,
     isoc_lib: str,
@@ -439,7 +564,7 @@ def _read_nebular_continuum(
         rem = rec % (n_age * n_u)
         ia = rem // n_u
         iu = rem % n_u
-        interp = np.interp(axis_lambda, raw_lam, np.log10(raw_spec + floor))
+        interp = _interp_linear_extrap(raw_lam, np.log10(raw_spec + floor), axis_lambda)
         cont[:, iz, ia, iu] = interp.astype(np.float32)
 
     return cont
@@ -1183,33 +1308,51 @@ def convert(
     sps_home: Path, spec_lib: str, isoc_lib: str, out_file: Path, dust_type: str
 ) -> None:
     spectra_dir = _spectra_dir(sps_home, spec_lib)
+    spec = spec_lib.lower()
 
-    axis_lambda = _read_axis(spectra_dir / _lambda_filename(spec_lib))
-    axis_z = _read_axis(spectra_dir / "zlegend.dat")
+    if spec == "bpass":
+        axis_lambda = _read_axis(spectra_dir / "bpass.lambda")
+        axis_z = _read_axis(spectra_dir / "zlegend.dat")
+        axis_logt, _mass_ssp = _read_bpass_mass_table(spectra_dir / "bpass.mass", int(axis_z.size))
+        axis_logg = np.array([0.0], dtype=np.float64)
 
-    # FSPS legacy spectral grid axes are shared from BaSeL tables.
-    basel_dir = sps_home / "data" / "spectra" / "BaSeL3.1"
-    axis_logt = _read_axis(basel_dir / "basel_logt.dat")
-    axis_logg = _read_axis(basel_dir / "basel_logg.dat")
+        cube_l_t_z = _read_bpass_cube(
+            spectra_dir / "bpass_v2.2_salpeter100.ssp.bin",
+            int(axis_lambda.size),
+            int(axis_logt.size),
+            int(axis_z.size),
+        )
+        cube_l_z_t_g = np.transpose(cube_l_t_z, (0, 2, 1))[:, :, :, np.newaxis]
+        spectral_grid_c = np.transpose(cube_l_z_t_g, (3, 2, 1, 0)).astype(
+            np.float32, copy=False
+        )
+    else:
+        axis_lambda = _read_axis(spectra_dir / _lambda_filename(spec_lib))
+        axis_z = _read_axis(spectra_dir / "zlegend.dat")
 
-    n_lam = axis_lambda.size
-    n_z = axis_z.size
-    n_logt = axis_logt.size
-    n_logg = axis_logg.size
+        # FSPS legacy spectral grid axes are shared from BaSeL tables.
+        basel_dir = sps_home / "data" / "spectra" / "BaSeL3.1"
+        axis_logt = _read_axis(basel_dir / "basel_logt.dat")
+        axis_logg = _read_axis(basel_dir / "basel_logg.dat")
 
-    cubes = []
-    for iz in range(n_z):
-        zval = float(axis_z[iz])
-        bin_path = _binary_filename(spec_lib, zval, spectra_dir)
-        cube = _read_legacy_cube(bin_path, n_lam, n_logt, n_logg)
-        cubes.append(cube)
+        n_lam = axis_lambda.size
+        n_z = axis_z.size
+        n_logt = axis_logt.size
+        n_logg = axis_logg.size
 
-    # Shape after stacking: (n_z, n_logg, n_logt, n_lam)
-    stacked = np.stack(cubes, axis=0)
+        cubes = []
+        for iz in range(n_z):
+            zval = float(axis_z[iz])
+            bin_path = _binary_filename(spec_lib, zval, spectra_dir)
+            cube = _read_legacy_cube(bin_path, n_lam, n_logt, n_logg)
+            cubes.append(cube)
 
-    # For Fortran backend expecting flux(lambda, z, logt, logg), write the dataset
-    # in C-order as (n_logg, n_logt, n_z, n_lambda).
-    spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(np.float32, copy=False)
+        # Shape after stacking: (n_z, n_logg, n_logt, n_lam)
+        stacked = np.stack(cubes, axis=0)
+
+        # For Fortran backend expecting flux(lambda, z, logt, logg), write the dataset
+        # in C-order as (n_logg, n_logt, n_z, n_lambda).
+        spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(np.float32, copy=False)
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(out_file, "w") as h5:
@@ -1246,12 +1389,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--spec-lib",
         required=True,
-        help="Spectral library name, e.g. miles, c3k_afe+0.0.",
+        help="Spectral library name, e.g. miles, basel, bpass, c3k_afe+0.0.",
     )
     p.add_argument(
         "--isoc-lib",
         required=True,
-        help="Isochrone library name, e.g. mist, pdva, prsc, bsti, gnva.",
+        help="Isochrone library name, e.g. mist, pdva, prsc, bsti, gnva, bpss.",
     )
     p.add_argument(
         "--dust-type",

@@ -23,6 +23,8 @@ module fsps_data_backend_legacy
     integer, parameter :: NLAMWR = 1963
     integer, parameter :: NSPEC_AGB = 6146
     integer, parameter :: NSPEC_ARINGER = 9032
+    integer, parameter :: NT_BPASS = 43
+    integer, parameter :: NZ_BPASS = 12
     real(WP), parameter :: QPAH_ARR_DL07(7) = [ &
         0.47_wp, 1.12_wp, 1.77_wp, 2.50_wp, 3.19_wp, 3.90_wp, 4.58_wp &
     ]
@@ -690,6 +692,7 @@ contains
         character(len=:), allocatable :: axis
         character(len=:), allocatable :: path
         integer :: i
+        real(WP), allocatable :: bpass_time(:), bpass_mass(:,:)
 
         call axis_desc%clear()
         call status%set_ok()
@@ -726,22 +729,40 @@ contains
             self%zlegend = axis_desc%values
 
         case ('logt')
-            axis_desc%n = NDIM_LOGT
-            axis_desc%path = 'legacy:dummy:logt'
             axis_desc%unit = 'dex'
-            allocate(axis_desc%values(axis_desc%n))
-            do i = 1, axis_desc%n
-                axis_desc%values(i) = real(i, WP)
-            end do
+            if (trim(self%spec_type) == 'bpass') then
+                call read_bpass_mass_table(self, bpass_time, bpass_mass, status)
+                if (status%code /= 0) return
+                axis_desc%n = size(bpass_time)
+                axis_desc%path = trim(self%sps_home)//'/data/isochrones/BPASS/bpass.mass'
+                allocate(axis_desc%values(axis_desc%n))
+                axis_desc%values = bpass_time
+                if (allocated(bpass_time)) deallocate(bpass_time)
+                if (allocated(bpass_mass)) deallocate(bpass_mass)
+            else
+                axis_desc%n = NDIM_LOGT
+                axis_desc%path = 'legacy:dummy:logt'
+                allocate(axis_desc%values(axis_desc%n))
+                do i = 1, axis_desc%n
+                    axis_desc%values(i) = real(i, WP)
+                end do
+            end if
 
         case ('logg')
-            axis_desc%n = NDIM_LOGG
-            axis_desc%path = 'legacy:dummy:logg'
             axis_desc%unit = 'dex'
-            allocate(axis_desc%values(axis_desc%n))
-            do i = 1, axis_desc%n
-                axis_desc%values(i) = real(i, WP)
-            end do
+            if (trim(self%spec_type) == 'bpass') then
+                axis_desc%n = 1
+                axis_desc%path = 'legacy:dummy:bpass_logg'
+                allocate(axis_desc%values(1))
+                axis_desc%values(1) = 0.0_wp
+            else
+                axis_desc%n = NDIM_LOGG
+                axis_desc%path = 'legacy:dummy:logg'
+                allocate(axis_desc%values(axis_desc%n))
+                do i = 1, axis_desc%n
+                    axis_desc%values(i) = real(i, WP)
+                end do
+            end if
 
         case ('afe', 'alpha_fe')
             call status%set_error(3021, 'Legacy backend does not support an afe axis.')
@@ -1282,6 +1303,7 @@ contains
 
         character(len=:), allocatable :: file_path
         real(real32), allocatable :: buffer_32(:,:,:)
+        real(WP), allocatable :: bpass_cube(:,:,:)
         integer :: u_file, io_stat, rec_len, file_unit_size
 
         call slice%clear()
@@ -1315,33 +1337,57 @@ contains
         call build_binary_file_path(self, iz, file_path, status)
         if (status%code /= 0) return
 
-        file_unit_size = file_storage_size / 8
-        rec_len = (self%nspec * NDIM_LOGT * NDIM_LOGG * 4) / file_unit_size
+        if (trim(self%spec_type) == 'bpass') then
+            allocate(bpass_cube(self%nspec, NT_BPASS, size(self%zlegend)))
 
-        allocate(buffer_32(self%nspec, NDIM_LOGT, NDIM_LOGG))
+            open(newunit=u_file, file=trim(file_path), status='old', access='stream', form='unformatted', &
+                 action='read', iostat=io_stat)
+            if (io_stat /= 0) then
+                deallocate(bpass_cube)
+                call status%set_error(3045, 'Failed to open legacy BPASS spectral binary: '//trim(file_path))
+                return
+            end if
 
-        open(newunit=u_file, file=trim(file_path), status='old', access='direct', recl=rec_len, &
-             form='unformatted', action='read', iostat=io_stat)
-        if (io_stat /= 0) then
+            read(u_file, iostat=io_stat) bpass_cube
+            close(u_file)
+            if (io_stat /= 0) then
+                deallocate(bpass_cube)
+                call status%set_error(3046, 'Failed to read legacy BPASS spectral record: '//trim(file_path))
+                return
+            end if
+
+            allocate(slice%flux(self%nspec, NT_BPASS, 1))
+            slice%flux(:, :, 1) = bpass_cube(:, :, iz)
+            deallocate(bpass_cube)
+        else
+            file_unit_size = file_storage_size / 8
+            rec_len = (self%nspec * NDIM_LOGT * NDIM_LOGG * 4) / file_unit_size
+
+            allocate(buffer_32(self%nspec, NDIM_LOGT, NDIM_LOGG))
+
+            open(newunit=u_file, file=trim(file_path), status='old', access='direct', recl=rec_len, &
+                 form='unformatted', action='read', iostat=io_stat)
+            if (io_stat /= 0) then
+                deallocate(buffer_32)
+                call status%set_error(3045, 'Failed to open legacy spectral binary: '//trim(file_path))
+                return
+            end if
+
+            read(u_file, rec=1, iostat=io_stat) buffer_32
+            close(u_file)
+            if (io_stat /= 0) then
+                deallocate(buffer_32)
+                call status%set_error(3046, 'Failed to read legacy spectral record: '//trim(file_path))
+                return
+            end if
+
+            allocate(slice%flux(self%nspec, NDIM_LOGT, NDIM_LOGG))
+            slice%flux = real(buffer_32, WP)
             deallocate(buffer_32)
-            call status%set_error(3045, 'Failed to open legacy spectral binary: '//trim(file_path))
-            return
         end if
 
-        read(u_file, rec=1, iostat=io_stat) buffer_32
-        close(u_file)
-        if (io_stat /= 0) then
-            deallocate(buffer_32)
-            call status%set_error(3046, 'Failed to read legacy spectral record: '//trim(file_path))
-            return
-        end if
-
-        allocate(slice%flux(self%nspec, NDIM_LOGT, NDIM_LOGG))
-        slice%flux = real(buffer_32, WP)
         slice%iz = iz
         slice%iafe = 1
-
-        deallocate(buffer_32)
     end subroutine legacy_backend_read_spectral_slice
 
     subroutine legacy_backend_read_spectral_neighborhood(self, dataset, iz_lo, iz_hi, iafe_lo, iafe_hi, neighborhood, status)
@@ -2288,6 +2334,10 @@ contains
             nz = NZ_GENEVA
             zsol = 0.020_wp
             file_path = trim(self%sps_home)//'/data/isochrones/Geneva/zlegend.dat'
+        case ('bpss')
+            nz = NZ_BPASS
+            zsol = 0.020_wp
+            file_path = trim(self%sps_home)//'/data/isochrones/BPASS/zlegend.dat'
         case default
             call status%set_error(3080, 'Unsupported isoc_type in legacy backend: '//trim(self%isoc_type))
             return
@@ -2362,6 +2412,10 @@ contains
             nt = NT_GENEVA
             nz = NZ_GENEVA
             zsol = 0.020_wp
+        case ('bpss')
+            nt = NT_BPASS
+            nz = NZ_BPASS
+            zsol = 0.020_wp
         case default
             call status%set_error(3083, 'Unsupported isoc_type for legacy isochrone loading: '//trim(self%isoc_type))
             return
@@ -2394,11 +2448,53 @@ contains
         self%iso_cache%ffco = 0.0_wp
         self%iso_cache%lmdot = -99.0_wp
 
+        if (trim(self%isoc_type) == 'bpss') then
+            call load_legacy_bpss_isochrones(self, status)
+            return
+        end if
+
         do z_idx = 1, nz
             call read_one_legacy_iso_file(self, z_idx, nt, zsol, status)
             if (status%code /= 0) return
         end do
     end subroutine load_legacy_isochrones
+
+    subroutine load_legacy_bpss_isochrones(self, status)
+        class(legacy_backend_t), intent(inout) :: self
+        type(backend_status_t), intent(out) :: status
+
+        real(WP), allocatable :: time_full(:), mass_ssp(:,:)
+        integer :: it, iz
+
+        call status%set_ok()
+        call read_bpass_mass_table(self, time_full, mass_ssp, status)
+        if (status%code /= 0) return
+
+        if (size(time_full) /= NT_BPASS .or. size(mass_ssp, 1) /= NT_BPASS .or. size(mass_ssp, 2) /= NZ_BPASS) then
+            if (allocated(time_full)) deallocate(time_full)
+            if (allocated(mass_ssp)) deallocate(mass_ssp)
+            call status%set_error(3085, 'Unexpected BPASS mass table dimensions while loading BPSS isochrones.')
+            return
+        end if
+
+        do it = 1, NT_BPASS
+            do iz = 1, NZ_BPASS
+                self%iso_cache%nmass(it, iz) = 1
+                self%iso_cache%timestep_logyr(it, iz) = time_full(it)
+                self%iso_cache%mini(1, it, iz) = mass_ssp(it, iz)
+                self%iso_cache%mact(1, it, iz) = mass_ssp(it, iz)
+                self%iso_cache%logl(1, it, iz) = 0.0_wp
+                self%iso_cache%logt(1, it, iz) = 0.0_wp
+                self%iso_cache%logg(1, it, iz) = 0.0_wp
+                self%iso_cache%phase(1, it, iz) = 0.0_wp
+                self%iso_cache%ffco(1, it, iz) = 0.0_wp
+                self%iso_cache%lmdot(1, it, iz) = -99.0_wp
+            end do
+        end do
+
+        if (allocated(time_full)) deallocate(time_full)
+        if (allocated(mass_ssp)) deallocate(mass_ssp)
+    end subroutine load_legacy_bpss_isochrones
 
     subroutine read_one_legacy_iso_file(self, z_idx, nt, zsol, status)
         class(legacy_backend_t), intent(inout) :: self
@@ -2600,6 +2696,8 @@ contains
             file_path = trim(self%sps_home)//'/data/spectra/BaSeL3.1/basel.lambda'
         case ('miles')
             file_path = trim(self%sps_home)//'/data/spectra/MILES/miles.lambda'
+        case ('bpass')
+            file_path = trim(self%sps_home)//'/data/isochrones/BPASS/bpass.lambda'
         case ('ckc14')
             file_path = trim(self%sps_home)//'/data/spectra/CKC14/ckc14.lambda'
         case default
@@ -2623,6 +2721,8 @@ contains
             file_path = trim(self%sps_home)//'/data/spectra/BaSeL3.1/zlegend.dat'
         case ('miles')
             file_path = trim(self%sps_home)//'/data/spectra/MILES/zlegend.dat'
+        case ('bpass')
+            file_path = trim(self%sps_home)//'/data/isochrones/BPASS/zlegend.dat'
         case ('ckc14')
             file_path = trim(self%sps_home)//'/data/spectra/CKC14/zlegend.dat'
         case default
@@ -2656,6 +2756,8 @@ contains
             file_path = trim(self%sps_home)//'/data/spectra/BaSeL3.1/basel_'//trim(BASEL_STR)//'_z'//trim(z_str)//'.spectra.bin'
         case ('miles')
             file_path = trim(self%sps_home)//'/data/spectra/MILES/imiles_z'//z_str//'.spectra.bin'
+        case ('bpass')
+            file_path = trim(self%sps_home)//'/data/isochrones/BPASS/bpass_v2.2_salpeter100.ssp.bin'
         case ('ckc14')
             file_path = trim(self%sps_home)//'/data/spectra/CKC14/'//trim(self%spec_type)//'_z'//z_str//'.spectra.bin'
         case default
@@ -2666,5 +2768,43 @@ contains
             end if
         end select
     end subroutine build_binary_file_path
+
+    subroutine read_bpass_mass_table(self, time_full, mass_ssp, status)
+        class(legacy_backend_t), intent(in) :: self
+        real(WP), allocatable, intent(out) :: time_full(:)
+        real(WP), allocatable, intent(out) :: mass_ssp(:,:)
+        type(backend_status_t), intent(out) :: status
+
+        integer :: u_file, io_stat, it, nz
+        character(len=1024) :: file_path
+
+        if (allocated(time_full)) deallocate(time_full)
+        if (allocated(mass_ssp)) deallocate(mass_ssp)
+        call status%set_ok()
+
+        nz = NZ_BPASS
+        file_path = trim(self%sps_home)//'/data/isochrones/BPASS/bpass.mass'
+        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+        if (io_stat /= 0) then
+            call status%set_error(3164, 'Failed to open BPASS mass file: '//trim(file_path))
+            return
+        end if
+
+        allocate(time_full(NT_BPASS))
+        allocate(mass_ssp(NT_BPASS, nz))
+
+        do it = 1, NT_BPASS
+            read(u_file, *, iostat=io_stat) time_full(it), mass_ssp(it, :)
+            if (io_stat /= 0) then
+                close(u_file)
+                if (allocated(time_full)) deallocate(time_full)
+                if (allocated(mass_ssp)) deallocate(mass_ssp)
+                call status%set_error(3165, 'Failed to parse BPASS mass row in: '//trim(file_path))
+                return
+            end if
+        end do
+
+        close(u_file)
+    end subroutine read_bpass_mass_table
 
 end module fsps_data_backend_legacy

@@ -1950,11 +1950,6 @@ contains
             dust_part = trim(ctx%state%str_dustem)
         end if
 
-        if (trim(ctx%state%isoc_type) == 'bpss') then
-            backend_mode = 'legacy'
-            use_hdf5_uri = .false.
-        end if
-
         if (use_hdf5_uri) then
             uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
                   trim(ctx%state%spec_type)//'|'//trim(dust_part)
