@@ -309,18 +309,18 @@ def _write_isochrones(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
     if max_nt <= 0 or max_nm <= 0:
         raise ValueError(f"No isochrone tracks parsed for {isoc_lib}")
 
-    missing32 = np.float32(-1.0e30)
+    missing64 = np.float64(-1.0e30)
     nmass = np.zeros((n_z, max_nt), dtype=np.int32)
     timestep_logyr = np.full((n_z, max_nt), -1.0e30, dtype=np.float64)
 
-    mini = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    mact = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    logl = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    logt = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    logg = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    phase = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    ffco = np.full((n_z, max_nt, max_nm), missing32, dtype=np.float32)
-    lmdot = np.full((n_z, max_nt, max_nm), np.float32(-99.0), dtype=np.float32)
+    mini = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    mact = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    logl = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    logt = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    logg = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    phase = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    ffco = np.full((n_z, max_nt, max_nm), missing64, dtype=np.float64)
+    lmdot = np.full((n_z, max_nt, max_nm), -99.0, dtype=np.float64)
 
     for iz, tracks in enumerate(all_tracks):
         for it, track in enumerate(tracks):
@@ -333,14 +333,14 @@ def _write_isochrones(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
                 _, v_mini, v_mact, v_logl, v_logt, v_logg, v_ffco, v_phase, v_lmdot = (
                     row
                 )
-                mini[iz, it, im] = np.float32(v_mini)
-                mact[iz, it, im] = np.float32(v_mact)
-                logl[iz, it, im] = np.float32(v_logl)
-                logt[iz, it, im] = np.float32(v_logt)
-                logg[iz, it, im] = np.float32(v_logg)
-                ffco[iz, it, im] = np.float32(v_ffco)
-                phase[iz, it, im] = np.float32(v_phase)
-                lmdot[iz, it, im] = np.float32(v_lmdot)
+                mini[iz, it, im] = v_mini
+                mact[iz, it, im] = v_mact
+                logl[iz, it, im] = v_logl
+                logt[iz, it, im] = v_logt
+                logg[iz, it, im] = v_logg
+                ffco[iz, it, im] = v_ffco
+                phase[iz, it, im] = v_phase
+                lmdot[iz, it, im] = v_lmdot
 
     tracks_grp = h5.require_group(f"/libraries/isochrones/{isoc_lib}/tracks")
 
@@ -357,7 +357,7 @@ def _write_isochrones(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
     d_tstep.attrs["representation"] = "dense_nd"
 
     def _write_3d(name: str, arr: np.ndarray) -> None:
-        ds = tracks_grp.create_dataset(name, data=arr, dtype=np.float32)
+        ds = tracks_grp.create_dataset(name, data=arr, dtype=np.float64)
         ds.attrs["role"] = f"isoc_{name}"
         ds.attrs["dims_csv"] = "nm,nt,nz"
         ds.attrs["representation"] = "dense_nd"
@@ -432,7 +432,7 @@ def _read_nebular_continuum(
         )
 
     cont = np.full((n_lam, n_z, n_age, n_u), np.float32(-1.0e30), dtype=np.float32)
-    floor = 1.0e-30
+    floor = 1.0e-95
 
     for rec, raw_spec in enumerate(records_spec):
         iz = rec // (n_age * n_u)
@@ -466,7 +466,7 @@ def _read_nebular_lines(
     spectra: list[np.ndarray] = []
 
     idx = 2
-    floor = 1.0e-30
+    floor = 1.0e-95
     while idx < len(lines):
         if idx + 1 >= len(lines):
             raise ValueError(

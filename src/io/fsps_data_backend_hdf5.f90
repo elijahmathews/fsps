@@ -117,14 +117,14 @@ contains
         end if
 
         call h5open_f(hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2001, 'HDF5 initialization failed in open().')
             return
         end if
         self%hdf5_initialized = .true.
 
         call h5fopen_f(trim(self%data_uri), H5F_ACC_RDONLY_F, self%file_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2002, 'Failed to open HDF5 file: '//trim(self%data_uri))
             self%file_id = -1_HID_T
             call h5close_f(hdferr)
@@ -660,7 +660,7 @@ contains
 
         exists = .false.
         call h5lexists_f(self%file_id, trim(path), exists, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             hdf5_backend_has_path = .false.
         else
             hdf5_backend_has_path = exists
@@ -724,13 +724,13 @@ contains
         end if
 
         call h5dopen_f(self%file_id, trim(dataset_path), dset_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2302, 'Failed to open dataset: '//trim(dataset_path))
             return
         end if
 
         call h5dget_space_f(dset_id, space_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2303, 'Failed to get dataspace: '//trim(dataset_path))
             return
@@ -745,7 +745,7 @@ contains
         end if
 
         call h5sget_simple_extent_npoints_f(space_id, npoints, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2305, 'Failed to read rank-1 size: '//trim(dataset_path))
@@ -764,7 +764,7 @@ contains
         read_dims(1) = npoints
         allocate(values(int(npoints)))
         call h5dread_f(dset_id, h5_real_type, values, read_dims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             if (allocated(values)) deallocate(values)
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
@@ -797,13 +797,13 @@ contains
         end if
 
         call h5dopen_f(self%file_id, trim(dataset_path), dset_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2312, 'Failed to open dataset: '//trim(dataset_path))
             return
         end if
 
         call h5dget_space_f(dset_id, space_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2313, 'Failed to get dataspace: '//trim(dataset_path))
             return
@@ -819,7 +819,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2315, 'Failed to read rank-2 dimensions: '//trim(dataset_path))
@@ -830,7 +830,7 @@ contains
 
         allocate(values(dims(1), dims(2)))
         call h5dread_f(dset_id, h5_real_type, values, dims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             if (allocated(values)) deallocate(values)
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
@@ -863,13 +863,13 @@ contains
         end if
 
         call h5dopen_f(self%file_id, trim(dataset_path), dset_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2318, 'Failed to open dataset: '//trim(dataset_path))
             return
         end if
 
         call h5dget_space_f(dset_id, space_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2319, 'Failed to get dataspace: '//trim(dataset_path))
             return
@@ -885,7 +885,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2327, 'Failed to read rank-3 dimensions: '//trim(dataset_path))
@@ -896,7 +896,7 @@ contains
 
         allocate(values(dims(1), dims(2), dims(3)))
         call h5dread_f(dset_id, h5_real_type, values, dims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             if (allocated(values)) deallocate(values)
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
@@ -929,13 +929,13 @@ contains
         end if
 
         call h5dopen_f(self%file_id, trim(dataset_path), dset_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call status%set_error(2330, 'Failed to open dataset: '//trim(dataset_path))
             return
         end if
 
         call h5dget_space_f(dset_id, space_id, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2331, 'Failed to get dataspace: '//trim(dataset_path))
             return
@@ -951,7 +951,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2333, 'Failed to read rank-4 dimensions: '//trim(dataset_path))
@@ -1016,7 +1016,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2325, 'Failed to read rank-1 dimensions: '//trim(dataset_path))
@@ -1079,7 +1079,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2335, 'Failed to read rank-2 dimensions: '//trim(dataset_path))
@@ -1142,7 +1142,7 @@ contains
 
         allocate(dims(rank), maxdims(rank))
         call h5sget_simple_extent_dims_f(space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2341, 'Failed to read rank-3 dimensions: '//trim(dataset_path))
@@ -1458,7 +1458,7 @@ contains
 
         allocate(dims(rank), maxdims(rank), offset(rank), count(rank))
         call h5sget_simple_extent_dims_f(file_space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2507, 'Failed to read spectral dimensions.')
@@ -1634,7 +1634,7 @@ contains
 
         allocate(dims(rank), maxdims(rank), offset(rank), count(rank))
         call h5sget_simple_extent_dims_f(file_space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2605, 'Failed to read validity mask dimensions.')
@@ -1769,7 +1769,7 @@ contains
 
         allocate(dims(rank), maxdims(rank), offset(rank), count(rank))
         call h5sget_simple_extent_dims_f(file_space_id, dims, maxdims, hdferr)
-        if (hdferr /= 0) then
+        if (hdferr < 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2705, 'Failed to read neighborhood mask dimensions.')

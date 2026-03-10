@@ -282,6 +282,7 @@ test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencie
 executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
 executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep)
+executable('test_backend_parity', 'tests/io/test_backend_parity.f90', dependencies : fsps_dep)
 
 if get_option('enable_stress_testing')
     stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep)

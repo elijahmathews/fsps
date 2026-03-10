@@ -1,3 +1,5 @@
+#include "fsps_build_config.h"
+
 module fsps_initialization
     !> @brief
     !> Handles the initialization, memory allocation, and data loading for FSPS contexts.
@@ -23,18 +25,25 @@ module fsps_initialization
     use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup
     use fsps_io, only: load_zlegend_file, load_wavelength_grid, load_spectral_resolution, &
-                       read_bpass_data, &
+                       read_bpass_data, read_isochrone_database_legacy => read_isochrone_database, &
+                       read_spectral_binary_legacy => read_spectral_binary, &
+                       load_nebular_grid_legacy => load_nebular_grid, &
+                       load_dust_emission_table_legacy => load_dust_emission_table, &
+                       load_agn_dust_models_legacy => load_agn_dust_models, &
                        load_filter_definitions, &
                        load_standard_sed, load_index_definitions, &
                        load_lsf_data, &
-                       apply_legacy_filter_norm, fsps_data_open, fsps_data_close, &
-                       fsps_data_load_spectral_library, fsps_data_load_isochrones, &
-                       fsps_data_load_nebular, fsps_data_load_wmbasic, fsps_data_load_pagb, &
-                       fsps_data_load_wr, fsps_data_load_agb, fsps_data_load_dust_emission, &
-                       fsps_data_load_agn_dust, fsps_data_load_dust_attenuation, fsps_data_load_xrb
-    use fsps_data_backend, only: backend_status_t
+                       load_attenuation_curves_legacy => load_attenuation_curves, &
+                       load_wmbasic_spectra_legacy => load_wmbasic_spectra, &
+                       load_agb_spectra_legacy => load_agb_spectra, &
+                       load_post_agb_spectra_legacy => load_post_agb_spectra, &
+                       load_wr_spectra_legacy => load_wr_spectra, &
+                       apply_legacy_filter_norm
+    use fsps_data_backend, only: backend_status_t, data_backend_t, backend_status_ok
+    use fsps_data_registry, only: create_data_backend
+    use fsps_data_mapper, only: fsps_data_mapper_t
     use fsps_data_schema, only: spectral_grid_t, isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, aux_wr_t, aux_agb_t, &
-                                dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t
+                                dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t, library_manifest_t, dataset_desc_t
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
@@ -50,6 +59,10 @@ module fsps_initialization
     ! Module constants
     ! ---------------------------------------------------------------------
     integer, parameter :: NZWMB = 12
+    class(data_backend_t), allocatable, save :: fsps_backend
+    type(fsps_data_mapper_t), save :: fsps_mapper
+    type(library_manifest_t), save :: fsps_manifest
+    logical, save :: fsps_backend_open = .false.
 
 contains
 
@@ -326,16 +339,12 @@ contains
         integer, intent(in) :: zin
         integer :: z, zmin, zmax, i, i1, j, k, nzinit, nm_data
         real(WP) :: dz, log_spec_val
-        real(WP), allocatable :: speclibinit(:, :, :, :)
+        real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
         type(backend_status_t) :: io_status
         type(spectral_grid_t) :: base_grid
         type(isochrone_grid_t) :: iso_grid
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
 
         call load_zlegend_file(ctx, ctx%state%isoc_type, .false.)
 
@@ -372,28 +381,55 @@ contains
         allocate (speclibinit(ctx%state%nspec, nzinit, NDIM_LOGT, NDIM_LOGG))
         speclibinit = 0.0_wp
 
-        backend_mode = 'legacy'
-        backend_mode_env = ''
-        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-            backend_mode = trim(to_lower(trim(backend_mode_env)))
-        end if
+        call resolve_data_backend_uri(ctx, backend_mode, uri)
 
-        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-        hdf5_file_path_env = ''
-        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-            hdf5_file_path = trim(hdf5_file_path_env)
-        end if
+        if (trim(backend_mode) == 'legacy') then
+            allocate(speclib_slice(ctx%state%nspec, NDIM_LOGT, NDIM_LOGG))
+            do z = 1, nzinit
+                call read_spectral_binary_legacy(ctx, ctx%state%spec_type, z, speclib_slice)
+                speclibinit(:, z, :, :) = speclib_slice
+            end do
+            deallocate(speclib_slice)
 
-        select case (trim(backend_mode))
-        case ('hdf5')
-            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        case default
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        end select
+            do z = 1, ctx%state%nz
+                i1 = min(max(find_interval(log10(ctx%state%zlegendinit/ctx%state%zsol_spec), &
+                                           log10(ctx%state%zlegend(z)/ctx%state%zsol)), 1), nzinit - 1)
+                dz = (log10(ctx%state%zlegend(z)/ctx%state%zsol) - &
+                      log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))/ &
+                     (log10(ctx%state%zlegendinit(i1 + 1)/ctx%state%zsol_spec) - &
+                      log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
+                dz = min(max(dz, 0.0_wp), 1.0_wp)
+
+                do k = 1, NDIM_LOGG
+                    do j = 1, NDIM_LOGT
+                        do i = 1, ctx%state%nspec
+                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + SAFE_FLOOR) + &
+                                           dz * log10(speclibinit(i, i1 + 1, j, k) + SAFE_FLOOR)
+                            ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                        end do
+                    end do
+                end do
+            end do
+
+            deallocate(speclibinit)
+
+            call load_wmbasic_spectra_legacy(ctx)
+            call load_agb_spectra_legacy(ctx)
+            call load_post_agb_spectra_legacy(ctx)
+            call load_wr_spectra_legacy(ctx)
+
+            do z = zmin, zmax
+                call read_isochrone_database_legacy(ctx, ctx%state%isoc_type, z)
+            end do
+
+            if (ctx%state%isoc_type == 'gnva') then
+                ctx%state%imf_lower_bound = minval(ctx%state%mini_isoc(zmin, 1, 1:ctx%state%nmass_isoc(zmin, 1)))*0.99_wp
+            else
+                ctx%state%imf_lower_bound = ctx%state%imf_lower_limit
+            end if
+
+            return
+        end if
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -448,10 +484,10 @@ contains
 
         deallocate (speclibinit)
 
-        call load_wmbasic_spectra(ctx)
-        call load_agb_spectra(ctx)
-        call load_post_agb_spectra(ctx)
-        call load_wr_spectra(ctx)
+        call load_wmbasic_spectra_legacy(ctx)
+        call load_agb_spectra_legacy(ctx)
+        call load_post_agb_spectra_legacy(ctx)
+        call load_wr_spectra_legacy(ctx)
 
         call fsps_data_load_isochrones(iso_grid, io_status)
         if (io_status%code /= 0) then
@@ -541,76 +577,57 @@ contains
         type(backend_status_t) :: io_status
         type(nebular_grid_t) :: neb_grid
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
 
-        call load_dust_emission_table(ctx, ctx%state%str_dustem)
-        call load_dust_attenuation_curves(ctx)
-        call load_dusty_agb_spectra(ctx)
+            call load_dust_emission_table_legacy(ctx, ctx%state%str_dustem)
+            call load_attenuation_curves_legacy(ctx)
+            call load_dusty_agb_spectra(ctx)
 
         if (ctx%state%isoc_type == 'mist' .or. ctx%state%isoc_type == 'pdva' .or. &
             ctx%state%isoc_type == 'prsc' .or. ctx%state%isoc_type == 'bpss') then
-            backend_mode = 'legacy'
-            backend_mode_env = ''
-            call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-            if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-                backend_mode = trim(to_lower(trim(backend_mode_env)))
-            end if
+            call resolve_data_backend_uri(ctx, backend_mode, uri)
 
-            hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-            hdf5_file_path_env = ''
-            call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-            if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-                hdf5_file_path = trim(hdf5_file_path_env)
-            end if
-
-            select case (trim(backend_mode))
-            case ('hdf5')
-                uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                      trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-            case default
-                uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                      trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-            end select
-
-            call fsps_data_open(uri, backend_mode, io_status)
-            if (io_status%code /= 0) then
-                write(error_unit, '(A,1x,I0,1x,A)') &
-                    '[FSPS_INIT] Error: fsps_data_open failed for nebular load', io_status%code, trim(io_status%message)
-                error stop 1
-            end if
-
-            if (ctx%cloudy_dust_val == 1) then
-                call fsps_data_load_nebular('WD', neb_grid, io_status)
+            if (trim(backend_mode) == 'legacy') then
+                call load_nebular_grid_legacy(ctx, ctx%state%isoc_type, ctx%cloudy_dust_val == 1)
+                call compute_nebular_kernels(ctx)
             else
-                call fsps_data_load_nebular('ND', neb_grid, io_status)
-            end if
-            if (io_status%code /= 0) then
-                write(error_unit, '(A,1x,I0,1x,A)') &
-                    '[FSPS_INIT] Error: fsps_data_load_nebular failed', io_status%code, trim(io_status%message)
+
+                call fsps_data_open(uri, backend_mode, io_status)
+                if (io_status%code /= 0) then
+                    write(error_unit, '(A,1x,I0,1x,A)') &
+                        '[FSPS_INIT] Error: fsps_data_open failed for nebular load', io_status%code, trim(io_status%message)
+                    error stop 1
+                end if
+
+                if (ctx%cloudy_dust_val == 1) then
+                    call fsps_data_load_nebular('WD', neb_grid, io_status)
+                else
+                    call fsps_data_load_nebular('ND', neb_grid, io_status)
+                end if
+                if (io_status%code /= 0) then
+                    write(error_unit, '(A,1x,I0,1x,A)') &
+                        '[FSPS_INIT] Error: fsps_data_load_nebular failed', io_status%code, trim(io_status%message)
+                    call fsps_data_close(io_status)
+                    error stop 1
+                end if
+
+                if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
+                if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
+                if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
+                if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
+                if (allocated(neb_grid%age)) ctx%state%nebem_age = neb_grid%age
+                if (allocated(neb_grid%logu)) ctx%state%nebem_logu = neb_grid%logu
+
                 call fsps_data_close(io_status)
-                error stop 1
+                if (io_status%code /= 0) then
+                    write(error_unit, '(A,1x,I0,1x,A)') &
+                        '[FSPS_INIT] Error: fsps_data_close failed for nebular load', io_status%code, trim(io_status%message)
+                    error stop 1
+                end if
+
+                call neb_grid%clear()
+                call compute_nebular_kernels(ctx)
             end if
-
-            if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
-            if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
-            if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
-            if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
-            if (allocated(neb_grid%age)) ctx%state%nebem_age = neb_grid%age
-            if (allocated(neb_grid%logu)) ctx%state%nebem_logu = neb_grid%logu
-
-            call fsps_data_close(io_status)
-            if (io_status%code /= 0) then
-                write(error_unit, '(A,1x,I0,1x,A)') &
-                    '[FSPS_INIT] Error: fsps_data_close failed for nebular load', io_status%code, trim(io_status%message)
-                error stop 1
-            end if
-
-            call neb_grid%clear()
-            call compute_nebular_kernels(ctx)
         end if
 
         if (ctx%state%isoc_type == 'bpss') then
@@ -628,35 +645,15 @@ contains
         type(dust_emission_t) :: em_grid
         type(backend_status_t) :: io_status
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
         integer :: i_spec, k, start_idx, nqpah, numin_cols
 
-        backend_mode = 'legacy'
-        backend_mode_env = ''
-        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-            backend_mode = trim(to_lower(trim(backend_mode_env)))
-        end if
+        call resolve_data_backend_uri(ctx, backend_mode, uri, dust_type)
 
-        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-        hdf5_file_path_env = ''
-        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-            hdf5_file_path = trim(hdf5_file_path_env)
+        if (trim(backend_mode) == 'legacy') then
+            call load_dust_emission_table_legacy(ctx, dust_type)
+            return
         end if
-
-        select case (trim(backend_mode))
-        case ('hdf5')
-            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(dust_type)
-        case default
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(dust_type)
-        end select
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -723,35 +720,15 @@ contains
         type(dust_attenuation_t) :: att_grid
         type(backend_status_t) :: io_status
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
         integer :: n, i, j, k
 
-        backend_mode = 'legacy'
-        backend_mode_env = ''
-        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-            backend_mode = trim(to_lower(trim(backend_mode_env)))
-        end if
+        call resolve_data_backend_uri(ctx, backend_mode, uri)
 
-        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-        hdf5_file_path_env = ''
-        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-            hdf5_file_path = trim(hdf5_file_path_env)
+        if (trim(backend_mode) == 'legacy') then
+            call load_attenuation_curves_legacy(ctx)
+            return
         end if
-
-        select case (trim(backend_mode))
-        case ('hdf5')
-            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        case default
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        end select
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -824,35 +801,15 @@ contains
         type(agn_dust_t) :: agn_grid
         type(backend_status_t) :: io_status
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
         integer :: i, i1, i2
 
-        backend_mode = 'legacy'
-        backend_mode_env = ''
-        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-            backend_mode = trim(to_lower(trim(backend_mode_env)))
-        end if
+        call resolve_data_backend_uri(ctx, backend_mode, uri)
 
-        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-        hdf5_file_path_env = ''
-        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-            hdf5_file_path = trim(hdf5_file_path_env)
+        if (trim(backend_mode) == 'legacy') then
+            call load_agn_dust_models_legacy(ctx)
+            return
         end if
-
-        select case (trim(backend_mode))
-        case ('hdf5')
-            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        case default
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        end select
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -1881,35 +1838,10 @@ contains
         type(xrb_spectra_t) :: xrb_grid
         type(backend_status_t) :: io_status
         character(len=32) :: backend_mode
-        character(len=64) :: backend_mode_env
-        character(len=1024) :: hdf5_file_path
-        character(len=1024) :: hdf5_file_path_env
         character(len=:), allocatable :: uri
-        integer :: env_stat
         integer :: i, j
 
-        backend_mode = 'legacy'
-        backend_mode_env = ''
-        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
-            backend_mode = trim(to_lower(trim(backend_mode_env)))
-        end if
-
-        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
-        hdf5_file_path_env = ''
-        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
-        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
-            hdf5_file_path = trim(hdf5_file_path_env)
-        end if
-
-        select case (trim(backend_mode))
-        case ('hdf5')
-            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        case default
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(ctx%state%str_dustem)
-        end select
+        call resolve_data_backend_uri(ctx, backend_mode, uri)
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -1962,6 +1894,322 @@ contains
 
         call xrb_grid%clear()
     end subroutine load_xrb_spectra
+
+    subroutine resolve_data_backend_uri(ctx, backend_mode, uri, dust_name)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=32), intent(out) :: backend_mode
+        character(len=:), allocatable, intent(out) :: uri
+        character(len=*), intent(in), optional :: dust_name
+
+        character(len=64) :: backend_mode_env
+        character(len=1024) :: hdf5_file_path
+        character(len=1024) :: hdf5_file_path_env
+        character(len=64) :: dust_part
+        integer :: env_stat
+        logical :: use_hdf5_uri
+
+        backend_mode = 'legacy'
+        backend_mode_env = ''
+        call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
+            backend_mode = trim(to_lower(trim(backend_mode_env)))
+        end if
+
+        select case (trim(backend_mode))
+        case ('fsds_hdf5')
+            backend_mode = 'hdf5'
+        case ('fsds_legacy')
+            backend_mode = 'legacy'
+        case ('fsds_auto')
+            backend_mode = 'auto'
+        end select
+
+        use_hdf5_uri = .false.
+        select case (trim(backend_mode))
+        case ('hdf5')
+            use_hdf5_uri = .true.
+        case ('auto')
+#if FSPS_HAS_HDF5 == 1
+            use_hdf5_uri = .true.
+            backend_mode = 'hdf5'
+#else
+            backend_mode = 'legacy'
+#endif
+        end select
+
+        hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
+        hdf5_file_path_env = ''
+        call get_environment_variable('FSPS_HDF5_DATA_PATH', value=hdf5_file_path_env, status=env_stat)
+        if (env_stat == 0 .and. len_trim(hdf5_file_path_env) > 0) then
+            hdf5_file_path = trim(hdf5_file_path_env)
+        end if
+
+        if (present(dust_name)) then
+            dust_part = trim(dust_name)
+        else
+            dust_part = trim(ctx%state%str_dustem)
+        end if
+
+        if (trim(ctx%state%isoc_type) == 'bpss') then
+            backend_mode = 'legacy'
+            use_hdf5_uri = .false.
+        end if
+
+        if (use_hdf5_uri) then
+            uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(dust_part)
+        else
+            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
+                  trim(ctx%state%spec_type)//'|'//trim(dust_part)
+        end if
+    end subroutine resolve_data_backend_uri
+
+    subroutine fsps_data_open(uri, backend_mode, status)
+        character(len=*), intent(in) :: uri
+        character(len=*), intent(in) :: backend_mode
+        type(backend_status_t), intent(out) :: status
+        type(backend_status_t) :: close_status
+        character(len=:), allocatable :: backend_uri
+
+        call status%set_ok()
+
+        if (fsps_backend_open) then
+            call fsps_data_close(close_status)
+            if (close_status%code /= 0) then
+                call status%set_error(close_status%code, trim(close_status%message))
+                return
+            end if
+        end if
+
+        call create_data_backend(backend_mode, fsps_backend, status)
+        if (.not. backend_status_ok(status)) return
+
+        backend_uri = trim(uri)
+        call normalize_backend_uri(backend_mode, backend_uri)
+
+        call fsps_backend%open(backend_uri, status)
+        if (.not. backend_status_ok(status)) then
+            if (allocated(fsps_backend)) deallocate(fsps_backend)
+            return
+        end if
+
+        call fsps_manifest%clear()
+        call fsps_backend%read_manifest(fsps_manifest, status)
+        if (.not. backend_status_ok(status)) then
+            call fsps_backend%close(close_status)
+            if (allocated(fsps_backend)) deallocate(fsps_backend)
+            call fsps_manifest%clear()
+            return
+        end if
+
+        fsps_backend_open = .true.
+    end subroutine fsps_data_open
+
+    subroutine fsps_data_close(status)
+        type(backend_status_t), intent(out) :: status
+        type(backend_status_t) :: close_status
+
+        call status%set_ok()
+
+        if (allocated(fsps_backend)) then
+            call fsps_backend%close(close_status)
+            if (.not. backend_status_ok(close_status)) then
+                call status%set_error(close_status%code, trim(close_status%message))
+            end if
+            deallocate(fsps_backend)
+        end if
+
+        call fsps_manifest%clear()
+        fsps_backend_open = .false.
+    end subroutine fsps_data_close
+
+    subroutine fsps_data_load_spectral_library(role, grid, status)
+        character(len=*), intent(in) :: role
+        type(spectral_grid_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+        type(dataset_desc_t) :: dataset
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call find_dataset_by_role(role, dataset, status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_spectral_grid(fsps_backend, dataset, grid, status)
+    end subroutine fsps_data_load_spectral_library
+
+    subroutine fsps_data_load_isochrones(grid, status)
+        type(isochrone_grid_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_isochrone_grid(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_isochrones
+
+    subroutine fsps_data_load_nebular(component, grid, status)
+        character(len=*), intent(in) :: component
+        type(nebular_grid_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_nebular_grid(fsps_backend, fsps_manifest, component, grid, status)
+    end subroutine fsps_data_load_nebular
+
+    subroutine fsps_data_load_wmbasic(grid, status)
+        type(aux_wmbasic_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_wmbasic(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_wmbasic
+
+    subroutine fsps_data_load_pagb(grid, status)
+        type(aux_pagb_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_pagb(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_pagb
+
+    subroutine fsps_data_load_wr(grid, status)
+        type(aux_wr_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_wr(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_wr
+
+    subroutine fsps_data_load_agb(grid, status)
+        type(aux_agb_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_agb(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_agb
+
+    subroutine fsps_data_load_dust_emission(grid, status)
+        type(dust_emission_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_dust_emission(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_dust_emission
+
+    subroutine fsps_data_load_agn_dust(grid, status)
+        type(agn_dust_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_agn_dust(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_agn_dust
+
+    subroutine fsps_data_load_dust_attenuation(grid, status)
+        type(dust_attenuation_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_dust_attenuation(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_dust_attenuation
+
+    subroutine fsps_data_load_xrb(grid, status)
+        type(xrb_spectra_t), intent(inout) :: grid
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call fsps_mapper%map_xrb(fsps_backend, fsps_manifest, grid, status)
+    end subroutine fsps_data_load_xrb
+
+    subroutine ensure_backend_ready(status)
+        type(backend_status_t), intent(out) :: status
+
+        call status%set_ok()
+
+        if (.not. fsps_backend_open .or. .not. allocated(fsps_backend)) then
+            call status%set_error(9101, 'FSPS data backend is not open.')
+            return
+        end if
+    end subroutine ensure_backend_ready
+
+    subroutine find_dataset_by_role(role, dataset, status)
+        character(len=*), intent(in) :: role
+        type(dataset_desc_t), intent(out) :: dataset
+        type(backend_status_t), intent(out) :: status
+        integer :: i
+
+        call status%set_ok()
+        call dataset%clear()
+
+        if (.not. allocated(fsps_manifest%datasets)) then
+            call status%set_error(9102, 'FSPS manifest has no datasets.')
+            return
+        end if
+
+        do i = 1, size(fsps_manifest%datasets)
+            if (.not. allocated(fsps_manifest%datasets(i)%role)) cycle
+            if (trim(fsps_manifest%datasets(i)%role) /= trim(role)) cycle
+            dataset = fsps_manifest%datasets(i)
+            return
+        end do
+
+        call status%set_error(9103, 'Dataset role not found in manifest: '//trim(role))
+    end subroutine find_dataset_by_role
+
+    subroutine normalize_backend_uri(backend_mode, uri)
+        character(len=*), intent(in) :: backend_mode
+        character(len=:), allocatable, intent(inout) :: uri
+        integer :: sep1, sep2_rel, sep3_rel, sep2, sep3
+        character(len=:), allocatable :: home_part, isoc_part, spec_part, dust_part
+
+        if (trim(to_lower(trim(backend_mode))) /= 'legacy') return
+
+        sep1 = index(uri, '|')
+        if (sep1 <= 1) return
+
+        sep2_rel = index(uri(sep1 + 1:), '|')
+        if (sep2_rel <= 1) return
+        sep2 = sep1 + sep2_rel
+
+        sep3_rel = index(uri(sep2 + 1:), '|')
+        if (sep3_rel <= 1) return
+        sep3 = sep2 + sep3_rel
+
+        if (sep3 >= len_trim(uri)) return
+
+        home_part = uri(1:sep1 - 1)
+        isoc_part = uri(sep1 + 1:sep2 - 1)
+        spec_part = uri(sep2 + 1:sep3 - 1)
+        dust_part = uri(sep3 + 1:len_trim(uri))
+
+        if (trim(to_lower(trim(isoc_part))) == 'bpss') then
+            isoc_part = 'mist'
+        end if
+
+        if (trim(to_lower(trim(spec_part))) == 'bpass') then
+            spec_part = 'miles'
+        end if
+
+        uri = trim(home_part)//'|'//trim(isoc_part)//'|'//trim(spec_part)//'|'//trim(dust_part)
+    end subroutine normalize_backend_uri
 
     subroutine convert_to_vega_system(ctx)
         type(fsps_context_t), intent(inout) :: ctx

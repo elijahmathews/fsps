@@ -9,6 +9,7 @@ module fsps_data_mapper
     !> - Bracketing index computations on numeric axes
 
     use fsps_precision, only: WP
+    use fsps_constants, only: NM, NDIM_PAGB
     use fsps_strings, only: to_lower
     use fsps_data_schema, only: axis_desc_t, dataset_desc_t, library_manifest_t, &
                                 spectral_grid_t, spectral_slice_t, isochrone_grid_t, nebular_grid_t, &
@@ -415,58 +416,89 @@ contains
         type(backend_status_t), intent(out) :: status
 
         character(len=:), allocatable :: path
+        integer :: nt, nz
+        integer, allocatable :: nmass_raw(:,:)
+        real(WP), allocatable :: timestep_raw(:,:)
+        real(WP), allocatable :: cube_raw(:,:,:)
 
         call status%set_ok()
         call grid%clear()
 
         call get_path_by_role(manifest, 'isoc_nmass', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_int_2d(path, grid%nmass, status)
+        call backend%read_int_2d(path, nmass_raw, status)
         if (.not. backend_status_ok(status)) return
+
+        nt = size(nmass_raw, 1)
+        nz = size(nmass_raw, 2)
+        if (nt <= 0 .or. nz <= 0) then
+            call status%set_error(1310, 'Invalid isochrone nmass shape.')
+            return
+        end if
+        allocate(grid%nmass(nt, nz))
+        grid%nmass = nmass_raw
 
         call get_path_by_role(manifest, 'isoc_timestep', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_2d(path, grid%timestep_logyr, status)
+        call backend%read_real_2d(path, timestep_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_timestep(timestep_raw, nt, nz, grid%timestep_logyr, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_mini', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%mini, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%mini, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_mact', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%mact, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%mact, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_logl', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%logl, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%logl, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_logt', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%logt, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%logt, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_logg', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%logg, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%logg, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_phase', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%phase, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%phase, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_ffco', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%ffco, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, 0.0_wp, grid%ffco, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, 'isoc_lmdot', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%lmdot, status)
+        call backend%read_real_3d(path, cube_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_iso_cube(cube_raw, nt, nz, -99.0_wp, grid%lmdot, status)
         if (.not. backend_status_ok(status)) return
     end subroutine map_isochrone_grid
 
@@ -481,6 +513,7 @@ contains
 
         character(len=:), allocatable :: role_prefix
         character(len=:), allocatable :: path
+        real(WP), allocatable :: cont_raw(:,:,:,:), line_raw(:,:,:,:)
 
         call status%set_ok()
         call grid%clear()
@@ -509,12 +542,17 @@ contains
 
         call get_path_by_role(manifest, trim(role_prefix)//'cont', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_4d(path, grid%cont, status)
+        call backend%read_real_4d(path, cont_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_nebular_cont(cont_raw, size(grid%logz), size(grid%age), size(grid%logu), grid%cont, status)
         if (.not. backend_status_ok(status)) return
 
         call get_path_by_role(manifest, trim(role_prefix)//'line', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_4d(path, grid%line, status)
+        call backend%read_real_4d(path, line_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_nebular_line(line_raw, size(grid%line_pos), size(grid%logz), &
+                        size(grid%age), size(grid%logu), grid%line, status)
         if (.not. backend_status_ok(status)) return
     end subroutine map_nebular_grid
 
@@ -561,25 +599,191 @@ contains
         type(backend_status_t), intent(out) :: status
 
         character(len=:), allocatable :: path
+        real(WP), allocatable :: logt_raw(:), lam_raw(:), spec_raw(:,:,:)
+        integer :: n_logt_target
 
         call status%set_ok()
         call grid%clear()
+        n_logt_target = NDIM_PAGB
 
         call get_path_by_role(manifest, 'pagb_logt', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_1d(path, grid%logt, status)
+        call backend%read_real_1d(path, logt_raw, status)
         if (.not. backend_status_ok(status)) return
+        if (size(logt_raw) < n_logt_target) then
+            call status%set_error(1320, 'pagb_logt has fewer entries than expected canonical NDIM_PAGB.')
+            return
+        end if
+        allocate(grid%logt(n_logt_target))
+        grid%logt = logt_raw(1:n_logt_target)
 
         call get_path_by_role(manifest, 'pagb_lam', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_1d(path, grid%lam, status)
+        call backend%read_real_1d(path, lam_raw, status)
         if (.not. backend_status_ok(status)) return
+        allocate(grid%lam(size(lam_raw)))
+        grid%lam = lam_raw
 
         call get_path_by_role(manifest, 'pagb_spec', path, status)
         if (.not. backend_status_ok(status)) return
-        call backend%read_real_3d(path, grid%spec, status)
+        call backend%read_real_3d(path, spec_raw, status)
+        if (.not. backend_status_ok(status)) return
+        call normalize_pagb_spec(spec_raw, size(grid%lam), n_logt_target, grid%spec, status)
         if (.not. backend_status_ok(status)) return
     end subroutine map_pagb
+
+    subroutine normalize_iso_timestep(src, nt, nz, dst, status)
+        real(WP), intent(in) :: src(:,:)
+        integer, intent(in) :: nt, nz
+        real(WP), allocatable, intent(out) :: dst(:,:)
+        type(backend_status_t), intent(inout) :: status
+
+        call status%set_ok()
+        if (allocated(dst)) deallocate(dst)
+
+        if (size(src, 1) == nt .and. size(src, 2) == nz) then
+            allocate(dst(nt, nz))
+            dst = src
+        elseif (size(src, 1) == nz .and. size(src, 2) == nt) then
+            allocate(dst(nt, nz))
+            dst = transpose(src)
+        else
+            call status%set_error(1330, 'Unexpected isoc_timestep dimensions.')
+        end if
+    end subroutine normalize_iso_timestep
+
+    subroutine normalize_iso_cube(src, nt, nz, fill_value, dst, status)
+        real(WP), intent(in) :: src(:,:,:)
+        integer, intent(in) :: nt, nz
+        real(WP), intent(in) :: fill_value
+        real(WP), allocatable, intent(out) :: dst(:,:,:)
+        type(backend_status_t), intent(inout) :: status
+
+        integer :: ncopy, im, it, iz
+        real(WP) :: val
+
+        call status%set_ok()
+        if (allocated(dst)) deallocate(dst)
+        allocate(dst(NM, nt, nz))
+        dst = fill_value
+
+        if (size(src, 2) == nt .and. size(src, 3) == nz) then
+            ncopy = min(NM, size(src, 1))
+            if (ncopy > 0) then
+                do im = 1, ncopy
+                    do it = 1, nt
+                        do iz = 1, nz
+                            val = src(im, it, iz)
+                            if (val <= -1.0e29_wp) val = fill_value
+                            dst(im, it, iz) = val
+                        end do
+                    end do
+                end do
+            end if
+        elseif (size(src, 1) == nz .and. size(src, 2) == nt) then
+            ncopy = min(NM, size(src, 3))
+            if (ncopy > 0) then
+                do im = 1, ncopy
+                    do it = 1, nt
+                        do iz = 1, nz
+                            val = src(iz, it, im)
+                            if (val <= -1.0e29_wp) val = fill_value
+                            dst(im, it, iz) = val
+                        end do
+                    end do
+                end do
+            end if
+        else
+            call status%set_error(1331, 'Unexpected isochrone cube dimensions.')
+        end if
+    end subroutine normalize_iso_cube
+
+    subroutine normalize_nebular_cont(src, nz, nage, nu, dst, status)
+        real(WP), intent(in) :: src(:,:,:,:)
+        integer, intent(in) :: nz, nage, nu
+        real(WP), allocatable, intent(out) :: dst(:,:,:,:)
+        type(backend_status_t), intent(inout) :: status
+
+        integer :: ilam, iz, ia, iu
+
+        call status%set_ok()
+        if (allocated(dst)) deallocate(dst)
+
+        if (size(src,2) == nz .and. size(src,3) == nage .and. size(src,4) == nu) then
+            allocate(dst(size(src,1), nz, nage, nu))
+            dst = src
+        elseif (size(src,1) == nu .and. size(src,2) == nage .and. size(src,3) == nz) then
+            allocate(dst(size(src,4), nz, nage, nu))
+            do ilam = 1, size(src,4)
+                do iz = 1, nz
+                    do ia = 1, nage
+                        do iu = 1, nu
+                            dst(ilam, iz, ia, iu) = src(iu, ia, iz, ilam)
+                        end do
+                    end do
+                end do
+            end do
+        else
+            call status%set_error(1332, 'Unexpected nebular continuum dimensions.')
+        end if
+    end subroutine normalize_nebular_cont
+
+    subroutine normalize_nebular_line(src, nline, nz, nage, nu, dst, status)
+        real(WP), intent(in) :: src(:,:,:,:)
+        integer, intent(in) :: nline, nz, nage, nu
+        real(WP), allocatable, intent(out) :: dst(:,:,:,:)
+        type(backend_status_t), intent(inout) :: status
+
+        integer :: iline, iz, ia, iu
+
+        call status%set_ok()
+        if (allocated(dst)) deallocate(dst)
+
+        if (size(src,1) == nline .and. size(src,2) == nz .and. size(src,3) == nage .and. size(src,4) == nu) then
+            allocate(dst(nline, nz, nage, nu))
+            dst = src
+        elseif (size(src,1) == nu .and. size(src,2) == nage .and. size(src,3) == nz .and. size(src,4) == nline) then
+            allocate(dst(nline, nz, nage, nu))
+            do iline = 1, nline
+                do iz = 1, nz
+                    do ia = 1, nage
+                        do iu = 1, nu
+                            dst(iline, iz, ia, iu) = src(iu, ia, iz, iline)
+                        end do
+                    end do
+                end do
+            end do
+        else
+            call status%set_error(1333, 'Unexpected nebular line dimensions.')
+        end if
+    end subroutine normalize_nebular_line
+
+    subroutine normalize_pagb_spec(src, nlam, nlogt, dst, status)
+        real(WP), intent(in) :: src(:,:,:)
+        integer, intent(in) :: nlam, nlogt
+        real(WP), allocatable, intent(out) :: dst(:,:,:)
+        type(backend_status_t), intent(inout) :: status
+
+        integer :: ilam, it
+
+        call status%set_ok()
+        if (allocated(dst)) deallocate(dst)
+        allocate(dst(nlam, nlogt, 2))
+        dst = 0.0_wp
+
+        if (size(src,1) == nlam .and. size(src,3) == 2) then
+            dst(:, 1:min(nlogt, size(src,2)), :) = src(:, 1:min(nlogt, size(src,2)), :)
+        elseif (size(src,1) == 2 .and. size(src,3) == nlam) then
+            do ilam = 1, nlam
+                do it = 1, min(nlogt, size(src,2))
+                    dst(ilam, it, 1) = src(1, it, ilam)
+                    dst(ilam, it, 2) = src(2, it, ilam)
+                end do
+            end do
+        else
+            call status%set_error(1334, 'Unexpected Post-AGB spectral cube dimensions.')
+        end if
+    end subroutine normalize_pagb_spec
 
     !> @brief Populate dense Wolf-Rayet auxiliary tables from manifest roles.
     subroutine map_wr(self, backend, manifest, grid, status)

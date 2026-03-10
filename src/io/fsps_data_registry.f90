@@ -41,17 +41,17 @@ contains
         mode_l = trim(to_lower(trim(mode)))
 
         select case (mode_l)
-        case ('legacy')
+        case ('legacy', 'fsds_legacy')
             allocate(legacy_backend_t :: backend)
 
-        case ('hdf5')
+        case ('hdf5', 'fsds_hdf5')
 #if FSPS_HAS_HDF5 == 1
             allocate(hdf5_backend_t :: backend)
 #else
             call status%set_error(4001, 'HDF5 backend requested, but FSPS was compiled without HDF5 support.')
 #endif
 
-        case ('auto')
+        case ('auto', 'fsds_auto')
 #if FSPS_HAS_HDF5 == 1
             allocate(hdf5_backend_t :: backend)
 #else
