@@ -328,7 +328,11 @@ def _read_bpass_cube(bin_path: Path, n_lam: int, n_t: int, n_z: int) -> np.ndarr
 
 
 def _write_bpss_isochrones(
-    h5: h5py.File, isoc_lib: str, axis_z: np.ndarray, time_full: np.ndarray, mass_ssp: np.ndarray
+    h5: h5py.File,
+    isoc_lib: str,
+    axis_z: np.ndarray,
+    time_full: np.ndarray,
+    mass_ssp: np.ndarray,
 ) -> None:
     n_t = int(time_full.size)
     n_z = int(axis_z.size)
@@ -390,7 +394,9 @@ def _write_isochrones(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
     zlegend = _read_isoc_zlegend(isoc_dir, isoc_lib)
 
     if isoc_lib.lower() == "bpss":
-        time_full, mass_ssp = _read_bpass_mass_table(isoc_dir / "bpass.mass", int(zlegend.size))
+        time_full, mass_ssp = _read_bpass_mass_table(
+            isoc_dir / "bpass.mass", int(zlegend.size)
+        )
         _write_bpss_isochrones(h5, isoc_lib, zlegend, time_full, mass_ssp)
         return
 
@@ -1313,7 +1319,9 @@ def convert(
     if spec == "bpass":
         axis_lambda = _read_axis(spectra_dir / "bpass.lambda")
         axis_z = _read_axis(spectra_dir / "zlegend.dat")
-        axis_logt, _mass_ssp = _read_bpass_mass_table(spectra_dir / "bpass.mass", int(axis_z.size))
+        axis_logt, _mass_ssp = _read_bpass_mass_table(
+            spectra_dir / "bpass.mass", int(axis_z.size)
+        )
         axis_logg = np.array([0.0], dtype=np.float64)
 
         cube_l_t_z = _read_bpass_cube(
@@ -1352,7 +1360,9 @@ def convert(
 
         # For Fortran backend expecting flux(lambda, z, logt, logg), write the dataset
         # in C-order as (n_logg, n_logt, n_z, n_lambda).
-        spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(np.float32, copy=False)
+        spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(
+            np.float32, copy=False
+        )
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(out_file, "w") as h5:

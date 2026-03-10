@@ -88,7 +88,7 @@ if get_option('buildtype') == 'release' and fc_id == 'gcc'
 endif
 
 # -----------------------------------
-# Data backend selection (legacy/hdf5/auto)
+# Data backend selection (HDF5-only)
 # -----------------------------------
 data_backend_opt = get_option('data_backend')
 hdf5_fortran_incdir = get_option('hdf5_fortran_incdir')
@@ -96,6 +96,10 @@ hdf5_fortran_link_args = get_option('hdf5_fortran_link_args')
 
 hdf5_dep = disabler()
 hdf5_backend_enabled = false
+
+if data_backend_opt == 'legacy' or data_backend_opt == 'fsds_legacy'
+    error('Legacy backend has been removed. Please use data_backend=auto or data_backend=hdf5 with FSDS HDF5 data.')
+endif
 
 # Primary probe: Meson HDF5 Fortran discovery
 hdf5_probe = dependency('hdf5', language: 'fortran', required: false)
@@ -117,27 +121,8 @@ elif hdf5_fortran_incdir != '' or hdf5_fortran_link_args.length() > 0
     hdf5_backend_enabled = true
 endif
 
-if data_backend_opt == 'hdf5' and not hdf5_backend_enabled
-    error('data_backend=hdf5 requested, but HDF5 Fortran dependency was not found. ' +
-          'Provide -Dhdf5_fortran_incdir and/or -Dhdf5_fortran_link_args as fallback.')
-endif
-
-if data_backend_opt == 'auto'
-    if hdf5_backend_enabled
-        message('FSPS data backend: auto -> enabling HDF5 backend')
-    else
-        message('FSPS data backend: auto -> HDF5 unavailable, falling back to legacy backend')
-    endif
-endif
-
-if data_backend_opt == 'legacy'
-    hdf5_backend_enabled = false
-endif
-
-if hdf5_backend_enabled
-    conf_data.set('FSPS_HAS_HDF5', 1)
-else
-    conf_data.set('FSPS_HAS_HDF5', 0)
+if not hdf5_backend_enabled
+    error('HDF5 Fortran dependency is required. Provide -Dhdf5_fortran_incdir and/or -Dhdf5_fortran_link_args as fallback.')
 endif
 
 configure_file(
@@ -168,7 +153,7 @@ lib_sources = files(
     # IO Module
     'src/io/fsps_data_schema.f90',
     'src/io/fsps_data_backend.f90',
-    'src/io/fsps_data_backend_legacy.f90',
+    'src/io/fsps_data_backend_hdf5.f90',
     'src/io/fsps_data_registry.f90',
     'src/io/fsps_data_mapper.f90',
     'src/io/fsps_io.f90',
@@ -194,10 +179,6 @@ lib_sources = files(
     'src/spectra/fsps_spectral_indices.f90',
     'src/spectra/fsps_spectral_library.f90',
 )
-
-if hdf5_backend_enabled
-    lib_sources += files('src/io/fsps_data_backend_hdf5.f90')
-endif
 
 backend_deps = []
 if hdf5_backend_enabled
@@ -247,8 +228,6 @@ unit_test_sources = files(
     'tests/core/test_fsps_strings.f90',
     'tests/core/test_fsps_types.f90',
 
-    'tests/io/test_fsps_io.f90',
-
     'tests/math/test_fsps_integration.f90',
     'tests/math/test_fsps_interpolation.f90',
     'tests/math/test_fsps_special_functions.f90',
@@ -282,7 +261,6 @@ test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencie
 executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
 executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep)
-executable('test_backend_parity', 'tests/io/test_backend_parity.f90', dependencies : fsps_dep)
 
 if get_option('enable_stress_testing')
     stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep)

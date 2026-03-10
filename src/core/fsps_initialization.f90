@@ -1,5 +1,3 @@
-#include "fsps_build_config.h"
-
 module fsps_initialization
     !> @brief
     !> Handles the initialization, memory allocation, and data loading for FSPS contexts.
@@ -25,15 +23,10 @@ module fsps_initialization
     use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup
     use fsps_io, only: load_zlegend_file, load_wavelength_grid, load_spectral_resolution, &
-                       read_bpass_data, read_isochrone_database_legacy => read_isochrone_database, &
-                       read_spectral_binary_legacy => read_spectral_binary, &
-                       load_nebular_grid_legacy => load_nebular_grid, &
-                       load_dust_emission_table_legacy => load_dust_emission_table, &
-                       load_agn_dust_models_legacy => load_agn_dust_models, &
+                       read_bpass_data, &
                        load_filter_definitions, &
                        load_standard_sed, load_index_definitions, &
                        load_lsf_data, &
-                       load_attenuation_curves_legacy => load_attenuation_curves, &
                        load_wmbasic_spectra_legacy => load_wmbasic_spectra, &
                        load_agb_spectra_legacy => load_agb_spectra, &
                        load_post_agb_spectra_legacy => load_post_agb_spectra, &
@@ -339,7 +332,7 @@ contains
         integer, intent(in) :: zin
         integer :: z, zmin, zmax, i, i1, j, k, nzinit, nm_data
         real(WP) :: dz, log_spec_val
-        real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
+        real(WP), allocatable :: speclibinit(:, :, :, :)
         type(backend_status_t) :: io_status
         type(spectral_grid_t) :: base_grid
         type(isochrone_grid_t) :: iso_grid
@@ -382,54 +375,6 @@ contains
         speclibinit = 0.0_wp
 
         call resolve_data_backend_uri(ctx, backend_mode, uri)
-
-        if (trim(backend_mode) == 'legacy') then
-            allocate(speclib_slice(ctx%state%nspec, NDIM_LOGT, NDIM_LOGG))
-            do z = 1, nzinit
-                call read_spectral_binary_legacy(ctx, ctx%state%spec_type, z, speclib_slice)
-                speclibinit(:, z, :, :) = speclib_slice
-            end do
-            deallocate(speclib_slice)
-
-            do z = 1, ctx%state%nz
-                i1 = min(max(find_interval(log10(ctx%state%zlegendinit/ctx%state%zsol_spec), &
-                                           log10(ctx%state%zlegend(z)/ctx%state%zsol)), 1), nzinit - 1)
-                dz = (log10(ctx%state%zlegend(z)/ctx%state%zsol) - &
-                      log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))/ &
-                     (log10(ctx%state%zlegendinit(i1 + 1)/ctx%state%zsol_spec) - &
-                      log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
-                dz = min(max(dz, 0.0_wp), 1.0_wp)
-
-                do k = 1, NDIM_LOGG
-                    do j = 1, NDIM_LOGT
-                        do i = 1, ctx%state%nspec
-                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + SAFE_FLOOR) + &
-                                           dz * log10(speclibinit(i, i1 + 1, j, k) + SAFE_FLOOR)
-                            ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
-                        end do
-                    end do
-                end do
-            end do
-
-            deallocate(speclibinit)
-
-            call load_wmbasic_spectra_legacy(ctx)
-            call load_agb_spectra_legacy(ctx)
-            call load_post_agb_spectra_legacy(ctx)
-            call load_wr_spectra_legacy(ctx)
-
-            do z = zmin, zmax
-                call read_isochrone_database_legacy(ctx, ctx%state%isoc_type, z)
-            end do
-
-            if (ctx%state%isoc_type == 'gnva') then
-                ctx%state%imf_lower_bound = minval(ctx%state%mini_isoc(zmin, 1, 1:ctx%state%nmass_isoc(zmin, 1)))*0.99_wp
-            else
-                ctx%state%imf_lower_bound = ctx%state%imf_lower_limit
-            end if
-
-            return
-        end if
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -579,55 +524,49 @@ contains
         character(len=32) :: backend_mode
         character(len=:), allocatable :: uri
 
-            call load_dust_emission_table_legacy(ctx, ctx%state%str_dustem)
-            call load_attenuation_curves_legacy(ctx)
-            call load_dusty_agb_spectra(ctx)
+        call load_dust_emission_table(ctx, ctx%state%str_dustem)
+        call load_dust_attenuation_curves(ctx)
+        call load_dusty_agb_spectra(ctx)
 
         if (ctx%state%isoc_type == 'mist' .or. ctx%state%isoc_type == 'pdva' .or. &
             ctx%state%isoc_type == 'prsc' .or. ctx%state%isoc_type == 'bpss') then
             call resolve_data_backend_uri(ctx, backend_mode, uri)
 
-            if (trim(backend_mode) == 'legacy') then
-                call load_nebular_grid_legacy(ctx, ctx%state%isoc_type, ctx%cloudy_dust_val == 1)
-                call compute_nebular_kernels(ctx)
-            else
-
-                call fsps_data_open(uri, backend_mode, io_status)
-                if (io_status%code /= 0) then
-                    write(error_unit, '(A,1x,I0,1x,A)') &
-                        '[FSPS_INIT] Error: fsps_data_open failed for nebular load', io_status%code, trim(io_status%message)
-                    error stop 1
-                end if
-
-                if (ctx%cloudy_dust_val == 1) then
-                    call fsps_data_load_nebular('WD', neb_grid, io_status)
-                else
-                    call fsps_data_load_nebular('ND', neb_grid, io_status)
-                end if
-                if (io_status%code /= 0) then
-                    write(error_unit, '(A,1x,I0,1x,A)') &
-                        '[FSPS_INIT] Error: fsps_data_load_nebular failed', io_status%code, trim(io_status%message)
-                    call fsps_data_close(io_status)
-                    error stop 1
-                end if
-
-                if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
-                if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
-                if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
-                if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
-                if (allocated(neb_grid%age)) ctx%state%nebem_age = neb_grid%age
-                if (allocated(neb_grid%logu)) ctx%state%nebem_logu = neb_grid%logu
-
-                call fsps_data_close(io_status)
-                if (io_status%code /= 0) then
-                    write(error_unit, '(A,1x,I0,1x,A)') &
-                        '[FSPS_INIT] Error: fsps_data_close failed for nebular load', io_status%code, trim(io_status%message)
-                    error stop 1
-                end if
-
-                call neb_grid%clear()
-                call compute_nebular_kernels(ctx)
+            call fsps_data_open(uri, backend_mode, io_status)
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_open failed for nebular load', io_status%code, trim(io_status%message)
+                error stop 1
             end if
+
+            if (ctx%cloudy_dust_val == 1) then
+                call fsps_data_load_nebular('WD', neb_grid, io_status)
+            else
+                call fsps_data_load_nebular('ND', neb_grid, io_status)
+            end if
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_load_nebular failed', io_status%code, trim(io_status%message)
+                call fsps_data_close(io_status)
+                error stop 1
+            end if
+
+            if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
+            if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
+            if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
+            if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
+            if (allocated(neb_grid%age)) ctx%state%nebem_age = neb_grid%age
+            if (allocated(neb_grid%logu)) ctx%state%nebem_logu = neb_grid%logu
+
+            call fsps_data_close(io_status)
+            if (io_status%code /= 0) then
+                write(error_unit, '(A,1x,I0,1x,A)') &
+                    '[FSPS_INIT] Error: fsps_data_close failed for nebular load', io_status%code, trim(io_status%message)
+                error stop 1
+            end if
+
+            call neb_grid%clear()
+            call compute_nebular_kernels(ctx)
         end if
 
         if (ctx%state%isoc_type == 'bpss') then
@@ -649,11 +588,6 @@ contains
         integer :: i_spec, k, start_idx, nqpah, numin_cols
 
         call resolve_data_backend_uri(ctx, backend_mode, uri, dust_type)
-
-        if (trim(backend_mode) == 'legacy') then
-            call load_dust_emission_table_legacy(ctx, dust_type)
-            return
-        end if
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -724,11 +658,6 @@ contains
         integer :: n, i, j, k
 
         call resolve_data_backend_uri(ctx, backend_mode, uri)
-
-        if (trim(backend_mode) == 'legacy') then
-            call load_attenuation_curves_legacy(ctx)
-            return
-        end if
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -805,11 +734,6 @@ contains
         integer :: i, i1, i2
 
         call resolve_data_backend_uri(ctx, backend_mode, uri)
-
-        if (trim(backend_mode) == 'legacy') then
-            call load_agn_dust_models_legacy(ctx)
-            return
-        end if
 
         call fsps_data_open(uri, backend_mode, io_status)
         if (io_status%code /= 0) then
@@ -1908,7 +1832,7 @@ contains
         integer :: env_stat
         logical :: use_hdf5_uri
 
-        backend_mode = 'legacy'
+        backend_mode = 'hdf5'
         backend_mode_env = ''
         call get_environment_variable('FSPS_DATA_BACKEND', value=backend_mode_env, status=env_stat)
         if (env_stat == 0 .and. len_trim(backend_mode_env) > 0) then
@@ -1919,22 +1843,25 @@ contains
         case ('fsds_hdf5')
             backend_mode = 'hdf5'
         case ('fsds_legacy')
-            backend_mode = 'legacy'
+            write(error_unit, '(A)') '[FSPS_INIT] Error: Legacy backend has been removed. Use FSDS HDF5 data.'
+            error stop 1
         case ('fsds_auto')
             backend_mode = 'auto'
         end select
 
-        use_hdf5_uri = .false.
+        use_hdf5_uri = .true.
         select case (trim(backend_mode))
         case ('hdf5')
             use_hdf5_uri = .true.
         case ('auto')
-#if FSPS_HAS_HDF5 == 1
             use_hdf5_uri = .true.
             backend_mode = 'hdf5'
-#else
-            backend_mode = 'legacy'
-#endif
+        case ('legacy')
+            write(error_unit, '(A)') '[FSPS_INIT] Error: Legacy backend has been removed. Use FSDS HDF5 data.'
+            error stop 1
+        case default
+            write(error_unit, '(A,1x,A)') '[FSPS_INIT] Error: Unknown backend mode', trim(backend_mode)
+            error stop 1
         end select
 
         hdf5_file_path = trim(ctx%sps_home)//'/data/fsps_data_v1.h5'
@@ -1952,9 +1879,6 @@ contains
 
         if (use_hdf5_uri) then
             uri = trim(hdf5_file_path)//'|'//trim(ctx%state%isoc_type)//'|'// &
-                  trim(ctx%state%spec_type)//'|'//trim(dust_part)
-        else
-            uri = trim(ctx%sps_home)//'|'//trim(ctx%state%isoc_type)//'|'// &
                   trim(ctx%state%spec_type)//'|'//trim(dust_part)
         end if
     end subroutine resolve_data_backend_uri

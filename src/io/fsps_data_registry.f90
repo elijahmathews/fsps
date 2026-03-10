@@ -1,19 +1,14 @@
-#include "fsps_build_config.h"
-
 module fsps_data_registry
     !> @brief Backend factory/registry for FSDS data access.
     !>
     !> @details
     !> This module maps a user/backend mode request (`legacy`, `hdf5`, `auto`)
-    !> to a concrete backend instance. Compile-time HDF5 support is controlled
-    !> by Meson-generated preprocessor definitions in `fsps_build_config.h`.
+    !> to a concrete backend instance. Legacy backend support has been removed;
+    !> only the HDF5 backend is available.
 
     use fsps_strings, only: to_lower
     use fsps_data_backend, only: data_backend_t, backend_status_t
-    use fsps_data_backend_legacy, only: legacy_backend_t
-#if FSPS_HAS_HDF5 == 1
     use fsps_data_backend_hdf5, only: hdf5_backend_t
-#endif
 
     implicit none
     private
@@ -42,21 +37,13 @@ contains
 
         select case (mode_l)
         case ('legacy', 'fsds_legacy')
-            allocate(legacy_backend_t :: backend)
+            call status%set_error(4003, 'Legacy backend has been removed. Please use FSDS HDF5 format.')
 
         case ('hdf5', 'fsds_hdf5')
-#if FSPS_HAS_HDF5 == 1
             allocate(hdf5_backend_t :: backend)
-#else
-            call status%set_error(4001, 'HDF5 backend requested, but FSPS was compiled without HDF5 support.')
-#endif
 
         case ('auto', 'fsds_auto')
-#if FSPS_HAS_HDF5 == 1
             allocate(hdf5_backend_t :: backend)
-#else
-            allocate(legacy_backend_t :: backend)
-#endif
 
         case default
             call status%set_error(4002, 'Unknown data backend mode: '//trim(mode))

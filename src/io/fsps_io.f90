@@ -60,12 +60,7 @@ module fsps_io
     public :: load_zlegend_file
     public :: load_wavelength_grid
     public :: load_spectral_resolution
-    public :: read_isochrone_database
-    public :: read_spectral_binary
     public :: read_bpass_data
-    public :: load_dust_emission_table
-    public :: load_nebular_grid
-    public :: load_agn_dust_models
     public :: load_filter_definitions
     public :: apply_legacy_filter_norm
     public :: load_standard_sed
@@ -73,7 +68,6 @@ module fsps_io
     public :: load_wr_spectra
     public :: load_agb_spectra
     public :: load_post_agb_spectra
-    public :: load_attenuation_curves
     public :: load_wmbasic_spectra
     public :: load_lsf_data
     

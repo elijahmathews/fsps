@@ -58,9 +58,6 @@ program test_fsps
     use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
                                   failures_photometry => total_failures, &
                                   tests_photometry => total_tests
-    use test_fsps_io_mod, only: run_fsps_io_tests, &
-                                  failures_io => total_failures, &
-                                  tests_io => total_tests
     use test_fsps_ssp_mod, only: run_fsps_ssp_tests, &
                                  failures_ssp => total_failures, &
                                  tests_ssp => total_tests
@@ -85,8 +82,6 @@ program test_fsps
     call run_fsps_context_types_tests()
     call run_fsps_strings_tests()
     call run_fsps_types_tests()
-
-    call run_fsps_io_tests()
 
     call run_fsps_integration_tests()
     call run_fsps_interpolation_tests()
@@ -135,12 +130,6 @@ program test_fsps
         tests_types &
     )
 
-    call print_summary_line( &
-        "fsps_io", &
-        (tests_io - failures_io), &
-        tests_io &
-    )
-    
     call print_summary_line( &
         "fsps_integration", &
         (tests_integration - failures_integration), &
@@ -224,7 +213,6 @@ program test_fsps
                            failures_context_types + &
                            failures_strings + &
                            failures_types + &
-                           failures_io + &
                            failures_integration + &
                            failures_interpolation + &
                            failures_special_functions + &
@@ -246,7 +234,6 @@ program test_fsps
                         tests_context_types + &
                         tests_strings + &
                         tests_types + &
-                        tests_io + &
                         tests_integration + &
                         tests_interpolation + &
                         tests_special_functions + &
