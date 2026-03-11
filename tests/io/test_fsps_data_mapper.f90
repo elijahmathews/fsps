@@ -6,7 +6,7 @@ module test_fsps_data_mapper_mod
     use fsps_data_schema, only: dataset_desc_t, library_manifest_t, spectral_grid_t, spectral_slice_t, &
                                 isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, aux_wr_t, aux_agb_t, &
                                 dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t
-    use test_fsps_hdf5_fixture_support_mod, only: create_test_hdf5_fixture, remove_test_hdf5_fixture, make_backend_uri
+    use test_fsps_data_backend_hdf5_mod, only: create_test_hdf5_fixture, remove_test_hdf5_fixture, make_backend_uri
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_true, assert_int_equals, assert_float_equals
     implicit none

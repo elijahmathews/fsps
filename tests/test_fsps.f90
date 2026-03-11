@@ -13,17 +13,36 @@ program test_fsps
     use test_fsps_context_types_mod, only: run_fsps_context_types_tests, &
                                            failures_context_types => total_failures, &
                                            tests_context_types => total_tests
+    use test_fsps_initialization_mod, only: run_fsps_initialization_tests, &
+                                  failures_initialization => total_failures, &
+                                  tests_initialization => total_tests
     use test_fsps_strings_mod, only: run_fsps_strings_tests, &
                                      failures_strings => total_failures, &
                                      tests_strings => total_tests
     use test_fsps_types_mod, only: run_fsps_types_tests, &
                                    failures_types => total_failures, &
                                    tests_types => total_tests
+    
+    ! IO modules
+    use test_fsps_data_backend_hdf5_mod, only: run_fsps_data_backend_hdf5_tests, &
+                                  failures_data_backend_hdf5 => total_failures, &
+                                  tests_data_backend_hdf5 => total_tests
+    use test_fsps_data_loader_mod, only: run_fsps_data_loader_tests, &
+                                  failures_data_loader => total_failures, &
+                                  tests_data_loader => total_tests
+    use test_fsps_data_mapper_mod, only: run_fsps_data_mapper_tests, &
+                                  failures_data_mapper => total_failures, &
+                                  tests_data_mapper => total_tests
+    use test_fsps_data_registry_mod, only: run_fsps_data_registry_tests, &
+                                  failures_data_registry => total_failures, &
+                                  tests_data_registry => total_tests
+    use test_fsps_data_schema_mod, only: run_fsps_data_schema_tests, &
+                                  failures_data_schema => total_failures, &
+                                  tests_data_schema => total_tests
+    use test_fsps_io_mod, only: run_fsps_io_tests, &
+                                  failures_io => total_failures, &
+                                  tests_io => total_tests
 
-    ! IMF modules
-    use test_fsps_imf_mod, only: run_fsps_imf_tests, &
-                                 failures_imf => total_failures, &
-                                 tests_imf => total_tests
     ! Math modules
     use test_fsps_integration_mod, only: run_fsps_integration_tests, &
                                          failures_integration => total_failures, &
@@ -34,18 +53,37 @@ program test_fsps
     use test_fsps_special_functions_mod, only: run_fsps_special_functions_tests, &
                                            failures_special_functions => total_failures, &
                                            tests_special_functions => total_tests
+
+    ! Physics modules
+    use test_fsps_cosmology_mod, only: run_fsps_cosmology_tests, &
+                                  failures_cosmology => total_failures, &
+                                  tests_cosmology => total_tests
+    use test_fsps_csp_mod, only: run_fsps_csp_tests, &
+                                 failures_csp => total_failures, &
+                                 tests_csp => total_tests
     use test_fsps_dust_mod, only: run_fsps_dust_tests, &
                                   failures_dust => total_failures, &
                                   tests_dust => total_tests
     use test_fsps_gas_mod, only: run_fsps_gas_tests, &
                                  failures_gas => total_failures, &
                                  tests_gas => total_tests
+    use test_fsps_imf_mod, only: run_fsps_imf_tests, &
+                                 failures_imf => total_failures, &
+                                 tests_imf => total_tests
+    use test_fsps_sfh_mod, only: run_fsps_sfh_tests, &
+                                 failures_sfh => total_failures, &
+                                 tests_sfh => total_tests
+    use test_fsps_ssp_mod, only: run_fsps_ssp_tests, &
+                                 failures_ssp => total_failures, &
+                                 tests_ssp => total_tests
     use test_fsps_stellar_modifications_mod, only: run_fsps_stellar_modifications_tests, &
                                  failures_stellar_modifications => total_failures, &
                                  tests_stellar_modifications => total_tests
-    use test_fsps_cosmology_mod, only: run_fsps_cosmology_tests, &
-                                  failures_cosmology => total_failures, &
-                                  tests_cosmology => total_tests
+    
+    ! Spectra modules
+    use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
+                                  failures_photometry => total_failures, &
+                                  tests_photometry => total_tests
     use test_fsps_smoothing_mod, only: run_fsps_smoothing_tests, &
                                   failures_smoothing => total_failures, &
                                   tests_smoothing => total_tests
@@ -55,36 +93,6 @@ program test_fsps
     use test_fsps_spectral_library_mod, only: run_fsps_spectral_library_tests, &
                                   failures_spectral_library => total_failures, &
                                   tests_spectral_library => total_tests
-    use test_fsps_data_backend_hdf5_mod, only: run_fsps_data_backend_hdf5_tests, &
-                                  failures_data_backend_hdf5 => total_failures, &
-                                  tests_data_backend_hdf5 => total_tests
-    use test_fsps_data_mapper_mod, only: run_fsps_data_mapper_tests, &
-                                  failures_data_mapper => total_failures, &
-                                  tests_data_mapper => total_tests
-    use test_fsps_data_schema_mod, only: run_fsps_data_schema_tests, &
-                                  failures_data_schema => total_failures, &
-                                  tests_data_schema => total_tests
-    use test_fsps_data_registry_mod, only: run_fsps_data_registry_tests, &
-                                  failures_data_registry => total_failures, &
-                                  tests_data_registry => total_tests
-    use test_fsps_io_mod, only: run_fsps_io_tests, &
-                                  failures_io => total_failures, &
-                                  tests_io => total_tests
-    use test_fsps_initialization_mod, only: run_fsps_initialization_tests, &
-                                  failures_initialization => total_failures, &
-                                  tests_initialization => total_tests
-    use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
-                                  failures_photometry => total_failures, &
-                                  tests_photometry => total_tests
-    use test_fsps_ssp_mod, only: run_fsps_ssp_tests, &
-                                 failures_ssp => total_failures, &
-                                 tests_ssp => total_tests
-    use test_fsps_sfh_mod, only: run_fsps_sfh_tests, &
-                                 failures_sfh => total_failures, &
-                                 tests_sfh => total_tests
-    use test_fsps_csp_mod, only: run_fsps_csp_tests, &
-                                 failures_csp => total_failures, &
-                                 tests_csp => total_tests
     use hdf5, only: h5eset_auto_f
     use, intrinsic :: ieee_exceptions, only: ieee_set_flag, ieee_all
     ! Test utilities
@@ -103,8 +111,16 @@ program test_fsps
     call run_fsps_cache_tests()
     call run_fsps_context_tests()
     call run_fsps_context_types_tests()
+    call run_fsps_initialization_tests()
     call run_fsps_strings_tests()
     call run_fsps_types_tests()
+
+    call run_fsps_data_backend_hdf5_tests()
+    call run_fsps_data_loader_tests()
+    call run_fsps_data_mapper_tests()
+    call run_fsps_data_registry_tests()
+    call run_fsps_data_schema_tests()
+    call run_fsps_io_tests()
 
     call run_fsps_integration_tests()
     call run_fsps_interpolation_tests()
@@ -123,12 +139,6 @@ program test_fsps
     call run_fsps_smoothing_tests()
     call run_fsps_spectral_indices_tests()
     call run_fsps_spectral_library_tests()
-    call run_fsps_data_schema_tests()
-    call run_fsps_data_registry_tests()
-    call run_fsps_io_tests()
-    call run_fsps_initialization_tests()
-    call run_fsps_data_mapper_tests()
-    call run_fsps_data_backend_hdf5_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -149,6 +159,11 @@ program test_fsps
         tests_context_types &
     )
     call print_summary_line( &
+        "fsps_initialization", &
+        (tests_initialization - failures_initialization), &
+        tests_initialization &
+    )
+    call print_summary_line( &
         "fsps_strings", &
         (tests_strings - failures_strings), &
         tests_strings &
@@ -157,6 +172,37 @@ program test_fsps
         "fsps_types", &
         (tests_types - failures_types), &
         tests_types &
+    )
+
+    call print_summary_line( &
+        "fsps_data_backend_hdf5", &
+        (tests_data_backend_hdf5 - failures_data_backend_hdf5), &
+        tests_data_backend_hdf5 &
+    )
+    call print_summary_line( &
+        "fsps_data_loader", &
+        (tests_data_loader - failures_data_loader), &
+        tests_data_loader &
+    )
+    call print_summary_line( &
+        "fsps_data_mapper", &
+        (tests_data_mapper - failures_data_mapper), &
+        tests_data_mapper &
+    )
+    call print_summary_line( &
+        "fsps_data_registry", &
+        (tests_data_registry - failures_data_registry), &
+        tests_data_registry &
+    )
+    call print_summary_line( &
+        "fsps_data_schema", &
+        (tests_data_schema - failures_data_schema), &
+        tests_data_schema &
+    )
+    call print_summary_line( &
+        "fsps_io", &
+        (tests_io - failures_io), &
+        tests_io &
     )
 
     call print_summary_line( &
@@ -236,42 +282,19 @@ program test_fsps
         (tests_spectral_library - failures_spectral_library), &
         tests_spectral_library &
     )
-    call print_summary_line( &
-        "fsps_data_schema", &
-        (tests_data_schema - failures_data_schema), &
-        tests_data_schema &
-    )
-    call print_summary_line( &
-        "fsps_data_registry", &
-        (tests_data_registry - failures_data_registry), &
-        tests_data_registry &
-    )
-    call print_summary_line( &
-        "fsps_io", &
-        (tests_io - failures_io), &
-        tests_io &
-    )
-    call print_summary_line( &
-        "fsps_initialization", &
-        (tests_initialization - failures_initialization), &
-        tests_initialization &
-    )
-    call print_summary_line( &
-        "fsps_data_backend_hdf5", &
-        (tests_data_backend_hdf5 - failures_data_backend_hdf5), &
-        tests_data_backend_hdf5 &
-    )
-    call print_summary_line( &
-        "fsps_data_mapper", &
-        (tests_data_mapper - failures_data_mapper), &
-        tests_data_mapper &
-    )
     
     grand_total_failures = failures_cache + &
                            failures_context + &
                            failures_context_types + &
+                           failures_initialization + &
                            failures_strings + &
                            failures_types + &
+                           failures_data_backend_hdf5 + &
+                           failures_data_loader + &
+                           failures_data_mapper + &
+                           failures_data_registry + &
+                           failures_data_schema + &
+                           failures_io + &
                            failures_integration + &
                            failures_interpolation + &
                            failures_special_functions + &
@@ -286,19 +309,20 @@ program test_fsps
                            failures_photometry + &
                            failures_smoothing + &
                            failures_spectral_indices + &
-                           failures_spectral_library + &
-                           failures_data_schema + &
-                           failures_data_registry + &
-                           failures_io + &
-                           failures_initialization + &
-                           failures_data_mapper + &
-                           failures_data_backend_hdf5
+                           failures_spectral_library
     
     grand_total_tests = tests_cache + &
                         tests_context + &
                         tests_context_types + &
+                        tests_initialization + &
                         tests_strings + &
                         tests_types + &
+                        tests_data_backend_hdf5 + &
+                        tests_data_loader + &
+                        tests_data_mapper + &
+                        tests_data_registry + &
+                        tests_data_schema + &
+                        tests_io + &
                         tests_integration + &
                         tests_interpolation + &
                         tests_special_functions + &
@@ -313,13 +337,7 @@ program test_fsps
                         tests_photometry + &
                         tests_smoothing + &
                         tests_spectral_indices + &
-                        tests_spectral_library + &
-                        tests_data_schema + &
-                        tests_data_registry + &
-                        tests_io + &
-                        tests_initialization + &
-                        tests_data_mapper + &
-                        tests_data_backend_hdf5
+                        tests_spectral_library
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

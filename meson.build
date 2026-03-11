@@ -155,6 +155,7 @@ lib_sources = files(
     'src/io/fsps_data_backend.f90',
     'src/io/fsps_data_backend_hdf5.f90',
     'src/io/fsps_data_registry.f90',
+    'src/io/fsps_data_loader.f90',
     'src/io/fsps_data_mapper.f90',
     'src/io/fsps_io.f90',
 
@@ -247,9 +248,10 @@ unit_test_sources = files(
     'tests/spectra/test_fsps_spectral_library.f90',
     'tests/io/test_fsps_data_schema.f90',
     'tests/io/test_fsps_data_registry.f90',
+    'tests/io/test_fsps_data_backend_hdf5.f90',
+    'tests/io/test_fsps_data_loader.f90',
     'tests/io/test_fsps_io.f90',
     'tests/core/test_fsps_initialization.f90',
-    'tests/io/test_fsps_data_backend_hdf5.f90',
     'tests/io/test_fsps_data_mapper.f90',
     
     'tests/test_fsps.f90' # Main driver
