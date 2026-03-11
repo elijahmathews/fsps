@@ -21,6 +21,7 @@ module fsps_data_backend_hdf5
     private
 
     public :: hdf5_backend_t
+    public :: resolve_axis_dataset_path
 
     !> @brief HDF5-backed implementation of the abstract FSDS backend.
     type, extends(data_backend_t) :: hdf5_backend_t
@@ -55,6 +56,29 @@ module fsps_data_backend_hdf5
     end type hdf5_backend_t
 
 contains
+
+    pure function resolve_axis_dataset_path(axis_name, spec_type) result(path)
+        character(len=*), intent(in) :: axis_name
+        character(len=*), intent(in) :: spec_type
+        character(len=:), allocatable :: path
+        character(len=:), allocatable :: spec_name
+
+        character(len=:), allocatable :: axis_l, spec_l
+
+        axis_l = trim(to_lower(adjustl(trim(axis_name))))
+        spec_l = trim(to_lower(adjustl(trim(spec_type))))
+
+        select case (axis_l)
+        case ('lambda', 'z', 'logt', 'logg', 'afe', 'alpha_fe')
+            if (len_trim(spec_l) > 0) then
+                path = '/libraries/spectra/'//trim(spec_l)//'/axes/'//trim(axis_l)
+            else
+                path = '/axes/'//trim(axis_l)
+            end if
+        case default
+            path = '/axes/'//trim(axis_l)
+        end select
+    end function resolve_axis_dataset_path
 
     !> @brief Open an HDF5 source file in read-only mode.
     subroutine hdf5_backend_open(self, source_uri, status)
@@ -187,6 +211,7 @@ contains
         class(hdf5_backend_t), intent(inout) :: self
         type(library_manifest_t), intent(inout) :: manifest
         type(backend_status_t), intent(out) :: status
+        character(len=:), allocatable :: neb_root, neb_candidate
 
         call status%set_ok()
 
@@ -213,6 +238,13 @@ contains
             manifest%dust_name = trim(self%dust_type)
         else
             manifest%dust_name = ''
+        end if
+
+        neb_candidate = '/libraries/nebular/'//trim(self%isoc_type)
+        if (self%has_path(trim(neb_candidate)//'/WD/line_pos')) then
+            neb_root = trim(neb_candidate)
+        else
+            neb_root = '/libraries/nebular'
         end if
 
         allocate(manifest%datasets(61))
@@ -297,84 +329,84 @@ contains
         call manifest%datasets(12)%clear()
         manifest%datasets(12)%role = 'nebular_wd_line_pos'
         manifest%datasets(12)%dims_csv = 'line'
-        manifest%datasets(12)%path = '/libraries/nebular/WD/line_pos'
+        manifest%datasets(12)%path = trim(neb_root)//'/WD/line_pos'
         manifest%datasets(12)%dtype = 'float64'
         manifest%datasets(12)%representation = 'dense_nd'
 
         call manifest%datasets(13)%clear()
         manifest%datasets(13)%role = 'nebular_wd_logz'
         manifest%datasets(13)%dims_csv = 'z'
-        manifest%datasets(13)%path = '/libraries/nebular/WD/logz'
+        manifest%datasets(13)%path = trim(neb_root)//'/WD/logz'
         manifest%datasets(13)%dtype = 'float64'
         manifest%datasets(13)%representation = 'dense_nd'
 
         call manifest%datasets(14)%clear()
         manifest%datasets(14)%role = 'nebular_wd_age'
         manifest%datasets(14)%dims_csv = 'age'
-        manifest%datasets(14)%path = '/libraries/nebular/WD/age'
+        manifest%datasets(14)%path = trim(neb_root)//'/WD/age'
         manifest%datasets(14)%dtype = 'float64'
         manifest%datasets(14)%representation = 'dense_nd'
 
         call manifest%datasets(15)%clear()
         manifest%datasets(15)%role = 'nebular_wd_logu'
         manifest%datasets(15)%dims_csv = 'u'
-        manifest%datasets(15)%path = '/libraries/nebular/WD/logu'
+        manifest%datasets(15)%path = trim(neb_root)//'/WD/logu'
         manifest%datasets(15)%dtype = 'float64'
         manifest%datasets(15)%representation = 'dense_nd'
 
         call manifest%datasets(16)%clear()
         manifest%datasets(16)%role = 'nebular_wd_cont'
         manifest%datasets(16)%dims_csv = 'lam,z,age,u'
-        manifest%datasets(16)%path = '/libraries/nebular/WD/cont'
+        manifest%datasets(16)%path = trim(neb_root)//'/WD/cont'
         manifest%datasets(16)%dtype = 'float32'
         manifest%datasets(16)%representation = 'dense_nd'
 
         call manifest%datasets(17)%clear()
         manifest%datasets(17)%role = 'nebular_wd_line'
         manifest%datasets(17)%dims_csv = 'line,z,age,u'
-        manifest%datasets(17)%path = '/libraries/nebular/WD/lines'
+        manifest%datasets(17)%path = trim(neb_root)//'/WD/lines'
         manifest%datasets(17)%dtype = 'float32'
         manifest%datasets(17)%representation = 'dense_nd'
 
         call manifest%datasets(18)%clear()
         manifest%datasets(18)%role = 'nebular_nd_line_pos'
         manifest%datasets(18)%dims_csv = 'line'
-        manifest%datasets(18)%path = '/libraries/nebular/ND/line_pos'
+        manifest%datasets(18)%path = trim(neb_root)//'/ND/line_pos'
         manifest%datasets(18)%dtype = 'float64'
         manifest%datasets(18)%representation = 'dense_nd'
 
         call manifest%datasets(19)%clear()
         manifest%datasets(19)%role = 'nebular_nd_logz'
         manifest%datasets(19)%dims_csv = 'z'
-        manifest%datasets(19)%path = '/libraries/nebular/ND/logz'
+        manifest%datasets(19)%path = trim(neb_root)//'/ND/logz'
         manifest%datasets(19)%dtype = 'float64'
         manifest%datasets(19)%representation = 'dense_nd'
 
         call manifest%datasets(20)%clear()
         manifest%datasets(20)%role = 'nebular_nd_age'
         manifest%datasets(20)%dims_csv = 'age'
-        manifest%datasets(20)%path = '/libraries/nebular/ND/age'
+        manifest%datasets(20)%path = trim(neb_root)//'/ND/age'
         manifest%datasets(20)%dtype = 'float64'
         manifest%datasets(20)%representation = 'dense_nd'
 
         call manifest%datasets(21)%clear()
         manifest%datasets(21)%role = 'nebular_nd_logu'
         manifest%datasets(21)%dims_csv = 'u'
-        manifest%datasets(21)%path = '/libraries/nebular/ND/logu'
+        manifest%datasets(21)%path = trim(neb_root)//'/ND/logu'
         manifest%datasets(21)%dtype = 'float64'
         manifest%datasets(21)%representation = 'dense_nd'
 
         call manifest%datasets(22)%clear()
         manifest%datasets(22)%role = 'nebular_nd_cont'
         manifest%datasets(22)%dims_csv = 'lam,z,age,u'
-        manifest%datasets(22)%path = '/libraries/nebular/ND/cont'
+        manifest%datasets(22)%path = trim(neb_root)//'/ND/cont'
         manifest%datasets(22)%dtype = 'float32'
         manifest%datasets(22)%representation = 'dense_nd'
 
         call manifest%datasets(23)%clear()
         manifest%datasets(23)%role = 'nebular_nd_line'
         manifest%datasets(23)%dims_csv = 'line,z,age,u'
-        manifest%datasets(23)%path = '/libraries/nebular/ND/lines'
+        manifest%datasets(23)%path = trim(neb_root)//'/ND/lines'
         manifest%datasets(23)%dtype = 'float32'
         manifest%datasets(23)%representation = 'dense_nd'
 
@@ -667,7 +699,7 @@ contains
         end if
     end function hdf5_backend_has_path
 
-    !> @brief Read one axis descriptor from `/axes/<axis_name>`.
+    !> @brief Read one axis descriptor.
     subroutine hdf5_backend_query_axis(self, axis_name, axis_desc, status)
         class(hdf5_backend_t), intent(inout) :: self
         character(len=*), intent(in) :: axis_name
@@ -685,10 +717,13 @@ contains
             return
         end if
 
-        path = '/axes/'//trim(axis_name)
+        path = resolve_axis_dataset_path(axis_name, self%spec_type)
         if (.not. self%has_path(path)) then
-            call status%set_error(2202, 'Axis path not found: '//trim(path))
-            return
+            path = '/axes/'//trim(axis_name)
+            if (.not. self%has_path(path)) then
+                call status%set_error(2202, 'Axis path not found: '//trim(path))
+                return
+            end if
         end if
 
         call self%read_real_1d(path, vals, status)
@@ -1180,6 +1215,7 @@ contains
         integer(HSIZE_T), allocatable :: dims(:), offset(:), count(:)
         type(axis_desc_t) :: ax_lambda, ax_z, ax_logt, ax_logg, ax_afe
         real(WP), allocatable :: tmp4(:,:,:,:), tmp5(:,:,:,:,:)
+        character(len=:), allocatable :: axis_path
         logical :: has_afe
         integer :: rank, hdferr
 
@@ -1226,39 +1262,58 @@ contains
 
         allocate(dims(rank), offset(rank), count(rank))
 
-        call self%query_axis('lambda', ax_lambda, status)
+        axis_path = resolve_axis_dataset_path('lambda', self%spec_type)
+        if (.not. self%has_path(axis_path)) axis_path = '/axes/lambda'
+        call self%read_real_1d(axis_path, ax_lambda%values, status)
         if (status%code /= 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2407, 'Failed to query lambda axis for spectral dimensions.')
             return
         end if
-        call self%query_axis('z', ax_z, status)
+        ax_lambda%n = size(ax_lambda%values)
+
+        axis_path = resolve_axis_dataset_path('z', self%spec_type)
+        if (.not. self%has_path(axis_path)) axis_path = '/axes/z'
+        call self%read_real_1d(axis_path, ax_z%values, status)
         if (status%code /= 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2407, 'Failed to query z axis for spectral dimensions.')
             return
         end if
-        call self%query_axis('logt', ax_logt, status)
+        ax_z%n = size(ax_z%values)
+
+        axis_path = resolve_axis_dataset_path('logt', self%spec_type)
+        if (.not. self%has_path(axis_path)) axis_path = '/axes/logt'
+        call self%read_real_1d(axis_path, ax_logt%values, status)
         if (status%code /= 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2407, 'Failed to query logt axis for spectral dimensions.')
             return
         end if
-        call self%query_axis('logg', ax_logg, status)
+        ax_logt%n = size(ax_logt%values)
+
+        axis_path = resolve_axis_dataset_path('logg', self%spec_type)
+        if (.not. self%has_path(axis_path)) axis_path = '/axes/logg'
+        call self%read_real_1d(axis_path, ax_logg%values, status)
         if (status%code /= 0) then
             call h5sclose_f(file_space_id, hdferr)
             call h5dclose_f(dset_id, hdferr)
             call status%set_error(2407, 'Failed to query logg axis for spectral dimensions.')
             return
         end if
+        ax_logg%n = size(ax_logg%values)
 
         if (has_afe) then
-            call self%query_axis('afe', ax_afe, status)
+            axis_path = resolve_axis_dataset_path('afe', self%spec_type)
+            if (.not. self%has_path(axis_path)) axis_path = '/axes/afe'
+            call self%read_real_1d(axis_path, ax_afe%values, status)
             if (status%code /= 0) then
-                call self%query_axis('alpha_fe', ax_afe, status)
+                axis_path = resolve_axis_dataset_path('alpha_fe', self%spec_type)
+                if (.not. self%has_path(axis_path)) axis_path = '/axes/alpha_fe'
+                call self%read_real_1d(axis_path, ax_afe%values, status)
                 if (status%code /= 0) then
                     call h5sclose_f(file_space_id, hdferr)
                     call h5dclose_f(dset_id, hdferr)
@@ -1266,6 +1321,7 @@ contains
                     return
                 end if
             end if
+            ax_afe%n = size(ax_afe%values)
             dims = [int(ax_lambda%n,HSIZE_T), int(ax_z%n,HSIZE_T), int(ax_afe%n,HSIZE_T), &
                     int(ax_logt%n,HSIZE_T), int(ax_logg%n,HSIZE_T)]
         else

@@ -4,8 +4,6 @@
 Usage:
   python tools/convert_spectra_to_fsds.py \
       --sps-home /path/to/fsps \
-      --spec-lib miles \
-    --isoc-lib mist \
       --out /path/to/output.h5
 """
 
@@ -92,6 +90,10 @@ UMIN_ARR_THEMIS = np.array(
     ],
     dtype=np.float64,
 )
+
+OMNIBUS_ISO_LIBS = ["mist", "pdva", "prsc", "bsti", "gnva", "bpss"]
+OMNIBUS_SPEC_LIBS = ["miles", "basel", "c3k_afe+0.0", "bpass"]
+OMNIBUS_DUST_TYPES = ["DL07", "THEMIS"]
 
 
 def _spectra_dir(sps_home: Path, spec_lib: str) -> Path:
@@ -491,6 +493,17 @@ def _read_nebular_file_lines(path: Path) -> list[str]:
     return [ln for ln in lines if ln]
 
 
+def _has_nebular_sources(sps_home: Path, isoc_lib: str) -> bool:
+    neb_dir = sps_home / "data" / "nebular"
+    required = (
+        neb_dir / f"ZAU_WD_{isoc_lib}.lines",
+        neb_dir / f"ZAU_WD_{isoc_lib}.cont",
+        neb_dir / f"ZAU_ND_{isoc_lib}.lines",
+        neb_dir / f"ZAU_ND_{isoc_lib}.cont",
+    )
+    return all(path.exists() for path in required)
+
+
 def _interp_linear_extrap(
     x_in: np.ndarray, y_in: np.ndarray, x_out: np.ndarray
 ) -> np.ndarray:
@@ -514,11 +527,10 @@ def _read_nebular_continuum(
     sps_home: Path,
     isoc_lib: str,
     prefix: str,
-    axis_lambda: np.ndarray,
     n_z: int,
     n_age: int,
     n_u: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     path = sps_home / "data" / "nebular" / f"ZAU_{prefix}_{isoc_lib}.cont"
     lines = _read_nebular_file_lines(path)
     if len(lines) < 2:
@@ -555,14 +567,14 @@ def _read_nebular_continuum(
     if not records_spec:
         raise ValueError(f"No continuum records parsed from: {path}")
 
-    n_lam = int(axis_lambda.size)
+    n_lam = int(raw_lam.size)
     expected_records = n_z * n_age * n_u
     if len(records_spec) != expected_records:
         raise ValueError(
             f"Nebular continuum record count mismatch: got {len(records_spec)}, expected {expected_records}"
         )
 
-    cont = np.full((n_lam, n_z, n_age, n_u), np.float32(-1.0e30), dtype=np.float32)
+    cont = np.full((n_lam, n_z, n_age, n_u), np.float64(-1.0e30), dtype=np.float64)
     floor = 1.0e-95
 
     for rec, raw_spec in enumerate(records_spec):
@@ -570,10 +582,9 @@ def _read_nebular_continuum(
         rem = rec % (n_age * n_u)
         ia = rem // n_u
         iu = rem % n_u
-        interp = _interp_linear_extrap(raw_lam, np.log10(raw_spec + floor), axis_lambda)
-        cont[:, iz, ia, iu] = interp.astype(np.float32)
+        cont[:, iz, ia, iu] = np.log10(raw_spec + floor)
 
-    return cont
+    return raw_lam, cont
 
 
 def _read_nebular_lines(
@@ -639,7 +650,7 @@ def _read_nebular_lines(
         )
 
     line = np.full(
-        (line_pos.size, n_z, n_age, n_u), np.float32(-1.0e30), dtype=np.float32
+        (line_pos.size, n_z, n_age, n_u), np.float64(-1.0e30), dtype=np.float64
     )
     logz = np.zeros(n_z, dtype=np.float64)
     age = np.zeros(n_age, dtype=np.float64)
@@ -654,14 +665,12 @@ def _read_nebular_lines(
         logz[iz] = meta[0]
         age[ia] = meta[1]
         logu[iu] = meta[2]
-        line[:, iz, ia, iu] = np.log10(vals + floor).astype(np.float32)
+        line[:, iz, ia, iu] = np.log10(vals + floor)
 
     return logz, np.log10(age), logu, line_pos, line
 
 
-def _write_nebular(
-    h5: h5py.File, sps_home: Path, isoc_lib: str, axis_lambda: np.ndarray
-) -> None:
+def _write_nebular(h5: h5py.File, sps_home: Path, isoc_lib: str) -> None:
     for prefix in ("WD", "ND"):
         logz, age_log, logu, line_pos, line = _read_nebular_lines(
             sps_home, isoc_lib, prefix
@@ -670,11 +679,25 @@ def _write_nebular(
         n_age = int(age_log.size)
         n_u = int(logu.size)
 
-        cont = _read_nebular_continuum(
-            sps_home, isoc_lib, prefix, axis_lambda, n_z, n_age, n_u
+        neb_lam, cont = _read_nebular_continuum(
+            sps_home, isoc_lib, prefix, n_z, n_age, n_u
         )
 
-        grp = h5.require_group(f"/libraries/nebular/{prefix}")
+        if "/axes/nebular_lambda" in h5:
+            if not np.allclose(
+                h5["/axes/nebular_lambda"][:], neb_lam, rtol=0.0, atol=0.0
+            ):
+                raise ValueError(
+                    "Nebular lambda axis mismatch across isochrone libraries"
+                )
+        else:
+            h5.create_dataset(
+                "/axes/nebular_lambda",
+                data=neb_lam.astype(np.float64),
+                dtype=np.float64,
+            )
+
+        grp = h5.require_group(f"/libraries/nebular/{isoc_lib}/{prefix}")
         role_prefix = f"nebular_{prefix.lower()}"
 
         d_logz = grp.create_dataset("logz", data=logz, dtype=np.float64)
@@ -699,16 +722,16 @@ def _write_nebular(
 
         # For Fortran rank-4 reads expecting (lam,z,age,u), write in C-order
         # as (u,age,z,lam).
-        cont_c = np.transpose(cont, (3, 2, 1, 0)).astype(np.float32, copy=False)
-        d_cont = grp.create_dataset("cont", data=cont_c, dtype=np.float32)
+        cont_c = np.transpose(cont, (3, 2, 1, 0)).astype(np.float64, copy=False)
+        d_cont = grp.create_dataset("cont", data=cont_c, dtype=np.float64)
         d_cont.attrs["role"] = f"{role_prefix}_cont"
         d_cont.attrs["dims_csv"] = "lam,z,age,u"
         d_cont.attrs["representation"] = "dense_nd"
 
         # For Fortran rank-4 reads expecting (line,z,age,u), write in C-order
         # as (u,age,z,line).
-        line_c = np.transpose(line, (3, 2, 1, 0)).astype(np.float32, copy=False)
-        d_line = grp.create_dataset("lines", data=line_c, dtype=np.float32)
+        line_c = np.transpose(line, (3, 2, 1, 0)).astype(np.float64, copy=False)
+        d_line = grp.create_dataset("lines", data=line_c, dtype=np.float64)
         d_line.attrs["role"] = f"{role_prefix}_line"
         d_line.attrs["dims_csv"] = "line,z,age,u"
         d_line.attrs["representation"] = "dense_nd"
@@ -753,7 +776,7 @@ def _read_wr_file(
         )
 
     z = np.zeros(n_z, dtype=np.float64)
-    spec = np.zeros((n_z, n_logt, lam.size), dtype=np.float32)
+    spec = np.zeros((n_z, n_logt, lam.size), dtype=np.float64)
 
     k = 0
     for iz in range(n_z):
@@ -808,7 +831,7 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     # Shape: (n_z, n_lam, n_logt, n_logg)
     wmb_z_lam_t_g = np.stack(wmb_stack, axis=0)
     # Reorder to (n_z, n_logg, n_logt, n_lam) for Fortran read as (lam,logt,logg,z)
-    wmb_c = np.transpose(wmb_z_lam_t_g, (0, 3, 2, 1)).astype(np.float32, copy=False)
+    wmb_c = np.transpose(wmb_z_lam_t_g, (0, 3, 2, 1)).astype(np.float64, copy=False)
 
     wmb_grp = h5.require_group("/libraries/auxiliary/wmbasic")
 
@@ -829,7 +852,7 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     ds.attrs["dims_csv"] = "lam"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = wmb_grp.create_dataset("spec", data=wmb_c, dtype=np.float32)
+    ds = wmb_grp.create_dataset("spec", data=wmb_c, dtype=np.float64)
     ds.attrs["role"] = "wmb_spec"
     ds.attrs["dims_csv"] = "lam,logt,logg,z"
     ds.attrs["representation"] = "dense_nd"
@@ -859,7 +882,7 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     # Raw shape: (n_lam, n_logt, n_z)
     pagb_raw = np.stack((halo[:, 1:], solar[:, 1:]), axis=2)
     # Reorder to (n_z, n_logt, n_lam) for Fortran read as (lam,logt,z)
-    pagb_c = np.transpose(pagb_raw, (2, 1, 0)).astype(np.float32, copy=False)
+    pagb_c = np.transpose(pagb_raw, (2, 1, 0)).astype(np.float64, copy=False)
 
     pagb_grp = h5.require_group("/libraries/auxiliary/pagb")
 
@@ -877,7 +900,7 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     ds.attrs["dims_csv"] = "lam"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = pagb_grp.create_dataset("spec", data=pagb_c, dtype=np.float32)
+    ds = pagb_grp.create_dataset("spec", data=pagb_c, dtype=np.float64)
     ds.attrs["role"] = "pagb_spec"
     ds.attrs["dims_csv"] = "lam,logt,z"
     ds.attrs["representation"] = "dense_nd"
@@ -905,8 +928,8 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
         raise ValueError("WR WN/WC metallicity grids differ")
 
     # For Fortran rank-3 reads expecting (lam,logt,z), write C-order as (z,logt,lam).
-    wrn_c = wrn_raw.astype(np.float32, copy=False)
-    wrc_c = wrc_raw.astype(np.float32, copy=False)
+    wrn_c = wrn_raw.astype(np.float64, copy=False)
+    wrc_c = wrc_raw.astype(np.float64, copy=False)
 
     wr_grp = h5.require_group("/libraries/auxiliary/wr")
 
@@ -934,12 +957,12 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     ds.attrs["dims_csv"] = "lam"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = wr_grp.create_dataset("spec_wn", data=wrn_c, dtype=np.float32)
+    ds = wr_grp.create_dataset("spec_wn", data=wrn_c, dtype=np.float64)
     ds.attrs["role"] = "wr_spec_wn"
     ds.attrs["dims_csv"] = "lam,logt,z"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = wr_grp.create_dataset("spec_wc", data=wrc_c, dtype=np.float32)
+    ds = wr_grp.create_dataset("spec_wc", data=wrc_c, dtype=np.float64)
     ds.attrs["role"] = "wr_spec_wc"
     ds.attrs["dims_csv"] = "lam,logt,z"
     ds.attrs["representation"] = "dense_nd"
@@ -987,9 +1010,9 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     # For Fortran rank-2 reads expecting (z,logt), write C-order as (logt,z).
     logt_o_c = np.transpose(agb_logt_o, (1, 0)).astype(np.float64, copy=False)
     # For Fortran rank-2 reads expecting (lam,logt), write C-order as (logt,lam).
-    spec_o_c = np.transpose(spec_o, (1, 0)).astype(np.float32, copy=False)
-    spec_c_c = np.transpose(spec_c, (1, 0)).astype(np.float32, copy=False)
-    spec_car_c = np.transpose(spec_car, (1, 0)).astype(np.float32, copy=False)
+    spec_o_c = np.transpose(spec_o, (1, 0)).astype(np.float64, copy=False)
+    spec_c_c = np.transpose(spec_c, (1, 0)).astype(np.float64, copy=False)
+    spec_car_c = np.transpose(spec_car, (1, 0)).astype(np.float64, copy=False)
 
     agb_grp = h5.require_group("/libraries/auxiliary/agb")
 
@@ -1040,17 +1063,17 @@ def _write_auxiliary(h5: h5py.File, sps_home: Path) -> None:
     ds.attrs["dims_csv"] = "z,logt"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = agb_grp.create_dataset("spec_o", data=spec_o_c, dtype=np.float32)
+    ds = agb_grp.create_dataset("spec_o", data=spec_o_c, dtype=np.float64)
     ds.attrs["role"] = "agb_spec_o"
     ds.attrs["dims_csv"] = "lam,logt"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = agb_grp.create_dataset("spec_c", data=spec_c_c, dtype=np.float32)
+    ds = agb_grp.create_dataset("spec_c", data=spec_c_c, dtype=np.float64)
     ds.attrs["role"] = "agb_spec_c"
     ds.attrs["dims_csv"] = "lam,logt"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = agb_grp.create_dataset("spec_car", data=spec_car_c, dtype=np.float32)
+    ds = agb_grp.create_dataset("spec_car", data=spec_car_c, dtype=np.float64)
     ds.attrs["role"] = "agb_spec_car"
     ds.attrs["dims_csv"] = "lam,logt"
     ds.attrs["representation"] = "dense_nd"
@@ -1078,7 +1101,7 @@ def _write_dust_emission(h5: h5py.File, sps_home: Path, dust_type: str) -> None:
 
     lam_ref: np.ndarray | None = None
     # Raw target shape for Fortran (lam, qpah, umin_cols): write C-order as (umin_cols, qpah, lam)
-    spec_c = np.zeros((n_umin_cols, n_qpah, n_lam), dtype=np.float32)
+    spec_c = np.zeros((n_umin_cols, n_qpah, n_lam), dtype=np.float64)
 
     for k in range(n_qpah):
         if k == 10:
@@ -1103,7 +1126,7 @@ def _write_dust_emission(h5: h5py.File, sps_home: Path, dust_type: str) -> None:
             raise ValueError("Dust emission wavelength grids differ between qpah files")
 
         # table[:, 1:] is (lam, umin_cols) -> transpose to (umin_cols, lam)
-        spec_c[:, k, :] = table[:, 1:].T.astype(np.float32, copy=False)
+        spec_c[:, k, :] = table[:, 1:].T.astype(np.float64, copy=False)
 
     if lam_ref is None:
         raise ValueError("No dust emission templates were parsed")
@@ -1125,7 +1148,7 @@ def _write_dust_emission(h5: h5py.File, sps_home: Path, dust_type: str) -> None:
     ds.attrs["dims_csv"] = "lam"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = grp.create_dataset("spec", data=spec_c, dtype=np.float32)
+    ds = grp.create_dataset("spec", data=spec_c, dtype=np.float64)
     ds.attrs["role"] = "dust_em_spec"
     ds.attrs["dims_csv"] = "lam,qpah,umin"
     ds.attrs["representation"] = "dense_nd"
@@ -1276,7 +1299,7 @@ def _write_xrb(h5: h5py.File, sps_home: Path) -> None:
     n_age = int(age.size)
     n_z = int(z.size)
 
-    spec_c = np.zeros((n_z, n_age, n_lam), dtype=np.float32)
+    spec_c = np.zeros((n_z, n_age, n_lam), dtype=np.float64)
     for iz, tag in enumerate(z_tags):
         arr = np.loadtxt(xrb_dir / f"xsp_feh{tag}.spec", dtype=np.float64)
         if arr.ndim == 1:
@@ -1285,7 +1308,7 @@ def _write_xrb(h5: h5py.File, sps_home: Path) -> None:
             raise ValueError(
                 f"Unexpected XRB spectra shape for [Fe/H]={tag}: got {arr.shape}, expected {(n_age, n_lam)}"
             )
-        spec_c[iz, :, :] = arr.astype(np.float32, copy=False)
+        spec_c[iz, :, :] = arr.astype(np.float64, copy=False)
 
     grp = h5.require_group("/libraries/xrb")
 
@@ -1304,15 +1327,15 @@ def _write_xrb(h5: h5py.File, sps_home: Path) -> None:
     ds.attrs["dims_csv"] = "z"
     ds.attrs["representation"] = "dense_nd"
 
-    ds = grp.create_dataset("spec", data=spec_c, dtype=np.float32)
+    ds = grp.create_dataset("spec", data=spec_c, dtype=np.float64)
     ds.attrs["role"] = "xrb_spec"
     ds.attrs["dims_csv"] = "lam,age,z"
     ds.attrs["representation"] = "dense_nd"
 
 
-def convert(
-    sps_home: Path, spec_lib: str, isoc_lib: str, out_file: Path, dust_type: str
-) -> None:
+def _build_spectral_grid(
+    sps_home: Path, spec_lib: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     spectra_dir = _spectra_dir(sps_home, spec_lib)
     spec = spec_lib.lower()
 
@@ -1332,60 +1355,79 @@ def convert(
         )
         cube_l_z_t_g = np.transpose(cube_l_t_z, (0, 2, 1))[:, :, :, np.newaxis]
         spectral_grid_c = np.transpose(cube_l_z_t_g, (3, 2, 1, 0)).astype(
-            np.float32, copy=False
+            np.float64, copy=False
         )
-    else:
-        axis_lambda = _read_axis(spectra_dir / _lambda_filename(spec_lib))
-        axis_z = _read_axis(spectra_dir / "zlegend.dat")
+        return axis_lambda, axis_z, axis_logt, axis_logg, spectral_grid_c
 
-        # FSPS legacy spectral grid axes are shared from BaSeL tables.
-        basel_dir = sps_home / "data" / "spectra" / "BaSeL3.1"
-        axis_logt = _read_axis(basel_dir / "basel_logt.dat")
-        axis_logg = _read_axis(basel_dir / "basel_logg.dat")
+    axis_lambda = _read_axis(spectra_dir / _lambda_filename(spec_lib))
+    axis_z = _read_axis(spectra_dir / "zlegend.dat")
 
-        n_lam = axis_lambda.size
-        n_z = axis_z.size
-        n_logt = axis_logt.size
-        n_logg = axis_logg.size
+    # FSPS legacy spectral grid axes are shared from BaSeL tables.
+    basel_dir = sps_home / "data" / "spectra" / "BaSeL3.1"
+    axis_logt = _read_axis(basel_dir / "basel_logt.dat")
+    axis_logg = _read_axis(basel_dir / "basel_logg.dat")
 
-        cubes = []
-        for iz in range(n_z):
-            zval = float(axis_z[iz])
-            bin_path = _binary_filename(spec_lib, zval, spectra_dir)
-            cube = _read_legacy_cube(bin_path, n_lam, n_logt, n_logg)
-            cubes.append(cube)
+    n_lam = axis_lambda.size
+    n_z = axis_z.size
+    n_logt = axis_logt.size
+    n_logg = axis_logg.size
 
-        # Shape after stacking: (n_z, n_logg, n_logt, n_lam)
-        stacked = np.stack(cubes, axis=0)
+    cubes = []
+    for iz in range(n_z):
+        zval = float(axis_z[iz])
+        bin_path = _binary_filename(spec_lib, zval, spectra_dir)
+        cubes.append(_read_legacy_cube(bin_path, n_lam, n_logt, n_logg))
 
-        # For Fortran backend expecting flux(lambda, z, logt, logg), write the dataset
-        # in C-order as (n_logg, n_logt, n_z, n_lambda).
-        spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(
-            np.float32, copy=False
-        )
+    # Shape after stacking: (n_z, n_logg, n_logt, n_lam)
+    stacked = np.stack(cubes, axis=0)
 
+    # For Fortran backend expecting flux(lambda, z, logt, logg), write the dataset
+    # in C-order as (n_logg, n_logt, n_z, n_lambda).
+    spectral_grid_c = np.transpose(stacked, (1, 2, 0, 3)).astype(np.float64, copy=False)
+    return axis_lambda, axis_z, axis_logt, axis_logg, spectral_grid_c
+
+
+def convert(sps_home: Path, out_file: Path) -> None:
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(out_file, "w") as h5:
         axes_grp = h5.require_group("/axes")
-        axes_grp.create_dataset("lambda", data=axis_lambda.astype(np.float64))
-        axes_grp.create_dataset("z", data=axis_z.astype(np.float64))
-        axes_grp.create_dataset("logt", data=axis_logt.astype(np.float64))
-        axes_grp.create_dataset("logg", data=axis_logg.astype(np.float64))
+        for spec_lib in OMNIBUS_SPEC_LIBS:
+            axis_lambda, axis_z, axis_logt, axis_logg, spectral_grid_c = (
+                _build_spectral_grid(sps_home, spec_lib)
+            )
+            if "lambda" not in axes_grp:
+                axes_grp.create_dataset("lambda", data=axis_lambda.astype(np.float64))
+                axes_grp.create_dataset("z", data=axis_z.astype(np.float64))
+                axes_grp.create_dataset("logt", data=axis_logt.astype(np.float64))
+                axes_grp.create_dataset("logg", data=axis_logg.astype(np.float64))
 
-        base_grp = h5.require_group(f"/libraries/spectra/{spec_lib}/base")
-        dset = base_grp.create_dataset(
-            "spectral_grid_nd", data=spectral_grid_c, dtype=np.float32
-        )
+            spec_axes_grp = h5.require_group(f"/libraries/spectra/{spec_lib}/axes")
+            spec_axes_grp.create_dataset("lambda", data=axis_lambda.astype(np.float64))
+            spec_axes_grp.create_dataset("z", data=axis_z.astype(np.float64))
+            spec_axes_grp.create_dataset("logt", data=axis_logt.astype(np.float64))
+            spec_axes_grp.create_dataset("logg", data=axis_logg.astype(np.float64))
 
-        dset.attrs["role"] = "spectral_base"
-        dset.attrs["dims_csv"] = "lambda,z,logt,logg"
-        dset.attrs["unit"] = "Lsun/Hz/Msun"
-        dset.attrs["has_missing_value"] = np.int32(0)
+            base_grp = h5.require_group(f"/libraries/spectra/{spec_lib}/base")
+            dset = base_grp.create_dataset(
+                "spectral_grid_nd", data=spectral_grid_c, dtype=np.float64
+            )
+            dset.attrs["role"] = "spectral_base"
+            dset.attrs["dims_csv"] = "lambda,z,logt,logg"
+            dset.attrs["unit"] = "Lsun/Hz/Msun"
+            dset.attrs["has_missing_value"] = np.int32(0)
 
-        _write_isochrones(h5, sps_home, isoc_lib)
-        _write_nebular(h5, sps_home, isoc_lib, axis_lambda)
+        for isoc_lib in OMNIBUS_ISO_LIBS:
+            _write_isochrones(h5, sps_home, isoc_lib)
+
+        for isoc_lib in OMNIBUS_ISO_LIBS:
+            if _has_nebular_sources(sps_home, isoc_lib):
+                _write_nebular(h5, sps_home, isoc_lib)
+
         _write_auxiliary(h5, sps_home)
-        _write_dust_emission(h5, sps_home, dust_type)
+
+        for dust_type in OMNIBUS_DUST_TYPES:
+            _write_dust_emission(h5, sps_home, dust_type)
+
         _write_agn_dust(h5, sps_home)
         _write_attenuation(h5, sps_home)
         _write_xrb(h5, sps_home)
@@ -1396,31 +1438,10 @@ def _parse_args() -> argparse.Namespace:
         description="Convert legacy FSPS spectral binaries to FSDS HDF5."
     )
     p.add_argument("--sps-home", required=True, help="FSPS root path.")
-    p.add_argument(
-        "--spec-lib",
-        required=True,
-        help="Spectral library name, e.g. miles, basel, bpass, c3k_afe+0.0.",
-    )
-    p.add_argument(
-        "--isoc-lib",
-        required=True,
-        help="Isochrone library name, e.g. mist, pdva, prsc, bsti, gnva, bpss.",
-    )
-    p.add_argument(
-        "--dust-type",
-        default="DL07",
-        help="Dust emission library name: DL07 or THEMIS.",
-    )
     p.add_argument("--out", required=True, help="Output HDF5 filename.")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    convert(
-        Path(args.sps_home),
-        args.spec_lib,
-        args.isoc_lib,
-        Path(args.out),
-        args.dust_type,
-    )
+    convert(Path(args.sps_home), Path(args.out))

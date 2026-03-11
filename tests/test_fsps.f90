@@ -55,6 +55,12 @@ program test_fsps
     use test_fsps_spectral_library_mod, only: run_fsps_spectral_library_tests, &
                                   failures_spectral_library => total_failures, &
                                   tests_spectral_library => total_tests
+    use test_fsps_data_backend_hdf5_mod, only: run_fsps_data_backend_hdf5_tests, &
+                                  failures_data_backend_hdf5 => total_failures, &
+                                  tests_data_backend_hdf5 => total_tests
+    use test_fsps_data_mapper_mod, only: run_fsps_data_mapper_tests, &
+                                  failures_data_mapper => total_failures, &
+                                  tests_data_mapper => total_tests
     use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
                                   failures_photometry => total_failures, &
                                   tests_photometry => total_tests
@@ -100,6 +106,8 @@ program test_fsps
     call run_fsps_smoothing_tests()
     call run_fsps_spectral_indices_tests()
     call run_fsps_spectral_library_tests()
+    call run_fsps_data_mapper_tests()
+    call run_fsps_data_backend_hdf5_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -207,6 +215,16 @@ program test_fsps
         (tests_spectral_library - failures_spectral_library), &
         tests_spectral_library &
     )
+    call print_summary_line( &
+        "fsps_data_backend_hdf5", &
+        (tests_data_backend_hdf5 - failures_data_backend_hdf5), &
+        tests_data_backend_hdf5 &
+    )
+    call print_summary_line( &
+        "fsps_data_mapper", &
+        (tests_data_mapper - failures_data_mapper), &
+        tests_data_mapper &
+    )
     
     grand_total_failures = failures_cache + &
                            failures_context + &
@@ -227,7 +245,9 @@ program test_fsps
                            failures_photometry + &
                            failures_smoothing + &
                            failures_spectral_indices + &
-                           failures_spectral_library
+                           failures_spectral_library + &
+                           failures_data_mapper + &
+                           failures_data_backend_hdf5
     
     grand_total_tests = tests_cache + &
                         tests_context + &
@@ -248,7 +268,9 @@ program test_fsps
                         tests_photometry + &
                         tests_smoothing + &
                         tests_spectral_indices + &
-                        tests_spectral_library
+                        tests_spectral_library + &
+                        tests_data_mapper + &
+                        tests_data_backend_hdf5
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)

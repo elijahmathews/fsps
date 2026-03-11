@@ -10,7 +10,7 @@ option('cpu_baseline', type: 'combo', choices: ['generic', 'native', 'x86-64-v3'
 option('enable_stress_testing', type: 'boolean', value: false,
   description: 'Build and register stress-test executables for CI and profiling')
 
-option('data_backend', type: 'combo', choices: ['legacy', 'hdf5', 'auto'], value: 'legacy',
+option('data_backend', type: 'combo', choices: ['legacy', 'hdf5', 'auto'], value: 'auto',
   description: 'Data backend selection for standardized FSDS I/O')
 
 option('hdf5_fortran_incdir', type: 'string', value: '',

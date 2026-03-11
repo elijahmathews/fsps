@@ -98,7 +98,7 @@ hdf5_dep = disabler()
 hdf5_backend_enabled = false
 
 if data_backend_opt == 'legacy' or data_backend_opt == 'fsds_legacy'
-    error('Legacy backend has been removed. Please use data_backend=auto or data_backend=hdf5 with FSDS HDF5 data.')
+    warning('data_backend=legacy is deprecated and now maps to hdf5/auto behavior. Use data_backend=auto or data_backend=hdf5.')
 endif
 
 # Primary probe: Meson HDF5 Fortran discovery
@@ -245,6 +245,9 @@ unit_test_sources = files(
     'tests/spectra/test_fsps_smoothing.f90',
     'tests/spectra/test_fsps_spectral_indices.f90',
     'tests/spectra/test_fsps_spectral_library.f90',
+    'tests/io/test_fsps_hdf5_fixture_support.f90',
+    'tests/io/test_fsps_data_mapper.f90',
+    'tests/io/test_fsps_data_backend_hdf5.f90',
     
     'tests/test_fsps.f90' # Main driver
 )

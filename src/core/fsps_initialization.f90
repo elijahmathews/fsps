@@ -35,8 +35,9 @@ module fsps_initialization
     use fsps_data_backend, only: backend_status_t, data_backend_t, backend_status_ok
     use fsps_data_registry, only: create_data_backend
     use fsps_data_mapper, only: fsps_data_mapper_t
-    use fsps_data_schema, only: spectral_grid_t, isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, aux_wr_t, aux_agb_t, &
-                                dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t, library_manifest_t, dataset_desc_t
+    use fsps_data_schema, only: spectral_grid_t, isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, &
+                                aux_wr_t, aux_agb_t, dust_emission_t, agn_dust_t, dust_attenuation_t, &
+                                xrb_spectra_t, library_manifest_t, dataset_desc_t, axis_desc_t
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
@@ -521,8 +522,12 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(backend_status_t) :: io_status
         type(nebular_grid_t) :: neb_grid
+        type(axis_desc_t) :: lambda_axis
+        type(axis_desc_t) :: lambda_axis_fallback
         character(len=32) :: backend_mode
+        character(len=16) :: original_spec_type
         character(len=:), allocatable :: uri
+        integer :: i, j, k, i_spec
 
         call load_dust_emission_table(ctx, ctx%state%str_dustem)
         call load_dust_attenuation_curves(ctx)
@@ -551,7 +556,85 @@ contains
                 error stop 1
             end if
 
-            if (allocated(neb_grid%cont)) ctx%state%nebem_cont = neb_grid%cont
+            if (allocated(neb_grid%cont)) then
+                call fsps_data_query_axis('lambda', lambda_axis, io_status)
+                if (io_status%code /= 0) then
+                    write(error_unit, '(A,1x,I0,1x,A)') &
+                        '[FSPS_INIT] Error: fsps_data_query_axis failed for nebular load', io_status%code, trim(io_status%message)
+                    call fsps_data_close(io_status)
+                    error stop 1
+                end if
+
+                if (size(neb_grid%cont, 1) == ctx%state%nspec) then
+                    ctx%state%nebem_cont = neb_grid%cont
+                else
+                    if (size(lambda_axis%values) /= size(neb_grid%cont, 1)) then
+                        call fsps_data_query_axis('nebular_lambda', lambda_axis_fallback, io_status)
+                        if (io_status%code == 0 .and. allocated(lambda_axis_fallback%values)) then
+                            if (size(lambda_axis_fallback%values) == size(neb_grid%cont, 1)) then
+                                call lambda_axis%clear()
+                                lambda_axis = lambda_axis_fallback
+                            end if
+                        end if
+
+                        if (size(lambda_axis%values) /= size(neb_grid%cont, 1)) then
+                            original_spec_type = trim(ctx%state%spec_type)
+                            ctx%state%spec_type = 'miles'
+                            call resolve_data_backend_uri(ctx, backend_mode, uri)
+                            ctx%state%spec_type = original_spec_type
+
+                            call fsps_data_close(io_status)
+                            call fsps_data_open(uri, backend_mode, io_status)
+                            if (io_status%code /= 0) then
+                                write(error_unit, '(A,1x,I0,1x,A)') &
+                                    '[FSPS_INIT] Error: fsps_data_open failed for nebular axis fallback', &
+                                    io_status%code, trim(io_status%message)
+                                error stop 1
+                            end if
+
+                            call fsps_data_query_axis('lambda', lambda_axis_fallback, io_status)
+                            if (io_status%code /= 0 .or. .not. allocated(lambda_axis_fallback%values)) then
+                                write(error_unit, '(A,1x,I0,1x,A)') &
+                                    '[FSPS_INIT] Error: fsps_data_query_axis failed for nebular axis fallback', &
+                                    io_status%code, trim(io_status%message)
+                                call fsps_data_close(io_status)
+                                error stop 1
+                            end if
+
+                            call fsps_data_close(io_status)
+                            call fsps_data_open(uri, backend_mode, io_status)
+                            if (io_status%code /= 0) then
+                                write(error_unit, '(A,1x,I0,1x,A)') &
+                                    '[FSPS_INIT] Error: fsps_data_open failed restoring active backend', &
+                                    io_status%code, trim(io_status%message)
+                                error stop 1
+                            end if
+
+                            if (size(lambda_axis_fallback%values) == size(neb_grid%cont, 1)) then
+                                call lambda_axis%clear()
+                                lambda_axis = lambda_axis_fallback
+                            else
+                                write(error_unit, '(A,1x,I0,1x,I0)') &
+                                    '[FSPS_INIT] Error: neb cont shape mismatch', &
+                                    size(neb_grid%cont, 1), size(lambda_axis_fallback%values)
+                                error stop 1
+                            end if
+                        end if
+                    end if
+
+                    do i = 1, size(neb_grid%cont, 2)
+                        do j = 1, size(neb_grid%cont, 3)
+                            do k = 1, size(neb_grid%cont, 4)
+                                do i_spec = 1, ctx%state%nspec
+                                    ctx%state%nebem_cont(i_spec, i, j, k) = interpolate_linear(lambda_axis%values, &
+                                                                                                 neb_grid%cont(:, i, j, k), &
+                                                                                                 ctx%state%spec_lambda(i_spec))
+                                end do
+                            end do
+                        end do
+                    end do
+                end if
+            end if
             if (allocated(neb_grid%line)) ctx%state%nebem_line = neb_grid%line
             if (allocated(neb_grid%line_pos)) ctx%state%nebem_line_pos = neb_grid%line_pos
             if (allocated(neb_grid%logz)) ctx%state%nebem_logz = neb_grid%logz
@@ -566,6 +649,7 @@ contains
             end if
 
             call neb_grid%clear()
+            call lambda_axis%clear()
             call compute_nebular_kernels(ctx)
         end if
 
@@ -1688,16 +1772,15 @@ contains
     subroutine load_xray_nebular_grid(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, k, stat, i_spec
-        real(WP), dimension(NEBNIP) :: readcontneb
-        real(WP), dimension(NEBNIP) :: raw_spec_log
+        integer :: i, j, k, stat, i_spec, nlam_nebx
         real(WP), dimension(NEBNAGE) :: tmp_age
         real(WP), dimension(NEBNZ) :: tmp_logz
         real(WP), dimension(NEBNIP) :: tmp_logu
-        real(WP), dimension(:), allocatable :: readlambneb
+        real(WP), dimension(:), allocatable :: readlambneb, readcontneb, raw_spec_log
         character(len=1024) :: file_path
 
         allocate (readlambneb(ctx%state%nspec))
+        readlambneb = -1.0_wp
 
         if (ctx%cloudy_dust_val == 1) then
             file_path = trim(ctx%sps_home)//'/data/nebular/ZAU_WX_WD_'//trim(ctx%state%isoc_type)//'.cont'
@@ -1712,6 +1795,12 @@ contains
         end if
         read (99, *)
         read (99, *) readlambneb
+        nlam_nebx = count(readlambneb > 0.0_wp)
+        if (nlam_nebx < 2) then
+            write (error_unit, '(A)') '[FSPS_INIT] Error: invalid X-ray nebular wavelength grid'
+            error stop 1
+        end if
+        allocate (readcontneb(nlam_nebx), raw_spec_log(nlam_nebx))
         do i = 1, NEBNZ
             do j = 1, NEBNAGE
                 do k = 1, NEBNIP
@@ -1719,7 +1808,7 @@ contains
                     read (99, *, iostat=stat) readcontneb
                     raw_spec_log = log10(readcontneb + 10.0_wp**(-95.0_wp))
                     do i_spec = 1, ctx%state%nspec
-                        ctx%state%xnebem_cont(i_spec, i, j, k) = interpolate_linear(readlambneb, raw_spec_log, &
+                        ctx%state%xnebem_cont(i_spec, i, j, k) = interpolate_linear(readlambneb(1:nlam_nebx), raw_spec_log, &
                                                                                       ctx%state%spec_lambda(i_spec))
                     end do
                 end do
@@ -1753,7 +1842,7 @@ contains
         ctx%state%nebem_age = log10(ctx%state%nebem_age)
         ctx%state%xnebem_line = log10(ctx%state%xnebem_line + 10.0_wp**(-95.0_wp))
 
-        deallocate (readlambneb)
+        deallocate (readlambneb, readcontneb, raw_spec_log)
     end subroutine load_xray_nebular_grid
 
     subroutine load_xrb_spectra(ctx)
@@ -1977,6 +2066,18 @@ contains
 
         call fsps_mapper%map_nebular_grid(fsps_backend, fsps_manifest, component, grid, status)
     end subroutine fsps_data_load_nebular
+
+    subroutine fsps_data_query_axis(axis_name, axis_desc, status)
+        character(len=*), intent(in) :: axis_name
+        type(axis_desc_t), intent(inout) :: axis_desc
+        type(backend_status_t), intent(out) :: status
+
+        call ensure_backend_ready(status)
+        if (.not. backend_status_ok(status)) return
+
+        call axis_desc%clear()
+        call fsps_backend%query_axis(axis_name, axis_desc, status)
+    end subroutine fsps_data_query_axis
 
     subroutine fsps_data_load_wmbasic(grid, status)
         type(aux_wmbasic_t), intent(inout) :: grid
