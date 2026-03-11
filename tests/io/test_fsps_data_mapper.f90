@@ -4,7 +4,8 @@ module test_fsps_data_mapper_mod
     use fsps_data_backend_hdf5, only: hdf5_backend_t
     use fsps_data_mapper, only: fsps_data_mapper_t
     use fsps_data_schema, only: dataset_desc_t, library_manifest_t, spectral_grid_t, spectral_slice_t, &
-                                dust_emission_t, agn_dust_t, xrb_spectra_t
+                                isochrone_grid_t, nebular_grid_t, aux_wmbasic_t, aux_pagb_t, aux_wr_t, aux_agb_t, &
+                                dust_emission_t, agn_dust_t, dust_attenuation_t, xrb_spectra_t
     use test_fsps_hdf5_fixture_support_mod, only: create_test_hdf5_fixture, remove_test_hdf5_fixture, make_backend_uri
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_true, assert_int_equals, assert_float_equals
@@ -24,6 +25,7 @@ contains
         call test_map_spectral_grid_success_and_validation()
         call test_map_spectral_slice_pick_logic()
         call test_map_auxiliary_roles_and_errors()
+        call test_map_additional_structures_and_error_branches()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_data_mapper_tests
@@ -252,5 +254,159 @@ contains
         call backend%close(status)
         call remove_test_hdf5_fixture(file_path)
     end subroutine test_map_auxiliary_roles_and_errors
+
+    subroutine test_map_additional_structures_and_error_branches()
+        type(fsps_data_mapper_t) :: mapper
+        type(hdf5_backend_t) :: backend
+        type(library_manifest_t) :: manifest
+        type(backend_status_t) :: status
+        type(isochrone_grid_t) :: isoc
+        type(nebular_grid_t) :: neb
+        type(aux_wmbasic_t) :: wmb
+        type(aux_pagb_t) :: pagb
+        type(aux_wr_t) :: wr
+        type(aux_agb_t) :: agb
+        type(dust_attenuation_t) :: att
+        character(len=:), allocatable :: file_path, uri
+        logical :: ok
+
+        call print_group("mapper extended role coverage")
+
+        call create_test_hdf5_fixture(file_path, ok)
+        call assert_true(ok, 'fixture creation succeeds', total_tests, total_failures)
+        if (.not. ok) return
+
+        uri = make_backend_uri(file_path, 'mist', 'miles', 'themis')
+        call backend%open(uri, status)
+        if (status%code /= 0) then
+            call assert_true(.false., 'backend open should succeed for extended mapper tests', total_tests, total_failures)
+            call remove_test_hdf5_fixture(file_path)
+            return
+        end if
+
+        call manifest%clear()
+        allocate(manifest%datasets(10))
+        manifest%datasets(1)%role = 'isoc_nmass';    manifest%datasets(1)%path = '/tests/i2'
+        manifest%datasets(2)%role = 'isoc_timestep'; manifest%datasets(2)%path = '/tests/r2x2'
+        manifest%datasets(3)%role = 'isoc_mini';     manifest%datasets(3)%path = '/tests/r3'
+        manifest%datasets(4)%role = 'isoc_mact';     manifest%datasets(4)%path = '/tests/r3'
+        manifest%datasets(5)%role = 'isoc_logl';     manifest%datasets(5)%path = '/tests/r3'
+        manifest%datasets(6)%role = 'isoc_logt';     manifest%datasets(6)%path = '/tests/r3'
+        manifest%datasets(7)%role = 'isoc_logg';     manifest%datasets(7)%path = '/tests/r3'
+        manifest%datasets(8)%role = 'isoc_phase';    manifest%datasets(8)%path = '/tests/r3'
+        manifest%datasets(9)%role = 'isoc_ffco';     manifest%datasets(9)%path = '/tests/r3'
+        manifest%datasets(10)%role = 'isoc_lmdot';   manifest%datasets(10)%path = '/tests/r3'
+
+        call mapper%map_isochrone_grid(backend, manifest, isoc, status)
+        call assert_int_equals(0, status%code, 'map_isochrone_grid succeeds on compact fixture', total_tests, total_failures)
+        if (status%code == 0) then
+            call assert_int_equals(2, size(isoc%nmass, 1), 'isoc nmass nt size is 2', total_tests, total_failures)
+            call assert_int_equals(2, size(isoc%nmass, 2), 'isoc nmass nz size is 2', total_tests, total_failures)
+            call assert_int_equals(2, size(isoc%timestep_logyr, 1), 'isoc timestep nt size is 2', total_tests, total_failures)
+            call assert_int_equals(2, size(isoc%timestep_logyr, 2), 'isoc timestep nz size is 2', total_tests, total_failures)
+        end if
+
+        call manifest%clear()
+        allocate(manifest%datasets(10))
+        manifest%datasets(1)%role = 'isoc_nmass';    manifest%datasets(1)%path = '/tests/i2'
+        manifest%datasets(2)%role = 'isoc_timestep'; manifest%datasets(2)%path = '/tests/r2'
+        manifest%datasets(3)%role = 'isoc_mini';     manifest%datasets(3)%path = '/tests/r3'
+        manifest%datasets(4)%role = 'isoc_mact';     manifest%datasets(4)%path = '/tests/r3'
+        manifest%datasets(5)%role = 'isoc_logl';     manifest%datasets(5)%path = '/tests/r3'
+        manifest%datasets(6)%role = 'isoc_logt';     manifest%datasets(6)%path = '/tests/r3'
+        manifest%datasets(7)%role = 'isoc_logg';     manifest%datasets(7)%path = '/tests/r3'
+        manifest%datasets(8)%role = 'isoc_phase';    manifest%datasets(8)%path = '/tests/r3'
+        manifest%datasets(9)%role = 'isoc_ffco';     manifest%datasets(9)%path = '/tests/r3'
+        manifest%datasets(10)%role = 'isoc_lmdot';   manifest%datasets(10)%path = '/tests/r3'
+        call mapper%map_isochrone_grid(backend, manifest, isoc, status)
+        call assert_int_equals(1330, status%code, 'invalid isoc_timestep shape returns 1330', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(9))
+        manifest%datasets(1)%role = 'isoc_nmass';    manifest%datasets(1)%path = '/tests/i2'
+        manifest%datasets(2)%role = 'isoc_timestep'; manifest%datasets(2)%path = '/tests/r2x2'
+        manifest%datasets(3)%role = 'isoc_mini';     manifest%datasets(3)%path = '/tests/r3'
+        manifest%datasets(4)%role = 'isoc_mact';     manifest%datasets(4)%path = '/tests/r3'
+        manifest%datasets(5)%role = 'isoc_logl';     manifest%datasets(5)%path = '/tests/r3'
+        manifest%datasets(6)%role = 'isoc_logt';     manifest%datasets(6)%path = '/tests/r3'
+        manifest%datasets(7)%role = 'isoc_logg';     manifest%datasets(7)%path = '/tests/r3'
+        manifest%datasets(8)%role = 'isoc_phase';    manifest%datasets(8)%path = '/tests/r3'
+        manifest%datasets(9)%role = 'isoc_ffco';     manifest%datasets(9)%path = '/tests/r3'
+        call mapper%map_isochrone_grid(backend, manifest, isoc, status)
+        call assert_int_equals(1303, status%code, 'missing isoc role returns 1303', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(6))
+        manifest%datasets(1)%role = 'nebular_wd_line_pos'; manifest%datasets(1)%path = '/axes/z'
+        manifest%datasets(2)%role = 'nebular_wd_logz';     manifest%datasets(2)%path = '/axes/z'
+        manifest%datasets(3)%role = 'nebular_wd_age';      manifest%datasets(3)%path = '/axes/age'
+        manifest%datasets(4)%role = 'nebular_wd_logu';     manifest%datasets(4)%path = '/axes/z'
+        manifest%datasets(5)%role = 'nebular_wd_cont';     manifest%datasets(5)%path = '/tests/r4'
+        manifest%datasets(6)%role = 'nebular_wd_line';     manifest%datasets(6)%path = '/tests/r4'
+        call mapper%map_nebular_grid(backend, manifest, 'WD', neb, status)
+        call assert_int_equals(0, status%code, 'map_nebular_grid succeeds for WD component', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(2))
+        manifest%datasets(1)%role = 'nebular_wd_line_pos'; manifest%datasets(1)%path = '/axes/z'
+        manifest%datasets(2)%role = 'nebular_wd_logz';     manifest%datasets(2)%path = '/axes/z'
+        call mapper%map_nebular_grid(backend, manifest, 'WD', neb, status)
+        call assert_int_equals(1303, status%code, 'missing nebular roles returns 1303', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(4))
+        manifest%datasets(1)%role = 'wmb_logt'; manifest%datasets(1)%path = '/axes/logt'
+        manifest%datasets(2)%role = 'wmb_z';    manifest%datasets(2)%path = '/axes/z'
+        manifest%datasets(3)%role = 'wmb_lam';  manifest%datasets(3)%path = '/axes/lambda'
+        manifest%datasets(4)%role = 'wmb_spec'; manifest%datasets(4)%path = '/tests/r4'
+        call mapper%map_wmbasic(backend, manifest, wmb, status)
+        call assert_int_equals(0, status%code, 'map_wmbasic succeeds', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(3))
+        manifest%datasets(1)%role = 'pagb_logt'; manifest%datasets(1)%path = '/tests/r1'
+        manifest%datasets(2)%role = 'pagb_lam';  manifest%datasets(2)%path = '/axes/lambda'
+        manifest%datasets(3)%role = 'pagb_spec'; manifest%datasets(3)%path = '/tests/r3'
+        call mapper%map_pagb(backend, manifest, pagb, status)
+        call assert_int_equals(1320, status%code, 'map_pagb validates canonical NDIM_PAGB', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(6))
+        manifest%datasets(1)%role = 'wr_logt_wn';  manifest%datasets(1)%path = '/axes/logt'
+        manifest%datasets(2)%role = 'wr_logt_wc';  manifest%datasets(2)%path = '/axes/logt'
+        manifest%datasets(3)%role = 'wr_z';        manifest%datasets(3)%path = '/axes/z'
+        manifest%datasets(4)%role = 'wr_lam';      manifest%datasets(4)%path = '/axes/lambda'
+        manifest%datasets(5)%role = 'wr_spec_wn';  manifest%datasets(5)%path = '/tests/r3'
+        manifest%datasets(6)%role = 'wr_spec_wc';  manifest%datasets(6)%path = '/tests/r3'
+        call mapper%map_wr(backend, manifest, wr, status)
+        call assert_int_equals(0, status%code, 'map_wr succeeds', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(10))
+        manifest%datasets(1)%role = 'agb_z_o';      manifest%datasets(1)%path = '/axes/z'
+        manifest%datasets(2)%role = 'agb_logt_c';   manifest%datasets(2)%path = '/axes/logt'
+        manifest%datasets(3)%role = 'agb_logt_car'; manifest%datasets(3)%path = '/axes/logt'
+        manifest%datasets(4)%role = 'agb_lam_o';    manifest%datasets(4)%path = '/axes/lambda'
+        manifest%datasets(5)%role = 'agb_lam_c';    manifest%datasets(5)%path = '/axes/lambda'
+        manifest%datasets(6)%role = 'agb_lam_car';  manifest%datasets(6)%path = '/axes/lambda'
+        manifest%datasets(7)%role = 'agb_logt_o';   manifest%datasets(7)%path = '/tests/r2'
+        manifest%datasets(8)%role = 'agb_spec_o';   manifest%datasets(8)%path = '/tests/r2'
+        manifest%datasets(9)%role = 'agb_spec_c';   manifest%datasets(9)%path = '/tests/r2'
+        manifest%datasets(10)%role = 'agb_spec_car'; manifest%datasets(10)%path = '/tests/r2'
+        call mapper%map_agb(backend, manifest, agb, status)
+        call assert_int_equals(0, status%code, 'map_agb succeeds', total_tests, total_failures)
+
+        call manifest%clear()
+        allocate(manifest%datasets(4))
+        manifest%datasets(1)%role = 'dust_att_wg_lam';  manifest%datasets(1)%path = '/axes/lambda'
+        manifest%datasets(2)%role = 'dust_att_wg_spec'; manifest%datasets(2)%path = '/tests/r4'
+        manifest%datasets(3)%role = 'dust_att_smc_lam'; manifest%datasets(3)%path = '/axes/lambda'
+        manifest%datasets(4)%role = 'dust_att_smc_ext'; manifest%datasets(4)%path = '/tests/r1'
+        call mapper%map_dust_attenuation(backend, manifest, att, status)
+        call assert_int_equals(0, status%code, 'map_dust_attenuation succeeds', total_tests, total_failures)
+
+        call backend%close(status)
+        call remove_test_hdf5_fixture(file_path)
+    end subroutine test_map_additional_structures_and_error_branches
 
 end module test_fsps_data_mapper_mod

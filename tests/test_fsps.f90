@@ -61,6 +61,18 @@ program test_fsps
     use test_fsps_data_mapper_mod, only: run_fsps_data_mapper_tests, &
                                   failures_data_mapper => total_failures, &
                                   tests_data_mapper => total_tests
+    use test_fsps_data_schema_mod, only: run_fsps_data_schema_tests, &
+                                  failures_data_schema => total_failures, &
+                                  tests_data_schema => total_tests
+    use test_fsps_data_registry_mod, only: run_fsps_data_registry_tests, &
+                                  failures_data_registry => total_failures, &
+                                  tests_data_registry => total_tests
+    use test_fsps_io_mod, only: run_fsps_io_tests, &
+                                  failures_io => total_failures, &
+                                  tests_io => total_tests
+    use test_fsps_initialization_mod, only: run_fsps_initialization_tests, &
+                                  failures_initialization => total_failures, &
+                                  tests_initialization => total_tests
     use test_fsps_photometry_mod, only: run_fsps_photometry_tests, &
                                   failures_photometry => total_failures, &
                                   tests_photometry => total_tests
@@ -73,12 +85,17 @@ program test_fsps
     use test_fsps_csp_mod, only: run_fsps_csp_tests, &
                                  failures_csp => total_failures, &
                                  tests_csp => total_tests
+    use hdf5, only: h5eset_auto_f
+    use, intrinsic :: ieee_exceptions, only: ieee_set_flag, ieee_all
     ! Test utilities
     use test_utils_mod, only: print_summary_line, print_major_header
     implicit none
 
     integer :: grand_total_failures = 0
     integer :: grand_total_tests = 0
+    integer :: hdferr
+
+    call h5eset_auto_f(0, hdferr)
 
     call print_major_header("FSPS UNIT TEST SUITE")
 
@@ -106,6 +123,10 @@ program test_fsps
     call run_fsps_smoothing_tests()
     call run_fsps_spectral_indices_tests()
     call run_fsps_spectral_library_tests()
+    call run_fsps_data_schema_tests()
+    call run_fsps_data_registry_tests()
+    call run_fsps_io_tests()
+    call run_fsps_initialization_tests()
     call run_fsps_data_mapper_tests()
     call run_fsps_data_backend_hdf5_tests()
 
@@ -216,6 +237,26 @@ program test_fsps
         tests_spectral_library &
     )
     call print_summary_line( &
+        "fsps_data_schema", &
+        (tests_data_schema - failures_data_schema), &
+        tests_data_schema &
+    )
+    call print_summary_line( &
+        "fsps_data_registry", &
+        (tests_data_registry - failures_data_registry), &
+        tests_data_registry &
+    )
+    call print_summary_line( &
+        "fsps_io", &
+        (tests_io - failures_io), &
+        tests_io &
+    )
+    call print_summary_line( &
+        "fsps_initialization", &
+        (tests_initialization - failures_initialization), &
+        tests_initialization &
+    )
+    call print_summary_line( &
         "fsps_data_backend_hdf5", &
         (tests_data_backend_hdf5 - failures_data_backend_hdf5), &
         tests_data_backend_hdf5 &
@@ -246,6 +287,10 @@ program test_fsps
                            failures_smoothing + &
                            failures_spectral_indices + &
                            failures_spectral_library + &
+                           failures_data_schema + &
+                           failures_data_registry + &
+                           failures_io + &
+                           failures_initialization + &
                            failures_data_mapper + &
                            failures_data_backend_hdf5
     
@@ -269,12 +314,18 @@ program test_fsps
                         tests_smoothing + &
                         tests_spectral_indices + &
                         tests_spectral_library + &
+                        tests_data_schema + &
+                        tests_data_registry + &
+                        tests_io + &
+                        tests_initialization + &
                         tests_data_mapper + &
                         tests_data_backend_hdf5
 
     print *
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)
     print *
+
+    call ieee_set_flag(ieee_all, .false.)
 
     if (grand_total_failures == 0) then
         stop 0

@@ -146,6 +146,7 @@ contains
             return
         end if
         self%hdf5_initialized = .true.
+        call h5eset_auto_f(0, hdferr)
 
         call h5fopen_f(trim(self%data_uri), H5F_ACC_RDONLY_F, self%file_id, hdferr)
         if (hdferr < 0) then

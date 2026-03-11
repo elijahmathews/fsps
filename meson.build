@@ -245,9 +245,12 @@ unit_test_sources = files(
     'tests/spectra/test_fsps_smoothing.f90',
     'tests/spectra/test_fsps_spectral_indices.f90',
     'tests/spectra/test_fsps_spectral_library.f90',
-    'tests/io/test_fsps_hdf5_fixture_support.f90',
-    'tests/io/test_fsps_data_mapper.f90',
+    'tests/io/test_fsps_data_schema.f90',
+    'tests/io/test_fsps_data_registry.f90',
+    'tests/io/test_fsps_io.f90',
+    'tests/core/test_fsps_initialization.f90',
     'tests/io/test_fsps_data_backend_hdf5.f90',
+    'tests/io/test_fsps_data_mapper.f90',
     
     'tests/test_fsps.f90' # Main driver
 )
@@ -255,9 +258,12 @@ unit_test_sources = files(
 tests_units_exe = executable(
     'tests_units', 
     unit_test_sources, 
+    fortran_args : (fc_id == 'gcc' ? ['-ffpe-summary=none'] : []),
     dependencies : [fsps_dep, test_utils_dep]
 )
-test('unit_tests', tests_units_exe, suite : 'unit')
+unit_env = environment()
+unit_env.set('FSPS_DATA_HOME', meson.project_source_root())
+test('unit_tests', tests_units_exe, suite : 'unit', env : unit_env)
 
 # 3. Other Test Drivers
 test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
