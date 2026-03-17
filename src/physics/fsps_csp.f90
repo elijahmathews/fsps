@@ -250,12 +250,6 @@ contains
                 ctx%state%csp_spec_final(:) = results(i)%spec(:)
                 !$acc update device(ctx%state%csp_spec_final)
 
-                ! AGN Dust Emission
-                if (ctx%add_agn_dust_val == 1 .and. pset%fagn > SAFE_FLOOR) then
-                    call apply_agn_dust_emission(ctx, pset, ctx%state%spec_lambda, &
-                                                 results(i)%lbol_csp, ctx%state%csp_spec_final)
-                end if
-
                 ! Instrumental Smoothing
                 if (pset%sigma_smooth > 0.0_wp) then
                     call apply_smoothing(ctx, ctx%state%spec_lambda, ctx%state%csp_spec_final, &
@@ -696,6 +690,11 @@ contains
                 end if
             end do
         end do
+
+        if (ctx%add_agn_dust_val == 1 .and. pset%fagn > SAFE_FLOOR) then
+            call apply_agn_dust_emission(ctx, pset, n_outputs, ctx%state%spec_lambda, &
+                                         ctx%state%out_lbol_csp, ctx%state%out_csp_spec)
+        end if
 
         ! 2. Post-process Emission Lines (Combination & Mass Renormalization)
         !$acc parallel loop collapse(2) present(ctx) &

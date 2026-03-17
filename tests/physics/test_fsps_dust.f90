@@ -362,7 +362,9 @@ contains
         integer, parameter :: nlam = 5
         integer :: tmp_dust_type
         real(WP), dimension(nlam) :: wavelengths
-        real(WP), dimension(nlam) :: spectrum, expected
+        real(WP), dimension(nlam, 1) :: spectrum
+        real(WP), dimension(nlam) :: expected
+        real(WP), dimension(1) :: test_log_lbol
 
         call print_group("AGN Dust Emission")
 
@@ -377,61 +379,65 @@ contains
 
         ! Test 1.1: Early exit when fagn=0
         settings%fagn = 0.0_wp
-        spectrum = 100.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 100.0_wp
+        test_log_lbol(1) = 0.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
-        call assert_true(all(abs(spectrum - 100.0_wp) <= EPS), "AGN early exit (fagn=0)", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - 100.0_wp) <= EPS), "AGN early exit (fagn=0)", total_tests, total_failures)
 
         ! Test 1.2: Torus interpolation exact grid point
         settings%fagn = 1.0_wp
         settings%dust2 = 0.0_wp
         settings%agn_tau = 20.0_wp
-        spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 0.0_wp
+        test_log_lbol(1) = 0.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
         expected = 2.0_wp
-        call assert_true(all(abs(spectrum - expected) <= EPS), "AGN grid exact (tau=20)", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - expected) <= EPS), "AGN grid exact (tau=20)", total_tests, total_failures)
 
         ! Test 1.3: Torus interpolation linear
         settings%agn_tau = 15.0_wp
-        spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 0.0_wp
+        test_log_lbol(1) = 0.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
         expected = 1.5_wp
-        call assert_true(all(abs(spectrum - expected) <= EPS), "AGN grid linear (tau=15)", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - expected) <= EPS), "AGN grid linear (tau=15)", total_tests, total_failures)
 
         ! Test 1.4: Galaxy attenuation (power-law, dust2=1)
         settings%agn_tau = 10.0_wp
         settings%dust2 = 1.0_wp
-        spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 0.0_wp
+        test_log_lbol(1) = 0.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
         expected = exp(-1.0_wp)
-        call assert_true(all(abs(spectrum - expected) <= EPS), "AGN host attenuation", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - expected) <= EPS), "AGN host attenuation", total_tests, total_failures)
 
         ! Test 1.5: Type 3 exception (no dust2 scaling)
         ctx%dust_type_val = 3
@@ -439,17 +445,18 @@ contains
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
         settings%dust2 = 50.0_wp
-        spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 0.0_wp
+        test_log_lbol(1) = 0.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 0.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
         expected = exp(-1.0_wp)
-        call assert_true(all(abs(spectrum - expected) <= EPS), "AGN Type 3 exception", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - expected) <= EPS), "AGN Type 3 exception", total_tests, total_failures)
 
         ! Test 1.6: Luminosity normalization
         ctx%dust_type_val = 0
@@ -459,17 +466,18 @@ contains
         settings%dust2 = 0.0_wp
         settings%agn_tau = 10.0_wp
         settings%fagn = 0.1_wp
-        spectrum = 0.0_wp
-        !$acc data copyin(wavelengths, spectrum, settings)
+        spectrum(:, 1) = 0.0_wp
+        test_log_lbol(1) = 10.0_wp
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, 10.0_wp, spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
         expected = 1.0e9_wp
-        call assert_true(all(abs(spectrum - expected) <= EPS), "AGN luminosity normalization", total_tests, total_failures)
+        call assert_true(all(abs(spectrum(:, 1) - expected) <= EPS), "AGN luminosity normalization", total_tests, total_failures)
 
         call teardown_physics_context(ctx)
 
@@ -624,9 +632,11 @@ contains
         type(params) :: settings
         integer, parameter :: nlam = 5
         integer :: tmp_dust_type
-        real(WP), dimension(nlam) :: spectrum, wavelengths
+        real(WP), dimension(nlam, 1) :: spectrum
+        real(WP), dimension(nlam) :: wavelengths
         real(WP), dimension(nlam) :: spectrum_out
         real(WP), dimension(nlam) :: freqs
+        real(WP), dimension(1) :: test_log_lbol
         real(WP) :: lbol_in, lbol_out
         real(WP) :: norm_template
 
@@ -637,8 +647,8 @@ contains
         freqs = C_LIGHT / wavelengths
 
         ! Test 4.1: AGN energy conservation (template normalized)
-        spectrum = 1.0_wp
-        lbol_in = integrate_trapezoid_array(freqs, spectrum)
+        spectrum(:, 1) = 1.0_wp
+        lbol_in = integrate_trapezoid_array(freqs, spectrum(:, 1))
 
         norm_template = lbol_in
         ctx%state%agndust_spec(:, :) = 1.0_wp / norm_template
@@ -646,21 +656,22 @@ contains
         settings%fagn = 0.1_wp
         settings%dust2 = 0.0_wp
         settings%agn_tau = 10.0_wp
+        test_log_lbol(1) = log10(lbol_in)
         ctx%dust_type_val = 0
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         ctx%state%agndust_spec(:, :) = 1.0_wp / norm_template
         !$acc update device(ctx%dust_type_val, ctx%state%agndust_spec(:, :))
 
-        !$acc data copyin(wavelengths, spectrum, settings)
+        !$acc data copyin(wavelengths, spectrum, settings, test_log_lbol)
         !$acc update device(settings)
         tmp_dust_type = ctx%dust_type_val
         ctx%dust_type_val = tmp_dust_type
         !$acc update device(ctx%dust_type_val)
-        call apply_agn_dust_emission(ctx, settings, wavelengths, log10(lbol_in), spectrum)
+        call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
-        lbol_out = integrate_trapezoid_array(freqs, spectrum)
+        lbol_out = integrate_trapezoid_array(freqs, spectrum(:, 1))
         call assert_relative_error(lbol_in * 1.1_wp, lbol_out, 1.0e-6_wp, "AGN energy conservation", total_tests, total_failures)
 
         ! Test 4.2: AGB energy conservation (attenuation only)

@@ -636,12 +636,13 @@ contains
     !> @param[in]    wavelengths      Vector of wavelengths in Angstroms.
     !> @param[in]    log_lbol_stellar Log10 of the bolometric luminosity of the stellar population (L_sol).
     !> @param[inout] spectrum_inout   The spectral energy distribution to be modified (L_sol/Hz or similar).
-    subroutine apply_agn_dust_emission(ctx, settings, wavelengths, log_lbol_stellar, spectrum_inout)
+    subroutine apply_agn_dust_emission(ctx, settings, n_outputs, wavelengths, log_lbol_stellar, spectrum_inout)
         type(fsps_context_t), intent(in)       :: ctx
         type(params), intent(in)               :: settings
+        integer, intent(in)                    :: n_outputs
         real(WP), dimension(:), intent(in)     :: wavelengths
-        real(WP), intent(in)                   :: log_lbol_stellar
-        real(WP), dimension(:), intent(inout)  :: spectrum_inout
+        real(WP), dimension(:), intent(in)     :: log_lbol_stellar
+        real(WP), dimension(:,:), intent(inout)  :: spectrum_inout
 
         ! Local variables
         real(WP) :: agn_template_interpolated
@@ -649,7 +650,7 @@ contains
         real(WP) :: tau_agn_param, interpolation_weight
         real(WP) :: luminosity_agn_bolometric
         integer  :: idx_tau_grid, n_agn_grid
-        integer :: i
+        integer :: i, i_out
 
         ! 0. Early exit if no AGN contribution is specified
         if (settings%fagn <= tiny(0.0_wp)) return
@@ -667,29 +668,55 @@ contains
                                (ctx%state%agndust_tau(idx_tau_grid + 1) - ctx%state%agndust_tau(idx_tau_grid))
         interpolation_weight = max(0.0_wp, min(interpolation_weight, 1.0_wp))
 
-        ! Interpolate the template AND calculate attenuation
-        ! Combined loop for performance
-        luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar) * settings%fagn
-        
-        !$acc parallel loop present(ctx, wavelengths, spectrum_inout) private(agn_template_interpolated, galaxy_attenuation_curve)
-        do i = 1, size(wavelengths)
-            ! Interpolate Template
-            agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
-                                        interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
+#ifdef _OPENACC
+        !$acc parallel loop gang present(ctx, wavelengths, spectrum_inout, log_lbol_stellar, settings) &
+        !$acc private(luminosity_agn_bolometric, agn_template_interpolated, galaxy_attenuation_curve, i)
+        do i_out = 1, n_outputs
+            luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar(i_out)) * settings%fagn
             
-            ! Calculate Attenuation
-            galaxy_attenuation_curve = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
-            
-            ! Apply Attenuation
-            if (ctx%dust_type_val == 3) then
-                agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
-            else
-                agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
-            end if
-            
-            ! Add to Spectrum
-            spectrum_inout(i) = spectrum_inout(i) + (luminosity_agn_bolometric * agn_template_interpolated)
+            !$acc loop vector
+            do i = 1, size(wavelengths)
+                ! Interpolate Template
+                agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
+                                            interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
+                
+                ! Calculate Attenuation
+                galaxy_attenuation_curve = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
+                
+                ! Apply Attenuation
+                if (ctx%dust_type_val == 3) then
+                    agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
+                else
+                    agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
+                end if
+                
+                ! Add to Spectrum
+                spectrum_inout(i, i_out) = spectrum_inout(i, i_out) + (luminosity_agn_bolometric * agn_template_interpolated)
+            end do
         end do
+#else
+        do i_out = 1, n_outputs
+            luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar(i_out)) * settings%fagn
+            do i = 1, size(wavelengths)
+                ! Interpolate Template
+                agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
+                                            interpolation_weight * ctx%state%agndust_spec(i, idx_tau_grid + 1)
+                
+                ! Calculate Attenuation
+                galaxy_attenuation_curve = compute_attenuation_curve_point(wavelengths(i), i, ctx%dust_type_val, settings, ctx)
+                
+                ! Apply Attenuation
+                if (ctx%dust_type_val == 3) then
+                    agn_template_interpolated = agn_template_interpolated * exp(-galaxy_attenuation_curve)
+                else
+                    agn_template_interpolated = agn_template_interpolated * exp(-settings%dust2 * galaxy_attenuation_curve)
+                end if
+                
+                ! Add to Spectrum
+                spectrum_inout(i, i_out) = spectrum_inout(i, i_out) + (luminosity_agn_bolometric * agn_template_interpolated)
+            end do
+        end do
+#endif
 
     end subroutine apply_agn_dust_emission
 
