@@ -301,7 +301,7 @@ contains
         num_wavelengths = size(wavelength_grid)
 
         ! 1. Calculate Tau directly into transmission array (Single Pass)
-        !$acc parallel loop present(wavelength_grid, transmission) private(observed_wavelength, lambda_ratio, tau_val, i)
+        !$omp target teams distribute parallel do private(observed_wavelength, lambda_ratio, tau_val)
         do j = 1, num_wavelengths
             observed_wavelength = wavelength_grid(j) * one_plus_z
             lambda_ratio        = observed_wavelength / LYMAN_LIMIT
@@ -333,7 +333,7 @@ contains
 
         ! 2. Safety Cap for Short Wavelengths
         ! Serial device execution to avoid PCIe bounce while tracking maxloc
-        !$acc serial present(transmission)
+        !$omp target
         max_tau = 0.0_wp
         max_valid_idx = 1
         do j = 1, num_wavelengths
@@ -348,10 +348,10 @@ contains
                 transmission(j) = max_tau
             end do
         end if
-        !$acc end serial
+        !$omp end target
 
         ! 3. Convert to Transmission
-        !$acc parallel loop present(transmission)
+        !$omp target teams distribute parallel do
         do j = 1, num_wavelengths
             transmission(j) = exp(-transmission(j) * optical_depth_factor)
         end do

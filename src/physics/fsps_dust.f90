@@ -261,7 +261,7 @@ contains
         dust_type_is3    = (ctx%dust_type_val == 3)
 
         ! 1. Pre-calculate Age-Independent Quantities (Diffuse Curve & Emission Template)
-        !$acc parallel loop present(ctx) private(curve) async(1)
+        !$omp target teams distribute parallel do private(curve) nowait
         do i = 1, nspec
             curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
             if (dust_type_is3) then
@@ -274,12 +274,12 @@ contains
 
         if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
             call interpolate_draine_li_dust_model(ctx, settings, ctx%state%dust_emission_shape)
-            !$acc update device(ctx%state%dust_emission_shape) async(1)
+            !$omp target update to(ctx%state%dust_emission_shape) nowait
 
             emission_norm_factor = 0.0_wp
             lum_escaped_profile  = 0.0_wp
-            !$acc parallel loop reduction(+:emission_norm_factor, lum_escaped_profile) &
-            !$acc present(ctx) private(y1, y2, y1_att, y2_att) async(1)
+            !$omp target teams distribute parallel do reduction(+:emission_norm_factor, lum_escaped_profile) &
+            !$omp private(y1, y2, y1_att, y2_att) nowait
             do i = 1, nspec-1
                 y1 = ctx%state%dust_emission_shape(i)
                 y2 = ctx%state%dust_emission_shape(i+1)
@@ -291,11 +291,11 @@ contains
                 lum_escaped_profile = lum_escaped_profile + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
                                       ctx%state%dust_frequencies(i)) * (y1_att + y2_att)
             end do
-            !$acc wait(1)
+            !$omp taskwait
         end if
 
         ! 2. Apply Attenuation to Stellar Spectra
-        !$acc parallel loop collapse(2) present(ctx) private(i, curve, trans_birth, trans_old, spec_sum) async(1)
+        !$omp target teams distribute parallel do collapse(2) private(i, curve, trans_birth, trans_old, spec_sum) nowait
         do i_out = 1, n_outputs
             do i = 1, nspec
                 curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
@@ -326,14 +326,14 @@ contains
         end do
 
         ! 3. Apply Attenuation to Nebular Lines & Compute Line Reductions
-        !$acc parallel loop gang present(ctx) private(sum_neb_intrinsic, sum_neb_attenuated) async(1)
+        !$omp target teams distribute parallel do private(sum_neb_intrinsic, sum_neb_attenuated) nowait
         do i_out = 1, n_outputs
             sum_neb_intrinsic  = 0.0_wp
             sum_neb_attenuated = 0.0_wp
 
-            !$acc loop vector reduction(+:sum_neb_intrinsic, sum_neb_attenuated) &
-            !$acc private(search_val, search_lower, search_upper, search_mid, search_slope, &
-            !$acc         trans_diffuse_neb, neb_birth, intrinsic_flux, att_young, att_old)
+            !$omp simd reduction(+:sum_neb_intrinsic, sum_neb_attenuated) &
+            !$omp private(search_val, search_lower, search_upper, search_mid, search_slope, &
+            !$omp         trans_diffuse_neb, neb_birth, intrinsic_flux, att_young, att_old)
             do i = 1, nem
                 if (one_minus_nodust <= SAFE_FLOOR) then
                     trans_diffuse_neb = 1.0_wp
@@ -390,13 +390,13 @@ contains
 
         ! 4. Add Dust Emission (Energy Balance)
         if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
-            !$acc parallel loop gang present(ctx) &
-            !$acc private(lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total, normalization_factor) async(1)
+            !$omp target teams distribute parallel do &
+            !$omp private(lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total, normalization_factor) nowait
             do i_out = 1, n_outputs
                 lum_bol_intrinsic = 0.0_wp
                 lum_bol_attenuated = 0.0_wp
 
-                !$acc loop vector reduction(+:lum_bol_intrinsic, lum_bol_attenuated) private(y1, y2)
+                !$omp simd reduction(+:lum_bol_intrinsic, lum_bol_attenuated) private(y1, y2)
                 do i = 1, nspec-1
                     y1 = ctx%state%spec_young(i, i_out) + ctx%state%spec_old(i, i_out)
                     y2 = ctx%state%spec_young(i+1, i_out) + ctx%state%spec_old(i+1, i_out)
@@ -422,7 +422,7 @@ contains
                     normalization_factor = 0.0_wp
                 end if
 
-                !$acc loop vector
+                !$omp simd
                 do i = 1, nspec
                     if (lum_escaped_profile > SAFE_FLOOR) then
                         ctx%state%dust_emission_final(i, i_out) = ctx%state%dust_emission_shape(i) * &
@@ -444,7 +444,7 @@ contains
                 end if
             end do
         else
-            !$acc parallel loop present(ctx) async(1)
+            !$omp target teams distribute parallel do nowait
             do i_out = 1, n_outputs
                 ctx%state%sfh_w_tmp1(3, i_out) = SAFE_FLOOR
             end do
@@ -476,7 +476,7 @@ contains
     !> We refactor the array function into an elemental/scalar one for the parallel loop.
     !> @return attenuation_val
     pure function compute_attenuation_curve_point(wavelength, idx, dust_type_id, settings, ctx) result(attenuation_val)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         integer, intent(in)                :: idx, dust_type_id
         type(params), intent(in)           :: settings
@@ -529,7 +529,7 @@ contains
     !> @param[in]    log_mdot     Log10 Mass Loss Rate (M_sol/yr) from isochrone (optional).
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
-        !$acc routine seq
+        !$omp declare target
         
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
@@ -668,13 +668,13 @@ contains
                                (ctx%state%agndust_tau(idx_tau_grid + 1) - ctx%state%agndust_tau(idx_tau_grid))
         interpolation_weight = max(0.0_wp, min(interpolation_weight, 1.0_wp))
 
-#ifdef _OPENACC
-        !$acc parallel loop gang present(ctx, wavelengths, spectrum_inout, log_lbol_stellar, settings) &
-        !$acc private(luminosity_agn_bolometric, agn_template_interpolated, galaxy_attenuation_curve, i)
+#ifdef _OPENMP
+        !$omp target teams distribute parallel do &
+        !$omp private(luminosity_agn_bolometric, agn_template_interpolated, galaxy_attenuation_curve, i)
         do i_out = 1, n_outputs
             luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar(i_out)) * settings%fagn
             
-            !$acc loop vector
+            !$omp simd
             do i = 1, size(wavelengths)
                 ! Interpolate Template
                 agn_template_interpolated = (1.0_wp - interpolation_weight) * ctx%state%agndust_spec(i, idx_tau_grid) + &
@@ -785,7 +785,7 @@ contains
     !> Implementation of Cardelli, Clayton, & Mathis (1989) extinction curve.
     !> Includes the "hack" for smooth transitions used in the original FSPS.
     elemental function get_ccm89_curve_point(wavelength, r_v, uv_bump_strength) result(curve)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: r_v, uv_bump_strength
         real(WP) :: curve
@@ -919,7 +919,7 @@ contains
 
     !> Implementation of Calzetti et al. (2000) starburst attenuation curve.
     elemental function get_calzetti_curve_point(wavelength) result(curve)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k
@@ -953,7 +953,7 @@ contains
 
     !> Implementation of Kriek & Conroy (2013): Calzetti + UV Bump + Tilt.
     elemental function get_kriek_conroy_curve_point(wavelength, tilt_index) result(curve)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: tilt_index
         real(WP) :: curve
@@ -983,7 +983,7 @@ contains
 
 !> Implementation of Reddy et al. (2015) MOSDEF curve.
     elemental function get_reddy_curve_point(wavelength) result(curve)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k, wavenumber_clamped
@@ -1017,7 +1017,7 @@ contains
     !> Converts wavelength (Angstroms) to wavenumber (inverse microns).
     !> Used frequently for dust curve parameterizations (CCM89, Calzetti, etc.).
     elemental function get_wavenumber_point(wavelength) result(wavenumber)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: wavenumber
         
@@ -1028,7 +1028,7 @@ contains
     !> Computes the circumstellar optical depth (tau_1um) from physical parameters.
     !> See Villaume et al. (2015).
     pure function compute_circumstellar_optical_depth(ctx, c_rich_flag, m_act, log_l, log_g, log_mdot_iso) result(tau)
-        !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: c_rich_flag
         real(WP), intent(in) :: m_act, log_l, log_g, log_mdot_iso

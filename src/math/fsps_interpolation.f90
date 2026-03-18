@@ -9,9 +9,6 @@ module fsps_interpolation
     !>
     !> It exposes a generic interface `interpolate_linear` that automatically
     !> handles both scalar and array query points.
-    !>
-    !> OpenACC notes:
-    !> - Device-callable routines are marked with `!$acc routine seq`.
     
     use fsps_precision, only: WP
     implicit none
@@ -44,7 +41,7 @@ contains
     !>
     !> @return    y_out  The interpolated value.
     pure function interpolate_linear_scalar(x_in, y_in, x_out) result(y_out)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: x_in, y_in
         real(WP), intent(in) :: x_out
         real(WP) :: y_out
@@ -84,7 +81,7 @@ contains
     !>
     !> @return    y_out  The interpolated values at x_out.
     pure function interpolate_linear_array(x_in, y_in, x_out) result(y_out)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: x_in, y_in, x_out
         real(WP), dimension(size(x_out)) :: y_out
 
@@ -106,8 +103,6 @@ contains
         ! Initialize hint for the first iteration.
         idx = 1
 
-        ! Sequential hint-accelerated path.
-        !$acc loop seq
         do i = 1, m
             ! Find the interval index and clamp to valid interpolation range.
             idx = find_interval_with_hint(x_in, x_out(i), idx)
@@ -134,7 +129,7 @@ contains
     !>
     !> @return    idx    Lower interval index.
     pure function find_interval(array, value) result(idx)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: array
         real(WP), intent(in) :: value
         integer :: idx
@@ -146,7 +141,7 @@ contains
     !> Finds the index `i` in an array such that `array(i) <= value < array(i+1)`.
     !> (Standard version without hint)
     pure function find_interval_no_hint(array, value) result(idx)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: array
         real(WP), intent(in) :: value
         integer :: idx
@@ -207,7 +202,7 @@ contains
     !>
     !> @return    idx    Lower index of the interpolation interval.
     pure function find_interval_with_hint(array, value, hint) result(idx)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: array
         real(WP), intent(in) :: value
         integer, intent(in) :: hint
@@ -296,7 +291,7 @@ contains
     !> Wraps the IEEE_ARITHMETIC intrinsic to avoid module namespace pollution
     !> and ensures a safe return value for error conditions in PURE functions.
     pure function get_quiet_nan() result(res)
-        !$acc routine seq
+        !$omp declare target
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
         real(WP) :: res
         res = ieee_value(0.0_wp, ieee_quiet_nan)

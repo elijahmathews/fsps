@@ -837,7 +837,7 @@ contains
     !> @brief Wrapper for IMF Number Density integration (dn/dM)
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_number(ctx, x) result(res)
-        !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: x
         real(WP) :: res
@@ -848,7 +848,7 @@ contains
     !> @brief Wrapper for IMF Mass Density integration (M * dn/dM)
     !> Used by add_remnant_mass integration calls.
     pure function wrapper_imf_mass(ctx, x) result(res)
-        !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: x
         real(WP) :: res

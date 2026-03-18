@@ -600,7 +600,8 @@ contains
 
         if (needs_realloc) then
                 if (allocated(ctx%state%ssp_basis_spec)) then
-                    !$acc exit data delete(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+                    !$omp target exit data map(delete: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, &
+                    !$omp                              ctx%state%ssp_basis_lbol)
                 end if
                 if (allocated(ctx%state%ssp_basis_spec)) deallocate(ctx%state%ssp_basis_spec)
                 if (allocated(ctx%state%ssp_basis_mass)) deallocate(ctx%state%ssp_basis_mass)
@@ -616,8 +617,7 @@ contains
         end if
 
         if (mapped_new) then
-            !$acc enter data copyin(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
-            !$acc enter data attach(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            !$omp target enter data map(to: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
             ctx%state%ssp_basis_is_dirty = .true.
         end if
 
@@ -626,7 +626,7 @@ contains
             ctx%state%ssp_basis_mass(:, 1:nzin) = mass_ssp(:, 1:nzin)
             ctx%state%ssp_basis_lbol(:, 1:nzin) = lbol_ssp(:, 1:nzin)
 
-            !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            !$omp target update to(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
             ctx%state%ssp_basis_is_dirty = .false.
         end if
     end subroutine fsps_context_update_ssp_basis
@@ -798,419 +798,319 @@ contains
         call fsps_context_prepare_csp_workspace(ctx)
 
         ! Copy the main structure
-        !$acc enter data copyin(ctx)
-        !$acc enter data copyin(ctx%state)
+        !$omp target enter data map(to: ctx)
+        !$omp target enter data map(to: ctx%state)
         
         ! Copy allocatable parameter arrays in pset
         if (allocated(ctx%pset%mag_compute)) then
-            !$acc enter data copyin(ctx%pset%mag_compute)
-            !$acc enter data attach(ctx%pset%mag_compute)
+            !$omp target enter data map(to: ctx%pset%mag_compute)
         end if
         if (allocated(ctx%pset%ssp_gen_age)) then
-            !$acc enter data copyin(ctx%pset%ssp_gen_age)
-            !$acc enter data attach(ctx%pset%ssp_gen_age)
+            !$omp target enter data map(to: ctx%pset%ssp_gen_age)
         end if
 
         ! Copy pointer/allocatable components of state
         if (associated(ctx%state%indexdefined)) then
-            !$acc enter data copyin(ctx%state%indexdefined)
-            !$acc enter data attach(ctx%state%indexdefined)
+            !$omp target enter data map(to: ctx%state%indexdefined)
         end if
         if (associated(ctx%state%wgdust)) then
-            !$acc enter data copyin(ctx%state%wgdust)
-            !$acc enter data attach(ctx%state%wgdust)
+            !$omp target enter data map(to: ctx%state%wgdust)
         end if
         if (associated(ctx%state%g03smcextn)) then
-            !$acc enter data copyin(ctx%state%g03smcextn)
-            !$acc enter data attach(ctx%state%g03smcextn)
+            !$omp target enter data map(to: ctx%state%g03smcextn)
         end if
         if (associated(ctx%state%bands)) then
-            !$acc enter data copyin(ctx%state%bands)
-            !$acc enter data attach(ctx%state%bands)
+            !$omp target enter data map(to: ctx%state%bands)
         end if
         if (associated(ctx%state%magsun)) then
-            !$acc enter data copyin(ctx%state%magsun)
-            !$acc enter data attach(ctx%state%magsun)
+            !$omp target enter data map(to: ctx%state%magsun)
         end if
         if (associated(ctx%state%magvega)) then
-            !$acc enter data copyin(ctx%state%magvega)
-            !$acc enter data attach(ctx%state%magvega)
+            !$omp target enter data map(to: ctx%state%magvega)
         end if
         if (associated(ctx%state%filter_leff)) then
-            !$acc enter data copyin(ctx%state%filter_leff)
-            !$acc enter data attach(ctx%state%filter_leff)
+            !$omp target enter data map(to: ctx%state%filter_leff)
         end if
         if (associated(ctx%state%vega_spec)) then
-            !$acc enter data copyin(ctx%state%vega_spec)
-            !$acc enter data attach(ctx%state%vega_spec)
+            !$omp target enter data map(to: ctx%state%vega_spec)
         end if
         if (associated(ctx%state%sun_spec)) then
-            !$acc enter data copyin(ctx%state%sun_spec)
-            !$acc enter data attach(ctx%state%sun_spec)
+            !$omp target enter data map(to: ctx%state%sun_spec)
         end if
         if (associated(ctx%state%spec_lambda)) then
-            !$acc enter data copyin(ctx%state%spec_lambda)
-            !$acc enter data attach(ctx%state%spec_lambda)
+            !$omp target enter data map(to: ctx%state%spec_lambda)
         end if
         if (associated(ctx%state%spec_nu)) then
-            !$acc enter data copyin(ctx%state%spec_nu)
-            !$acc enter data attach(ctx%state%spec_nu)
+            !$omp target enter data map(to: ctx%state%spec_nu)
         end if
         if (associated(ctx%state%spec_res)) then
-            !$acc enter data copyin(ctx%state%spec_res)
-            !$acc enter data attach(ctx%state%spec_res)
+            !$omp target enter data map(to: ctx%state%spec_res)
         end if
         if (associated(ctx%state%speclib)) then
-            !$acc enter data copyin(ctx%state%speclib)
-            !$acc enter data attach(ctx%state%speclib)
+            !$omp target enter data map(to: ctx%state%speclib)
         end if
         if (associated(ctx%state%wmb_spec)) then
-            !$acc enter data copyin(ctx%state%wmb_spec)
-            !$acc enter data attach(ctx%state%wmb_spec)
+            !$omp target enter data map(to: ctx%state%wmb_spec)
         end if
         if (associated(ctx%state%agb_spec_o)) then
-            !$acc enter data copyin(ctx%state%agb_spec_o)
-            !$acc enter data attach(ctx%state%agb_spec_o)
+            !$omp target enter data map(to: ctx%state%agb_spec_o)
         end if
         if (associated(ctx%state%agb_logt_o)) then
-            !$acc enter data copyin(ctx%state%agb_logt_o)
-            !$acc enter data attach(ctx%state%agb_logt_o)
+            !$omp target enter data map(to: ctx%state%agb_logt_o)
         end if
         if (associated(ctx%state%agb_spec_c)) then
-            !$acc enter data copyin(ctx%state%agb_spec_c)
-            !$acc enter data attach(ctx%state%agb_spec_c)
+            !$omp target enter data map(to: ctx%state%agb_spec_c)
         end if
         if (associated(ctx%state%agb_logt_c)) then
-            !$acc enter data copyin(ctx%state%agb_logt_c)
-            !$acc enter data attach(ctx%state%agb_logt_c)
+            !$omp target enter data map(to: ctx%state%agb_logt_c)
         end if
         if (associated(ctx%state%agb_spec_car)) then
-            !$acc enter data copyin(ctx%state%agb_spec_car)
-            !$acc enter data attach(ctx%state%agb_spec_car)
+            !$omp target enter data map(to: ctx%state%agb_spec_car)
         end if
         if (associated(ctx%state%pagb_spec)) then
-            !$acc enter data copyin(ctx%state%pagb_spec)
-            !$acc enter data attach(ctx%state%pagb_spec)
+            !$omp target enter data map(to: ctx%state%pagb_spec)
         end if
         if (associated(ctx%state%wrn_spec)) then
-            !$acc enter data copyin(ctx%state%wrn_spec)
-            !$acc enter data attach(ctx%state%wrn_spec)
+            !$omp target enter data map(to: ctx%state%wrn_spec)
         end if
         if (associated(ctx%state%wrc_spec)) then
-            !$acc enter data copyin(ctx%state%wrc_spec)
-            !$acc enter data attach(ctx%state%wrc_spec)
+            !$omp target enter data map(to: ctx%state%wrc_spec)
         end if
         if (associated(ctx%state%qpaharr)) then
-            !$acc enter data copyin(ctx%state%qpaharr)
-            !$acc enter data attach(ctx%state%qpaharr)
+            !$omp target enter data map(to: ctx%state%qpaharr)
         end if
         if (associated(ctx%state%uminarr)) then
-            !$acc enter data copyin(ctx%state%uminarr)
-            !$acc enter data attach(ctx%state%uminarr)
+            !$omp target enter data map(to: ctx%state%uminarr)
         end if
         if (associated(ctx%state%lambda_dustem)) then
-            !$acc enter data copyin(ctx%state%lambda_dustem)
-            !$acc enter data attach(ctx%state%lambda_dustem)
+            !$omp target enter data map(to: ctx%state%lambda_dustem)
         end if
         if (associated(ctx%state%dustem_dustem)) then
-            !$acc enter data copyin(ctx%state%dustem_dustem)
-            !$acc enter data attach(ctx%state%dustem_dustem)
+            !$omp target enter data map(to: ctx%state%dustem_dustem)
         end if
         if (associated(ctx%state%dustem2_dustem)) then
-            !$acc enter data copyin(ctx%state%dustem2_dustem)
-            !$acc enter data attach(ctx%state%dustem2_dustem)
+            !$omp target enter data map(to: ctx%state%dustem2_dustem)
         end if
         if (associated(ctx%state%flux_dagb)) then
-            !$acc enter data copyin(ctx%state%flux_dagb)
-            !$acc enter data attach(ctx%state%flux_dagb)
+            !$omp target enter data map(to: ctx%state%flux_dagb)
         end if
         if (associated(ctx%state%nebem_cont)) then
-            !$acc enter data copyin(ctx%state%nebem_cont)
-            !$acc enter data attach(ctx%state%nebem_cont)
+            !$omp target enter data map(to: ctx%state%nebem_cont)
         end if
         if (associated(ctx%state%xnebem_cont)) then
-            !$acc enter data copyin(ctx%state%xnebem_cont)
-            !$acc enter data attach(ctx%state%xnebem_cont)
+            !$omp target enter data map(to: ctx%state%xnebem_cont)
         end if
         if (associated(ctx%state%neb_res_min)) then
-            !$acc enter data copyin(ctx%state%neb_res_min)
-            !$acc enter data attach(ctx%state%neb_res_min)
+            !$omp target enter data map(to: ctx%state%neb_res_min)
         end if
         if (associated(ctx%state%gaussnebarr)) then
-            !$acc enter data copyin(ctx%state%gaussnebarr)
-            !$acc enter data attach(ctx%state%gaussnebarr)
+            !$omp target enter data map(to: ctx%state%gaussnebarr)
         end if
         if (associated(ctx%state%agndust_spec)) then
-            !$acc enter data copyin(ctx%state%agndust_spec)
-            !$acc enter data attach(ctx%state%agndust_spec)
+            !$omp target enter data map(to: ctx%state%agndust_spec)
         end if
         if (associated(ctx%state%mact_isoc)) then
-            !$acc enter data copyin(ctx%state%mact_isoc)
-            !$acc enter data attach(ctx%state%mact_isoc)
+            !$omp target enter data map(to: ctx%state%mact_isoc)
         end if
         if (associated(ctx%state%logl_isoc)) then
-            !$acc enter data copyin(ctx%state%logl_isoc)
-            !$acc enter data attach(ctx%state%logl_isoc)
+            !$omp target enter data map(to: ctx%state%logl_isoc)
         end if
         if (associated(ctx%state%logt_isoc)) then
-            !$acc enter data copyin(ctx%state%logt_isoc)
-            !$acc enter data attach(ctx%state%logt_isoc)
+            !$omp target enter data map(to: ctx%state%logt_isoc)
         end if
         if (associated(ctx%state%logg_isoc)) then
-            !$acc enter data copyin(ctx%state%logg_isoc)
-            !$acc enter data attach(ctx%state%logg_isoc)
+            !$omp target enter data map(to: ctx%state%logg_isoc)
         end if
         if (associated(ctx%state%ffco_isoc)) then
-            !$acc enter data copyin(ctx%state%ffco_isoc)
-            !$acc enter data attach(ctx%state%ffco_isoc)
+            !$omp target enter data map(to: ctx%state%ffco_isoc)
         end if
         if (associated(ctx%state%phase_isoc)) then
-            !$acc enter data copyin(ctx%state%phase_isoc)
-            !$acc enter data attach(ctx%state%phase_isoc)
+            !$omp target enter data map(to: ctx%state%phase_isoc)
         end if
         if (associated(ctx%state%mini_isoc)) then
-            !$acc enter data copyin(ctx%state%mini_isoc)
-            !$acc enter data attach(ctx%state%mini_isoc)
+            !$omp target enter data map(to: ctx%state%mini_isoc)
         end if
         if (associated(ctx%state%lmdot_isoc)) then
-            !$acc enter data copyin(ctx%state%lmdot_isoc)
-            !$acc enter data attach(ctx%state%lmdot_isoc)
+            !$omp target enter data map(to: ctx%state%lmdot_isoc)
         end if
         if (associated(ctx%state%nmass_isoc)) then
-            !$acc enter data copyin(ctx%state%nmass_isoc)
-            !$acc enter data attach(ctx%state%nmass_isoc)
+            !$omp target enter data map(to: ctx%state%nmass_isoc)
         end if
         if (associated(ctx%state%timestep_isoc)) then
-            !$acc enter data copyin(ctx%state%timestep_isoc)
-            !$acc enter data attach(ctx%state%timestep_isoc)
+            !$omp target enter data map(to: ctx%state%timestep_isoc)
         end if
         if (associated(ctx%state%zlegend)) then
-            !$acc enter data copyin(ctx%state%zlegend)
-            !$acc enter data attach(ctx%state%zlegend)
+            !$omp target enter data map(to: ctx%state%zlegend)
         end if
         if (associated(ctx%state%zlegendinit)) then
-            !$acc enter data copyin(ctx%state%zlegendinit)
-            !$acc enter data attach(ctx%state%zlegendinit)
+            !$omp target enter data map(to: ctx%state%zlegendinit)
         end if
         if (allocated(ctx%state%spec_ssp_zz)) then
-            !$acc enter data copyin(ctx%state%spec_ssp_zz)
-            !$acc enter data attach(ctx%state%spec_ssp_zz)
+            !$omp target enter data map(to: ctx%state%spec_ssp_zz)
         end if
         if (allocated(ctx%state%mass_ssp_zz)) then
-            !$acc enter data copyin(ctx%state%mass_ssp_zz)
-            !$acc enter data attach(ctx%state%mass_ssp_zz)
+            !$omp target enter data map(to: ctx%state%mass_ssp_zz)
         end if
         if (allocated(ctx%state%lbol_ssp_zz)) then
-            !$acc enter data copyin(ctx%state%lbol_ssp_zz)
-            !$acc enter data attach(ctx%state%lbol_ssp_zz)
+            !$omp target enter data map(to: ctx%state%lbol_ssp_zz)
         end if
         if (associated(ctx%state%time_full)) then
-            !$acc enter data copyin(ctx%state%time_full)
-            !$acc enter data attach(ctx%state%time_full)
+            !$omp target enter data map(to: ctx%state%time_full)
         end if
         if (allocated(ctx%state%weight_ssp)) then
-            !$acc enter data copyin(ctx%state%weight_ssp)
-            !$acc enter data attach(ctx%state%weight_ssp)
+            !$omp target enter data map(to: ctx%state%weight_ssp)
         end if
         if (allocated(ctx%state%spec_young)) then
-            !$acc enter data copyin(ctx%state%spec_young)
-            !$acc enter data attach(ctx%state%spec_young)
+            !$omp target enter data map(to: ctx%state%spec_young)
         end if
         if (allocated(ctx%state%spec_old)) then
-            !$acc enter data copyin(ctx%state%spec_old)
-            !$acc enter data attach(ctx%state%spec_old)
+            !$omp target enter data map(to: ctx%state%spec_old)
         end if
         if (allocated(ctx%state%ssp_temp_grid)) then
-            !$acc enter data copyin(ctx%state%ssp_temp_grid)
-            !$acc enter data attach(ctx%state%ssp_temp_grid)
+            !$omp target enter data map(to: ctx%state%ssp_temp_grid)
         end if
         if (allocated(ctx%state%ssp_active_idx)) then
-            !$acc enter data copyin(ctx%state%ssp_active_idx)
-            !$acc enter data attach(ctx%state%ssp_active_idx)
+            !$omp target enter data map(to: ctx%state%ssp_active_idx)
         end if
         if (allocated(ctx%state%ssp_active_w)) then
-            !$acc enter data copyin(ctx%state%ssp_active_w)
-            !$acc enter data attach(ctx%state%ssp_active_w)
+            !$omp target enter data map(to: ctx%state%ssp_active_w)
         end if
         if (associated(ctx%state%bpass_spec_ssp)) then
-            !$acc enter data copyin(ctx%state%bpass_spec_ssp)
-            !$acc enter data attach(ctx%state%bpass_spec_ssp)
+            !$omp target enter data map(to: ctx%state%bpass_spec_ssp)
         end if
         if (associated(ctx%state%bpass_mass_ssp)) then
-            !$acc enter data copyin(ctx%state%bpass_mass_ssp)
-            !$acc enter data attach(ctx%state%bpass_mass_ssp)
+            !$omp target enter data map(to: ctx%state%bpass_mass_ssp)
         end if
         if (associated(ctx%state%lam_xrb)) then
-            !$acc enter data copyin(ctx%state%lam_xrb)
-            !$acc enter data attach(ctx%state%lam_xrb)
+            !$omp target enter data map(to: ctx%state%lam_xrb)
         end if
         if (associated(ctx%state%spec_xrb)) then
-            !$acc enter data copyin(ctx%state%spec_xrb)
-            !$acc enter data attach(ctx%state%spec_xrb)
+            !$omp target enter data map(to: ctx%state%spec_xrb)
         end if
         if (associated(ctx%state%ages_xrb)) then
-            !$acc enter data copyin(ctx%state%ages_xrb)
-            !$acc enter data attach(ctx%state%ages_xrb)
+            !$omp target enter data map(to: ctx%state%ages_xrb)
         end if
         if (associated(ctx%state%zmet_xrb)) then
-            !$acc enter data copyin(ctx%state%zmet_xrb)
-            !$acc enter data attach(ctx%state%zmet_xrb)
+            !$omp target enter data map(to: ctx%state%zmet_xrb)
         end if
         if (allocated(ctx%state%lsfinfo%lsf)) then
-            !$acc enter data copyin(ctx%state%lsfinfo%lsf)
-            !$acc enter data attach(ctx%state%lsfinfo%lsf)
+            !$omp target enter data map(to: ctx%state%lsfinfo%lsf)
         end if
         ! Powell and Sedfit data are usually observation data, typically not needed for simulation,
         ! but we include them to be safe if they are present.
         if (allocated(ctx%state%powell_data%mags)) then
-            !$acc enter data copyin(ctx%state%powell_data%mags)
-            !$acc enter data attach(ctx%state%powell_data%mags)
+            !$omp target enter data map(to: ctx%state%powell_data%mags)
         end if
         if (allocated(ctx%state%powell_data%magerr)) then
-            !$acc enter data copyin(ctx%state%powell_data%magerr)
-            !$acc enter data attach(ctx%state%powell_data%magerr)
+            !$omp target enter data map(to: ctx%state%powell_data%magerr)
         end if
         if (allocated(ctx%state%powell_data%spec)) then
-            !$acc enter data copyin(ctx%state%powell_data%spec)
-            !$acc enter data attach(ctx%state%powell_data%spec)
+            !$omp target enter data map(to: ctx%state%powell_data%spec)
         end if
         if (allocated(ctx%state%powell_data%specerr)) then
-            !$acc enter data copyin(ctx%state%powell_data%specerr)
-            !$acc enter data attach(ctx%state%powell_data%specerr)
+            !$omp target enter data map(to: ctx%state%powell_data%specerr)
         end if
         if (allocated(ctx%state%sedfit_data%mags)) then
-            !$acc enter data copyin(ctx%state%sedfit_data%mags)
-            !$acc enter data attach(ctx%state%sedfit_data%mags)
+            !$omp target enter data map(to: ctx%state%sedfit_data%mags)
         end if
         if (allocated(ctx%state%sedfit_data%magerr)) then
-            !$acc enter data copyin(ctx%state%sedfit_data%magerr)
-            !$acc enter data attach(ctx%state%sedfit_data%magerr)
+            !$omp target enter data map(to: ctx%state%sedfit_data%magerr)
         end if
         if (allocated(ctx%state%sedfit_data%spec)) then
-            !$acc enter data copyin(ctx%state%sedfit_data%spec)
-            !$acc enter data attach(ctx%state%sedfit_data%spec)
+            !$omp target enter data map(to: ctx%state%sedfit_data%spec)
         end if
         if (allocated(ctx%state%sedfit_data%specerr)) then
-            !$acc enter data copyin(ctx%state%sedfit_data%specerr)
-            !$acc enter data attach(ctx%state%sedfit_data%specerr)
+            !$omp target enter data map(to: ctx%state%sedfit_data%specerr)
         end if
 
         ! --- Permanent CSP Workspace ---
         if (allocated(ctx%state%csp_ssp_grid)) then
-            !$acc enter data copyin(ctx%state%csp_ssp_grid)
-            !$acc enter data attach(ctx%state%csp_ssp_grid)
+            !$omp target enter data map(to: ctx%state%csp_ssp_grid)
         end if
         if (allocated(ctx%state%csp_emlin_grid)) then
-            !$acc enter data copyin(ctx%state%csp_emlin_grid)
-            !$acc enter data attach(ctx%state%csp_emlin_grid)
+            !$omp target enter data map(to: ctx%state%csp_emlin_grid)
         end if
         if (allocated(ctx%state%csp_ssp_lum_linear)) then
-            !$acc enter data copyin(ctx%state%csp_ssp_lum_linear)
-            !$acc enter data attach(ctx%state%csp_ssp_lum_linear)
+            !$omp target enter data map(to: ctx%state%csp_ssp_lum_linear)
         end if
         if (allocated(ctx%state%csp_igm_transmission)) then
-            !$acc enter data copyin(ctx%state%csp_igm_transmission)
-            !$acc enter data attach(ctx%state%csp_igm_transmission)
+            !$omp target enter data map(to: ctx%state%csp_igm_transmission)
         end if
         if (allocated(ctx%state%csp_spec_final)) then
-            !$acc enter data copyin(ctx%state%csp_spec_final)
-            !$acc enter data attach(ctx%state%csp_spec_final)
+            !$omp target enter data map(to: ctx%state%csp_spec_final)
         end if
         if (allocated(ctx%state%csp_emlin_final)) then
-            !$acc enter data copyin(ctx%state%csp_emlin_final)
-            !$acc enter data attach(ctx%state%csp_emlin_final)
+            !$omp target enter data map(to: ctx%state%csp_emlin_final)
         end if
         if (allocated(ctx%state%csp_weights)) then
-            !$acc enter data copyin(ctx%state%csp_weights)
-            !$acc enter data attach(ctx%state%csp_weights)
+            !$omp target enter data map(to: ctx%state%csp_weights)
         end if
         if (allocated(ctx%state%csp_emlin_young)) then
-            !$acc enter data copyin(ctx%state%csp_emlin_young)
-            !$acc enter data attach(ctx%state%csp_emlin_young)
+            !$omp target enter data map(to: ctx%state%csp_emlin_young)
         end if
         if (allocated(ctx%state%csp_emlin_old)) then
-            !$acc enter data copyin(ctx%state%csp_emlin_old)
-            !$acc enter data attach(ctx%state%csp_emlin_old)
+            !$omp target enter data map(to: ctx%state%csp_emlin_old)
         end if
 
         ! --- Persistent Physics Workspaces ---
         if (allocated(ctx%state%dust_transmission_diffuse)) then
-            !$acc enter data copyin(ctx%state%dust_transmission_diffuse)
-            !$acc enter data attach(ctx%state%dust_transmission_diffuse)
+            !$omp target enter data map(to: ctx%state%dust_transmission_diffuse)
         end if
         if (allocated(ctx%state%dust_frequencies)) then
-            !$acc enter data copyin(ctx%state%dust_frequencies)
-            !$acc enter data attach(ctx%state%dust_frequencies)
+            !$omp target enter data map(to: ctx%state%dust_frequencies)
         end if
         if (allocated(ctx%state%dust_spec_total_work)) then
-            !$acc enter data copyin(ctx%state%dust_spec_total_work)
-            !$acc enter data attach(ctx%state%dust_spec_total_work)
+            !$omp target enter data map(to: ctx%state%dust_spec_total_work)
         end if
         if (allocated(ctx%state%dust_emission_shape)) then
-            !$acc enter data copyin(ctx%state%dust_emission_shape)
-            !$acc enter data attach(ctx%state%dust_emission_shape)
+            !$omp target enter data map(to: ctx%state%dust_emission_shape)
         end if
         if (allocated(ctx%state%dust_emission_final)) then
-            !$acc enter data copyin(ctx%state%dust_emission_final)
-            !$acc enter data attach(ctx%state%dust_emission_final)
+            !$omp target enter data map(to: ctx%state%dust_emission_final)
         end if
         if (allocated(ctx%state%gas_neb_cont_reduced)) then
-            !$acc enter data copyin(ctx%state%gas_neb_cont_reduced)
-            !$acc enter data attach(ctx%state%gas_neb_cont_reduced)
+            !$omp target enter data map(to: ctx%state%gas_neb_cont_reduced)
         end if
         if (allocated(ctx%state%gas_neb_line_reduced)) then
-            !$acc enter data copyin(ctx%state%gas_neb_line_reduced)
-            !$acc enter data attach(ctx%state%gas_neb_line_reduced)
+            !$omp target enter data map(to: ctx%state%gas_neb_line_reduced)
         end if
         if (allocated(ctx%state%gas_current_step_cont)) then
-            !$acc enter data copyin(ctx%state%gas_current_step_cont)
-            !$acc enter data attach(ctx%state%gas_current_step_cont)
+            !$omp target enter data map(to: ctx%state%gas_current_step_cont)
         end if
         if (allocated(ctx%state%gas_current_step_lines)) then
-            !$acc enter data copyin(ctx%state%gas_current_step_lines)
-            !$acc enter data attach(ctx%state%gas_current_step_lines)
+            !$omp target enter data map(to: ctx%state%gas_current_step_lines)
         end if
         if (allocated(ctx%state%scalar_reductions)) then
-            !$acc enter data copyin(ctx%state%scalar_reductions)
-            !$acc enter data attach(ctx%state%scalar_reductions)
+            !$omp target enter data map(to: ctx%state%scalar_reductions)
         end if
         if (allocated(ctx%state%sfh_t_calc)) then
-            !$acc enter data copyin(ctx%state%sfh_t_calc)
-            !$acc enter data attach(ctx%state%sfh_t_calc)
+            !$omp target enter data map(to: ctx%state%sfh_t_calc)
         end if
         if (allocated(ctx%state%sfh_sfr_calc)) then
-            !$acc enter data copyin(ctx%state%sfh_sfr_calc)
-            !$acc enter data attach(ctx%state%sfh_sfr_calc)
+            !$omp target enter data map(to: ctx%state%sfh_sfr_calc)
         end if
         if (allocated(ctx%state%sfh_age_integrand)) then
-            !$acc enter data copyin(ctx%state%sfh_age_integrand)
-            !$acc enter data attach(ctx%state%sfh_age_integrand)
+            !$omp target enter data map(to: ctx%state%sfh_age_integrand)
         end if
         if (allocated(ctx%state%sfh_w_tmp1)) then
-            !$acc enter data copyin(ctx%state%sfh_w_tmp1)
-            !$acc enter data attach(ctx%state%sfh_w_tmp1)
+            !$omp target enter data map(to: ctx%state%sfh_w_tmp1)
         end if
         if (allocated(ctx%state%sfh_w_tmp2)) then
-            !$acc enter data copyin(ctx%state%sfh_w_tmp2)
-            !$acc enter data attach(ctx%state%sfh_w_tmp2)
+            !$omp target enter data map(to: ctx%state%sfh_w_tmp2)
         end if
 
         ! --- Fused Loop Output Buffers ---
         if (allocated(ctx%state%out_csp_spec)) then
-            !$acc enter data copyin(ctx%state%out_csp_spec)
-            !$acc enter data attach(ctx%state%out_csp_spec)
+            !$omp target enter data map(to: ctx%state%out_csp_spec)
         end if
         if (allocated(ctx%state%out_csp_emlin)) then
-            !$acc enter data copyin(ctx%state%out_csp_emlin)
-            !$acc enter data attach(ctx%state%out_csp_emlin)
+            !$omp target enter data map(to: ctx%state%out_csp_emlin)
         end if
         if (allocated(ctx%state%out_mass_csp)) then
-            !$acc enter data copyin(ctx%state%out_mass_csp)
-            !$acc enter data attach(ctx%state%out_mass_csp)
+            !$omp target enter data map(to: ctx%state%out_mass_csp)
         end if
         if (allocated(ctx%state%out_lbol_csp)) then
-            !$acc enter data copyin(ctx%state%out_lbol_csp)
-            !$acc enter data attach(ctx%state%out_lbol_csp)
+            !$omp target enter data map(to: ctx%state%out_lbol_csp)
         end if
     end subroutine fsps_context_move_to_device
 
@@ -1221,325 +1121,325 @@ contains
 
         associate(s => ctx%state)
             if (allocated(s%sedfit_data%specerr)) then
-                !$acc exit data delete(s%sedfit_data%specerr)
+                !$omp target exit data map(delete: s%sedfit_data%specerr)
             end if
             if (allocated(s%sedfit_data%spec)) then
-                !$acc exit data delete(s%sedfit_data%spec)
+                !$omp target exit data map(delete: s%sedfit_data%spec)
             end if
             if (allocated(s%sedfit_data%magerr)) then
-                !$acc exit data delete(s%sedfit_data%magerr)
+                !$omp target exit data map(delete: s%sedfit_data%magerr)
             end if
             if (allocated(s%sedfit_data%mags)) then
-                !$acc exit data delete(s%sedfit_data%mags)
+                !$omp target exit data map(delete: s%sedfit_data%mags)
             end if
             if (allocated(s%powell_data%specerr)) then
-                !$acc exit data delete(s%powell_data%specerr)
+                !$omp target exit data map(delete: s%powell_data%specerr)
             end if
             if (allocated(s%powell_data%spec)) then
-                !$acc exit data delete(s%powell_data%spec)
+                !$omp target exit data map(delete: s%powell_data%spec)
             end if
             if (allocated(s%powell_data%magerr)) then
-                !$acc exit data delete(s%powell_data%magerr)
+                !$omp target exit data map(delete: s%powell_data%magerr)
             end if
             if (allocated(s%powell_data%mags)) then
-                !$acc exit data delete(s%powell_data%mags)
+                !$omp target exit data map(delete: s%powell_data%mags)
             end if
             if (allocated(s%lsfinfo%lsf)) then
-                !$acc exit data delete(s%lsfinfo%lsf)
+                !$omp target exit data map(delete: s%lsfinfo%lsf)
             end if
             if (associated(s%zmet_xrb)) then
-                !$acc exit data delete(s%zmet_xrb)
+                !$omp target exit data map(delete: s%zmet_xrb)
             end if
             if (associated(s%ages_xrb)) then
-                !$acc exit data delete(s%ages_xrb)
+                !$omp target exit data map(delete: s%ages_xrb)
             end if
             if (associated(s%spec_xrb)) then
-                !$acc exit data delete(s%spec_xrb)
+                !$omp target exit data map(delete: s%spec_xrb)
             end if
             if (associated(s%lam_xrb)) then
-                !$acc exit data delete(s%lam_xrb)
+                !$omp target exit data map(delete: s%lam_xrb)
             end if
             if (associated(s%bpass_mass_ssp)) then
-                !$acc exit data delete(s%bpass_mass_ssp)
+                !$omp target exit data map(delete: s%bpass_mass_ssp)
             end if
             if (associated(s%bpass_spec_ssp)) then
-                !$acc exit data delete(s%bpass_spec_ssp)
+                !$omp target exit data map(delete: s%bpass_spec_ssp)
             end if
             if (allocated(s%spec_old)) then
-                !$acc exit data delete(s%spec_old)
+                !$omp target exit data map(delete: s%spec_old)
             end if
             if (allocated(s%ssp_temp_grid)) then
-                !$acc exit data delete(s%ssp_temp_grid)
+                !$omp target exit data map(delete: s%ssp_temp_grid)
             end if
             if (allocated(s%ssp_active_idx)) then
-                !$acc exit data delete(s%ssp_active_idx)
+                !$omp target exit data map(delete: s%ssp_active_idx)
             end if
             if (allocated(s%ssp_active_w)) then
-                !$acc exit data delete(s%ssp_active_w)
+                !$omp target exit data map(delete: s%ssp_active_w)
             end if
             if (allocated(s%spec_young)) then
-                !$acc exit data delete(s%spec_young)
+                !$omp target exit data map(delete: s%spec_young)
             end if
             if (allocated(s%weight_ssp)) then
-                !$acc exit data delete(s%weight_ssp)
+                !$omp target exit data map(delete: s%weight_ssp)
             end if
             if (associated(s%time_full)) then
-                !$acc exit data delete(s%time_full)
+                !$omp target exit data map(delete: s%time_full)
             end if
             if (allocated(s%lbol_ssp_zz)) then
-                !$acc exit data delete(s%lbol_ssp_zz)
+                !$omp target exit data map(delete: s%lbol_ssp_zz)
             end if
             if (allocated(s%mass_ssp_zz)) then
-                !$acc exit data delete(s%mass_ssp_zz)
+                !$omp target exit data map(delete: s%mass_ssp_zz)
             end if
             if (allocated(s%spec_ssp_zz)) then
-                !$acc exit data delete(s%spec_ssp_zz)
+                !$omp target exit data map(delete: s%spec_ssp_zz)
             end if
             if (associated(s%zlegendinit)) then
-                !$acc exit data delete(s%zlegendinit)
+                !$omp target exit data map(delete: s%zlegendinit)
             end if
             if (associated(s%zlegend)) then
-                !$acc exit data delete(s%zlegend)
+                !$omp target exit data map(delete: s%zlegend)
             end if
             if (associated(s%timestep_isoc)) then
-                !$acc exit data delete(s%timestep_isoc)
+                !$omp target exit data map(delete: s%timestep_isoc)
             end if
             if (associated(s%nmass_isoc)) then
-                !$acc exit data delete(s%nmass_isoc)
+                !$omp target exit data map(delete: s%nmass_isoc)
             end if
             if (associated(s%lmdot_isoc)) then
-                !$acc exit data delete(s%lmdot_isoc)
+                !$omp target exit data map(delete: s%lmdot_isoc)
             end if
             if (associated(s%mini_isoc)) then
-                !$acc exit data delete(s%mini_isoc)
+                !$omp target exit data map(delete: s%mini_isoc)
             end if
             if (associated(s%phase_isoc)) then
-                !$acc exit data delete(s%phase_isoc)
+                !$omp target exit data map(delete: s%phase_isoc)
             end if
             if (associated(s%ffco_isoc)) then
-                !$acc exit data delete(s%ffco_isoc)
+                !$omp target exit data map(delete: s%ffco_isoc)
             end if
             if (associated(s%logg_isoc)) then
-                !$acc exit data delete(s%logg_isoc)
+                !$omp target exit data map(delete: s%logg_isoc)
             end if
             if (associated(s%logt_isoc)) then
-                !$acc exit data delete(s%logt_isoc)
+                !$omp target exit data map(delete: s%logt_isoc)
             end if
             if (associated(s%logl_isoc)) then
-                !$acc exit data delete(s%logl_isoc)
+                !$omp target exit data map(delete: s%logl_isoc)
             end if
             if (associated(s%mact_isoc)) then
-                !$acc exit data delete(s%mact_isoc)
+                !$omp target exit data map(delete: s%mact_isoc)
             end if
             if (associated(s%agndust_spec)) then
-                !$acc exit data delete(s%agndust_spec)
+                !$omp target exit data map(delete: s%agndust_spec)
             end if
             if (associated(s%gaussnebarr)) then
-                !$acc exit data delete(s%gaussnebarr)
+                !$omp target exit data map(delete: s%gaussnebarr)
             end if
             if (associated(s%neb_res_min)) then
-                !$acc exit data delete(s%neb_res_min)
+                !$omp target exit data map(delete: s%neb_res_min)
             end if
             if (associated(s%xnebem_cont)) then
-                !$acc exit data delete(s%xnebem_cont)
+                !$omp target exit data map(delete: s%xnebem_cont)
             end if
             if (associated(s%nebem_cont)) then
-                !$acc exit data delete(s%nebem_cont)
+                !$omp target exit data map(delete: s%nebem_cont)
             end if
             if (associated(s%flux_dagb)) then
-                !$acc exit data delete(s%flux_dagb)
+                !$omp target exit data map(delete: s%flux_dagb)
             end if
             if (associated(s%dustem2_dustem)) then
-                !$acc exit data delete(s%dustem2_dustem)
+                !$omp target exit data map(delete: s%dustem2_dustem)
             end if
             if (associated(s%dustem_dustem)) then
-                !$acc exit data delete(s%dustem_dustem)
+                !$omp target exit data map(delete: s%dustem_dustem)
             end if
             if (associated(s%lambda_dustem)) then
-                !$acc exit data delete(s%lambda_dustem)
+                !$omp target exit data map(delete: s%lambda_dustem)
             end if
             if (associated(s%uminarr)) then
-                !$acc exit data delete(s%uminarr)
+                !$omp target exit data map(delete: s%uminarr)
             end if
             if (associated(s%qpaharr)) then
-                !$acc exit data delete(s%qpaharr)
+                !$omp target exit data map(delete: s%qpaharr)
             end if
             if (associated(s%wrc_spec)) then
-                !$acc exit data delete(s%wrc_spec)
+                !$omp target exit data map(delete: s%wrc_spec)
             end if
             if (associated(s%wrn_spec)) then
-                !$acc exit data delete(s%wrn_spec)
+                !$omp target exit data map(delete: s%wrn_spec)
             end if
             if (associated(s%pagb_spec)) then
-                !$acc exit data delete(s%pagb_spec)
+                !$omp target exit data map(delete: s%pagb_spec)
             end if
             if (associated(s%agb_spec_car)) then
-                !$acc exit data delete(s%agb_spec_car)
+                !$omp target exit data map(delete: s%agb_spec_car)
             end if
             if (associated(s%agb_logt_c)) then
-                !$acc exit data delete(s%agb_logt_c)
+                !$omp target exit data map(delete: s%agb_logt_c)
             end if
             if (associated(s%agb_spec_c)) then
-                !$acc exit data delete(s%agb_spec_c)
+                !$omp target exit data map(delete: s%agb_spec_c)
             end if
             if (associated(s%agb_logt_o)) then
-                !$acc exit data delete(s%agb_logt_o)
+                !$omp target exit data map(delete: s%agb_logt_o)
             end if
             if (associated(s%agb_spec_o)) then
-                !$acc exit data delete(s%agb_spec_o)
+                !$omp target exit data map(delete: s%agb_spec_o)
             end if
             if (associated(s%wmb_spec)) then
-                !$acc exit data delete(s%wmb_spec)
+                !$omp target exit data map(delete: s%wmb_spec)
             end if
             if (associated(s%speclib)) then
-                !$acc exit data delete(s%speclib)
+                !$omp target exit data map(delete: s%speclib)
             end if
             if (associated(s%spec_res)) then
-                !$acc exit data delete(s%spec_res)
+                !$omp target exit data map(delete: s%spec_res)
             end if
             if (associated(s%spec_nu)) then
-                !$acc exit data delete(s%spec_nu)
+                !$omp target exit data map(delete: s%spec_nu)
             end if
             if (associated(s%spec_lambda)) then
-                !$acc exit data delete(s%spec_lambda)
+                !$omp target exit data map(delete: s%spec_lambda)
             end if
             if (associated(s%sun_spec)) then
-                !$acc exit data delete(s%sun_spec)
+                !$omp target exit data map(delete: s%sun_spec)
             end if
             if (associated(s%vega_spec)) then
-                !$acc exit data delete(s%vega_spec)
+                !$omp target exit data map(delete: s%vega_spec)
             end if
             if (associated(s%filter_leff)) then
-                !$acc exit data delete(s%filter_leff)
+                !$omp target exit data map(delete: s%filter_leff)
             end if
             if (associated(s%magvega)) then
-                !$acc exit data delete(s%magvega)
+                !$omp target exit data map(delete: s%magvega)
             end if
             if (associated(s%magsun)) then
-                !$acc exit data delete(s%magsun)
+                !$omp target exit data map(delete: s%magsun)
             end if
             if (associated(s%bands)) then
-                !$acc exit data delete(s%bands)
+                !$omp target exit data map(delete: s%bands)
             end if
             if (associated(s%g03smcextn)) then
-                !$acc exit data delete(s%g03smcextn)
+                !$omp target exit data map(delete: s%g03smcextn)
             end if
             if (associated(s%wgdust)) then
-                !$acc exit data delete(s%wgdust)
+                !$omp target exit data map(delete: s%wgdust)
             end if
             if (associated(s%indexdefined)) then
-                !$acc exit data delete(s%indexdefined)
+                !$omp target exit data map(delete: s%indexdefined)
             end if
 
             ! --- Permanent CSP Workspace ---
             if (allocated(s%ssp_basis_spec)) then
-                !$acc exit data delete(s%ssp_basis_spec)
+                !$omp target exit data map(delete: s%ssp_basis_spec)
             end if
             if (allocated(s%ssp_basis_mass)) then
-                !$acc exit data delete(s%ssp_basis_mass)
+                !$omp target exit data map(delete: s%ssp_basis_mass)
             end if
             if (allocated(s%ssp_basis_lbol)) then
-                !$acc exit data delete(s%ssp_basis_lbol)
+                !$omp target exit data map(delete: s%ssp_basis_lbol)
             end if
             if (allocated(s%csp_ssp_grid)) then
-                !$acc exit data delete(s%csp_ssp_grid)
+                !$omp target exit data map(delete: s%csp_ssp_grid)
             end if
             if (allocated(s%csp_emlin_grid)) then
-                !$acc exit data delete(s%csp_emlin_grid)
+                !$omp target exit data map(delete: s%csp_emlin_grid)
             end if
             if (allocated(s%csp_ssp_lum_linear)) then
-                !$acc exit data delete(s%csp_ssp_lum_linear)
+                !$omp target exit data map(delete: s%csp_ssp_lum_linear)
             end if
             if (allocated(s%csp_igm_transmission)) then
-                !$acc exit data delete(s%csp_igm_transmission)
+                !$omp target exit data map(delete: s%csp_igm_transmission)
             end if
             if (allocated(s%csp_spec_final)) then
-                !$acc exit data delete(s%csp_spec_final)
+                !$omp target exit data map(delete: s%csp_spec_final)
             end if
             if (allocated(s%csp_emlin_final)) then
-                !$acc exit data delete(s%csp_emlin_final)
+                !$omp target exit data map(delete: s%csp_emlin_final)
             end if
             if (allocated(s%csp_weights)) then
-                !$acc exit data delete(s%csp_weights)
+                !$omp target exit data map(delete: s%csp_weights)
             end if
             if (allocated(s%csp_emlin_young)) then
-                !$acc exit data delete(s%csp_emlin_young)
+                !$omp target exit data map(delete: s%csp_emlin_young)
             end if
             if (allocated(s%csp_emlin_old)) then
-                !$acc exit data delete(s%csp_emlin_old)
+                !$omp target exit data map(delete: s%csp_emlin_old)
             end if
 
             ! --- Persistent Physics Workspaces ---
             if (allocated(s%dust_transmission_diffuse)) then
-                !$acc exit data delete(s%dust_transmission_diffuse)
+                !$omp target exit data map(delete: s%dust_transmission_diffuse)
             end if
             if (allocated(s%dust_frequencies)) then
-                !$acc exit data delete(s%dust_frequencies)
+                !$omp target exit data map(delete: s%dust_frequencies)
             end if
             if (allocated(s%dust_spec_total_work)) then
-                !$acc exit data delete(s%dust_spec_total_work)
+                !$omp target exit data map(delete: s%dust_spec_total_work)
             end if
             if (allocated(s%dust_emission_shape)) then
-                !$acc exit data delete(s%dust_emission_shape)
+                !$omp target exit data map(delete: s%dust_emission_shape)
             end if
             if (allocated(s%dust_emission_final)) then
-                !$acc exit data delete(s%dust_emission_final)
+                !$omp target exit data map(delete: s%dust_emission_final)
             end if
             if (allocated(s%gas_neb_cont_reduced)) then
-                !$acc exit data delete(s%gas_neb_cont_reduced)
+                !$omp target exit data map(delete: s%gas_neb_cont_reduced)
             end if
             if (allocated(s%gas_neb_line_reduced)) then
-                !$acc exit data delete(s%gas_neb_line_reduced)
+                !$omp target exit data map(delete: s%gas_neb_line_reduced)
             end if
             if (allocated(s%gas_current_step_cont)) then
-                !$acc exit data delete(s%gas_current_step_cont)
+                !$omp target exit data map(delete: s%gas_current_step_cont)
             end if
             if (allocated(s%gas_current_step_lines)) then
-                !$acc exit data delete(s%gas_current_step_lines)
+                !$omp target exit data map(delete: s%gas_current_step_lines)
             end if
             if (allocated(s%scalar_reductions)) then
-                !$acc exit data delete(s%scalar_reductions)
+                !$omp target exit data map(delete: s%scalar_reductions)
             end if
             if (allocated(s%sfh_t_calc)) then
-                !$acc exit data delete(s%sfh_t_calc)
+                !$omp target exit data map(delete: s%sfh_t_calc)
             end if
             if (allocated(s%sfh_sfr_calc)) then
-                !$acc exit data delete(s%sfh_sfr_calc)
+                !$omp target exit data map(delete: s%sfh_sfr_calc)
             end if
             if (allocated(s%sfh_age_integrand)) then
-                !$acc exit data delete(s%sfh_age_integrand)
+                !$omp target exit data map(delete: s%sfh_age_integrand)
             end if
             if (allocated(s%sfh_w_tmp1)) then
-                !$acc exit data delete(s%sfh_w_tmp1)
+                !$omp target exit data map(delete: s%sfh_w_tmp1)
             end if
             if (allocated(s%sfh_w_tmp2)) then
-                !$acc exit data delete(s%sfh_w_tmp2)
+                !$omp target exit data map(delete: s%sfh_w_tmp2)
             end if
 
             ! --- Fused Loop Output Buffers ---
             if (allocated(s%out_csp_spec)) then
-                !$acc exit data delete(s%out_csp_spec)
+                !$omp target exit data map(delete: s%out_csp_spec)
             end if
             if (allocated(s%out_csp_emlin)) then
-                !$acc exit data delete(s%out_csp_emlin)
+                !$omp target exit data map(delete: s%out_csp_emlin)
             end if
             if (allocated(s%out_mass_csp)) then
-                !$acc exit data delete(s%out_mass_csp)
+                !$omp target exit data map(delete: s%out_mass_csp)
             end if
             if (allocated(s%out_lbol_csp)) then
-                !$acc exit data delete(s%out_lbol_csp)
+                !$omp target exit data map(delete: s%out_lbol_csp)
             end if
         end associate
 
         if (allocated(ctx%pset%ssp_gen_age)) then
-            !$acc exit data delete(ctx%pset%ssp_gen_age)
+            !$omp target exit data map(delete: ctx%pset%ssp_gen_age)
         end if
         if (allocated(ctx%pset%mag_compute)) then
-            !$acc exit data delete(ctx%pset%mag_compute)
+            !$omp target exit data map(delete: ctx%pset%mag_compute)
         end if
 
-        !$acc exit data delete(ctx%state)
-        !$acc exit data delete(ctx)
+        !$omp target exit data map(delete: ctx%state)
+        !$omp target exit data map(delete: ctx)
     end subroutine fsps_context_remove_from_device
 
 end module fsps_context

@@ -83,17 +83,17 @@ contains
         ! Local copies for speed/readability
         n_idx = ctx%state%nindx
 
-        !$acc data pcopyin(lambda, spec) pcopy(indices)
-        !$acc update device(spec, lambda)
+        !$omp target data map(to: lambda, spec) map(tofrom: indices)
+        !$omp target update to(spec, lambda)
 
         ! Initialize with sentinel
-        !$acc kernels present(spec, lambda, indices)
+        !$omp target
         indices = IND_UNDEFINED
-        !$acc end kernels
+        !$omp end target
 
         ! Iterate over all defined indices
         ! Parallelize over indices (gang vector)
-        !$acc parallel loop gang vector present(spec, lambda, indices, ctx) private(denom_width, cont_slope, cont_intercept)
+        !$omp target teams distribute parallel do private(denom_width, cont_slope, cont_intercept)
         do j = 1, n_idx
             
             ! 1. Extract Definitions
@@ -181,7 +181,7 @@ contains
 
         end do
 
-        !$acc end data
+        !$omp end target data
 
     end subroutine compute_spectral_indices
 
@@ -197,7 +197,7 @@ contains
     !> linearly interpolates the flux at exact endpoints, and performs trapezoidal
     !> integration between them.
     pure function integrate_interval(lam, func, lo, hi) result(area)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in) :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP) :: area
@@ -240,7 +240,7 @@ contains
     !> Used for EW and Mag indices where the spectrum is normalized by a pseudo-continuum
     !> defined by the blue and red sidebands.
     pure function integrate_ratio_interval(lam, func, lo, hi, slope, intercept, x_ref) result(area)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in) :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP), intent(in) :: slope, intercept, x_ref
@@ -303,7 +303,7 @@ contains
     !> @brief
     !> Helper: Linear interpolation for a single point.
     pure function interpolate_linear_point(x1, y1, x2, y2, x_target) result(y_target)
-        !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: x1, y1, x2, y2, x_target
         real(WP) :: y_target
         

@@ -79,14 +79,14 @@ contains
 
         nspec = size(sspi, 1)
 
-        !$acc data pcopyin(sspi) pcopy(sspo)
-        !$acc update device(sspi)
+        !$omp target data map(to: sspi) map(tofrom: sspo)
+        !$omp target update to(sspi)
 
         ! 0. Initialization & Validation
         ! ------------------------------
-        !$acc kernels present(sspo, sspi)
+        !$omp target
         sspo = sspi
-        !$acc end kernels
+        !$omp end target
         
         if (present(nebemline)) then
             nebemline = 0.0_wp
@@ -103,7 +103,7 @@ contains
         ! compute_line_gaussians is likely expensive.
         if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
             call compute_line_gaussians(ctx, pset)
-            !$acc update device(ctx%state%gaussnebarr(:,:))
+            !$omp target update to(ctx%state%gaussnebarr(:,:))
         end if
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
@@ -130,7 +130,7 @@ contains
                     end if
                 end do
             end do
-            !$acc update device(ctx%state%gas_neb_cont_reduced)
+            !$omp target update to(ctx%state%gas_neb_cont_reduced)
         end if
 
         if (calc_lines) then
@@ -147,7 +147,7 @@ contains
                     end if
                 end do
             end do
-            !$acc update device(ctx%state%gas_neb_line_reduced)
+            !$omp target update to(ctx%state%gas_neb_line_reduced)
         end if
         
         ! 3. Main Time Loop
@@ -155,10 +155,10 @@ contains
         max_neb_time_idx = find_interval(ctx%state%time_full, ctx%state%nebem_age(NEBNAGE))
 
         ! Scratch arrays initialized directly on the device
-        !$acc kernels present(ctx)
+        !$omp target
         ctx%state%gas_current_step_cont = 0.0_wp
         ctx%state%gas_current_step_lines = log10(SAFE_FLOOR)
-        !$acc end kernels
+        !$omp end target
 
         do t = 1, max_neb_time_idx
             
@@ -176,8 +176,8 @@ contains
             ! C. Add Continuum
             ! ----------------
             if (calc_cont) then
-                !$acc parallel loop present(ctx, sspo) &
-                !$acc               firstprivate(idx_a, w_a, q_ionizing, t)
+                !$omp target teams distribute parallel do &
+                !$omp firstprivate(idx_a, w_a, q_ionizing, t)
                 do k = 1, nspec
                     ctx%state%gas_current_step_cont(k) = (1.0_wp - w_a) * ctx%state%gas_neb_cont_reduced(k, idx_a) + &
                                                          (         w_a) * ctx%state%gas_neb_cont_reduced(k, idx_a + 1)
@@ -189,15 +189,15 @@ contains
             ! D. Add Lines
             ! ------------
             if (calc_lines) then
-                !$acc parallel loop present(ctx) &
-                !$acc               firstprivate(idx_a, w_a)
+                !$omp target teams distribute parallel do &
+                !$omp firstprivate(idx_a, w_a)
                 do k = 1, NEMLINE
                     ctx%state%gas_current_step_lines(k) = (1.0_wp - w_a) * ctx%state%gas_neb_line_reduced(k, idx_a) + &
                                                           (         w_a) * ctx%state%gas_neb_line_reduced(k, idx_a + 1)
                 end do
 
                 if (present(nebemline)) then
-                    !$acc parallel loop present(ctx, nebemline) firstprivate(t, q_ionizing)
+                    !$omp target teams distribute parallel do firstprivate(t, q_ionizing)
                     do k = 1, NEMLINE
                         nebemline(k,t) = (10.0_wp**ctx%state%gas_current_step_lines(k)) * q_ionizing
                     end do
@@ -210,7 +210,7 @@ contains
 
         end do
 
-        !$acc end data
+        !$omp end target data
 
     end subroutine apply_nebular_emission
 
@@ -251,12 +251,12 @@ contains
         whlylim = ctx%state%whlylim
         frac_obrun_clamped = max(0.0_wp, min(pset%frac_obrun, 1.0_wp))
 
-        !$acc data pcopyin(spec_in) pcopy(spec_out)
-        !$acc update device(spec_in)
+        !$omp target data map(to: spec_in) map(tofrom: spec_out)
+        !$omp target update to(spec_in)
 
         ! 1. Attenuate Output Spectrum (EUV < 912 A)
         if (whlylim > 0) then
-            !$acc parallel loop present(ctx, spec_in, spec_out) firstprivate(frac_obrun_clamped, t_idx)
+            !$omp target teams distribute parallel do firstprivate(frac_obrun_clamped, t_idx)
             do i = 1, whlylim
                 spec_out(i, t_idx) = spec_in(i, t_idx) * frac_obrun_clamped
             end do
@@ -268,7 +268,7 @@ contains
         else
             integral_flux = 0.0_wp
             ! Use specialized loop to avoid array temp (spec_in / spec_nu)
-            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx) private(y1, y2)
+            !$omp target teams distribute parallel do reduction(+:integral_flux) firstprivate(t_idx) private(y1, y2)
             do i = 1, whlylim - 1
                 y1 = spec_in(i, t_idx) / ctx%state%spec_nu(i)
                 y2 = spec_in(i+1, t_idx) / ctx%state%spec_nu(i+1)
@@ -281,7 +281,7 @@ contains
             q_val = abs((integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun))
         end if
 
-        !$acc end data
+        !$omp end target data
 
     end subroutine process_ionizing_radiation
 
@@ -347,7 +347,7 @@ contains
 
         ! Manual Matmul
         ! spectrum(j) = sum(gauss(j, i) * flux(i))
-        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val, i) firstprivate(t_idx, q_val)
+        !$omp target teams distribute parallel do private(sum_val, i) firstprivate(t_idx, q_val)
         do j = 1, size(spectrum, 1)
             sum_val = 0.0_wp
             do i = 1, NEMLINE
@@ -388,7 +388,7 @@ contains
     !> Scalar version of interpolate_zu_slice for use inside parallel loops.
     !> Returns single value at index `i_wave`.
     pure function interpolate_zu_slice_point(grid, i_wave, idx_age, idx_z, idx_u, w_z, w_u) result(val)
-        !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:,:,:,:), intent(in) :: grid
         integer, intent(in)  :: i_wave, idx_age, idx_z, idx_u
         real(WP), intent(in) :: w_z, w_u

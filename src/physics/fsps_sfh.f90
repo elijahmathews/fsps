@@ -89,7 +89,7 @@ contains
         ! NVHPC array descriptor reallocation bugs on the device.
         real(WP), dimension(:), intent(inout), contiguous :: weights
 
-        !$acc routine seq
+        !$omp declare target
 
         integer :: j, nt
         integer :: j_start, j_end
@@ -278,7 +278,7 @@ contains
         real(WP), intent(in) :: age_gyr
         real(WP), intent(out) :: mass_frac, sfr_norm, frac_linear
 
-        !$acc routine seq
+        !$omp declare target
 
         ! Local variables
         real(WP) :: t_max_gyr, t_prime_gyr, t_trunc_gyr, t_zero_sfr_gyr
@@ -753,7 +753,7 @@ contains
         real(WP), dimension(2), intent(in) :: limits
         real(WP), intent(out) :: m0, m1
 
-        !$acc routine seq
+        !$omp declare target
 
         integer :: idx_start, idx_end, i
         real(WP) :: t_start_yr, t_end_yr
