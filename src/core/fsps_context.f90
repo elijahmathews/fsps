@@ -62,19 +62,19 @@ contains
         ctx%sps_home = ''
         ctx%data_home = ''
         ctx%output_home = ''
-        ctx%om0_val = 0.27
-        ctx%ol0_val = 0.73
-        ctx%H0_val = 72.0
+        ctx%om0_val = 0.27_wp
+        ctx%ol0_val = 0.73_wp
+        ctx%H0_val = 72.0_wp
         ctx%tpagb_norm_type_val = 2
         ctx%pzcon_val = 0
         ctx%interpolation_type_val = 0
-        ctx%tiny_logt_val = 0.0
+        ctx%tiny_logt_val = 0.0_wp
         ctx%compute_light_ages_val = 0
         ctx%add_dust_emission_val = 1
         ctx%add_agn_dust_val = 1
         ctx%add_agb_dust_model_val = 1
         ctx%use_wr_spectra_val = 1
-        ctx%logt_wmb_hot_val = 0.0
+        ctx%logt_wmb_hot_val = 0.0_wp
         ctx%add_neb_emission_val = 0
         ctx%add_neb_continuum_val = 1
         ctx%cloudy_dust_val = 0
@@ -91,10 +91,10 @@ contains
         ctx%redshift_colors_val = 0
         ctx%use_isoc_mdot_val = 0
         ctx%setup_nebular_gaussians_val = 0
-        ctx%nebular_smooth_init_val = 100.0
+        ctx%nebular_smooth_init_val = 100.0_wp
         ctx%nebemlineinspec_val = 1
-        ctx%imf_lower_limit_val = 0.08
-        ctx%imf_upper_limit_val = 120.0
+        ctx%imf_lower_limit_val = 0.08_wp
+        ctx%imf_upper_limit_val = 120.0_wp
     end subroutine fsps_context_create
 
     !> @brief Initialize a context by loading data and binding cache resources.
