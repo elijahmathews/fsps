@@ -222,6 +222,15 @@ regression_env = environment()
 regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
 regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
 
+# Integration test: contexts sharing a setup cache must not leak state into each other
+context_isolation_exe = executable('test_context_isolation', 'tests/test_context_isolation.f90',
+    dependencies : [fsps_dep, test_utils_dep])
+test('context_isolation', context_isolation_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
+
 test('regression_miles_mist',
         test_runner_exe,
         args : [

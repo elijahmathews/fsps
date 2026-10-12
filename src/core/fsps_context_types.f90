@@ -113,6 +113,9 @@ module fsps_context_types
         real(WP), dimension(NEBNIP) :: nebem_logu = 0.0
         real(WP), pointer :: neb_res_min(:) => null()
         real(WP), pointer :: gaussnebarr(:, :) => null()
+        !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
+        !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
+        logical :: owns_gaussnebarr = .false.
         real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0
         real(WP), pointer :: agndust_spec(:, :) => null()
         real(WP), pointer :: mact_isoc(:, :, :) => null()
@@ -277,7 +280,12 @@ contains
         if (associated(state%nebem_cont)) nullify (state%nebem_cont)
         if (associated(state%xnebem_cont)) nullify (state%xnebem_cont)
         if (associated(state%neb_res_min)) nullify (state%neb_res_min)
-        if (associated(state%gaussnebarr)) nullify (state%gaussnebarr)
+        if (state%owns_gaussnebarr) then
+            if (associated(state%gaussnebarr)) deallocate (state%gaussnebarr)
+            state%owns_gaussnebarr = .false.
+        else if (associated(state%gaussnebarr)) then
+            nullify (state%gaussnebarr)
+        end if
         if (associated(state%agndust_spec)) nullify (state%agndust_spec)
         if (associated(state%mact_isoc)) nullify (state%mact_isoc)
         if (associated(state%logl_isoc)) nullify (state%logl_isoc)

@@ -689,7 +689,16 @@ contains
         ctx%state%nebem_cont => cache%nebem_cont
         ctx%state%xnebem_cont => cache%xnebem_cont
         ctx%state%neb_res_min => cache%neb_res_min
-        ctx%state%gaussnebarr => cache%gaussnebarr
+        if (ctx%setup_nebular_gaussians_val == 1) then
+            ! Kernels fixed at setup: read-only after setup, safe to share
+            ctx%state%gaussnebarr => cache%gaussnebarr
+        else
+            ! Kernels rebuilt on every nebular call from this context's sigma_smooth: the array
+            ! must be private, or concurrent contexts overwrite each other's line profiles
+            allocate (ctx%state%gaussnebarr(size(cache%gaussnebarr, 1), size(cache%gaussnebarr, 2)))
+            ctx%state%gaussnebarr = 0.0_wp
+            ctx%state%owns_gaussnebarr = .true.
+        end if
         ctx%state%agndust_spec => cache%agndust_spec
         ctx%state%mact_isoc => cache%mact_isoc
         ctx%state%logl_isoc => cache%logl_isoc
@@ -854,11 +863,15 @@ contains
         integer, intent(in) :: zin
         character(len=*), intent(out) :: cache_key
 
-        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A)') &
+        ! nebular_smooth_init sets the shared setup-time line kernels (setup_nebular_gaussians = 1),
+        ! so contexts that differ in it must not share a cache entry
+        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
+                           &"|",ES24.16)') &
             trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
-            ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file)
+            ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &
+            ctx%nebular_smooth_init_val
     end subroutine build_cache_key
 
     subroutine populate_cache_metadata(ctx, cache)
