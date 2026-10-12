@@ -14,23 +14,40 @@ program stress_test
 
     integer :: iterations
     integer :: num_threads
+    character(len=16) :: phases
 
     call read_env_int('FSPS_STRESS_ITERS', DEFAULT_ITERS, iterations)
     call read_env_int('OMP_NUM_THREADS', DEFAULT_THREADS, num_threads)
     num_threads = max(1, num_threads)
+
+    ! FSPS_STRESS_PHASES selects phases by letter (default: all of ABCD)
+    phases = 'ABCD'
+    call get_environment_variable('FSPS_STRESS_PHASES', value=phases)
+    if (len_trim(phases) == 0) phases = 'ABCD'
 
     write (*, *) '========================================='
     write (*, *) 'FSPS MEMORY + CONCURRENCY STRESS TEST'
     write (*, *) '========================================='
     write (*, *) 'FSPS_STRESS_ITERS = ', iterations
     write (*, *) 'num_threads       = ', num_threads
+    write (*, *) 'phases            = ', trim(phases)
 
-    call set_omp_threads(1)
-    call phase_a_leak_check(iterations)
-    call set_omp_threads(num_threads)
-    call phase_b_concurrency_check(num_threads)
-    call set_omp_threads(1)
-    call phase_c_reallocation_thrash(iterations)
+    if (index(phases, 'A') > 0) then
+        call set_omp_threads(1)
+        call phase_a_leak_check(iterations)
+    end if
+    if (index(phases, 'B') > 0) then
+        call set_omp_threads(num_threads)
+        call phase_b_concurrency_check(num_threads)
+    end if
+    if (index(phases, 'C') > 0) then
+        call set_omp_threads(1)
+        call phase_c_reallocation_thrash(iterations)
+    end if
+    if (index(phases, 'D') > 0) then
+        call set_omp_threads(num_threads)
+        call phase_d_setup_release_churn(num_threads, max(1, iterations / 4))
+    end if
 
     write (*, *) 'Stress test PASS'
 
@@ -90,6 +107,33 @@ contains
 
         call fsps_destroy(ctx)
     end subroutine phase_c_reallocation_thrash
+
+    !> Every thread repeatedly creates, sets up and destroys a context with the same library
+    !> selection, so setups (cache lookup, refcount increment, loaders writing the shared entry) and
+    !> releases (refcount decrement, freeing the entry) of one shared cache entry interleave across
+    !> threads. Phase B overlaps only one setup and one destroy per thread.
+    subroutine phase_d_setup_release_churn(thread_count, iter_count)
+        integer, intent(in) :: thread_count, iter_count
+
+        type(fsps_context_t), allocatable :: contexts(:)
+        integer :: thread_idx, iter_idx
+
+        write (*, *) '[Phase D] Shared setup-cache churn: concurrent setup/destroy'
+
+        allocate (contexts(thread_count))
+
+        !$omp parallel do default(shared) private(thread_idx, iter_idx) schedule(static)
+        do thread_idx = 1, thread_count
+            do iter_idx = 1, iter_count
+                call fsps_create(contexts(thread_idx))
+                call fsps_setup(contexts(thread_idx), 1, 'mist', 'miles', 'DL07')
+                call fsps_destroy(contexts(thread_idx))
+            end do
+        end do
+        !$omp end parallel do
+
+        deallocate (contexts)
+    end subroutine phase_d_setup_release_churn
 
     subroutine run_lightweight_csp(ctx, iter_idx)
         type(fsps_context_t), intent(inout) :: ctx

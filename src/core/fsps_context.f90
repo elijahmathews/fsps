@@ -115,9 +115,9 @@ contains
         if (present(spec_type_in)) ctx%spec_type_name = trim(spec_type_in)
         if (present(dust_type_in)) ctx%dust_type_name = trim(dust_type_in)
 
-        !$omp critical(fsps_setup_initialize)
+        ! fsps_initialize_data serializes itself with the process-wide setup lock, which (unlike an
+        ! OpenMP critical section) also covers non-OpenMP builds and fsps_context_ensure_setup
         call fsps_initialize_data(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
-        !$omp end critical(fsps_setup_initialize)
 
         ctx%initialized = .true.
         if (len_trim(ctx%isoc_type_name) == 0) then
