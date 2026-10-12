@@ -2,6 +2,8 @@ module test_fsps_imf_mod
     use fsps_precision, only: WP
     use fsps_context_types, only: fsps_context_t
     use fsps_imf
+    use fsps_types, only: params
+    use fsps_ssp, only: configure_imf_parameters
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_true, assert_relative_error
     use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
@@ -29,6 +31,7 @@ contains
         call test_compute_weights_normalization()
         call test_analytic_integrals_match_quadrature()
         call test_weights_match_quadrature()
+        call test_runtime_imf_limits_are_honoured()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
 
@@ -358,5 +361,67 @@ contains
             deallocate(ctx)
         end do
     end subroutine test_weights_match_quadrature
+
+    !> The imf_lower_limit / imf_upper_limit parameters (fsps_set_param_float, C API) must reach the
+    !> IMF weights: configure_imf_parameters runs before every SSP generation and has to copy them
+    !> into the state used by compute_imf_weights and add_remnant_mass. Checks the propagated limits
+    !> and lower bin edge, zero weight outside the limits, and per-bin weights normalized by the mass
+    !> integral over the restricted range (quadrature oracle).
+    subroutine test_runtime_imf_limits_are_honoured()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        integer, parameter :: nmass = 40
+        real(WP), parameter :: lo_lim = 0.15_wp, hi_lim = 40.0_wp
+        real(WP) :: mini(nmass), weights(nmass), expected(nmass)
+        real(WP) :: m1, m2, total_mass
+        integer :: i
+
+        call print_group("Runtime IMF Limits Reach the Weights (oracle)")
+
+        allocate(ctx)
+        ctx%imf_type_val = 2
+        ctx%imf_lower_limit_val = lo_lim
+        ctx%imf_upper_limit_val = hi_lim
+        ctx%state%isoc_type = 'mist'
+        call configure_imf_parameters(ctx, pset)
+
+        call assert_float_equals(lo_lim, ctx%state%imf_lower_limit, 1.0e-12_wp, &
+                                 "state lower limit = imf_lower_limit parameter", total_tests, total_failures)
+        call assert_float_equals(hi_lim, ctx%state%imf_upper_limit, 1.0e-12_wp, &
+                                 "state upper limit = imf_upper_limit parameter", total_tests, total_failures)
+        call assert_float_equals(lo_lim, ctx%state%imf_lower_bound, 1.0e-12_wp, &
+                                 "first bin edge follows the lower limit (non-Geneva)", total_tests, total_failures)
+
+        do i = 1, nmass
+            mini(i) = 0.1_wp * (1000.0_wp)**(real(i - 1, WP) / real(nmass - 1, WP))
+        end do
+        call compute_imf_weights(ctx, mini, weights, nmass)
+
+        ! Expected: midpoint bins (as in compute_imf_weights) for masses inside the limits, zero outside
+        total_mass = imf_quadrature(ctx, lo_lim, hi_lim, .true.)
+        do i = 1, nmass
+            expected(i) = 0.0_wp
+            if (mini(i) < lo_lim .or. mini(i) > hi_lim) cycle
+            if (i == 1) then
+                m1 = ctx%state%imf_lower_bound
+            else
+                m1 = 0.5_wp * (mini(i - 1) + mini(i))
+            end if
+            if (i == nmass) then
+                m2 = mini(i)
+            else
+                m2 = 0.5_wp * (mini(i) + mini(i + 1))
+            end if
+            expected(i) = imf_quadrature(ctx, m1, m2, .false.) / total_mass
+        end do
+
+        call assert_true(all(weights(pack([(i, i = 1, nmass)], mini < lo_lim .or. mini > hi_lim)) == 0.0_wp), &
+                         "zero weight outside [imf_lower_limit, imf_upper_limit]", total_tests, total_failures)
+        call assert_true(maxval(abs(weights - expected), mask=expected > 0.0_wp) < &
+                         1.0e-8_wp * maxval(expected), &
+                         "weights normalized over the restricted mass range", total_tests, total_failures)
+
+        deallocate(ctx)
+    end subroutine test_runtime_imf_limits_are_honoured
 
 end module test_fsps_imf_mod

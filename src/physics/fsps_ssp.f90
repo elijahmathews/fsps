@@ -824,6 +824,13 @@ contains
         ctx%state%imf_vdmc     = pset%vdmc
         ctx%state%imf_mdave    = pset%mdave
 
+        ! Runtime IMF mass limits (imf_lower_limit / imf_upper_limit parameters). A user IMF file
+        ! (type 5) overrides them below. The first-bin edge follows the lower limit, except for
+        ! Geneva isochrones whose edge is fixed at setup from the lowest tabulated mass.
+        ctx%state%imf_lower_limit = ctx%imf_lower_limit_val
+        ctx%state%imf_upper_limit = ctx%imf_upper_limit_val
+        if (trim(ctx%state%isoc_type) /= 'gnva') ctx%state%imf_lower_bound = ctx%state%imf_lower_limit
+
         ! 3. Handle User-Defined IMF (Type 5)
         if (imf_type == 5) then
             

@@ -206,8 +206,9 @@ module fsps_context_types
         real(WP) :: ol0_val = 0.0
         real(WP) :: H0_val = 0.0
         real(WP) :: tiny_logt_val = 0.0
-        real(WP) :: imf_upper_limit_val = 0.0
-        real(WP) :: imf_lower_limit_val = 0.0
+        ! Same defaults as fsps_context_create: these now drive the IMF limits used by the physics
+        real(WP) :: imf_upper_limit_val = 120.0
+        real(WP) :: imf_lower_limit_val = 0.08
         real(WP) :: logt_wmb_hot_val = 0.0
         real(WP) :: nebular_smooth_init_val = 0.0
         integer :: imf_type_val = 0
