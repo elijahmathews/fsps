@@ -873,8 +873,12 @@ contains
             
             m0 = -(t_lin - sfh%tage - sfh%tau) * exp(t_tau)
             
+            ! M1 = int SFR(t) log10(t) dt with SFR = dm0/dt = (tage - t) e^(t/tau) / tau.
+            ! Differentiating confirms dM1/dt = SFR * log10(t) only with this overall sign; the
+            ! previous expression had the opposite sign, producing negative hat-function
+            ! weights (and 45-100x wrong CSPs) for sfh = 4 and 5.
             term_const = sfh%tau * LOG_E
-            m1 = ((t_lin - sfh%tage - sfh%tau) * log_t - term_const) * exp(t_tau) + &
+            m1 = -((t_lin - sfh%tage - sfh%tau) * log_t - term_const) * exp(t_tau) - &
                  (sfh%tage + sfh%tau) * LOG_E * ei_val
 
         case (5) ! Simha
@@ -925,7 +929,11 @@ contains
             if (sfh%tau <= SAFE_FLOOR) then; m0=0._wp; m1=0._wp; return; endif
             t_tau = t / sfh%tau
             m0 = (sfh%tage - t + sfh%tau) * exp(t_tau)
-            m1 = ( -sfh%tage*(t - sfh%tau) + t**2 - 2.0_wp*t*sfh%tau + 2.0_wp*sfh%tau**2 ) * exp(t_tau)
+            ! M1 = int SFR(t) t dt with SFR = dm0/dt = (tage - t) e^(t/tau) / tau, using
+            ! int t e^(t/tau) dt = tau (t - tau) e^(t/tau) and
+            ! int t^2 e^(t/tau) dt = tau (t^2 - 2 tau t + 2 tau^2) e^(t/tau).
+            ! (The previous expression had the opposite overall sign.)
+            m1 = ( sfh%tage*(t - sfh%tau) - (t**2 - 2.0_wp*t*sfh%tau + 2.0_wp*sfh%tau**2) ) * exp(t_tau)
             
         case (5)
             trunc_off = max(0.0_wp, sfh%tage - sfh%sf_trunc)
