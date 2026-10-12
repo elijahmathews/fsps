@@ -33,6 +33,7 @@ contains
 
         call test_cache_blocked_summation()
         call test_remnant_budgeting()
+        call test_remnants_ignore_appended_stragglers()
 
         call test_sequential_hunter()
         call test_log_linear_interpolation()
@@ -757,5 +758,72 @@ contains
         character(len=16) :: str
         write(str, '(I0)') i
     end function to_str
+
+    !> Blue stragglers (and blue HB stars) are appended to the isochrone buffer after the native
+    !> isochrone points, with initial masses above the turn-off. The remnant budget must use the
+    !> turn-off of the native isochrone: appending a straggler may only add that star's own mass,
+    !> w * M_act, never reduce the remnant mass of stars that have died. (Legacy FSPS takes
+    !> MAXVAL(mini) after ADD_BS and so undercounts remnants when sbss > 0.)
+    subroutine test_remnants_ignore_appended_stragglers()
+        type(fsps_context_t), allocatable :: ctx
+        type(isochrone_buffer_t) :: buf
+        real(WP) :: mass_native, mass_with_bs, lbol
+        real(WP), parameter :: mini(3) = [0.5_wp, 0.6_wp, 0.8_wp]
+        real(WP), parameter :: bs_mass = 1.2_wp, bs_weight = 0.01_wp
+
+        call print_group("Integrate: Remnants Ignore Appended Blue Stragglers")
+
+        allocate(ctx)
+        ctx%add_stellar_remnants_val = 1
+        ctx%imf_type_val = 0
+        ctx%state%salp_ind = 2.35_wp
+        ctx%state%imf_lower_limit = 0.08_wp
+        ctx%state%imf_upper_limit = 120.0_wp
+        ctx%state%imf_lower_bound = 0.08_wp
+
+        ! One-age, one-metallicity synthetic isochrone with a turn-off at 0.8 Msun
+        allocate(ctx%state%mini_isoc(1, 1, NM), ctx%state%mact_isoc(1, 1, NM), ctx%state%logl_isoc(1, 1, NM), &
+                 ctx%state%logt_isoc(1, 1, NM), ctx%state%logg_isoc(1, 1, NM), ctx%state%phase_isoc(1, 1, NM), &
+                 ctx%state%ffco_isoc(1, 1, NM), ctx%state%lmdot_isoc(1, 1, NM), ctx%state%nmass_isoc(1, 1))
+        ctx%state%mini_isoc = 0.0_wp
+        ctx%state%mact_isoc = 0.0_wp
+        ctx%state%logl_isoc = 0.0_wp
+        ctx%state%logt_isoc = 3.7_wp
+        ctx%state%logg_isoc = 4.5_wp
+        ctx%state%phase_isoc = 0.0_wp
+        ctx%state%ffco_isoc = 0.0_wp
+        ctx%state%lmdot_isoc = -99.0_wp
+        ctx%state%mini_isoc(1, 1, 1:3) = mini
+        ctx%state%mact_isoc(1, 1, 1:3) = mini
+        ctx%state%nmass_isoc(1, 1) = 3
+
+        call init_isochrone_buffer(buf)
+
+        ! Native isochrone only
+        call load_timestep_data(ctx, 1, 1, buf)
+        buf%weights(1:3) = 1.0_wp
+        call compute_integrated_properties(ctx, buf, mass_native, lbol)
+
+        ! Same isochrone plus one appended straggler above the turn-off (as apply_blue_stragglers does)
+        call load_timestep_data(ctx, 1, 1, buf)
+        buf%weights(1:3) = 1.0_wp
+        buf%n_stars = 4
+        buf%initial_mass(4) = bs_mass
+        buf%current_mass(4) = bs_mass
+        buf%log_lum(4) = 0.5_wp
+        buf%phase(4) = 7.0_wp
+        buf%weights(4) = bs_weight
+        call compute_integrated_properties(ctx, buf, mass_with_bs, lbol)
+
+        call assert_relative_error(mass_native + bs_weight * bs_mass, mass_with_bs, 1.0e-12_wp, &
+                                   "straggler adds only its own mass (remnant turn-off unchanged)", &
+                                   total_tests, total_failures)
+
+        call free_isochrone_buffer(buf)
+        deallocate(ctx%state%mini_isoc, ctx%state%mact_isoc, ctx%state%logl_isoc, ctx%state%logt_isoc, &
+                   ctx%state%logg_isoc, ctx%state%phase_isoc, ctx%state%ffco_isoc, ctx%state%lmdot_isoc, &
+                   ctx%state%nmass_isoc)
+        deallocate(ctx)
+    end subroutine test_remnants_ignore_appended_stragglers
 
 end module test_fsps_ssp_mod
