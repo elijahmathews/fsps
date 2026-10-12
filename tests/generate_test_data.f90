@@ -8,7 +8,8 @@ PROGRAM GENERATE_TEST_DATA
    USE fsps_types, ONLY: PARAMS, COMPSPOUT
    use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
    USE fsps_csp, ONLY: compute_csp_scenario
-   use fsps_context, only: fsps_context_update_ssp_basis
+   use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
+                           fsps_context_set_pset
    USE fsps_context_types, ONLY: fsps_context_t
    USE fsps_ssp, ONLY: generate_ssp_grid
   IMPLICIT NONE
@@ -105,6 +106,9 @@ PROGRAM GENERATE_TEST_DATA
   call fsps_setup(ctx, pset%zmet, isoc_type_in=TRIM(isoc_arg), &
      spec_type_in=TRIM(spec_arg), dust_type_in=TRIM(dust_arg))
 
+  ! Allocate the persistent CSP/SSP workspaces (mirrors test_runner.f90)
+  call fsps_context_move_to_device(ctx)
+
   ! Cache context dimensions for local allocations
   nspec_ctx = ctx%state%nspec
   ntfull_ctx = ctx%state%ntfull
@@ -159,6 +163,7 @@ PROGRAM GENERATE_TEST_DATA
   pset%ssp_gen_age = 1
 
   ! Compute SSP
+   call fsps_context_set_pset(ctx, pset)
    CALL generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Write SSP Data
@@ -176,6 +181,7 @@ PROGRAM GENERATE_TEST_DATA
   pset%dust2 = 0.3
   
   ! Re-run generate_ssp_grid
+   call fsps_context_set_pset(ctx, pset)
    CALL generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
 
   ! Compute CSP
