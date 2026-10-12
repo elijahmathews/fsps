@@ -228,18 +228,25 @@ contains
             call get_sfh_properties_at_age(ctx, pset, target_age, mass_frac, sfr_norm, frac_linear)
 
             if (pset%tage <= 0.0_wp) then
+                ! All-ages mode: outputs are per unit mass formed over the full history, so each
+                ! age is rescaled by the fraction formed by then (the spectrum is rescaled in
+                ! apply_post_processing).
                 results(i)%lbol_csp = ctx%state%out_lbol_csp(i) + log10(max(mass_frac, SAFE_FLOOR))
                 results(i)%mformed  = mass_frac
+                results(i)%mass_csp = ctx%state%out_mass_csp(i) * mass_frac
+                results(i)%mdust    = ctx%state%sfh_w_tmp1(3, i) * mass_frac
             else
+                ! Single-age mode: the SFH weights are already normalized to 1 Msun formed by tage,
+                ! exactly as for the spectrum and lbol, so mass and dust mass are not rescaled.
                 results(i)%lbol_csp = ctx%state%out_lbol_csp(i)
                 if (mass_frac > SAFE_FLOOR) sfr_norm = sfr_norm / mass_frac
                 results(i)%mformed  = 1.0_wp
+                results(i)%mass_csp = ctx%state%out_mass_csp(i)
+                results(i)%mdust    = ctx%state%sfh_w_tmp1(3, i)
             end if
 
             results(i)%age      = log10(target_age * 1.0e9_wp)
-            results(i)%mass_csp = ctx%state%out_mass_csp(i) * mass_frac
             results(i)%sfr      = sfr_norm
-            results(i)%mdust    = ctx%state%sfh_w_tmp1(3, i) * mass_frac
 
             ! Perform heavy post-processing only if not in fast_mode
             if (.not. ctx%fast_mode) then
