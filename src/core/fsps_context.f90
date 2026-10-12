@@ -639,7 +639,7 @@ contains
         case ('zmet', 'wgp1', 'wgp2', 'wgp3', 'evtype', 'imf_type', 'tpagb_norm_type', &
               'interpolation_type', 'use_wr_spectra', 'add_neb_emission', 'add_neb_continuum', &
               'add_xrb_emission', 'add_stellar_remnants', 'smooth_velocity', 'smooth_lsf', &
-              'smoothspec_fast', 'vactoair_flag', 'use_isoc_mdot')
+              'smoothspec_fast', 'vactoair_flag', 'use_isoc_mdot', 'add_agb_dust_model')
             is_sensitive = .true.
         end select
     end function is_ssp_sensitive_int_param
@@ -652,7 +652,7 @@ contains
         case ('tiny_logt', 'imf_upper_limit', 'imf_lower_limit', 'logt_wmb_hot', 'nebular_smooth_init', &
               'imf1', 'imf2', 'imf3', 'vdmc', 'mdave', 'dell', 'delt', 'sbss', 'fbhb', 'pagb', &
               'redgb', 'agb', 'masscut', 'fcstar', 'frac_xrb', 'sigma_smooth', 'min_wave_smooth', &
-              'max_wave_smooth', 'gas_logu', 'gas_logz')
+              'max_wave_smooth', 'gas_logu', 'gas_logz', 'agb_dust', 'frac_obrun')
             is_sensitive = .true.
         end select
     end function is_ssp_sensitive_float_param
@@ -699,6 +699,10 @@ contains
         if (old_pset%max_wave_smooth /= new_pset%max_wave_smooth) changed = .true.
         if (old_pset%gas_logu /= new_pset%gas_logu) changed = .true.
         if (old_pset%gas_logz /= new_pset%gas_logz) changed = .true.
+        ! Circumstellar AGB dust screen (get_stellar_spectrum) and the ionizing-flux escape
+        ! fraction used when nebular emission is added to the SSPs (add_neb_emission = 2)
+        if (old_pset%agb_dust /= new_pset%agb_dust) changed = .true.
+        if (old_pset%frac_obrun /= new_pset%frac_obrun) changed = .true.
         if (trim(old_pset%imf_filename) /= trim(new_pset%imf_filename)) changed = .true.
 
         if (allocated(old_pset%ssp_gen_age) .neqv. allocated(new_pset%ssp_gen_age)) then

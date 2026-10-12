@@ -29,6 +29,7 @@ contains
         call test_context_pset_management()
         call test_context_workspace_allocation()
         call test_context_ssp_basis_update()
+        call test_ssp_dirty_flag_covers_agb_dust_and_obrun()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
 
@@ -268,5 +269,54 @@ contains
         ctx%initialized = .true. ! Prevents NVHPC OpenACC exit data crash on mock context
         call fsps_context_destroy(ctx)
     end subroutine test_context_ssp_basis_update
+
+    !> Every parameter read during SSP generation must mark the cached SSP basis dirty, both through
+    !> the string-keyed setters and through fsps_context_set_pset (pset_changes_ssp_basis):
+    !> agb_dust and add_agb_dust_model enter get_stellar_spectrum (circumstellar AGB dust), and
+    !> frac_obrun scales the ionizing flux when nebular emission is built into the SSPs. A CSP-only
+    !> parameter (dust2) must not mark it dirty.
+    subroutine test_ssp_dirty_flag_covers_agb_dust_and_obrun()
+        type(fsps_context_t), allocatable :: ctx
+        type(PARAMS) :: pset
+        integer :: status, k
+        character(len=16), parameter :: float_keys(2) = [character(len=16) :: 'agb_dust', 'frac_obrun']
+
+        call print_group("SSP Dirty Flag: AGB Dust and frac_obrun")
+        allocate(ctx)
+        call fsps_context_create(ctx)
+
+        do k = 1, size(float_keys)
+            ctx%state%ssp_basis_is_dirty = .false.
+            call fsps_context_set_param_float(ctx, trim(float_keys(k)), 0.5_wp, status)
+            call assert_true(ctx%state%ssp_basis_is_dirty, "set_param_float('"//trim(float_keys(k))// &
+                             "') flags the SSP basis dirty", total_tests, total_failures)
+        end do
+
+        ctx%state%ssp_basis_is_dirty = .false.
+        call fsps_context_set_param_int(ctx, 'add_agb_dust_model', 0, status)
+        call assert_true(ctx%state%ssp_basis_is_dirty, "set_param_int('add_agb_dust_model') flags the SSP basis dirty", &
+                         total_tests, total_failures)
+
+        ! Whole-pset updates
+        call fsps_context_get_pset(ctx, pset)
+        ctx%state%ssp_basis_is_dirty = .false.
+        pset%agb_dust = pset%agb_dust + 1.0_wp
+        call fsps_context_set_pset(ctx, pset)
+        call assert_true(ctx%state%ssp_basis_is_dirty, "set_pset with new agb_dust flags dirty", total_tests, total_failures)
+
+        ctx%state%ssp_basis_is_dirty = .false.
+        pset%frac_obrun = pset%frac_obrun + 0.1_wp
+        call fsps_context_set_pset(ctx, pset)
+        call assert_true(ctx%state%ssp_basis_is_dirty, "set_pset with new frac_obrun flags dirty", total_tests, total_failures)
+
+        ctx%state%ssp_basis_is_dirty = .false.
+        pset%dust2 = pset%dust2 + 0.3_wp
+        call fsps_context_set_pset(ctx, pset)
+        call assert_true(.not. ctx%state%ssp_basis_is_dirty, "set_pset with only a new dust2 keeps the basis clean", &
+                         total_tests, total_failures)
+
+        call fsps_context_destroy(ctx)
+        deallocate(ctx)
+    end subroutine test_ssp_dirty_flag_covers_agb_dust_and_obrun
 
 end module test_fsps_context_mod
