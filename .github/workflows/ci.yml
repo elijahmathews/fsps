@@ -142,6 +142,17 @@ jobs:
         run: |
           $FC --version
           meson --version
+          lscpu | grep -E 'Model name|Vendor ID' || true
+
+      # nvfortran's math runtime picks a CPU-specific library variant at startup, and has aborted
+      # ("Math dispatch table is either misconfigured or corrupted") on some hosted-runner CPUs
+      - name: nvfortran runtime libraries
+        if: matrix.toolchain == 'nvidia-hpc'
+        run: |
+          grep -o -m1 -E 'avx512[a-z]*' /proc/cpuinfo | sort -u | head -3 || true
+          sdk_lib=$(dirname "$(readlink -f "$(command -v nvfortran)")")/../lib
+          ls "$sdk_lib" | grep -i -E 'nvcpumath|nvhpcatm|nvc\.' || true
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 
       - name: Configure
         run: meson setup build --buildtype=release ${{ matrix.setup_args }}
