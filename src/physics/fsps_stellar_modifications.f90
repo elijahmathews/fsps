@@ -504,7 +504,7 @@ contains
         ! Local variables
         integer :: i, j, k, n_curr
         integer :: n_blue_added
-        real(WP) :: grad_l, hb_lum_marker
+        real(WP) :: dl, dm, hb_lum_marker
         logical :: is_in_hb_region
         real(WP) :: inv_nbs
         
@@ -528,17 +528,13 @@ contains
             ! Iterate through the isochrone points
             do j = 2, n_curr
                 
-                ! Compute gradient d(LogL)/d(Mass)
-                if (abs(mass_ini(time_idx, j) - mass_ini(time_idx, j-1)) > tiny(0.0_wp)) then
-                    grad_l = (log_l(time_idx, j) - log_l(time_idx, j-1)) / &
-                             (mass_ini(time_idx, j) - mass_ini(time_idx, j-1))
-                else
-                    grad_l = 0.0_wp
-                end if
-
-                ! Check for start of HB (Sharp drop in Lum at specific brightness)
-                if (.not. is_in_hb_region .and. &
-                    grad_l <= GRAD_THRESH_HB .and. &
+                ! Start of HB: d(LogL)/d(Mass) <= GRAD_THRESH_HB below a bright point. Tested
+                ! without dividing, because the tables repeat the tip-of-RGB mass at the drop
+                ! (dm = 0), which legacy MOD_HB evaluates as a -Inf gradient. As in legacy, the
+                ! test is repeated on the HB (resetting the marker).
+                dl = log_l(time_idx, j) - log_l(time_idx, j-1)
+                dm = mass_ini(time_idx, j) - mass_ini(time_idx, j-1)
+                if (dl < 0.0_wp .and. dm >= 0.0_wp .and. dl <= GRAD_THRESH_HB * dm .and. &
                     log_l(time_idx, j-1) > LUM_THRESH_MIN) then
                     
                     is_in_hb_region = .true.
@@ -548,11 +544,9 @@ contains
                 ! Process HB stars
                 if (is_in_hb_region) then
                     
-                    ! Check if we have exited the HB (Lum increased significantly)
-                    if (abs(log_l(time_idx, j) - hb_lum_marker) >= LUM_WIDTH_TOL) then
-                        is_in_hb_region = .false.
-                        cycle 
-                    end if
+                    ! Once the luminosity leaves the HB we are past it for good (legacy flip = -1);
+                    ! later dips on the AGB are not a second HB.
+                    if (abs(log_l(time_idx, j) - hb_lum_marker) >= LUM_WIDTH_TOL) exit
 
                     ! We are on the HB: Accumulate weight
                     hb_total_weight = hb_total_weight + weights(j)

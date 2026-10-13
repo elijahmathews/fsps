@@ -35,6 +35,7 @@ contains
         call test_gb_conroy_gunn_lowz()
 
         call test_hb_cliff_padova()
+        call test_hb_cliff_padova_duplicate_mass()
         call test_hb_mist_redistribution()
 
         call test_remnant_ghost_mass()
@@ -645,6 +646,51 @@ contains
         deallocate(ctx)
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_hb_cliff_padova
+
+    !> The Padova tables repeat the tip-of-RGB initial mass at the drop onto the HB, so the
+    !> cliff has dM_ini = 0 (467 of the 753 Padova isochrones with an HB). Legacy MOD_HB
+    !> divides by zero there, giving a -Inf gradient that passes the cliff test, and stops
+    !> looking for the HB once it has left it. Points 2-4 are the HB; the later 3.0 -> 2.9 dip
+    !> (an AGB glitch) must not be taken for a second HB.
+    subroutine test_hb_cliff_padova_duplicate_mass()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: n_time = 1
+        integer, parameter :: n_curr = 6
+        integer, dimension(n_time) :: n_mass
+        real(WP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(WP), allocatable :: weights(:)
+        real(WP) :: hb_total_weight
+
+        call print_group("HB: Padova Cliff at Repeated Mass")
+
+        allocate(ctx)
+        allocate(mass_ini(n_time, NM), mass_act(n_time, NM), log_l(n_time, NM), log_t(n_time, NM), &
+                 log_g(n_time, NM), phase(n_time, NM), weights(NM))
+
+        mass_ini = 0.0_wp
+        log_l = 0.0_wp
+        log_t = 3.7_wp
+        log_g = 0.0_wp
+        phase = 0.0_wp
+        weights = 0.0_wp
+
+        mass_ini(1, 1:n_curr) = [1.0_wp, 1.0_wp, 1.001_wp, 1.002_wp, 1.0021_wp, 1.00211_wp]
+        mass_act = mass_ini
+        log_l(1, 1:n_curr) = [3.3_wp, 1.6_wp, 1.62_wp, 1.65_wp, 3.0_wp, 2.9_wp]
+        weights(1:n_curr) = [1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp, 5.0_wp, 6.0_wp]
+
+        n_mass(1) = n_curr
+        ctx%state%isoc_type = 'pdva'
+
+        call modify_horizontal_branch(ctx, 1, 0.0_wp, 10.0_wp, hb_total_weight, n_mass, mass_ini, mass_act, &
+                                      log_l, log_t, log_g, phase, weights)
+
+        call assert_float_equals(9.0_wp, hb_total_weight, EPS, "HB found at repeated mass, later dip ignored", &
+                                 total_tests, total_failures)
+
+        deallocate(ctx)
+        deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+    end subroutine test_hb_cliff_padova_duplicate_mass
 
     subroutine test_hb_mist_redistribution()
         type(fsps_context_t), allocatable :: ctx
