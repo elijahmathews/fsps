@@ -54,6 +54,8 @@ contains
         call test_driver_igm_precalc()
         call test_driver_tabular_tage_99()
 
+        call test_single_age_outputs_are_weighted_sums()
+
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_csp_tests
 
@@ -1393,7 +1395,12 @@ contains
 
         call compute_csp_scenario(ctx, pset, 1, results)
 
-        call assert_true(results(1)%mass_csp < 1.0_wp, "Surviving mass < 1", total_tests, total_failures)
+        ! Every SSP in this basis retains all of its formed mass (mass_ssp = 1), and single-age
+        ! weights are normalized to 1 Msun formed by tage, so the surviving mass is exactly
+        ! sum(w * 1) = 1. (This previously asserted mass_csp < 1, which only held because
+        ! mass_csp was wrongly rescaled by the formed-mass fraction mass_frac(tage) < 1.)
+        call assert_relative_error(1.0_wp, results(1)%mass_csp, 1.0e-10_wp, &
+                                   "Surviving mass = sum(w * mass_ssp) = 1", total_tests, total_failures)
         call assert_relative_error(1.0_wp, results(1)%mformed, 1.0e-6_wp, &
                                    "Formed mass normalized to 1", total_tests, total_failures)
 
@@ -1667,5 +1674,91 @@ contains
         call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_driver_tabular_tage_99
+
+    ! ---------------------------------------------------------------------
+    ! Oracle: single-age CSP outputs are SFH-weighted sums of the SSP basis
+    ! ---------------------------------------------------------------------
+
+    !> With dust, nebular emission, IGM and smoothing disabled, a single-age CSP (tage > 0) must
+    !> equal the SFH-weighted sum of its SSP basis for every user-facing output:
+    !>     spec = sum_t w_t spec_ssp(t),  mass = sum_t w_t mass_ssp(t),  L = sum_t w_t L_ssp(t)
+    !> with sum_t w_t = 1 (normalized to 1 Msun formed by tage). This checks results(:) rather than
+    !> internal buffers, so any rescaling applied while packing results (e.g. by mass_frac, which
+    !> only applies to the all-ages tage <= 0 mode) is caught. The default log-time interpolation
+    !> is used so that the production SFH weight path is exercised.
+    subroutine test_single_age_outputs_are_weighted_sums()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:), spec_lambda(:), weights(:)
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+        real(WP) :: expected
+        integer :: n, nspec, i, k, l
+        integer, parameter :: sfh_types(2) = [1, 4]
+        real(WP), parameter :: taus(2) = [2.0_wp, 3.0_wp]
+        character(len=96) :: label
+
+        call print_group("Driver: Single-Age Outputs = Weighted SSP Sums (oracle)")
+
+        n = 40
+        nspec = 5
+        allocate(time_full(n), weights(n))
+        call fill_log_grid(time_full, 6.0_wp, 10.15_wp)
+        allocate(spec_lambda(nspec))
+        spec_lambda = [800.0_wp, 1200.0_wp, 3000.0_wp, 5500.0_wp, 9000.0_wp]
+
+        ! Synthetic SSP basis whose spectrum, surviving mass and luminosity all vary with age
+        allocate(tspec_ssp(nspec, n, 1), mass_ssp(n, 1), lbol_ssp(n, 1))
+        do i = 1, n
+            do l = 1, nspec
+                tspec_ssp(l, i, 1) = (1.0_wp + 0.1_wp * real(l, WP)) * 10.0_wp**(-0.3_wp * (time_full(i) - 6.0_wp))
+            end do
+            mass_ssp(i, 1) = 1.0_wp - 0.4_wp * real(i - 1, WP) / real(n - 1, WP)
+            lbol_ssp(i, 1) = -0.5_wp * (time_full(i) - 6.0_wp)
+        end do
+
+        do k = 1, size(sfh_types)
+            call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+            ctx%interpolation_type_val = 0
+            call fsps_context_prepare_csp_workspace(ctx)
+            call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+            call map_csp_workspace_to_device(ctx)
+
+            pset%sfh = sfh_types(k)
+            pset%tau = taus(k)
+            pset%tage = 5.0_wp
+
+            call compute_csp_scenario(ctx, pset, 1, results)
+            !$acc update host(ctx%state%csp_weights)
+            weights = ctx%state%csp_weights(1:n, 1, 1)
+
+            write(label, '(A,I0,A)') "SFH weights sum to 1 (sfh=", sfh_types(k), ")"
+            call assert_relative_error(1.0_wp, sum(weights), 1.0e-10_wp, trim(label), total_tests, total_failures)
+
+            write(label, '(A,I0,A)') "SFH weights non-negative (sfh=", sfh_types(k), ")"
+            call assert_true(all(weights >= 0.0_wp), trim(label), total_tests, total_failures)
+
+            write(label, '(A,I0,A)') "mass_csp = sum(w * mass_ssp) (sfh=", sfh_types(k), ")"
+            call assert_relative_error(sum(weights * mass_ssp(:, 1)), results(1)%mass_csp, 1.0e-10_wp, &
+                                       trim(label), total_tests, total_failures)
+
+            write(label, '(A,I0,A)') "10**lbol_csp = sum(w * 10**lbol_ssp) (sfh=", sfh_types(k), ")"
+            call assert_relative_error(sum(weights * 10.0_wp**lbol_ssp(:, 1)), 10.0_wp**results(1)%lbol_csp, &
+                                       1.0e-10_wp, trim(label), total_tests, total_failures)
+
+            do l = 1, nspec
+                expected = sum(weights * tspec_ssp(l, :, 1))
+                write(label, '(A,I0,A,I0,A)') "spec = sum(w * spec_ssp) (sfh=", sfh_types(k), ", lambda #", l, ")"
+                call assert_relative_error(expected, results(1)%spec(l), 1.0e-10_wp, &
+                                           trim(label), total_tests, total_failures)
+            end do
+
+            deallocate(results)
+            call unmap_csp_workspace_from_device(ctx)
+            call teardown_basic_context(ctx)
+        end do
+
+        deallocate(time_full, spec_lambda, weights, tspec_ssp, mass_ssp, lbol_ssp)
+    end subroutine test_single_age_outputs_are_weighted_sums
 
 end module test_fsps_csp_mod

@@ -56,6 +56,8 @@ contains
         call test_single_burst_log_interp()
         call test_tabular_log_interp_nodes()
 
+        call test_moments_match_quadrature()
+
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_sfh_tests
 
@@ -1071,5 +1073,141 @@ contains
         deallocate(time_full, weights, t_tab, sfr_tab)
         call teardown_sfh_context(ctx)
     end subroutine test_tabular_log_interp_nodes
+
+    ! ------------------------------------------------------------------------
+    ! Group: Oracle tests of the analytic moment antiderivatives
+    ! ------------------------------------------------------------------------
+
+    !> Checks the moment-method weights against brute-force quadrature for every analytic SFH
+    !> type in both interpolation modes.
+    !>
+    !> For hat functions on nodes x_j, each segment adds (x_{j+1} M0 - M1)/dx to node j and
+    !> (M1 - x_j M0)/dx to node j+1, so exactly:
+    !>     sum_j w_j     = int SFR(t) dt
+    !>     sum_j w_j x_j = int SFR(t) x(t) dt      (x = log10 t, or t for linear interpolation)
+    !> The first-moment antiderivative M1 cancels out of sum_j w_j, so mass-conservation tests are
+    !> blind to errors in M1; the second identity pins M1 directly. tage is placed exactly on a
+    !> node: a segment clipped at tage is distributed on [x_j, x(tage)], so the identity only holds
+    !> with node positions when no segment is partial. SFR is the derivative of the
+    !> zeroth-moment antiderivative in lookback time t: 1 (constant), e^(t/tau)/tau (tau model),
+    !> (tage - t) e^(t/tau)/tau (delayed tau) and slope_fac + sf_slope t (Simha linear segment).
+    subroutine test_moments_match_quadrature()
+        type(fsps_context_t), allocatable :: ctx
+        type(sfhparams) :: sfh
+        real(WP), allocatable :: time_full(:), weights(:), x_nodes(:)
+        real(WP) :: m0_ref, m1_ref, w_sum
+        integer :: interp, k
+        integer, parameter :: sfh_types(4) = [0, 1, 4, 5]
+        character(len=96) :: label
+
+        call print_group("Moment Method: Oracle vs Quadrature (all analytic types)")
+
+        allocate(time_full(60), weights(60), x_nodes(60))
+        call fill_log_grid(time_full, 6.0_wp, 10.2_wp)
+
+        do interp = 0, 1
+            do k = 1, size(sfh_types)
+                call setup_sfh_context(ctx, time_full, interpolation_type=interp, tiny_logt=4.0_wp)
+
+                sfh%type = sfh_types(k)
+                sfh%tau = 2.0e9_wp
+                sfh%tage = 10.0_wp**time_full(55)        ! ~6.9 Gyr, exactly on a node
+                sfh%tq = 0.0_wp
+                sfh%t0 = 0.0_wp
+                sfh%tb = 0.0_wp
+                sfh%sf_trunc = 2.0e9_wp
+                sfh%sf_slope = 1.0e-10_wp
+                sfh%use_simha_limits = 0
+
+                call compute_ssp_weights(ctx, sfh, 1, size(time_full), weights)
+
+                ! Nodes in the interpolation variable used by the hat functions
+                if (interp == 0) then
+                    x_nodes = time_full
+                else
+                    x_nodes = 10.0_wp**time_full
+                end if
+
+                ! The integration range starts at the first node (idx_min = 1 excludes the edge bin)
+                call sfh_moments_quadrature(sfh, 10.0_wp**time_full(1), sfh%tage, interp, m0_ref, m1_ref)
+                w_sum = sum(weights)
+
+                write(label, '(A,I0,A,I0,A)') "sum(w) = int SFR dt (sfh=", sfh_types(k), ", interp=", interp, ")"
+                call assert_relative_error(m0_ref, w_sum, 1.0e-6_wp, trim(label), total_tests, total_failures)
+
+                write(label, '(A,I0,A,I0,A)') "mean x = int SFR x dt / int SFR dt (sfh=", sfh_types(k), &
+                                              ", interp=", interp, ")"
+                call assert_relative_error(m1_ref / m0_ref, sum(weights * x_nodes) / w_sum, 1.0e-8_wp, &
+                                           trim(label), total_tests, total_failures)
+
+                write(label, '(A,I0,A,I0,A)') "weights non-negative (sfh=", sfh_types(k), ", interp=", interp, ")"
+                call assert_true(all(weights >= 0.0_wp), trim(label), total_tests, total_failures)
+
+                call teardown_sfh_context(ctx)
+            end do
+        end do
+
+        deallocate(time_full, weights, x_nodes)
+    end subroutine test_moments_match_quadrature
+
+    !> Composite Simpson quadrature of M0 = int SFR dt and M1 = int SFR x dt over lookback time
+    !> [t_lo, t_hi] (years), integrating in u = log10 t so that dt = t ln(10) du.
+    subroutine sfh_moments_quadrature(sfh, t_lo, t_hi, interp, m0, m1)
+        type(sfhparams), intent(in) :: sfh
+        real(WP), intent(in) :: t_lo, t_hi
+        integer, intent(in) :: interp
+        real(WP), intent(out) :: m0, m1
+
+        integer, parameter :: n_steps = 200000          ! even number of Simpson intervals
+        real(WP) :: u_lo, du, u, t, sfr, x, jac, coeff, slope_fac
+        integer :: i
+
+        u_lo = log10(t_lo)
+        du = (log10(t_hi) - u_lo) / real(n_steps, WP)
+        slope_fac = 1.0_wp - sfh%sf_slope * max(0.0_wp, sfh%tage - sfh%sf_trunc)
+        m0 = 0.0_wp
+        m1 = 0.0_wp
+
+        do i = 0, n_steps
+            u = u_lo + du * real(i, WP)
+            t = 10.0_wp**u
+
+            ! SFR in lookback time, normalized as d(M0)/dt of the analytic antiderivatives
+            select case (sfh%type)
+            case (0)
+                sfr = 1.0_wp
+            case (1)
+                sfr = exp(t / sfh%tau) / sfh%tau
+            case (4)
+                sfr = (sfh%tage - t) * exp(t / sfh%tau) / sfh%tau
+            case (5)
+                sfr = slope_fac + sfh%sf_slope * t
+            case default
+                sfr = 0.0_wp
+            end select
+
+            if (interp == 0) then
+                x = u
+            else
+                x = t
+            end if
+
+            ! Simpson coefficients 1, 4, 2, 4, ..., 2, 4, 1 times the Jacobian dt/du = t ln 10
+            if (i == 0 .or. i == n_steps) then
+                coeff = 1.0_wp
+            else if (mod(i, 2) == 1) then
+                coeff = 4.0_wp
+            else
+                coeff = 2.0_wp
+            end if
+            jac = t * log(10.0_wp)
+
+            m0 = m0 + coeff * sfr * jac
+            m1 = m1 + coeff * sfr * x * jac
+        end do
+
+        m0 = m0 * du / 3.0_wp
+        m1 = m1 * du / 3.0_wp
+    end subroutine sfh_moments_quadrature
 
 end module test_fsps_sfh_mod

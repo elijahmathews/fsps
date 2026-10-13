@@ -3,7 +3,7 @@ module test_fsps_imf_mod
     use fsps_context_types, only: fsps_context_t
     use fsps_imf
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
-                              assert_float_equals, assert_true
+                              assert_float_equals, assert_true, assert_relative_error
     use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
     implicit none
 
@@ -27,6 +27,8 @@ contains
         call test_kroupa()
         call test_imf_weighting()
         call test_compute_weights_normalization()
+        call test_analytic_integrals_match_quadrature()
+        call test_weights_match_quadrature()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
 
@@ -214,5 +216,147 @@ contains
 
         deallocate(ctx)
     end subroutine test_imf_weighting
+
+    ! ------------------------------------------------------------------------
+    ! ORACLE TESTS: analytic and Romberg IMF integrals vs dense quadrature
+    ! ------------------------------------------------------------------------
+
+    !> Configures ctx for IMF base type imf_type with standard slopes over [0.08, 120] Msun.
+    subroutine setup_imf_context(ctx, imf_type)
+        type(fsps_context_t), allocatable, intent(out) :: ctx
+        integer, intent(in) :: imf_type
+
+        allocate(ctx)
+        ctx%imf_type_val = imf_type
+        ctx%state%salp_ind = 2.35_wp
+        ctx%state%imf_alpha = [1.3_wp, 2.3_wp, 2.3_wp]
+        ctx%state%imf_mdave = 0.7_wp
+        ctx%state%imf_vdmc = 0.3_wp
+        ctx%state%imf_lower_limit = 0.08_wp
+        ctx%state%imf_upper_limit = 120.0_wp
+        ctx%state%imf_lower_bound = 0.08_wp
+    end subroutine setup_imf_context
+
+    !> Composite Simpson integral of get_imf_value over [lo, hi], in u = ln m (dm = m du).
+    !> The step is small enough that the slope kinks at segment breakpoints contribute < 1e-10.
+    function imf_quadrature(ctx, lo, hi, mass_weighted) result(total)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in) :: lo, hi
+        logical, intent(in) :: mass_weighted
+        real(WP) :: total
+
+        integer, parameter :: n_steps = 200000           ! even number of Simpson intervals
+        real(WP) :: du, m, coeff
+        integer :: i
+
+        du = (log(hi) - log(lo)) / real(n_steps, WP)
+        total = 0.0_wp
+        do i = 0, n_steps
+            ! Pin the end points exactly: exp(log(0.08)) rounds below the 0.08 Msun cutoff
+            if (i == 0) then
+                m = lo
+            else if (i == n_steps) then
+                m = hi
+            else
+                m = exp(log(lo) + du * real(i, WP))
+            end if
+            if (i == 0 .or. i == n_steps) then
+                coeff = 1.0_wp
+            else if (mod(i, 2) == 1) then
+                coeff = 4.0_wp
+            else
+                coeff = 2.0_wp
+            end if
+            total = total + coeff * get_imf_value(ctx, m, mass_weighted) * m
+        end do
+        total = total * du / 3.0_wp
+    end function imf_quadrature
+
+    !> integrate_imf_interval_analytic must equal the integral of get_imf_value, for number and
+    !> mass weighting, on intervals inside single segments and straddling the 0.5 / 1.0 Msun
+    !> (Kroupa) and mdave (Dave) breakpoints. This pins the segment continuity constants.
+    subroutine test_analytic_integrals_match_quadrature()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: types(3) = [0, 2, 4]
+        real(WP), parameter :: lo(6) = [0.08_wp, 0.3_wp, 0.4_wp, 0.9_wp, 5.0_wp, 0.08_wp]
+        real(WP), parameter :: hi(6) = [0.3_wp, 0.7_wp, 2.0_wp, 1.1_wp, 120.0_wp, 120.0_wp]
+        logical :: mass_weighted
+        integer :: k, j, w
+        character(len=96) :: label
+
+        call print_group("Analytic IMF Integrals vs Quadrature (oracle)")
+
+        do k = 1, size(types)
+            call setup_imf_context(ctx, types(k))
+            do j = 1, size(lo)
+                do w = 0, 1
+                    mass_weighted = (w == 1)
+                    write(label, '(A,I0,A,F5.2,A,F6.2,A,L1)') "type ", types(k), " [", lo(j), ",", hi(j), &
+                                                             "] mass_weighted=", mass_weighted
+                    call assert_relative_error(imf_quadrature(ctx, lo(j), hi(j), mass_weighted), &
+                                               integrate_imf_interval_analytic(ctx, lo(j), hi(j), mass_weighted), &
+                                               1.0e-8_wp, trim(label), total_tests, total_failures)
+                end do
+            end do
+            deallocate(ctx)
+        end do
+    end subroutine test_analytic_integrals_match_quadrature
+
+    !> compute_imf_weights must return, for every IMF type (analytic and Romberg), the number of
+    !> stars in each isochrone mass bin per 1 Msun formed:
+    !>     w_i = int_{m1_i}^{m2_i} phi dm / int_{lower}^{upper} m phi dm
+    !> with bin edges at midpoints between neighbouring masses (first edge = imf_lower_bound, last
+    !> edge = the last mass). The existing normalization test only checks positivity.
+    subroutine test_weights_match_quadrature()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: nmass = 40
+        integer, parameter :: types(5) = [0, 1, 2, 3, 4]
+        real(WP) :: mini(nmass), weights(nmass), expected(nmass)
+        real(WP) :: m1, m2, total_mass, tol, worst
+        integer :: i, k
+        character(len=96) :: label
+
+        call print_group("compute_imf_weights vs Quadrature (oracle, all types)")
+
+        ! Log-spaced isochrone-like mass grid strictly inside the IMF limits
+        do i = 1, nmass
+            mini(i) = 0.1_wp * (1000.0_wp)**(real(i - 1, WP) / real(nmass - 1, WP))
+        end do
+
+        do k = 1, size(types)
+            call setup_imf_context(ctx, types(k))
+            call compute_imf_weights(ctx, mini, weights, nmass)
+
+            total_mass = imf_quadrature(ctx, 0.08_wp, 120.0_wp, .true.)
+            do i = 1, nmass
+                if (i == 1) then
+                    m1 = ctx%state%imf_lower_bound
+                else
+                    m1 = 0.5_wp * (mini(i - 1) + mini(i))
+                end if
+                if (i == nmass) then
+                    m2 = mini(i)
+                else
+                    m2 = 0.5_wp * (mini(i) + mini(i + 1))
+                end if
+                expected(i) = imf_quadrature(ctx, m1, m2, .false.) / total_mass
+            end do
+
+            ! Analytic types are exact. Romberg types (1, 3) converge to ~1e-6 on smooth bins, but the
+            ! van Dokkum form jumps by +0.059% at m = 25 mc (the rounded constants 0.14 / 0.0443,
+            ! shared with legacy FSPS), which slows Romberg convergence in the straddling bin to ~1e-5
+            if (types(k) == 1 .or. types(k) == 3) then
+                tol = 3.0e-5_wp
+            else
+                tol = 1.0e-8_wp
+            end if
+
+            worst = maxval(abs(weights / expected - 1.0_wp))
+            write(label, '(A,I0,A,ES9.2,A)') "type ", types(k), " per-bin weights (max rel err ", worst, ")"
+            call assert_true(worst < tol, trim(label), total_tests, total_failures)
+
+            deallocate(ctx)
+        end do
+    end subroutine test_weights_match_quadrature
 
 end module test_fsps_imf_mod
