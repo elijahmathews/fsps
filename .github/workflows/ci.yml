@@ -132,11 +132,13 @@ jobs:
           key: ${{ matrix.os }}-${{ matrix.install }}
           max-size: 200M
 
+      # gcovr comes from Ubuntu (7.x): gcovr 8.6 discards the coverage of every library module
+      # built by meson (each source is listed with no lines), which reported ~4% coverage
       - name: Install Meson, Ninja and gcovr
         run: |
           pipx install meson
           pipx install ninja
-          if [ "${{ matrix.coverage }}" = "true" ]; then pipx install gcovr; fi
+          if [ "${{ matrix.coverage }}" = "true" ]; then sudo apt-get install -y -q gcovr; fi
 
       - name: Toolchain versions
         run: |
