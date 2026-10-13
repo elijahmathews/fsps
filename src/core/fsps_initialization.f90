@@ -749,11 +749,25 @@ contains
         ctx%state%agndust_tau = 0.0_wp
     end subroutine reset_setup_tables
 
+    !> @brief Copies a nebular line table (2 MB with xnebem_line).
+    !>
+    !> @details
+    !> Through explicit-shape dummies, which may not alias, so the compiler copies in place; a
+    !> plain assignment between components of a context and a cache entry made gfortran stage it
+    !> through a stack temporary, overflowing the stack of callers that hold a context there.
+    subroutine copy_line_table(src, dst)
+        real(WP), intent(in) :: src(NEMLINE, NEBNZ, NEBNAGE, NEBNIP)
+        real(WP), intent(out) :: dst(NEMLINE, NEBNZ, NEBNAGE, NEBNIP)
+
+        dst = src
+    end subroutine copy_line_table
+
     !> @brief Records the per-context tables produced while populating a cache entry.
     subroutine save_setup_tables(ctx, cache)
         type(fsps_context_t), intent(in) :: ctx
         type(fsps_setup_cache_t), intent(inout) :: cache
 
+        if (.not. allocated(cache%tables)) allocate (cache%tables)
         cache%tables%speclib_logt = ctx%state%speclib_logt
         cache%tables%speclib_logg = ctx%state%speclib_logg
         cache%tables%wmb_logt = ctx%state%wmb_logt
@@ -765,8 +779,8 @@ contains
         cache%tables%tau1_dagb = ctx%state%tau1_dagb
         cache%tables%teff_dagb = ctx%state%teff_dagb
         cache%tables%nebem_line_pos = ctx%state%nebem_line_pos
-        cache%tables%nebem_line = ctx%state%nebem_line
-        cache%tables%xnebem_line = ctx%state%xnebem_line
+        call copy_line_table(ctx%state%nebem_line, cache%tables%nebem_line)
+        call copy_line_table(ctx%state%xnebem_line, cache%tables%xnebem_line)
         cache%tables%nebem_logz = ctx%state%nebem_logz
         cache%tables%nebem_age = ctx%state%nebem_age
         cache%tables%nebem_logu = ctx%state%nebem_logu
@@ -779,6 +793,10 @@ contains
         type(fsps_setup_cache_t), target, intent(in) :: cache
         type(fsps_setup_tables_t), pointer :: tables
 
+        if (.not. allocated(cache%tables)) then
+            write (error_unit, '(A)') '[FSPS_INIT] Error: cache entry has no recorded setup tables'
+            error stop 1
+        end if
         tables => cache%tables
 
         ctx%state%speclib_logt = tables%speclib_logt
@@ -792,8 +810,8 @@ contains
         ctx%state%tau1_dagb = tables%tau1_dagb
         ctx%state%teff_dagb = tables%teff_dagb
         ctx%state%nebem_line_pos = tables%nebem_line_pos
-        ctx%state%nebem_line = tables%nebem_line
-        ctx%state%xnebem_line = tables%xnebem_line
+        call copy_line_table(tables%nebem_line, ctx%state%nebem_line)
+        call copy_line_table(tables%xnebem_line, ctx%state%xnebem_line)
         ctx%state%nebem_logz = tables%nebem_logz
         ctx%state%nebem_age = tables%nebem_age
         ctx%state%nebem_logu = tables%nebem_logu
