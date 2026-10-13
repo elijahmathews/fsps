@@ -211,6 +211,7 @@ test('unit_tests', tests_units_exe, suite : 'unit')
 test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
 executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
 executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
+executable('generate_opensps_fixtures', 'tests/generate_opensps_fixtures.f90', dependencies : fsps_dep)
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep)
 
 if get_option('enable_stress_testing')
