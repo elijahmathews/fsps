@@ -869,15 +869,20 @@ contains
         integer, intent(in) :: zin
         character(len=*), intent(out) :: cache_key
 
-        ! nebular_smooth_init sets the shared setup-time line kernels (setup_nebular_gaussians = 1),
-        ! so contexts that differ in it must not share a cache entry
+        ! The key must contain every setting the shared-data loaders depend on, because a context
+        ! that hits an entry reuses its data without reloading:
+        !   - nebular_smooth_init and smooth_velocity set the shared setup-time line kernels
+        !     (setup_nebular_gaussians = 1);
+        !   - cloudy_dust selects the nebular grid files (ZAU_WD_* vs ZAU_ND_*);
+        !   - compute_vega_mags converts the shared magsun to the Vega system;
+        !   - zin selects the isochrones loaded and the reference time grid.
         write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
-                           &"|",ES24.16)') &
+                           &"|",ES24.16,"|",I0,"|",I0)') &
             trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
             ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &
-            ctx%nebular_smooth_init_val
+            ctx%nebular_smooth_init_val, ctx%cloudy_dust_val, ctx%compute_vega_mags_val
     end subroutine build_cache_key
 
     subroutine populate_cache_metadata(ctx, cache)
