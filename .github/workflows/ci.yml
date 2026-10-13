@@ -152,6 +152,17 @@ jobs:
       - name: Unit and regression tests
         run: meson test -C build --suite unit --suite regression --print-errorlogs
 
+      # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
+      - name: Report test results
+        if: ${{ !cancelled() }}
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: build/meson-logs/testlog.junit.xml
+          check_name: ${{ matrix.name }}
+          annotate_only: true
+          detailed_summary: true
+          include_passed: false
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v6
@@ -173,32 +184,40 @@ jobs:
           files: ./build/meson-logs/coverage.xml
           fail_ci_if_error: true
 
-  # Each sanitizer runs the stress phases it is suited to: AddressSanitizer the leak and
-  # reallocation phases (A, C), ThreadSanitizer the concurrent compute and setup/release phases
-  # (B, D; the test harness makes its threads with OpenMP). Nightly runs every phase for longer.
-  sanitizers:
-    name: ${{ matrix.name }}
+  # Which pull requests can affect thread safety: ThreadSanitizer is the slowest check (~15 min),
+  # so it runs on pull requests that touch shared state, and every night.
+  changes:
+    name: Detect threading-relevant changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      threading: ${{ steps.filter.outputs.threading }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            threading:
+              - 'src/core/**'
+              - 'src/bindings/**'
+              - 'tests/stress_test.f90'
+              - 'tests/tsan.supp'
+              - 'meson.build'
+              - '.github/workflows/ci.yml'
+
+  # AddressSanitizer + UBSan: unit tests, then the stress phases that exercise allocation (A: create,
+  # compute, destroy; C: parameter mutations that reallocate). Every phase runs nightly.
+  asan:
+    name: AddressSanitizer + UBSan / stress A, C
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: AddressSanitizer + UBSan / stress A, C
-            setup_args: -Db_sanitize=address,undefined
-            stress_env: FSPS_STRESS_PHASES=AC FSPS_STRESS_ITERS=3
-
-          - name: ThreadSanitizer / stress B, D
-            setup_args: -Db_sanitize=thread -Denable_openmp=true
-            stress_env: FSPS_STRESS_PHASES=BD FSPS_STRESS_ITERS=4
-            tsan: true
-
     env:
       FFLAGS: -ffpe-summary=invalid,zero,overflow
-      OMP_NUM_THREADS: 4
       FC: ccache gfortran
       CC: ccache gcc
-
     steps:
       - uses: actions/checkout@v6
         with:
@@ -207,40 +226,87 @@ jobs:
           sparse-checkout: |
             /*
             !/data/spectra/C3K/
-
       - name: Install toolchain
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q gfortran ccache
           pipx install meson
           pipx install ninja
-
-      - name: Cache compiler output
-        uses: hendrikmuhs/ccache-action@v1.2
+      - uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: sanitizer-${{ strategy.job-index }}
+          key: asan
           max-size: 200M
-
-      - name: Configure
-        run: meson setup build -Denable_stress_testing=true ${{ matrix.setup_args }}
-
-      - name: Build
-        run: meson compile -C build
-
-      - name: Unit tests
-        run: meson test -C build --suite unit --print-errorlogs
-
-      - name: Stress tests
-        run: |
-          if [ "${{ matrix.tsan }}" = "true" ]; then
-            export TSAN_OPTIONS="suppressions=$PWD/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1"
-          fi
-          env ${{ matrix.stress_env }} meson test -C build --suite stress --print-errorlogs
-
-      - name: Upload test log on failure
-        if: failure()
+      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=address,undefined
+      - run: meson compile -C build
+      - run: meson test -C build --suite unit --print-errorlogs
+      - name: Stress phases A and C
+        run: FSPS_STRESS_PHASES=AC FSPS_STRESS_ITERS=3 meson test -C build --suite stress --print-errorlogs
+      - name: Report test results
+        if: ${{ !cancelled() }}
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: build/meson-logs/testlog.junit.xml
+          check_name: asan
+          annotate_only: true
+          detailed_summary: true
+          include_passed: false
+      - if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: sanitizer-log-${{ strategy.job-index }}
+          name: asan-log
+          path: build/meson-logs/
+          retention-days: 7
+
+  # ThreadSanitizer: the concurrent phases (B: per-thread setup and compute; D: concurrent
+  # setup/release of one shared cache entry). The harness makes its threads with OpenMP.
+  tsan:
+    name: ThreadSanitizer / stress B, D
+    needs: changes
+    if: always() && (needs.changes.outputs.threading == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      FFLAGS: -ffpe-summary=invalid,zero,overflow
+      FC: ccache gfortran
+      CC: ccache gcc
+      OMP_NUM_THREADS: 2
+      # Suppress known false positives in the uninstrumented Fortran/OpenMP runtimes (all steps)
+      TSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/data/spectra/C3K/
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gfortran ccache
+          pipx install meson
+          pipx install ninja
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: tsan
+          max-size: 200M
+      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=thread -Denable_openmp=true
+      - run: meson compile -C build
+      - run: meson test -C build --suite unit --print-errorlogs
+      - name: Stress phases B and D
+        run: FSPS_STRESS_PHASES=BD FSPS_STRESS_ITERS=4 meson test -C build --suite stress --print-errorlogs
+      - name: Report test results
+        if: ${{ !cancelled() }}
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: build/meson-logs/testlog.junit.xml
+          check_name: tsan
+          annotate_only: true
+          detailed_summary: true
+          include_passed: false
+      - if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tsan-log
           path: build/meson-logs/
           retention-days: 7

@@ -28,6 +28,21 @@ oracles and all 34 cases of the parameterized regression. The regression referen
 generated with gfortran on x86-64 and are compared at a relative tolerance of 1e-5, so the other
 compilers and the arm64 machines are checked against them, not only against themselves.
 
+## Test reporting
+
+The test programs built on `tests/test_utils.f90` print one TAP line per assertion when
+`FSPS_TEST_TAP=1` (meson sets it), and coloured `[PASS]`/`[FAIL]` lines when run by hand. Meson
+parses the TAP, so:
+
+- each of the 21 unit-test modules is its own meson test (`unit_sfh`, `unit_dust`, ...), run in
+  parallel and runnable alone: `meson test -C build unit_sfh`;
+- `meson test` shows the assertion count per test and names failing assertions;
+- `build/meson-logs/testlog.junit.xml` has every assertion as a test case, which CI publishes
+  (job summary and pull-request annotations, via `mikepenz/action-junit-report`).
+
+A test program built on `test_utils` must call `tap_finish()` before exiting, and should print
+diagnostic lines starting with `#` so that they are TAP comments.
+
 ## Design decisions
 
 - **Compilers are installed, not pulled as containers.** `fortran-lang/setup-fortran` installs
