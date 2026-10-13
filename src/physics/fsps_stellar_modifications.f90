@@ -71,7 +71,7 @@ contains
     !> Horizontal Branch (HB).
     !>
     !> **Algorithm:**
-    !> 1. Defines the "ZAMS" (Zero Age Main Sequence) using the isochrone at time index 1.
+    !> 1. Builds the ZAMS (Zero Age Main Sequence) reference with `build_zams_reference`.
     !> 2. Scans the current isochrone (`time_idx`) to find the Main Sequence Turn-Off (MSTO).
     !>    This is done by comparing the current star's Luminosity vs Temperature against 
     !>    the ZAMS relation. When they diverge (> 0.2 dex), we define that as the MSTO.
@@ -105,9 +105,8 @@ contains
         real(WP), dimension(:), intent(inout), contiguous :: weights
 
         ! Local variables
-        ! FIX 1: zams_m_cache added to allocatable array list
         real(WP), dimension(:), allocatable :: zams_t_cache, zams_l_cache, zams_m_cache
-        integer :: idx_zams_limit, idx_msto
+        integer :: n_zams, idx_msto
         integer :: i, k, n_curr
         real(WP) :: bs_total_weight
         real(WP) :: lum_expected_on_zams, diff_from_zams
@@ -120,25 +119,9 @@ contains
         bs_total_weight = s_bs * hb_weight
         n_curr = n_mass(time_idx)
 
-        ! 2. DEFINE ZAMS FROM GLOBAL CONTEXT
-        idx_zams_limit = 1
-        do while (ctx%state%logl_isoc(metal_idx, 1, idx_zams_limit) < ZAMS_LUM_LIMIT)
-            idx_zams_limit = idx_zams_limit + 1
-            if (idx_zams_limit >= NM) exit
-        end do
-        
-        idx_zams_limit = min(idx_zams_limit, NM)
-        if (idx_zams_limit < 2) return
-
-        allocate(zams_t_cache(idx_zams_limit))
-        allocate(zams_l_cache(idx_zams_limit))
-        allocate(zams_m_cache(idx_zams_limit))
-
-        ! FIX 2: Copy ALL ZAMS data from Global Context (Time Step 1)
-        ! Accessing 'log_t(1,:)' here would be WRONG (that is the current age).
-        zams_t_cache = ctx%state%logt_isoc(metal_idx, 1, 1:idx_zams_limit)
-        zams_l_cache = ctx%state%logl_isoc(metal_idx, 1, 1:idx_zams_limit)
-        zams_m_cache = ctx%state%mini_isoc(metal_idx, 1, 1:idx_zams_limit)
+        ! 2. Build the ZAMS reference from the isochrone set (not from the current age)
+        call build_zams_reference(ctx, metal_idx, zams_t_cache, zams_l_cache, zams_m_cache, n_zams)
+        if (n_zams < 2) return
 
         ! 3. Find MSTO
         idx_msto = 0
@@ -211,6 +194,112 @@ contains
         if (allocated(zams_m_cache)) deallocate(zams_m_cache)
 
     end subroutine apply_blue_stragglers
+
+    !> @brief
+    !> Builds the zero-age main sequence used to locate the turn-off and place blue stragglers.
+    !>
+    !> @details
+    !> A star's ZAMS point is its position in the youngest isochrone in which it is on the
+    !> main sequence (phase 0). Ages are scanned in ascending order; at each age, the MS points
+    !> less massive than every MS star seen at younger ages are the stars that have just arrived
+    !> on the MS. The result is sorted by initial mass.
+    !>
+    !> - Isochrone sets without a pre-main sequence (e.g. Padova) contribute every point at the
+    !>   first age, which reproduces the legacy reference (the first isochrone).
+    !> - Sets with a pre-main sequence (e.g. MIST, whose log t = 5 isochrone has only massive
+    !>   stars on the MS) take their low-mass ZAMS from the ages at which those stars arrive.
+    !>   Using the first isochrone there puts the turn-off among the M dwarfs (legacy FSPS) or
+    !>   finds none at all.
+    !>
+    !> Points that break strict monotonicity in log L or log T (stars that evolved slightly
+    !> within an age step) are dropped, since both serve as interpolation abscissae. As in
+    !> legacy FSPS, the table ends at the first point with log L >= ZAMS_LUM_LIMIT.
+    !>
+    !> @param[in]  ctx        Simulation context (isochrone state).
+    !> @param[in]  metal_idx  Metallicity index.
+    !> @param[out] zams_t     ZAMS log Teff, ascending.
+    !> @param[out] zams_l     ZAMS log L, ascending.
+    !> @param[out] zams_m     ZAMS initial mass, ascending.
+    !> @param[out] n_zams     Number of ZAMS points.
+    subroutine build_zams_reference(ctx, metal_idx, zams_t, zams_l, zams_m, n_zams)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in) :: metal_idx
+        real(WP), dimension(:), allocatable, intent(out) :: zams_t, zams_l, zams_m
+        integer, intent(out) :: n_zams
+
+        real(WP), dimension(:), allocatable :: t_all, l_all, m_all
+        real(WP) :: m_low, m_low_next, t_tmp, l_tmp, m_tmp
+        integer :: i_age, j, k, n_all, n_new
+
+        ! Pass 1: count stars arriving on the MS at each age
+        n_all = 0
+        m_low = huge(1.0_wp)
+        do i_age = 1, size(ctx%state%nmass_isoc, 2)
+            m_low_next = m_low
+            do j = 1, ctx%state%nmass_isoc(metal_idx, i_age)
+                if (nint(ctx%state%phase_isoc(metal_idx, i_age, j)) /= 0) cycle
+                if (ctx%state%mini_isoc(metal_idx, i_age, j) < m_low) n_all = n_all + 1
+                m_low_next = min(m_low_next, ctx%state%mini_isoc(metal_idx, i_age, j))
+            end do
+            m_low = m_low_next
+        end do
+
+        allocate(t_all(n_all), l_all(n_all), m_all(n_all))
+
+        ! Pass 2: collect them
+        n_new = 0
+        m_low = huge(1.0_wp)
+        do i_age = 1, size(ctx%state%nmass_isoc, 2)
+            m_low_next = m_low
+            do j = 1, ctx%state%nmass_isoc(metal_idx, i_age)
+                if (nint(ctx%state%phase_isoc(metal_idx, i_age, j)) /= 0) cycle
+                if (ctx%state%mini_isoc(metal_idx, i_age, j) < m_low) then
+                    n_new = n_new + 1
+                    t_all(n_new) = ctx%state%logt_isoc(metal_idx, i_age, j)
+                    l_all(n_new) = ctx%state%logl_isoc(metal_idx, i_age, j)
+                    m_all(n_new) = ctx%state%mini_isoc(metal_idx, i_age, j)
+                end if
+                m_low_next = min(m_low_next, ctx%state%mini_isoc(metal_idx, i_age, j))
+            end do
+            m_low = m_low_next
+        end do
+
+        ! Sort by initial mass (insertion sort; each age's block is already ordered)
+        do j = 2, n_all
+            t_tmp = t_all(j)
+            l_tmp = l_all(j)
+            m_tmp = m_all(j)
+            k = j - 1
+            do while (k >= 1)
+                if (m_all(k) <= m_tmp) exit
+                t_all(k + 1) = t_all(k)
+                l_all(k + 1) = l_all(k)
+                m_all(k + 1) = m_all(k)
+                k = k - 1
+            end do
+            t_all(k + 1) = t_tmp
+            l_all(k + 1) = l_tmp
+            m_all(k + 1) = m_tmp
+        end do
+
+        ! Keep a strictly increasing sequence in log L and log T, up to ZAMS_LUM_LIMIT
+        n_zams = 0
+        do j = 1, n_all
+            if (n_zams > 0) then
+                if (l_all(j) <= l_all(n_zams) .or. t_all(j) <= t_all(n_zams)) cycle
+            end if
+            n_zams = n_zams + 1
+            t_all(n_zams) = t_all(j)
+            l_all(n_zams) = l_all(j)
+            m_all(n_zams) = m_all(j)
+            if (l_all(n_zams) >= ZAMS_LUM_LIMIT) exit
+        end do
+
+        zams_t = t_all(1:n_zams)
+        zams_l = l_all(1:n_zams)
+        zams_m = m_all(1:n_zams)
+
+    end subroutine build_zams_reference
 
     !> @brief
     !> Modifies TP-AGB, HB, RGB, and post-AGB stars in the isochrone.
