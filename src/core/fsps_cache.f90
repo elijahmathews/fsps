@@ -15,6 +15,7 @@ module fsps_cache
     private
 
     public :: fsps_setup_cache_t
+    public :: fsps_setup_tables_t
     public :: fsps_setup_cache_ptr_t
     public :: fsps_cache_get_setup
     public :: fsps_cache_release_setup
@@ -33,6 +34,32 @@ module fsps_cache
     ! ---------------------------------------------------------------------
     ! Module constants
     ! ---------------------------------------------------------------------
+
+    !> @brief Small grid axes and tables the setup loaders write into fixed-size (per-context)
+    !> members of the context state alongside the shared arrays.
+    !>
+    !> @details
+    !> They are recorded here by the context that populates a cache entry and copied into every
+    !> later context that hits the entry, so a cache hit needs no file I/O.
+    type :: fsps_setup_tables_t
+        real(WP) :: speclib_logt(ndim_logt) = 0.0_wp
+        real(WP) :: speclib_logg(ndim_logg) = 0.0_wp
+        real(WP) :: wmb_logt(ndim_wmb_logt) = 0.0_wp
+        real(WP) :: wmb_logg(ndim_wmb_logg) = 0.0_wp
+        real(WP) :: agb_logt_car(n_agb_car) = 0.0_wp
+        real(WP) :: pagb_logt(ndim_pagb) = 0.0_wp
+        real(WP) :: wrn_logt(ndim_wr) = 0.0_wp
+        real(WP) :: wrc_logt(ndim_wr) = 0.0_wp
+        real(WP) :: tau1_dagb(2, ntau_dagb) = 0.0_wp
+        real(WP) :: teff_dagb(2, nteff_dagb) = 0.0_wp
+        real(WP) :: nebem_line_pos(nemline) = 0.0_wp
+        real(WP) :: nebem_line(nemline, nebnz, nebnage, nebnip) = 0.0_wp
+        real(WP) :: xnebem_line(nemline, nebnz, nebnage, nebnip) = 0.0_wp
+        real(WP) :: nebem_logz(nebnz) = 0.0_wp
+        real(WP) :: nebem_age(nebnage) = 0.0_wp
+        real(WP) :: nebem_logu(nebnip) = 0.0_wp
+        real(WP) :: agndust_tau(nagndust) = 0.0_wp
+    end type fsps_setup_tables_t
 
     type :: fsps_setup_cache_t
         character(len=512) :: key = ''
@@ -60,6 +87,9 @@ module fsps_cache
         integer :: add_xrb_emission = 0
         integer :: add_agb_dust_model = 0
         integer :: use_wr_spectra = 0
+
+        !> Per-context tables recorded by the populating context (see fsps_setup_tables_t)
+        type(fsps_setup_tables_t) :: tables
 
         real(WP), pointer :: indexdefined(:, :) => null()
         real(WP), pointer :: wgdust(:, :, :, :) => null()
@@ -250,6 +280,24 @@ contains
         if (associated(entry%zmet_xrb)) deallocate (entry%zmet_xrb)
         if (associated(entry%time_full)) deallocate (entry%time_full)
 
+        ! Cleared field by field: a temporary fsps_setup_tables_t (~2 MB) could overflow a stack
+        entry%tables%speclib_logt = 0.0_wp
+        entry%tables%speclib_logg = 0.0_wp
+        entry%tables%wmb_logt = 0.0_wp
+        entry%tables%wmb_logg = 0.0_wp
+        entry%tables%agb_logt_car = 0.0_wp
+        entry%tables%pagb_logt = 0.0_wp
+        entry%tables%wrn_logt = 0.0_wp
+        entry%tables%wrc_logt = 0.0_wp
+        entry%tables%tau1_dagb = 0.0_wp
+        entry%tables%teff_dagb = 0.0_wp
+        entry%tables%nebem_line_pos = 0.0_wp
+        entry%tables%nebem_line = 0.0_wp
+        entry%tables%xnebem_line = 0.0_wp
+        entry%tables%nebem_logz = 0.0_wp
+        entry%tables%nebem_age = 0.0_wp
+        entry%tables%nebem_logu = 0.0_wp
+        entry%tables%agndust_tau = 0.0_wp
         entry%key = ''
         entry%refcount = 0
         entry%nz = 0
