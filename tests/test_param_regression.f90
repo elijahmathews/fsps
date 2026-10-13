@@ -32,7 +32,7 @@ program test_param_regression
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
                             fsps_context_set_param_int, fsps_context_set_param_float
     use fsps_context_types, only: fsps_context_t
-    use test_utils_mod, only: print_major_header, print_group, print_summary_line, assert_true
+    use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
     implicit none
 
     integer, parameter :: MAX_ARRAYS = 32
@@ -108,16 +108,18 @@ program test_param_regression
         n_cases = n_cases + 1
         call run_case(trim(line))
     end do
-    write(*, '(A,I0,A,I0,A)') ' Ran ', n_cases, ' cases (', n_skipped, ' not selected)'
+    write(*, '(A,I0,A,I0,A)') '# Ran ', n_cases, ' cases (', n_skipped, ' not selected)'
     close(unit_cases)
     do ios = 1, n_pinned
         call fsps_destroy(pinned(ios))
     end do
+    deallocate(pinned)
 
     if (generate) then
-        write(*, '(A,I0,2A)') ' Wrote ', n_cases, ' references to ', trim(ref_dir)
+        write(*, '(A,I0,2A)') '# Wrote ', n_cases, ' references to ', trim(ref_dir)
     else
         call print_summary_line("Parameterized Regression", total_tests - total_failures, total_tests)
+        call tap_finish()
         if (total_failures > 0) stop 1
     end if
 
@@ -135,7 +137,7 @@ contains
             if (index(fields(3), trim(skip_spec)) == 1) then
                 selected = .false.
                 if (len_trim(only_prefix) == 0 .or. index(fields(1), trim(only_prefix)) == 1) &
-                    write(*, '(3A)') ' SKIP ', trim(fields(1)), ' (spectral library data not in this checkout)'
+                    write(*, '(3A)') '# SKIP ', trim(fields(1)), ' (spectral library data not in this checkout)'
             end if
         end if
     end function selected
@@ -242,7 +244,6 @@ contains
         integer :: i, j, k, n_bad
         logical :: absolute
         real(real64) :: floor, diff, worst, a, b
-        character(len=160) :: msg
 
         call print_group(name)
         if (.not. read_opsf(trim(ref_dir) // '/' // name // '.opsf')) then
@@ -277,8 +278,9 @@ contains
                     worst = max(worst, diff)
                 end if
             end do
-            write(msg, '(A,A,ES9.2,A,I0,A)') trim(arrays(i)%name), ": worst ", worst, " (", n_bad, " outside tolerance)"
-            call assert_true(n_bad == 0, trim(msg), total_tests, total_failures)
+            write(*, '(3A,ES9.2,A,I0,A)') '# ', trim(arrays(i)%name), ": worst ", worst, " (", n_bad, &
+                " outside tolerance)"
+            call assert_true(n_bad == 0, trim(arrays(i)%name) // " within tolerance", total_tests, total_failures)
         end do
     end subroutine compare_case
 

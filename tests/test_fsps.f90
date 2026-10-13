@@ -71,40 +71,45 @@ program test_fsps
                                  failures_csp => total_failures, &
                                  tests_csp => total_tests
     ! Test utilities
-    use test_utils_mod, only: print_summary_line, print_major_header
+    use test_utils_mod, only: print_summary_line, print_major_header, tap_finish
     implicit none
 
     integer :: grand_total_failures = 0
     integer :: grand_total_tests = 0
+    ! Optional argument: run only the named module (e.g. "fsps_sfh"); meson registers one test per
+    ! module this way so that they run in parallel and are reported separately
+    character(len=64) :: only_module = ''
+
+    call get_command_argument(1, only_module)
 
     call print_major_header("FSPS UNIT TEST SUITE")
 
     ! Run all the tests
-    call run_fsps_cache_tests()
-    call run_fsps_context_tests()
-    call run_fsps_context_types_tests()
-    call run_fsps_strings_tests()
-    call run_fsps_types_tests()
+    if (selected('fsps_cache')) call run_fsps_cache_tests()
+    if (selected('fsps_context')) call run_fsps_context_tests()
+    if (selected('fsps_context_types')) call run_fsps_context_types_tests()
+    if (selected('fsps_strings')) call run_fsps_strings_tests()
+    if (selected('fsps_types')) call run_fsps_types_tests()
 
-    call run_fsps_io_tests()
+    if (selected('fsps_io')) call run_fsps_io_tests()
 
-    call run_fsps_integration_tests()
-    call run_fsps_interpolation_tests()
-    call run_fsps_special_functions_tests()
+    if (selected('fsps_integration')) call run_fsps_integration_tests()
+    if (selected('fsps_interpolation')) call run_fsps_interpolation_tests()
+    if (selected('fsps_special_functions')) call run_fsps_special_functions_tests()
 
-    call run_fsps_cosmology_tests()
-    call run_fsps_csp_tests()
-    call run_fsps_dust_tests()
-    call run_fsps_gas_tests()
-    call run_fsps_imf_tests()
-    call run_fsps_sfh_tests()
-    call run_fsps_ssp_tests()
-    call run_fsps_stellar_modifications_tests()
+    if (selected('fsps_cosmology')) call run_fsps_cosmology_tests()
+    if (selected('fsps_csp')) call run_fsps_csp_tests()
+    if (selected('fsps_dust')) call run_fsps_dust_tests()
+    if (selected('fsps_gas')) call run_fsps_gas_tests()
+    if (selected('fsps_imf')) call run_fsps_imf_tests()
+    if (selected('fsps_sfh')) call run_fsps_sfh_tests()
+    if (selected('fsps_ssp')) call run_fsps_ssp_tests()
+    if (selected('fsps_stellar_modifications')) call run_fsps_stellar_modifications_tests()
 
-    call run_fsps_photometry_tests()
-    call run_fsps_smoothing_tests()
-    call run_fsps_spectral_indices_tests()
-    call run_fsps_spectral_library_tests()
+    if (selected('fsps_photometry')) call run_fsps_photometry_tests()
+    if (selected('fsps_smoothing')) call run_fsps_smoothing_tests()
+    if (selected('fsps_spectral_indices')) call run_fsps_spectral_indices_tests()
+    if (selected('fsps_spectral_library')) call run_fsps_spectral_library_tests()
 
     ! --- Summary ---
     call print_major_header("FSPS UNIT TEST FINAL REPORT")
@@ -267,10 +272,20 @@ program test_fsps
     call print_summary_line("Result", grand_total_tests - grand_total_failures, grand_total_tests)
     print *
 
+    call tap_finish()
+
     if (grand_total_failures == 0) then
         stop 0
     else
         stop 1
     end if
+
+contains
+
+    logical function selected(module_name)
+        character(len=*), intent(in) :: module_name
+
+        selected = len_trim(only_module) == 0 .or. trim(only_module) == module_name
+    end function selected
 
 end program test_fsps

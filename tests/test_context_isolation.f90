@@ -21,7 +21,7 @@ program test_context_isolation
     use fsps_initialization, only: fsps_shared_load_count
     use fsps_ssp, only: generate_ssp_grid
     use fsps_csp, only: compute_csp_scenario
-    use test_utils_mod, only: print_major_header, print_group, print_summary_line, assert_true, &
+    use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true, &
                               assert_int_equals
     implicit none
 
@@ -37,6 +37,7 @@ program test_context_isolation
     call test_cache_hit_reuses_shared_data()
 
     call print_summary_line("Context Isolation", total_tests - total_failures, total_tests)
+    call tap_finish()
     if (total_failures > 0) stop 1
 
 contains
@@ -151,7 +152,7 @@ contains
         call system_clock(t2)
         t_miss = real(t1 - t0, WP)/real(rate, WP)
         t_hit = real(t2 - t1, WP)/real(rate, WP)
-        write (*, '(A,F8.3,A,F8.3,A)') '    setup time: miss ', t_miss, ' s, hit ', t_hit, ' s'
+        write (*, '(A,F8.3,A,F8.3,A)') '# setup time: miss ', t_miss, ' s, hit ', t_hit, ' s'
 
         call assert_true(associated(ctx_miss%setup_cache, ctx_hit%setup_cache), &
                          "second context hits the first context's cache entry", total_tests, total_failures)
