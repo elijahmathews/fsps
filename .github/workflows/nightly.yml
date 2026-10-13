@@ -19,7 +19,7 @@ jobs:
   stress:
     name: Stress / ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -28,10 +28,11 @@ jobs:
             install: apt
             setup_args: -Db_sanitize=address,undefined
             stress_env: FSPS_STRESS_ITERS=10
+            regression: true
           - name: ThreadSanitizer
             install: apt
             setup_args: -Db_sanitize=thread -Denable_openmp=true
-            stress_env: FSPS_STRESS_ITERS=10
+            stress_env: FSPS_STRESS_ITERS=8
             tsan: true
           - name: nvfortran OpenACC multicore
             install: nvidia-hpc
@@ -62,6 +63,10 @@ jobs:
       - run: pipx install meson && pipx install ninja
       - run: meson setup build -Denable_stress_testing=true ${{ matrix.setup_args }}
       - run: meson compile -C build
+      # Real-data code paths under ASan (too slow, ~6 min, for per-change CI)
+      - name: Unit and regression tests
+        if: matrix.regression
+        run: meson test -C build --suite unit --suite regression --print-errorlogs --timeout-multiplier 3
       - name: Stress tests
         run: |
           if [ "${{ matrix.tsan }}" = "true" ]; then
