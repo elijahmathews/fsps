@@ -149,8 +149,9 @@ jobs:
       - name: Build
         run: meson compile -C build
 
+      # Coverage instrumentation slows the tests several-fold, so that build gets longer timeouts
       - name: Unit and regression tests
-        run: meson test -C build --suite unit --suite regression --print-errorlogs
+        run: meson test -C build --suite unit --suite regression --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
 
       # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
       - name: Report test results
