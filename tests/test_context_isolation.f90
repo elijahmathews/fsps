@@ -132,7 +132,8 @@ contains
     !> A second context with the same library selection must reuse the cached data without reading
     !> any file (deterministic: the process-wide count of shared-data loads does not change, and the
     !> setup takes a small fraction of a cold setup), receive identical per-context tables, and
-    !> produce bit-identical SSP and CSP output. Settings the shared data depend on must select a
+    !> produce the same SSP and CSP output (bit-identical in serial builds; to 1e-10 relative, since
+    !> OpenACC multicore reductions sum in a run-dependent order). Settings the shared data depend on must select a
     !> separate cache entry rather than silently reusing (or overwriting) another context's data.
     subroutine test_cache_hit_reuses_shared_data()
         type(fsps_context_t) :: ctx_miss, ctx_hit, ctx_other
@@ -176,15 +177,16 @@ contains
 
         call run_ssp(ctx_miss, mass_a, lbol_a, spec_a)
         call run_ssp(ctx_hit, mass_b, lbol_b, spec_b)
-        call assert_true(all(spec_a == spec_b) .and. all(mass_a == mass_b) .and. all(lbol_a == lbol_b), &
-                         "SSP output bit-identical on a cache hit", total_tests, total_failures)
+        call assert_true(same(reshape(spec_a, [size(spec_a)]), reshape(spec_b, [size(spec_b)])) .and. &
+                         same(mass_a, mass_b) .and. same(lbol_a, lbol_b), &
+                         "SSP output identical on a cache hit", total_tests, total_failures)
 
         call run_csp(ctx_miss, mass_a, lbol_a, spec_a, csp_a)
         call run_csp(ctx_hit, mass_b, lbol_b, spec_b, csp_b)
-        call assert_true(all(csp_a(1)%spec == csp_b(1)%spec) .and. all(csp_a(1)%mags == csp_b(1)%mags) .and. &
-                         all(csp_a(1)%emlines == csp_b(1)%emlines) .and. &
-                         csp_a(1)%mass_csp == csp_b(1)%mass_csp .and. csp_a(1)%lbol_csp == csp_b(1)%lbol_csp, &
-                         "CSP output (spectrum, mags, lines) bit-identical on a cache hit", &
+        call assert_true(same(csp_a(1)%spec, csp_b(1)%spec) .and. same(csp_a(1)%mags, csp_b(1)%mags) .and. &
+                         same(csp_a(1)%emlines, csp_b(1)%emlines) .and. &
+                         same([csp_a(1)%mass_csp, csp_a(1)%lbol_csp], [csp_b(1)%mass_csp, csp_b(1)%lbol_csp]), &
+                         "CSP output (spectrum, mags, lines) identical on a cache hit", &
                          total_tests, total_failures)
         call assert_true(any(csp_a(1)%emlines > 0.0_wp), "CSP exercises nebular line emission", &
                          total_tests, total_failures)
@@ -205,6 +207,14 @@ contains
         call fsps_destroy(ctx_hit)
         call fsps_destroy(ctx_miss)
     end subroutine test_cache_hit_reuses_shared_data
+
+    !> Element-wise equality to 1e-10 relative (a cache error gives order-unity differences).
+    logical function same(a, b)
+        real(WP), intent(in) :: a(:), b(:)
+
+        same = size(a) == size(b)
+        if (same) same = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+    end function same
 
     !> Configures a context for a nebular CSP and runs setup.
     subroutine setup_csp_context(ctx, cloudy_dust, vega_mags)
