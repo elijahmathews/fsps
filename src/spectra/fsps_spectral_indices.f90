@@ -220,7 +220,12 @@ contains
             area = (f1 + f2) * 0.5_wp * (hi - lo)
         else
             ! Sum full trapezoids between l1+1 and l2
-            term_trapz = integrate_trapezoid_array(lam(l1+1:l2), func(l1+1:l2))
+            ! Interior grid points l1+1..l2; a single point (l2 = l1 + 1) contributes no area
+            if (l2 > l1 + 1) then
+                term_trapz = integrate_trapezoid_array(lam(l1+1:l2), func(l1+1:l2))
+            else
+                term_trapz = 0.0_wp
+            end if
             
             ! Add fractional start triangle
             term1 = (lam(l1+1) - lo) * (f1 + func(l1+1)) * 0.5_wp

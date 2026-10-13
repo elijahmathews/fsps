@@ -41,6 +41,7 @@ module fsps_ssp
 
     !> Math Modules
     use fsps_interpolation, only: find_interval
+    use fsps_integration, only: integrate_trapezoid_array
 
     implicit none
     private
@@ -165,8 +166,14 @@ contains
             
             ! Copy pre-computed data for the requested metallicity
             spec_grid = ctx%state%bpass_spec_ssp(:, :, pset%zmet)
-            lbol_grid = 0.0_wp
             mass_grid = ctx%state%bpass_mass_ssp(:, pset%zmet)
+
+            ! BPASS ships no isochrones, so L_bol is the integral of the SSP spectrum
+            ! (Lsun/Hz over Hz). Legacy FSPS leaves it unset (log L = 0 at every age).
+            do i_time = 1, size(lbol_grid)
+                lbol_grid(i_time) = log10(max(integrate_trapezoid_array(ctx%state%spec_nu(1:size(spec_grid, 1)), &
+                                                                        spec_grid(:, i_time)), tiny(1.0_wp)))
+            end do
             
             ! Push the assigned arrays to the device so downstream device
             ! kernels (like CSP) see the valid data.

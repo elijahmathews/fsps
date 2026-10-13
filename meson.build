@@ -240,6 +240,28 @@ test('context_isolation', context_isolation_exe,
     timeout : 600
 )
 
+# Integration test: outputs checked against independent physical identities and published values
+physics_oracles_exe = executable('test_physics_oracles', 'tests/test_physics_oracles.f90',
+    dependencies : [fsps_dep, test_utils_dep])
+test('physics_oracles', physics_oracles_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 900
+)
+
+# Parameterized regression over the parity case matrix (shared with generate_opensps_fixtures.sh)
+param_regression_exe = executable('test_param_regression', 'tests/test_param_regression.f90',
+    dependencies : [fsps_dep, test_utils_dep])
+test('param_regression', param_regression_exe,
+    args : [
+        join_paths(meson.project_source_root(), 'tests/data/param_cases.psv'),
+        join_paths(meson.project_source_root(), 'tests/data/param_ref')
+    ],
+    env : regression_env,
+    suite : 'regression',
+    timeout : 1800
+)
+
 test('regression_miles_mist',
         test_runner_exe,
         args : [

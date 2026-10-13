@@ -386,13 +386,6 @@ program test_runner
         ! Check Arrays for EVERY time step
         call check_mags_1d('CSP Mags (flux)', ref_ocompsp(i)%mags, new_results(i)%mags, nbands_ctx)
 
-        ! Legacy behavior compatibility:
-        ! The reference files have 0.0 for indices (not computed).
-        ! The new module computes them automatically. Zero them out for comparison if ref is empty.
-        if (all(ref_ocompsp(i)%indx == 0.0_wp)) then
-            new_results(i)%indx = 0.0_wp
-        end if
-
         call check_array_1d('CSP Indx', ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx)
         call check_array_1d('CSP Emlines', ref_ocompsp(i)%emlines, new_results(i)%emlines, NEMLINE)
 

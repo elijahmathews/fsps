@@ -18,45 +18,63 @@ module test_fsps_sfh_mod
     real(WP), parameter :: EPS = 1.0e-6_wp
     real(WP), parameter :: REL_EPS = 1.0e-4_wp
 
+    !> Time interpolation used by the tests that hold for either scheme (run_fsps_sfh_tests
+    !> sweeps it over 1 = linear time and 0 = log time, the FSPS default).
+    integer :: sweep_interp = 1
+
 contains
 
     subroutine run_fsps_sfh_tests()
+        integer :: i_scheme
+        integer, parameter :: schemes(2) = [1, 0]
+        character(len=*), parameter :: scheme_names(2) = [character(len=11) :: "linear time", "log time   "]
+
         call print_minor_header("fsps_sfh")
 
-        call test_mass_conservation_tau()
-        call test_grid_invariance_delayed_tau()
-        call test_youngest_edge_includes_zero_bin()
+        ! Every test runs under both time-interpolation schemes. The SFH weights use separate
+        ! antiderivatives for each (eval_indefinite_moments_log / _lin), and log time is the
+        ! FSPS default.
+        do i_scheme = 1, size(schemes)
+            sweep_interp = schemes(i_scheme)
+            call print_group("SFH scheme: " // trim(scheme_names(i_scheme)))
 
-        call test_tabular_nonzero_weights()
-        call test_analytic_vs_tabular_match()
-        call test_simha_truncation_logic()
+            call test_mass_conservation_tau()
+            call test_grid_invariance_delayed_tau()
+            call test_youngest_edge_includes_zero_bin()
 
-        call test_ssfr_surviving_mass_normalization()
-        call test_mean_age_constant_sfh()
-        call test_tabular_unit_indexing()
+            call test_tabular_nonzero_weights()
+            call test_analytic_vs_tabular_match()
+            call test_simha_truncation_logic()
 
-        call test_ssp_type_zero_properties()
-        call test_tiny_tau_stability()
-        call test_empty_segment_cycle()
+            call test_ssfr_surviving_mass_normalization()
+            call test_mean_age_constant_sfh()
+            call test_tabular_unit_indexing()
 
-        call test_tabular_sfh_statistics_integration()
-        call test_tabular_sfh_statistics_zero_and_fallback()
-        call test_tabular_sfh_statistics_window_clipping()
+            call test_ssp_type_zero_properties()
+            call test_tiny_tau_stability()
+            call test_empty_segment_cycle()
 
-        call test_sfh_statistics_early_return()
-        call test_sfh_statistics_delayed_tau()
-        call test_sfh_statistics_burst_inclusion()
+            call test_tabular_sfh_statistics_integration()
+            call test_tabular_sfh_statistics_zero_and_fallback()
+            call test_tabular_sfh_statistics_window_clipping()
 
-        call test_eval_indefinite_moments_log_coverage()
-        call test_eval_indefinite_moments_log_overflow()
+            call test_sfh_statistics_early_return()
+            call test_sfh_statistics_delayed_tau()
+            call test_sfh_statistics_burst_inclusion()
 
-        call test_simha_no_truncation_effective()
-        call test_simha_before_sf_start()
+            call test_eval_indefinite_moments_log_coverage()
+            call test_eval_indefinite_moments_log_overflow()
 
-        call test_single_burst_log_interp()
-        call test_tabular_log_interp_nodes()
+            call test_simha_no_truncation_effective()
+            call test_simha_before_sf_start()
 
-        call test_moments_match_quadrature()
+            call test_single_burst_log_interp()
+            call test_tabular_log_interp_nodes()
+
+            call test_moments_match_quadrature()
+
+        end do
+        sweep_interp = 1
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_sfh_tests
@@ -149,7 +167,7 @@ contains
         n = 60
         allocate(time_full(n), weights(n))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         sfh%type = 1
         sfh%tau = 1.0e9_wp
@@ -192,8 +210,8 @@ contains
         grid_b(21) = 0.5_wp * (grid_a(20) + grid_a(21)) ! Insert midpoint
         grid_b(22:n+1) = grid_a(21:n)
 
-        call setup_sfh_context(ctx_a, grid_a, interpolation_type=1, tiny_logt=4.0_wp)
-        call setup_sfh_context(ctx_b, grid_b, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx_a, grid_a, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx_b, grid_b, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         allocate(weights_a(size(grid_a)))
         allocate(weights_b(size(grid_b)))
@@ -237,7 +255,7 @@ contains
         n = 30
         allocate(time_full(n), w_min0(n), w_min1(n))
         call fill_log_grid(time_full, 6.0_wp, 9.5_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         sfh%type = 0
         sfh%tau = 1.0_wp
@@ -275,7 +293,7 @@ contains
         n = 50
         allocate(time_full(n), weights(n))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         allocate(t_tab(4), sfr_tab(4))
         t_tab = [0.0_wp, 1.0e9_wp, 1.001e9_wp, 2.0e9_wp]
@@ -317,7 +335,7 @@ contains
         n = 80
         allocate(time_full(n), weights_a(n), weights_b(n))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         tau = 5.0e9_wp
         tmax = 1.0e10_wp
@@ -368,7 +386,7 @@ contains
 
         allocate(time_full(30))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 5
         pset%tau = 1.0_wp
@@ -400,7 +418,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 8.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 1
         pset%const = 1.0_wp
@@ -431,7 +449,7 @@ contains
 
         allocate(time_full(20))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 1
         pset%const = 1.0_wp
@@ -460,7 +478,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         allocate(t_tab(3), sfr_tab(3))
         t_tab = [1.0e8_wp, 1.0e9_wp, 2.0e9_wp]
@@ -491,7 +509,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 8.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 0
 
@@ -515,7 +533,7 @@ contains
         n = 25
         allocate(time_full(n), weights(n))
         call fill_log_grid(time_full, 6.0_wp, 9.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         sfh%type = 1
         sfh%tau = 1.0e4_wp
@@ -547,7 +565,7 @@ contains
         allocate(time_full(n), weights(n))
         call fill_log_grid(time_full, 6.0_wp, 9.0_wp)
         time_full(7) = time_full(6)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         sfh%type = 0
         sfh%tau = 1.0_wp
@@ -584,7 +602,7 @@ contains
         ! Setup minimal context
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         ! Allocate workspaces required for numerical SFH statistics
         allocate(ctx%state%sfh_t_calc(10))
@@ -636,7 +654,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         ! Allocate workspaces
         allocate(ctx%state%sfh_t_calc(10))
@@ -685,7 +703,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 8.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         allocate(ctx%state%sfh_t_calc(10))
         allocate(ctx%state%sfh_sfr_calc(10))
@@ -733,7 +751,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         ! Set SF start far in the future compared to the current model age
         pset%sf_start = 5.0_wp
@@ -762,7 +780,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 4
         pset%tau = 2.0_wp
@@ -800,7 +818,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 1
         pset%tau = 1.0_wp
@@ -944,7 +962,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 5
         pset%tau = 1.0_wp
@@ -974,7 +992,7 @@ contains
 
         allocate(time_full(10))
         call fill_log_grid(time_full, 6.0_wp, 10.0_wp)
-        call setup_sfh_context(ctx, time_full, interpolation_type=1, tiny_logt=4.0_wp)
+        call setup_sfh_context(ctx, time_full, interpolation_type=sweep_interp, tiny_logt=4.0_wp)
 
         pset%sfh = 5
         pset%tau = 1.0_wp

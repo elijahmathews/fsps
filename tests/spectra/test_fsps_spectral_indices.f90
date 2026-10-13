@@ -25,6 +25,7 @@ contains
         call test_scalar_accumulation_integrity()
         call test_sloped_continuum_normalization()
         call test_grid_gap_integration()
+        call test_single_interior_point()
 
         call test_equivalent_width_identity()
         call test_magnitude_identity()
@@ -116,6 +117,24 @@ contains
         call assert_float_equals(1200.0_wp, result, 1.0e-10_wp, &
                                  "Trapezoid area across coarse grid", total_tests, total_failures)
     end subroutine test_grid_gap_integration
+
+    !> A bandpass whose ends fall in adjacent grid intervals contains one grid point. The
+    !> interior trapezoid sum is then empty (zero), not undefined; on 20 A grids such as
+    !> BaSeL this is the case for most Lick indices (CN2, Ca4227, ...), which came out NaN.
+    subroutine test_single_interior_point()
+        real(WP), dimension(3) :: lambda, spec
+        real(WP) :: result
+
+        call print_group("Bandpass Containing One Grid Point")
+
+        lambda = [4070.0_wp, 4090.0_wp, 4110.0_wp]
+        spec = [1.0_wp, 3.0_wp, 5.0_wp]
+
+        ! f is linear, f(l) = 1 + (l - 4070)/10, so the area is the mean value times the width
+        result = integrate_interval(lambda, spec, 4083.875_wp, 4096.375_wp)
+        call assert_float_equals(12.5_wp * (1.0_wp + (4090.125_wp - 4070.0_wp) / 10.0_wp), result, 1.0e-10_wp, &
+                                 "area across one interior grid point", total_tests, total_failures)
+    end subroutine test_single_interior_point
 
     ! ------------------------------------------------------------------------
     ! Group 2: Index Types

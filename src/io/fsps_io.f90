@@ -1131,6 +1131,14 @@ contains
                 end if
             end if
 
+            ! The first grid point can lie just below the filter's first wavelength, where the
+            ! interpolation extrapolates the rising edge to a negative value. Clamp before
+            ! normalizing (legacy FSPS clamps after, so its integral of T/lambda exceeds 1 by up
+            ! to 0.4% and a flat f_nu source is not at M_AB = 0 in those bands).
+            where (ctx%state%bands(:, i_filt) < 0.0_wp)
+                ctx%state%bands(:, i_filt) = 0.0_wp
+            end where
+
             ! 4a. Normalize (Integral T/lambda dlambda = 1)
             ! --------------------------------------------
             ! We integrate (T / lambda)
@@ -1145,11 +1153,6 @@ contains
             else
                 ctx%state%bands(:, i_filt) = 0.0_wp ! Dead filter
             end if
-
-            ! Clamp to zero after normalization
-            where (ctx%state%bands(:, i_filt) < 0.0_wp)
-                ctx%state%bands(:, i_filt) = 0.0_wp
-            end where
 
         end do
 
