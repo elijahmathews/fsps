@@ -240,6 +240,15 @@ test('context_isolation', context_isolation_exe,
     timeout : 600
 )
 
+# Integration test: outputs checked against independent physical identities and published values
+physics_oracles_exe = executable('test_physics_oracles', 'tests/test_physics_oracles.f90',
+    dependencies : [fsps_dep, test_utils_dep])
+test('physics_oracles', physics_oracles_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 900
+)
+
 test('regression_miles_mist',
         test_runner_exe,
         args : [
