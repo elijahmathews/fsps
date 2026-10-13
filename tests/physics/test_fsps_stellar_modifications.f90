@@ -28,12 +28,14 @@ contains
         call test_bs_cache_safety()
         call test_bs_distribution()
         call test_bs_zams_vs_current()
+        call test_bs_zams_skips_pre_main_sequence()
 
         call test_gb_phase_selectivity()
         call test_gb_villaume_factor()
         call test_gb_conroy_gunn_lowz()
 
         call test_hb_cliff_padova()
+        call test_hb_cliff_padova_duplicate_mass()
         call test_hb_mist_redistribution()
 
         call test_remnant_ghost_mass()
@@ -390,6 +392,85 @@ contains
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_bs_zams_vs_current
 
+    !> MIST-like isochrone set whose youngest isochrone is still on the pre-main sequence
+    !> (phase -1) below some mass. The ZAMS reference must take those stars from the age at
+    !> which they reach the MS, not from the first isochrone. (Using the first isochrone, the
+    !> lowest-mass stars of an old isochrone already differ from the "ZAMS" by 1 dex, so no
+    !> turn-off is found and sbss has no effect.)
+    !>
+    !> ZAMS line: log L = log T, M_ini = log L + 1, with log T = 0.05 i (i = 1..60).
+    !> - Age 1: i <= 30 pre-MS (1 dex too bright), i > 30 on the MS.
+    !> - Age 2: every point on the MS.
+    !> - Age 3 (current): on the MS up to i = 20, 1 dex brighter beyond (turned off).
+    subroutine test_bs_zams_skips_pre_main_sequence()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: n_time = 3
+        integer, parameter :: n_curr = 60
+        integer, dimension(n_time) :: n_mass
+        real(WP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(WP), allocatable :: weights(:)
+        real(WP) :: expected_logl
+        integer :: i, it
+
+        call print_group("BS: ZAMS Skips Pre-Main Sequence")
+
+        allocate(ctx)
+        allocate(ctx%state%logl_isoc(1, n_time, NM), ctx%state%logt_isoc(1, n_time, NM), &
+                 ctx%state%mini_isoc(1, n_time, NM), ctx%state%phase_isoc(1, n_time, NM), &
+                 ctx%state%nmass_isoc(1, n_time))
+        allocate(mass_ini(n_time, NM), mass_act(n_time, NM), log_l(n_time, NM), log_t(n_time, NM), &
+                 log_g(n_time, NM), phase(n_time, NM), weights(NM))
+
+        mass_ini = 0.0_wp
+        mass_act = 0.0_wp
+        log_l = 0.0_wp
+        log_t = 0.0_wp
+        log_g = 0.0_wp
+        phase = 0.0_wp
+        weights = 0.0_wp
+
+        do it = 1, n_time
+            do i = 1, n_curr
+                log_t(it, i) = 0.05_wp * real(i, WP)
+                log_l(it, i) = log_t(it, i)
+                mass_ini(it, i) = log_t(it, i) + 1.0_wp
+                if (it == 1 .and. i <= 30) then
+                    log_l(it, i) = log_l(it, i) + 1.0_wp
+                    phase(it, i) = -1.0_wp
+                end if
+                if (it == 3 .and. i > 20) log_l(it, i) = log_l(it, i) + 1.0_wp
+            end do
+        end do
+        mass_act = mass_ini
+        weights(1:n_curr) = 1.0_wp
+        n_mass = n_curr
+
+        ctx%state%logl_isoc(1, :, :) = log_l
+        ctx%state%logt_isoc(1, :, :) = log_t
+        ctx%state%mini_isoc(1, :, :) = mass_ini
+        ctx%state%phase_isoc(1, :, :) = phase
+        ctx%state%nmass_isoc(1, :) = n_curr
+        ctx%zin = 0
+
+        call apply_blue_stragglers(ctx, 3, 1, 1.0_wp, 10.0_wp, n_mass, mass_ini, mass_act, &
+                                   log_l, log_t, log_g, phase, weights)
+
+        ! Turn-off at i = 20 (log L = 1.0); the first straggler sits 0.2 + 0.75/20 dex above it
+        expected_logl = 1.0_wp + 0.2_wp + 0.75_wp / 20.0_wp
+        call assert_int_equals(n_curr + 20, n_mass(3), "stragglers appended", total_tests, total_failures)
+        call assert_float_equals(expected_logl, log_l(3, n_curr + 1), EPS, "first straggler log L", &
+                                 total_tests, total_failures)
+        call assert_float_equals(expected_logl + 1.0_wp, mass_ini(3, n_curr + 1), EPS, &
+                                 "first straggler mass from ZAMS", total_tests, total_failures)
+        call assert_float_equals(expected_logl, log_t(3, n_curr + 1), EPS, &
+                                 "first straggler log T from ZAMS", total_tests, total_failures)
+
+        deallocate(ctx%state%logl_isoc, ctx%state%logt_isoc, ctx%state%mini_isoc, ctx%state%phase_isoc, &
+                   ctx%state%nmass_isoc)
+        deallocate(ctx)
+        deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+    end subroutine test_bs_zams_skips_pre_main_sequence
+
     ! --------------------------------------------------------------------
     ! GROUP 2: GIANT BRANCH TESTS
     ! --------------------------------------------------------------------
@@ -565,6 +646,51 @@ contains
         deallocate(ctx)
         deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
     end subroutine test_hb_cliff_padova
+
+    !> The Padova tables repeat the tip-of-RGB initial mass at the drop onto the HB, so the
+    !> cliff has dM_ini = 0 (467 of the 753 Padova isochrones with an HB). Legacy MOD_HB
+    !> divides by zero there, giving a -Inf gradient that passes the cliff test, and stops
+    !> looking for the HB once it has left it. Points 2-4 are the HB; the later 3.0 -> 2.9 dip
+    !> (an AGB glitch) must not be taken for a second HB.
+    subroutine test_hb_cliff_padova_duplicate_mass()
+        type(fsps_context_t), allocatable :: ctx
+        integer, parameter :: n_time = 1
+        integer, parameter :: n_curr = 6
+        integer, dimension(n_time) :: n_mass
+        real(WP), allocatable :: mass_ini(:,:), mass_act(:,:), log_l(:,:), log_t(:,:), log_g(:,:), phase(:,:)
+        real(WP), allocatable :: weights(:)
+        real(WP) :: hb_total_weight
+
+        call print_group("HB: Padova Cliff at Repeated Mass")
+
+        allocate(ctx)
+        allocate(mass_ini(n_time, NM), mass_act(n_time, NM), log_l(n_time, NM), log_t(n_time, NM), &
+                 log_g(n_time, NM), phase(n_time, NM), weights(NM))
+
+        mass_ini = 0.0_wp
+        log_l = 0.0_wp
+        log_t = 3.7_wp
+        log_g = 0.0_wp
+        phase = 0.0_wp
+        weights = 0.0_wp
+
+        mass_ini(1, 1:n_curr) = [1.0_wp, 1.0_wp, 1.001_wp, 1.002_wp, 1.0021_wp, 1.00211_wp]
+        mass_act = mass_ini
+        log_l(1, 1:n_curr) = [3.3_wp, 1.6_wp, 1.62_wp, 1.65_wp, 3.0_wp, 2.9_wp]
+        weights(1:n_curr) = [1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp, 5.0_wp, 6.0_wp]
+
+        n_mass(1) = n_curr
+        ctx%state%isoc_type = 'pdva'
+
+        call modify_horizontal_branch(ctx, 1, 0.0_wp, 10.0_wp, hb_total_weight, n_mass, mass_ini, mass_act, &
+                                      log_l, log_t, log_g, phase, weights)
+
+        call assert_float_equals(9.0_wp, hb_total_weight, EPS, "HB found at repeated mass, later dip ignored", &
+                                 total_tests, total_failures)
+
+        deallocate(ctx)
+        deallocate(mass_ini, mass_act, log_l, log_t, log_g, phase, weights)
+    end subroutine test_hb_cliff_padova_duplicate_mass
 
     subroutine test_hb_mist_redistribution()
         type(fsps_context_t), allocatable :: ctx
@@ -895,10 +1021,14 @@ contains
         if (.not. associated(ctx%state%logl_isoc)) allocate(ctx%state%logl_isoc(1, 1, NM))
         if (.not. associated(ctx%state%logt_isoc)) allocate(ctx%state%logt_isoc(1, 1, NM))
         if (.not. associated(ctx%state%mini_isoc)) allocate(ctx%state%mini_isoc(1, 1, NM))
+        if (.not. associated(ctx%state%phase_isoc)) allocate(ctx%state%phase_isoc(1, 1, NM))
+        if (.not. associated(ctx%state%nmass_isoc)) allocate(ctx%state%nmass_isoc(1, 1))
         
         ctx%state%logl_isoc = 0.0_wp
         ctx%state%logt_isoc = 0.0_wp
         ctx%state%mini_isoc = 0.0_wp
+        ctx%state%phase_isoc = 0.0_wp
+        ctx%state%nmass_isoc = NM
     end subroutine setup_zams_context
 
     subroutine teardown_zams_context(ctx)
@@ -907,6 +1037,8 @@ contains
         if (associated(ctx%state%logl_isoc)) deallocate(ctx%state%logl_isoc)
         if (associated(ctx%state%logt_isoc)) deallocate(ctx%state%logt_isoc)
         if (associated(ctx%state%mini_isoc)) deallocate(ctx%state%mini_isoc)
+        if (associated(ctx%state%phase_isoc)) deallocate(ctx%state%phase_isoc)
+        if (associated(ctx%state%nmass_isoc)) deallocate(ctx%state%nmass_isoc)
     end subroutine teardown_zams_context
 
 end module test_fsps_stellar_modifications_mod
