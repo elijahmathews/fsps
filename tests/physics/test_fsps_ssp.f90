@@ -528,6 +528,8 @@ contains
         n_time = 2
         allocate(ctx%state%bpass_spec_ssp(n_wave, n_time, 1))
         allocate(ctx%state%bpass_mass_ssp(n_time, 1))
+        allocate(ctx%state%spec_nu(n_wave))
+        ctx%state%spec_nu = [3.0_wp, 2.0_wp, 1.0_wp]
 
         ctx%state%check_sps_setup = 1
         ctx%state%nz = 1
@@ -551,11 +553,15 @@ contains
         call assert_float_equals(3.5_wp, mass_grid(2), EPS, "BPASS mass idx2", total_tests, total_failures)
         call assert_float_equals(1.0_wp, spec_grid(1, 1), EPS, "BPASS spec (1,1)", total_tests, total_failures)
         call assert_float_equals(6.0_wp, spec_grid(3, 2), EPS, "BPASS spec (3,2)", total_tests, total_failures)
-        call assert_float_equals(0.0_wp, lbol_grid(1), EPS, "BPASS lbol zero", total_tests, total_failures)
+        ! L_bol is the frequency integral of the spectrum: (1+2)/2 + (2+3)/2 = 4 and (4+5)/2 + (5+6)/2 = 10
+        call assert_float_equals(log10(4.0_wp), lbol_grid(1), EPS, "BPASS lbol from spectrum idx1", &
+                                 total_tests, total_failures)
+        call assert_float_equals(1.0_wp, lbol_grid(2), EPS, "BPASS lbol from spectrum idx2", total_tests, total_failures)
 
         deallocate(mass_grid, lbol_grid, spec_grid)
         if (associated(ctx%state%bpass_spec_ssp)) deallocate(ctx%state%bpass_spec_ssp)
         if (associated(ctx%state%bpass_mass_ssp)) deallocate(ctx%state%bpass_mass_ssp)
+        if (associated(ctx%state%spec_nu)) deallocate(ctx%state%spec_nu)
         deallocate(ctx)
     end subroutine test_bpass_short_circuit
 
