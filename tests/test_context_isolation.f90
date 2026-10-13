@@ -177,8 +177,7 @@ contains
 
         call run_ssp(ctx_miss, mass_a, lbol_a, spec_a)
         call run_ssp(ctx_hit, mass_b, lbol_b, spec_b)
-        call assert_true(same(reshape(spec_a, [size(spec_a)]), reshape(spec_b, [size(spec_b)])) .and. &
-                         same(mass_a, mass_b) .and. same(lbol_a, lbol_b), &
+        call assert_true(same_2d(spec_a, spec_b) .and. same(mass_a, mass_b) .and. same(lbol_a, lbol_b), &
                          "SSP output identical on a cache hit", total_tests, total_failures)
 
         call run_csp(ctx_miss, mass_a, lbol_a, spec_a, csp_a)
@@ -215,6 +214,14 @@ contains
         same = size(a) == size(b)
         if (same) same = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
     end function same
+
+    !> same() for a 2-D array, without reshaping (ifx would put the 5 MB temporary on the stack).
+    logical function same_2d(a, b)
+        real(WP), intent(in) :: a(:, :), b(:, :)
+
+        same_2d = all(shape(a) == shape(b))
+        if (same_2d) same_2d = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+    end function same_2d
 
     !> Configures a context for a nebular CSP and runs setup.
     subroutine setup_csp_context(ctx, cloudy_dust, vega_mags)
