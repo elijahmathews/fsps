@@ -7,8 +7,12 @@ program test_param_regression
     !> the CSP spectra, magnitudes, indices and lines at up to five outputs.
     !>
     !> Usage:
-    !>   test_param_regression CASES.psv REF_DIR             compare (exit 1 on any mismatch)
-    !>   test_param_regression CASES.psv REF_DIR --generate  write the references
+    !>   test_param_regression CASES.psv REF_DIR [options]
+    !> Options:
+    !>   --generate          write the references instead of comparing (exit 1 on any mismatch)
+    !>   --only PREFIX       run only cases whose name starts with PREFIX (used to shard the suite)
+    !>   --skip-spec PREFIX  skip cases whose spectral library starts with PREFIX (e.g. c3k, when
+    !>                       a checkout omits that library's data)
     !>
     !> Tolerance: FSPS_TEST_RTOL (default 1e-5), relative to the larger magnitude of the two values,
     !> with an absolute floor of 1e-10 times the array's largest reference value. Magnitudes and
@@ -28,7 +32,7 @@ program test_param_regression
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
                             fsps_context_set_param_int, fsps_context_set_param_float
     use fsps_context_types, only: fsps_context_t
-    use test_utils_mod, only: print_major_header, print_group, print_summary_line, assert_true
+    use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
     implicit none
 
     integer, parameter :: MAX_ARRAYS = 32
@@ -45,7 +49,9 @@ program test_param_regression
     type(named_array_t) :: arrays(MAX_ARRAYS), refs(MAX_ARRAYS)
     integer :: n_arrays, n_refs
     character(len=1024) :: case_file, ref_dir, arg, line
-    logical :: generate
+    character(len=256) :: only_prefix = '', skip_spec = ''
+    logical :: generate = .false.
+    integer :: i_arg, n_skipped
     integer :: unit_cases, ios, n_cases
     real(WP) :: rtol
     ! Contexts are ~2.4 MB each, so they live on the heap rather than the stack
@@ -57,12 +63,28 @@ program test_param_regression
 
     call get_command_argument(1, case_file)
     call get_command_argument(2, ref_dir)
-    call get_command_argument(3, arg)
-    generate = (trim(arg) == '--generate')
     if (len_trim(case_file) == 0 .or. len_trim(ref_dir) == 0) then
-        write(*, *) 'usage: test_param_regression CASES.psv REF_DIR [--generate]'
+        write(*, *) 'usage: test_param_regression CASES.psv REF_DIR [--generate] [--only PREFIX] [--skip-spec PREFIX]'
         stop 1
     end if
+    i_arg = 3
+    do while (i_arg <= command_argument_count())
+        call get_command_argument(i_arg, arg)
+        select case (trim(arg))
+        case ('--generate')
+            generate = .true.
+        case ('--only')
+            i_arg = i_arg + 1
+            call get_command_argument(i_arg, only_prefix)
+        case ('--skip-spec')
+            i_arg = i_arg + 1
+            call get_command_argument(i_arg, skip_spec)
+        case default
+            write(*, *) 'ERROR: unknown option ', trim(arg)
+            stop 1
+        end select
+        i_arg = i_arg + 1
+    end do
     rtol = env_real('FSPS_TEST_RTOL', 1.0e-5_wp)
     allocate(pinned(MAX_LIBRARIES))
 
@@ -74,26 +96,51 @@ program test_param_regression
         stop 1
     end if
     n_cases = 0
+    n_skipped = 0
     do
         read(unit_cases, '(A)', iostat=ios) line
         if (ios /= 0) exit
         if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
+        if (.not. selected(trim(line))) then
+            n_skipped = n_skipped + 1
+            cycle
+        end if
         n_cases = n_cases + 1
         call run_case(trim(line))
     end do
+    write(*, '(A,I0,A,I0,A)') '# Ran ', n_cases, ' cases (', n_skipped, ' not selected)'
     close(unit_cases)
     do ios = 1, n_pinned
         call fsps_destroy(pinned(ios))
     end do
+    deallocate(pinned)
 
     if (generate) then
-        write(*, '(A,I0,2A)') ' Wrote ', n_cases, ' references to ', trim(ref_dir)
+        write(*, '(A,I0,2A)') '# Wrote ', n_cases, ' references to ', trim(ref_dir)
     else
         call print_summary_line("Parameterized Regression", total_tests - total_failures, total_tests)
+        call tap_finish()
         if (total_failures > 0) stop 1
     end if
 
 contains
+
+    !> True if the case passes the --only and --skip-spec filters.
+    logical function selected(spec_line)
+        character(len=*), intent(in) :: spec_line
+        character(len=256) :: fields(6)
+
+        call split_fields(spec_line, fields)
+        selected = .true.
+        if (len_trim(only_prefix) > 0) selected = index(fields(1), trim(only_prefix)) == 1
+        if (len_trim(skip_spec) > 0) then
+            if (index(fields(3), trim(skip_spec)) == 1) then
+                selected = .false.
+                if (len_trim(only_prefix) == 0 .or. index(fields(1), trim(only_prefix)) == 1) &
+                    write(*, '(3A)') '# SKIP ', trim(fields(1)), ' (spectral library data not in this checkout)'
+            end if
+        end if
+    end function selected
 
     !> Runs one case line: name|isoc|spec|dust|flags|key=value ...
     subroutine run_case(spec_line)
@@ -197,7 +244,6 @@ contains
         integer :: i, j, k, n_bad
         logical :: absolute
         real(real64) :: floor, diff, worst, a, b
-        character(len=160) :: msg
 
         call print_group(name)
         if (.not. read_opsf(trim(ref_dir) // '/' // name // '.opsf')) then
@@ -232,8 +278,9 @@ contains
                     worst = max(worst, diff)
                 end if
             end do
-            write(msg, '(A,A,ES9.2,A,I0,A)') trim(arrays(i)%name), ": worst ", worst, " (", n_bad, " outside tolerance)"
-            call assert_true(n_bad == 0, trim(msg), total_tests, total_failures)
+            write(*, '(3A,ES9.2,A,I0,A)') '# ', trim(arrays(i)%name), ": worst ", worst, " (", n_bad, &
+                " outside tolerance)"
+            call assert_true(n_bad == 0, trim(arrays(i)%name) // " within tolerance", total_tests, total_failures)
         end do
     end subroutine compare_case
 

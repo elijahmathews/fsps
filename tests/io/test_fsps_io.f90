@@ -847,6 +847,8 @@ contains
         call assert_true(ctx%state%magvega(1) < 90.0_wp, "Vega Mag calculated", total_tests, total_failures)
         call assert_true(ctx%state%magsun(1) < 90.0_wp, "Sun Mag calculated", total_tests, total_failures)
 
+        deallocate(ctx%state%spec_lambda, ctx%state%spec_nu, ctx%state%bands, ctx%state%filter_leff, &
+                   ctx%state%vega_spec, ctx%state%sun_spec, ctx%state%magvega, ctx%state%magsun)
         if (allocated(ctx)) deallocate(ctx)
     end subroutine test_load_standard_sed
 
@@ -882,6 +884,7 @@ contains
         call assert_true(ctx%state%lsfinfo%lsf(25) > 10.0_wp .and. ctx%state%lsfinfo%lsf(25) < 20.0_wp, &
                          "LSF interpolated", total_tests, total_failures)
 
+        deallocate(ctx%state%spec_lambda, ctx%state%lsfinfo%lsf)
         deallocate(ctx)
     end subroutine test_load_lsf_data
 
@@ -944,6 +947,7 @@ contains
         ! If we didn't crash, and values are non-zero, success.
         call assert_true(ctx%state%wgdust(1, 1, 1, 1) > 0.0_wp, "WG dust loaded", total_tests, total_failures)
 
+        deallocate(ctx%state%spec_lambda, ctx%state%wgdust, ctx%state%g03smcextn)
         deallocate(ctx)
     end subroutine test_attenuation_curves
 
@@ -982,6 +986,7 @@ contains
         call assert_float_equals(4000.0_wp, ctx%state%indexdefined(1, 30), 1.0e-6_wp, &
                                  "High index untouched", total_tests, total_failures)
 
+        deallocate(ctx%state%indexdefined)
         deallocate(ctx)
     end subroutine test_index_definitions
 

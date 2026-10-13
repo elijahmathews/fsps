@@ -21,7 +21,7 @@ program test_context_isolation
     use fsps_initialization, only: fsps_shared_load_count
     use fsps_ssp, only: generate_ssp_grid
     use fsps_csp, only: compute_csp_scenario
-    use test_utils_mod, only: print_major_header, print_group, print_summary_line, assert_true, &
+    use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true, &
                               assert_int_equals
     implicit none
 
@@ -37,6 +37,7 @@ program test_context_isolation
     call test_cache_hit_reuses_shared_data()
 
     call print_summary_line("Context Isolation", total_tests - total_failures, total_tests)
+    call tap_finish()
     if (total_failures > 0) stop 1
 
 contains
@@ -131,7 +132,8 @@ contains
     !> A second context with the same library selection must reuse the cached data without reading
     !> any file (deterministic: the process-wide count of shared-data loads does not change, and the
     !> setup takes a small fraction of a cold setup), receive identical per-context tables, and
-    !> produce bit-identical SSP and CSP output. Settings the shared data depend on must select a
+    !> produce the same SSP and CSP output (bit-identical in serial builds; to 1e-10 relative, since
+    !> OpenACC multicore reductions sum in a run-dependent order). Settings the shared data depend on must select a
     !> separate cache entry rather than silently reusing (or overwriting) another context's data.
     subroutine test_cache_hit_reuses_shared_data()
         type(fsps_context_t) :: ctx_miss, ctx_hit, ctx_other
@@ -151,7 +153,7 @@ contains
         call system_clock(t2)
         t_miss = real(t1 - t0, WP)/real(rate, WP)
         t_hit = real(t2 - t1, WP)/real(rate, WP)
-        write (*, '(A,F8.3,A,F8.3,A)') '    setup time: miss ', t_miss, ' s, hit ', t_hit, ' s'
+        write (*, '(A,F8.3,A,F8.3,A)') '# setup time: miss ', t_miss, ' s, hit ', t_hit, ' s'
 
         call assert_true(associated(ctx_miss%setup_cache, ctx_hit%setup_cache), &
                          "second context hits the first context's cache entry", total_tests, total_failures)
@@ -175,15 +177,15 @@ contains
 
         call run_ssp(ctx_miss, mass_a, lbol_a, spec_a)
         call run_ssp(ctx_hit, mass_b, lbol_b, spec_b)
-        call assert_true(all(spec_a == spec_b) .and. all(mass_a == mass_b) .and. all(lbol_a == lbol_b), &
-                         "SSP output bit-identical on a cache hit", total_tests, total_failures)
+        call assert_true(same_2d(spec_a, spec_b) .and. same(mass_a, mass_b) .and. same(lbol_a, lbol_b), &
+                         "SSP output identical on a cache hit", total_tests, total_failures)
 
         call run_csp(ctx_miss, mass_a, lbol_a, spec_a, csp_a)
         call run_csp(ctx_hit, mass_b, lbol_b, spec_b, csp_b)
-        call assert_true(all(csp_a(1)%spec == csp_b(1)%spec) .and. all(csp_a(1)%mags == csp_b(1)%mags) .and. &
-                         all(csp_a(1)%emlines == csp_b(1)%emlines) .and. &
-                         csp_a(1)%mass_csp == csp_b(1)%mass_csp .and. csp_a(1)%lbol_csp == csp_b(1)%lbol_csp, &
-                         "CSP output (spectrum, mags, lines) bit-identical on a cache hit", &
+        call assert_true(same(csp_a(1)%spec, csp_b(1)%spec) .and. same(csp_a(1)%mags, csp_b(1)%mags) .and. &
+                         same(csp_a(1)%emlines, csp_b(1)%emlines) .and. &
+                         same([csp_a(1)%mass_csp, csp_a(1)%lbol_csp], [csp_b(1)%mass_csp, csp_b(1)%lbol_csp]), &
+                         "CSP output (spectrum, mags, lines) identical on a cache hit", &
                          total_tests, total_failures)
         call assert_true(any(csp_a(1)%emlines > 0.0_wp), "CSP exercises nebular line emission", &
                          total_tests, total_failures)
@@ -204,6 +206,22 @@ contains
         call fsps_destroy(ctx_hit)
         call fsps_destroy(ctx_miss)
     end subroutine test_cache_hit_reuses_shared_data
+
+    !> Element-wise equality to 1e-10 relative (a cache error gives order-unity differences).
+    logical function same(a, b)
+        real(WP), intent(in) :: a(:), b(:)
+
+        same = size(a) == size(b)
+        if (same) same = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+    end function same
+
+    !> same() for a 2-D array, without reshaping (ifx would put the 5 MB temporary on the stack).
+    logical function same_2d(a, b)
+        real(WP), intent(in) :: a(:, :), b(:, :)
+
+        same_2d = all(shape(a) == shape(b))
+        if (same_2d) same_2d = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+    end function same_2d
 
     !> Configures a context for a nebular CSP and runs setup.
     subroutine setup_csp_context(ctx, cloudy_dust, vega_mags)

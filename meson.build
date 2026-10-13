@@ -205,7 +205,23 @@ tests_units_exe = executable(
     unit_test_sources, 
     dependencies : [fsps_dep, test_utils_dep]
 )
-test('unit_tests', tests_units_exe, suite : 'unit')
+# One TAP test per module: meson runs them in parallel and reports every assertion
+unit_env = environment()
+unit_env.set('FSPS_TEST_TAP', '1')
+unit_modules = [
+    'fsps_cache', 'fsps_context', 'fsps_context_types', 'fsps_strings', 'fsps_types', 'fsps_io',
+    'fsps_integration', 'fsps_interpolation', 'fsps_special_functions', 'fsps_cosmology', 'fsps_csp',
+    'fsps_dust', 'fsps_gas', 'fsps_imf', 'fsps_sfh', 'fsps_ssp', 'fsps_stellar_modifications',
+    'fsps_photometry', 'fsps_smoothing', 'fsps_spectral_indices', 'fsps_spectral_library',
+]
+foreach unit_module : unit_modules
+    test('unit_' + unit_module.substring(5), tests_units_exe,
+        args : [unit_module],
+        env : unit_env,
+        protocol : 'tap',
+        suite : 'unit'
+    )
+endforeach
 
 # 3. Other Test Drivers
 test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
@@ -227,14 +243,24 @@ if get_option('enable_stress_testing')
 endif
 
 # 3a. Regression Tests (run through Meson test framework)
+# The C3K library (~600 MB) may be left out of a checkout (e.g. a sparse CI clone); its tests are
+# then skipped rather than failing on missing files.
+fs = import('fs')
+c3k_available = fs.is_dir('data/spectra/C3K')
+if not c3k_available
+    message('data/spectra/C3K not found: C3K regression tests are skipped')
+endif
 regression_env = environment()
 regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
 regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
+# Programs built on tests/test_utils.f90 report each assertion as TAP
+regression_env.set('FSPS_TEST_TAP', '1')
 
 # Integration test: contexts sharing a setup cache must not leak state into each other
 context_isolation_exe = executable('test_context_isolation', 'tests/test_context_isolation.f90',
     dependencies : [fsps_dep, test_utils_dep])
 test('context_isolation', context_isolation_exe,
+    protocol : 'tap',
     env : regression_env,
     suite : 'regression',
     timeout : 600
@@ -244,23 +270,30 @@ test('context_isolation', context_isolation_exe,
 physics_oracles_exe = executable('test_physics_oracles', 'tests/test_physics_oracles.f90',
     dependencies : [fsps_dep, test_utils_dep])
 test('physics_oracles', physics_oracles_exe,
+    protocol : 'tap',
     env : regression_env,
     suite : 'regression',
     timeout : 900
 )
 
-# Parameterized regression over the parity case matrix (shared with generate_opensps_fixtures.sh)
+# Parameterized regression over the parity case matrix (shared with generate_opensps_fixtures.sh),
+# sharded by case family so that meson runs the shards in parallel
 param_regression_exe = executable('test_param_regression', 'tests/test_param_regression.f90',
     dependencies : [fsps_dep, test_utils_dep])
-test('param_regression', param_regression_exe,
-    args : [
-        join_paths(meson.project_source_root(), 'tests/data/param_cases.psv'),
-        join_paths(meson.project_source_root(), 'tests/data/param_ref')
-    ],
-    env : regression_env,
-    suite : 'regression',
-    timeout : 1800
-)
+param_filter_args = c3k_available ? [] : ['--skip-spec', 'c3k']
+foreach shard : ['ssp_', 'csp_', 'lib_']
+    test('param_regression_' + shard.strip('_'), param_regression_exe,
+        protocol : 'tap',
+        args : [
+            join_paths(meson.project_source_root(), 'tests/data/param_cases.psv'),
+            join_paths(meson.project_source_root(), 'tests/data/param_ref'),
+            '--only', shard
+        ] + param_filter_args,
+        env : regression_env,
+        suite : 'regression',
+        timeout : 1200
+    )
+endforeach
 
 test('regression_miles_mist',
         test_runner_exe,
@@ -295,16 +328,18 @@ test('regression_themis_dust',
         timeout : 300
 )
 
-test('regression_c3k_mist',
-        test_runner_exe,
-        args : [
-            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_C3K-1_MIST-1.bin'),
-            '--isoc', 'mist', '--spec', 'c3k_afe+0.0'
-        ],
-        env : regression_env,
-        suite : 'regression',
-        timeout : 300
-)
+if c3k_available
+    test('regression_c3k_mist',
+            test_runner_exe,
+            args : [
+                join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_C3K-1_MIST-1.bin'),
+                '--isoc', 'mist', '--spec', 'c3k_afe+0.0'
+            ],
+            env : regression_env,
+            suite : 'regression',
+            timeout : 300
+    )
+endif
 
 test('regression_bpass',
         test_runner_exe,

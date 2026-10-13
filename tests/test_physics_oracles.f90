@@ -27,7 +27,7 @@ program test_physics_oracles
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
                             fsps_context_set_param_int, fsps_context_set_param_float
     use fsps_context_types, only: fsps_context_t
-    use test_utils_mod, only: print_major_header, print_group, print_summary_line, assert_true, &
+    use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true, &
                               assert_relative_error
     implicit none
 
@@ -41,6 +41,7 @@ program test_physics_oracles
     call run_bpass_checks()
 
     call print_summary_line("Physics Oracles", total_tests - total_failures, total_tests)
+    call tap_finish()
     if (total_failures > 0) stop 1
 
 contains
@@ -152,7 +153,7 @@ contains
                 i_worst = i
             end if
         end do
-        write(*, '(A,F8.5,A,F6.2)') "   max |L_spec / L_isoc - 1| = ", worst, " at log t = ", &
+        write(*, '(A,F8.5,A,F6.2)') "# max |L_spec / L_isoc - 1| = ", worst, " at log t = ", &
             ctx%state%time_full(i_worst)
         write(msg, '(A,ES8.1)') "all ages agree within ", rel_tol
         call assert_true(worst <= rel_tol, trim(msg), total_tests, total_failures)
@@ -203,7 +204,7 @@ contains
         l_hbeta = results(1)%emlines(i_hbeta) * L_SOL
 
         ratio = l_hbeta / q_h0
-        write(*, '(A,ES10.3,A,ES10.3,A,ES10.3)') "   Q(H0) = ", q_h0, " s^-1, L(Hb) = ", l_hbeta, &
+        write(*, '(A,ES10.3,A,ES10.3,A,ES10.3)') "# Q(H0) = ", q_h0, " s^-1, L(Hb) = ", l_hbeta, &
             " erg/s, ratio = ", ratio
         call assert_relative_error(CASE_B_HBETA, ratio, 0.25_wp, "L(H-beta) / Q(H0) within 25% of Case B", &
                                    total_tests, total_failures)
@@ -238,7 +239,7 @@ contains
 
         use_band = (mags == mags)
         use_band(pack(renormalized, renormalized <= size(mags))) = .false.
-        write(*, '(A,ES10.3)') "   max |M_AB| = ", maxval(abs(mags), mask=use_band)
+        write(*, '(A,ES10.3)') "# max |M_AB| = ", maxval(abs(mags), mask=use_band)
         ! FSPS uses the 48.60 zero point, i.e. 3630.8 Jy, so 3631 Jy is at -5e-5 mag
         write(msg, '(I0,A)') count(use_band), " bands give M_AB = 0 (to 1e-4 mag)"
         call assert_true(all(abs(mags) < 1.0e-4_wp .or. .not. use_band), trim(msg), total_tests, total_failures)
@@ -265,7 +266,7 @@ contains
         call print_group("Solar absolute AB magnitudes vs Willmer (2018)")
 
         do k = 1, n_check
-            write(*, '(3A,F6.3,A,F6.3)') "   ", names(k), ": FSPS ", ctx%state%magsun(band(k)), &
+            write(*, '(3A,F6.3,A,F6.3)') "# ", names(k), ": FSPS ", ctx%state%magsun(band(k)), &
                 "  Willmer ", willmer_ab(k)
             write(msg, '(2A,F4.2,A)') trim(names(k)), " within ", tol(k), " mag"
             call assert_true(abs(ctx%state%magsun(band(k)) - willmer_ab(k)) < tol(k), trim(msg), &
