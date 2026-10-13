@@ -6,7 +6,10 @@ module fsps_initialization
     !> This module replaces the legacy `sps_setup.f90`. It orchestrates the setup process:
     !> 1. Determines array dimensions based on selected physics models (MIST vs Padova, MILES vs BaSeL).
     !> 2. Manages the shared data cache (allocating new memory or linking to existing caches).
-    !> 3. Calls `fsps_io` to load data from disk if the cache is cold.
+    !> 3. Calls `fsps_io` to load data from disk only if the cache is cold. A context that hits
+    !>    an existing entry reads no files and never writes the shared arrays (other contexts
+    !>    may be computing from them); it only copies the small per-context tables recorded in
+    !>    the entry and computes its own context-local state.
     !> 4. Pre-calculates derived physical quantities (redshift grids, cosmology).
 
     use iso_fortran_env, only: error_unit
@@ -20,7 +23,8 @@ module fsps_initialization
                               NT_BASTI, NZ_BASTI, NT_GENEVA, NZ_GENEVA
     use fsps_strings, only: to_lower
     use fsps_context_types, only: fsps_context_t
-    use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup, fsps_setup_lock, fsps_setup_unlock
+    use fsps_cache, only: fsps_setup_cache_t, fsps_setup_tables_t, fsps_cache_get_setup, &
+                          fsps_setup_lock, fsps_setup_unlock
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup
     use fsps_io, only: load_zlegend_file, load_wavelength_grid, load_spectral_resolution, &
                        read_isochrone_database, read_spectral_binary, read_bpass_data, &
@@ -37,14 +41,54 @@ module fsps_initialization
     implicit none
     private
 
-    ! Only the main driver is public
+    ! Only the main driver is public (plus a read-only diagnostic counter for tests)
     public :: fsps_initialize_data
+    public :: fsps_shared_load_count
 
     ! ---------------------------------------------------------------------
-    ! Module constants
+    ! Module state
     ! ---------------------------------------------------------------------
+
+    !> Number of times the shared setup data has been loaded from disk (one per cache miss),
+    !> process-wide. Only modified under fsps_setup_lock.
+    integer, save :: shared_load_count = 0
 
 contains
+
+    !> @brief Number of cache misses that loaded shared setup data from disk in this process.
+    !>
+    !> @details
+    !> A setup that hits an existing cache entry performs no file I/O for shared data and leaves
+    !> this count unchanged; intended for tests and diagnostics.
+    integer function fsps_shared_load_count()
+        call fsps_setup_lock()
+        fsps_shared_load_count = shared_load_count
+        call fsps_setup_unlock()
+    end function fsps_shared_load_count
+
+    !> @brief Loads all data stored in the shared setup cache (called on a cache miss only).
+    !>
+    !> @details
+    !> Every routine called here writes shared (cache-owned) arrays and/or the fixed-size
+    !> per-context tables captured by `save_setup_tables`. Its results depend only on settings
+    !> that are part of the cache key (see `build_cache_key`).
+    !>
+    !> @param[inout] ctx The context populating the new cache entry.
+    !> @param[in]    zin Metallicity index to load (-1 / 0 for all).
+    subroutine load_shared_data(ctx, zin)
+        type(fsps_context_t), intent(inout) :: ctx
+        integer, intent(in) :: zin
+
+        call load_stellar_data(ctx, zin)
+        call load_interstellar_physics(ctx)
+        call load_photometry_data(ctx)
+        call compute_filter_leff(ctx)
+        call load_attenuation_curves(ctx)
+        call load_agn_dust_models(ctx)
+        call load_index_definitions(ctx)
+        call build_time_grid(ctx)
+        call compute_frequency_grid(ctx)
+    end subroutine load_shared_data
 
     !> @brief Main entry point for initializing an FSPS context.
     !>
@@ -106,19 +150,22 @@ contains
         call allocate_local_workspace(ctx)
 
         if (cache_is_new) then
+            ! Cache miss: read every data file once, filling the shared arrays of the new entry
+            ! and recording the small per-context tables the loaders produce alongside them
             call initialize_cache_arrays(ctx)
+            call reset_setup_tables(ctx)
+            call load_shared_data(ctx, zin)
+            call save_setup_tables(ctx, cache_ptr)
+            shared_load_count = shared_load_count + 1
+        else
+            ! Cache hit: the shared arrays are complete and may be read concurrently by other
+            ! contexts' computations, so they must not be written; no file is read
+            call restore_setup_tables(ctx, cache_ptr)
         end if
 
-        call load_stellar_data(ctx, zin)
-        call load_interstellar_physics(ctx)
-        call load_photometry_data(ctx)
-        call compute_filter_leff(ctx)
-        call load_attenuation_curves(ctx)
-        call load_agn_dust_models(ctx)
-        call load_index_definitions(ctx)
-        call build_time_grid(ctx)
+        ! Context-local state that depends on settings outside the cache key
+        call compute_imf_lower_bound(ctx, zin)
         if (ctx%smooth_lsf_val == 1) call load_lsf_data(ctx)
-
         call compute_local_properties(ctx)
 
         ctx%state%check_sps_setup = 1
@@ -401,13 +448,30 @@ contains
             call read_isochrone_database(ctx, ctx%state%isoc_type, z)
         end do
 
+    end subroutine load_stellar_data
+
+    !> @brief Sets the context's lower IMF integration bound.
+    !>
+    !> @details
+    !> Context-local: depends on `imf_lower_limit`, which is not part of the cache key, so it is
+    !> evaluated on every setup (cache hit or miss) from the shared isochrones.
+    !> BPASS leaves the bound untouched, as before.
+    subroutine compute_imf_lower_bound(ctx, zin)
+        type(fsps_context_t), intent(inout) :: ctx
+        integer, intent(in) :: zin
+        integer :: zmin
+
+        if (ctx%state%isoc_type == 'bpss') return
+
+        zmin = 1
+        if (zin > 0) zmin = zin
+
         if (ctx%state%isoc_type == 'gnva') then
             ctx%state%imf_lower_bound = minval(ctx%state%mini_isoc(zmin, 1, 1:ctx%state%nmass_isoc(zmin, 1)))*0.99_wp
         else
             ctx%state%imf_lower_bound = ctx%state%imf_lower_limit
         end if
-
-    end subroutine load_stellar_data
+    end subroutine compute_imf_lower_bound
 
     !> @brief Orchestrates I/O for Dust Emission, Attenuation, and Nebular grids.
     !>
@@ -637,16 +701,122 @@ contains
         ! Find index for Lyman Limit (912 Angstroms)
         ctx%state%whlylim = find_interval(lam, 912.0_wp)
 
-        ! Recompute frequency grid
-        ctx%state%spec_nu = 0.0_wp
-        where (lam > SAFE_FLOOR)
-            ctx%state%spec_nu = C_LIGHT/lam
-        end where
-
         ctx%state%sfh_tab = 0.0_wp
         ctx%state%ntabsfh = 0
 
     end subroutine compute_local_properties
+
+    !> @brief Recomputes the shared frequency grid from the final wavelength grid.
+    !>
+    !> @details
+    !> Writes the shared `spec_nu`, so it runs only when a cache entry is populated.
+    subroutine compute_frequency_grid(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        ctx%state%spec_nu = 0.0_wp
+        where (ctx%state%spec_lambda > SAFE_FLOOR)
+            ctx%state%spec_nu = C_LIGHT/ctx%state%spec_lambda
+        end where
+    end subroutine compute_frequency_grid
+
+    !> @brief Clears the fixed-size per-context tables written by the shared-data loaders.
+    !>
+    !> @details
+    !> Called before populating a new cache entry so the recorded tables never carry values
+    !> left over from an earlier setup of this context with other libraries (e.g. the nebular
+    !> tables for an isochrone set without a nebular grid).
+    subroutine reset_setup_tables(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        ! Assigned field by field: a temporary fsps_setup_tables_t (~2 MB) could overflow a
+        ! thread stack
+        ctx%state%speclib_logt = 0.0_wp
+        ctx%state%speclib_logg = 0.0_wp
+        ctx%state%wmb_logt = 0.0_wp
+        ctx%state%wmb_logg = 0.0_wp
+        ctx%state%agb_logt_car = 0.0_wp
+        ctx%state%pagb_logt = 0.0_wp
+        ctx%state%wrn_logt = 0.0_wp
+        ctx%state%wrc_logt = 0.0_wp
+        ctx%state%tau1_dagb = 0.0_wp
+        ctx%state%teff_dagb = 0.0_wp
+        ctx%state%nebem_line_pos = 0.0_wp
+        ctx%state%nebem_line = 0.0_wp
+        ctx%state%xnebem_line = 0.0_wp
+        ctx%state%nebem_logz = 0.0_wp
+        ctx%state%nebem_age = 0.0_wp
+        ctx%state%nebem_logu = 0.0_wp
+        ctx%state%agndust_tau = 0.0_wp
+    end subroutine reset_setup_tables
+
+    !> @brief Copies a nebular line table (2 MB with xnebem_line).
+    !>
+    !> @details
+    !> Through explicit-shape dummies, which may not alias, so the compiler copies in place; a
+    !> plain assignment between components of a context and a cache entry made gfortran stage it
+    !> through a stack temporary, overflowing the stack of callers that hold a context there.
+    subroutine copy_line_table(src, dst)
+        real(WP), intent(in) :: src(NEMLINE, NEBNZ, NEBNAGE, NEBNIP)
+        real(WP), intent(out) :: dst(NEMLINE, NEBNZ, NEBNAGE, NEBNIP)
+
+        dst = src
+    end subroutine copy_line_table
+
+    !> @brief Records the per-context tables produced while populating a cache entry.
+    subroutine save_setup_tables(ctx, cache)
+        type(fsps_context_t), intent(in) :: ctx
+        type(fsps_setup_cache_t), intent(inout) :: cache
+
+        if (.not. allocated(cache%tables)) allocate (cache%tables)
+        cache%tables%speclib_logt = ctx%state%speclib_logt
+        cache%tables%speclib_logg = ctx%state%speclib_logg
+        cache%tables%wmb_logt = ctx%state%wmb_logt
+        cache%tables%wmb_logg = ctx%state%wmb_logg
+        cache%tables%agb_logt_car = ctx%state%agb_logt_car
+        cache%tables%pagb_logt = ctx%state%pagb_logt
+        cache%tables%wrn_logt = ctx%state%wrn_logt
+        cache%tables%wrc_logt = ctx%state%wrc_logt
+        cache%tables%tau1_dagb = ctx%state%tau1_dagb
+        cache%tables%teff_dagb = ctx%state%teff_dagb
+        cache%tables%nebem_line_pos = ctx%state%nebem_line_pos
+        call copy_line_table(ctx%state%nebem_line, cache%tables%nebem_line)
+        call copy_line_table(ctx%state%xnebem_line, cache%tables%xnebem_line)
+        cache%tables%nebem_logz = ctx%state%nebem_logz
+        cache%tables%nebem_age = ctx%state%nebem_age
+        cache%tables%nebem_logu = ctx%state%nebem_logu
+        cache%tables%agndust_tau = ctx%state%agndust_tau
+    end subroutine save_setup_tables
+
+    !> @brief Copies the per-context tables recorded in a populated cache entry into a context.
+    subroutine restore_setup_tables(ctx, cache)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(fsps_setup_cache_t), target, intent(in) :: cache
+        type(fsps_setup_tables_t), pointer :: tables
+
+        if (.not. allocated(cache%tables)) then
+            write (error_unit, '(A)') '[FSPS_INIT] Error: cache entry has no recorded setup tables'
+            error stop 1
+        end if
+        tables => cache%tables
+
+        ctx%state%speclib_logt = tables%speclib_logt
+        ctx%state%speclib_logg = tables%speclib_logg
+        ctx%state%wmb_logt = tables%wmb_logt
+        ctx%state%wmb_logg = tables%wmb_logg
+        ctx%state%agb_logt_car = tables%agb_logt_car
+        ctx%state%pagb_logt = tables%pagb_logt
+        ctx%state%wrn_logt = tables%wrn_logt
+        ctx%state%wrc_logt = tables%wrc_logt
+        ctx%state%tau1_dagb = tables%tau1_dagb
+        ctx%state%teff_dagb = tables%teff_dagb
+        ctx%state%nebem_line_pos = tables%nebem_line_pos
+        call copy_line_table(tables%nebem_line, ctx%state%nebem_line)
+        call copy_line_table(tables%xnebem_line, ctx%state%xnebem_line)
+        ctx%state%nebem_logz = tables%nebem_logz
+        ctx%state%nebem_age = tables%nebem_age
+        ctx%state%nebem_logu = tables%nebem_logu
+        ctx%state%agndust_tau = tables%agndust_tau
+    end subroutine restore_setup_tables
 
     !> @brief Maps the pointers in `ctx%state` to the arrays in `cache`.
     !>
@@ -869,15 +1039,20 @@ contains
         integer, intent(in) :: zin
         character(len=*), intent(out) :: cache_key
 
-        ! nebular_smooth_init sets the shared setup-time line kernels (setup_nebular_gaussians = 1),
-        ! so contexts that differ in it must not share a cache entry
+        ! The key must contain every setting the shared-data loaders depend on, because a context
+        ! that hits an entry reuses its data without reloading:
+        !   - nebular_smooth_init and smooth_velocity set the shared setup-time line kernels
+        !     (setup_nebular_gaussians = 1);
+        !   - cloudy_dust selects the nebular grid files (ZAU_WD_* vs ZAU_ND_*);
+        !   - compute_vega_mags converts the shared magsun to the Vega system;
+        !   - zin selects the isochrones loaded and the reference time grid.
         write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
-                           &"|",ES24.16)') &
+                           &"|",ES24.16,"|",I0,"|",I0)') &
             trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
             ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &
-            ctx%nebular_smooth_init_val
+            ctx%nebular_smooth_init_val, ctx%cloudy_dust_val, ctx%compute_vega_mags_val
     end subroutine build_cache_key
 
     subroutine populate_cache_metadata(ctx, cache)

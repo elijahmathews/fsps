@@ -48,7 +48,8 @@ program test_param_regression
     logical :: generate
     integer :: unit_cases, ios, n_cases
     real(WP) :: rtol
-    type(fsps_context_t) :: pinned(MAX_LIBRARIES)
+    ! Contexts are ~2.4 MB each, so they live on the heap rather than the stack
+    type(fsps_context_t), allocatable :: pinned(:)
     character(len=128) :: pinned_key(MAX_LIBRARIES) = ''
     integer :: n_pinned = 0
     integer :: total_tests = 0
@@ -63,6 +64,7 @@ program test_param_regression
         stop 1
     end if
     rtol = env_real('FSPS_TEST_RTOL', 1.0e-5_wp)
+    allocate(pinned(MAX_LIBRARIES))
 
     call print_major_header("Parameterized Regression (parity case matrix)")
 
@@ -97,7 +99,7 @@ contains
     subroutine run_case(spec_line)
         character(len=*), intent(in) :: spec_line
         character(len=256) :: fields(6)
-        type(fsps_context_t) :: ctx
+        type(fsps_context_t), allocatable :: ctx
         type(PARAMS) :: pset
         type(COMPSPOUT), allocatable :: results(:)
         real(WP), allocatable :: spec_ssp(:, :), mass_ssp(:), lbol_ssp(:)
@@ -108,6 +110,7 @@ contains
         call split_fields(spec_line, fields)
         csp_only = index(fields(5), 'csp') > 0
         call pin_libraries(fields(2), fields(3), fields(4))
+        allocate(ctx)
 
         call fsps_create(ctx)
         ctx%pset%zmet = 10
