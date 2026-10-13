@@ -75,6 +75,9 @@ module fsps_ssp
     !> We allocate this ONCE and reuse it to avoid heap fragmentation.
     type :: isochrone_buffer_t
         integer :: n_stars
+        !> Number of stars loaded from the isochrone itself (set by load_timestep_data), before
+        !> apply_isochrone_physics appends blue stragglers / blue HB stars; 0 = all stars native
+        integer :: n_native = 0
         
         ! Changed to POINTER to allow them to be targets for 2D views.
         ! We manually manage their memory in init/free routines.
@@ -326,6 +329,7 @@ contains
     subroutine reset_buffer(buf)
         type(isochrone_buffer_t), intent(inout) :: buf
         buf%n_stars = 0
+        buf%n_native = 0
         if (associated(buf%initial_mass)) buf%initial_mass = 0.0_wp
         if (associated(buf%current_mass)) buf%current_mass = 0.0_wp
         if (associated(buf%log_lum))      buf%log_lum = SAFE_FLOOR
@@ -384,6 +388,7 @@ contains
         endif
         n = min(ctx%state%nmass_isoc(z_idx, t_idx), NM)
         buf%n_stars = n
+        buf%n_native = n
 
         ! Vectorized Copy: Global(z, t, 1:n) -> Buffer(1:n)
         ! This pays the "stride tax" exactly once per timestep.
@@ -524,10 +529,15 @@ contains
         type(isochrone_buffer_t), intent(in) :: buf
         real(WP), intent(out) :: tot_mass, tot_lbol
 
-        integer :: n, i
+        integer :: n, i, n_native
         real(WP) :: max_living_mass, local_mass, local_linear_lum
 
         n = buf%n_stars
+        ! Stars appended after the native isochrone (blue stragglers, blue HB) do not define the
+        ! turn-off: stragglers carry ZAMS masses above it, which would hide the remnants of stars
+        ! that have already died
+        n_native = buf%n_native
+        if (n_native <= 0 .or. n_native > n) n_native = n
         
         ! Handle empty buffer edge case
         if (n <= 0) then
@@ -547,11 +557,11 @@ contains
         ! 2. Add Remnant Mass (Black Holes, Neutron Stars, White Dwarfs)
         if (ctx%add_stellar_remnants_val == 1) then
              
-             ! The turn-off mass is approximately the maximum initial mass 
-             ! of stars still present in the isochrone.
+             ! The turn-off mass is approximately the maximum initial mass
+             ! of stars still present in the native isochrone.
              max_living_mass = -1.0_wp
              !$acc parallel loop reduction(max:max_living_mass) present(buf)
-             do i = 1, n
+             do i = 1, n_native
                  if (buf%initial_mass(i) > max_living_mass) max_living_mass = buf%initial_mass(i)
              end do
              
@@ -823,6 +833,13 @@ contains
         ctx%state%imf_alpha(3) = pset%imf3
         ctx%state%imf_vdmc     = pset%vdmc
         ctx%state%imf_mdave    = pset%mdave
+
+        ! Runtime IMF mass limits (imf_lower_limit / imf_upper_limit parameters). A user IMF file
+        ! (type 5) overrides them below. The first-bin edge follows the lower limit, except for
+        ! Geneva isochrones whose edge is fixed at setup from the lowest tabulated mass.
+        ctx%state%imf_lower_limit = ctx%imf_lower_limit_val
+        ctx%state%imf_upper_limit = ctx%imf_upper_limit_val
+        if (trim(ctx%state%isoc_type) /= 'gnva') ctx%state%imf_lower_bound = ctx%state%imf_lower_limit
 
         ! 3. Handle User-Defined IMF (Type 5)
         if (imf_type == 5) then

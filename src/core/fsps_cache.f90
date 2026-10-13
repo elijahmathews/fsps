@@ -18,6 +18,17 @@ module fsps_cache
     public :: fsps_setup_cache_ptr_t
     public :: fsps_cache_get_setup
     public :: fsps_cache_release_setup
+    public :: fsps_setup_lock
+    public :: fsps_setup_unlock
+
+    ! Process-wide recursive lock serializing setup and release of shared cache entries
+    ! (implemented with a pthread mutex in fsps_setup_lock.c)
+    interface
+        subroutine fsps_setup_lock() bind(C, name='fsps_setup_lock')
+        end subroutine fsps_setup_lock
+        subroutine fsps_setup_unlock() bind(C, name='fsps_setup_unlock')
+        end subroutine fsps_setup_unlock
+    end interface
 
     ! ---------------------------------------------------------------------
     ! Module constants
@@ -170,10 +181,13 @@ contains
 
         if (.not. associated(entry)) return
 
+        ! The refcount and the shared arrays are touched by every context's setup and release
+        call fsps_setup_lock()
         entry%refcount = entry%refcount - 1
         if (entry%refcount <= 0) then
             call fsps_cache_setup_clear(entry)
         end if
+        call fsps_setup_unlock()
 
         nullify (entry)
     end subroutine fsps_cache_release_setup

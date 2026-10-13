@@ -65,6 +65,9 @@ accel_dep = declare_dependency(
 # CPU Parallelism (OpenMP)
 # -----------------------------------
 
+# Native threads: the setup-cache lock (src/core/fsps_setup_lock.c) is a pthread mutex
+threads_dep = dependency('threads')
+
 omp_dep = []
 if get_option('enable_openmp')
     # Let Meson natively find OpenMP for both Fortran and C
@@ -93,6 +96,7 @@ lib_sources = files(
 
     # Core FSPS Modules
     'src/core/fsps_cache.f90',
+    'src/core/fsps_setup_lock.c',
     'src/core/fsps_constants.f90',
     'src/core/fsps_context_types.f90',
     'src/core/fsps_context.f90',
@@ -138,7 +142,10 @@ libfsps = library('fsps',
     version : meson.project_version(),
     soversion : '3',
     install : true,
-    dependencies : [omp_dep, accel_dep],
+    dependencies : [omp_dep, accel_dep, threads_dep],
+    # The library has one C source (setup-cache lock); link with the Fortran compiler so its
+    # runtime (libgfortran, flang runtime, ...) is always included
+    link_language : 'fortran',
 )
 
 # Declare a dependency object for executables/tests to use
@@ -146,7 +153,7 @@ libfsps = library('fsps',
 fsps_dep = declare_dependency(
     link_with : libfsps,
     include_directories : include_directories('include'),
-    dependencies : [omp_dep, accel_dep]
+    dependencies : [omp_dep, accel_dep, threads_dep]
 )
 
 # ===================================
@@ -213,7 +220,8 @@ if get_option('enable_stress_testing')
     test('stress_test', stress_test_exe,
         suite : 'stress',
         env : stress_env,
-        timeout : 1200
+        # Phase D serializes repeated full setups (~160 s each under ThreadSanitizer)
+        timeout : 2400
     )
 endif
 
@@ -221,6 +229,15 @@ endif
 regression_env = environment()
 regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
 regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
+
+# Integration test: contexts sharing a setup cache must not leak state into each other
+context_isolation_exe = executable('test_context_isolation', 'tests/test_context_isolation.f90',
+    dependencies : [fsps_dep, test_utils_dep])
+test('context_isolation', context_isolation_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
 
 test('regression_miles_mist',
         test_runner_exe,

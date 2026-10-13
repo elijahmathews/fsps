@@ -26,8 +26,8 @@ module fsps_context_types
     ! ---------------------------------------------------------------------
 
     type :: fsps_context_state_t
-        real(WP) :: zsol = 0.0
-        real(WP) :: zsol_spec = 0.0
+        real(WP) :: zsol = 0.0_wp
+        real(WP) :: zsol_spec = 0.0_wp
         character(len=64) :: isoc_type = ''
         character(len=64) :: spec_type = ''
         integer :: nt = 0
@@ -41,25 +41,25 @@ module fsps_context_types
         integer :: nt_xrb = 0
         integer :: nz_xrb = 0
         integer :: check_sps_setup = 0
-        real(WP) :: tuniv = 0.0
+        real(WP) :: tuniv = 0.0_wp
         integer :: whlam5000 = 0
         integer :: whlylim = 0
-        real(WP) :: zpow2 = 1.0
+        real(WP) :: zpow2 = 1.0_wp
         integer, dimension(6) :: mwdindex = 0
-        real(WP), dimension(500, 3) :: cosmospl = 0.0
+        real(WP), dimension(500, 3) :: cosmospl = 0.0_wp
         integer :: ntabsfh = 0
-        real(WP), dimension(3, NTABMAX) :: sfh_tab = 0.0
-        real(WP), dimension(3) :: imf_alpha = 1.3
-        real(WP) :: imf_vdmc = 0.08
-        real(WP) :: imf_mdave = 0.5
+        real(WP), dimension(3, NTABMAX) :: sfh_tab = 0.0_wp
+        real(WP), dimension(3) :: imf_alpha = 1.3_wp
+        real(WP) :: imf_vdmc = 0.08_wp
+        real(WP) :: imf_mdave = 0.5_wp
         integer :: n_user_imf = 0
-        real(WP), dimension(3, 100) :: imf_user_alpha = 0.0
-        real(WP) :: salp_ind = 2.35
-        real(WP) :: imf_lower_limit = 0.08
-        real(WP) :: imf_upper_limit = 120.0
-        real(WP) :: imf_lower_bound = 0.0
-        real(WP) :: mlim_bh = 40.0
-        real(WP) :: mlim_ns = 8.5
+        real(WP), dimension(3, 100) :: imf_user_alpha = 0.0_wp
+        real(WP) :: salp_ind = 2.35_wp
+        real(WP) :: imf_lower_limit = 0.08_wp
+        real(WP) :: imf_upper_limit = 120.0_wp
+        real(WP) :: imf_lower_bound = 0.0_wp
+        real(WP) :: mlim_bh = 40.0_wp
+        real(WP) :: mlim_ns = 8.5_wp
         character(len=30) :: alt_filter_file = ''
         real(WP), pointer :: indexdefined(:, :) => null()
         real(WP), pointer :: wgdust(:, :, :, :) => null()
@@ -73,24 +73,24 @@ module fsps_context_types
         real(WP), pointer :: spec_lambda(:) => null()
         real(WP), pointer :: spec_nu(:) => null()
         real(WP), pointer :: spec_res(:) => null()
-        real(WP), dimension(NDIM_LOGT) :: speclib_logt = 0.0
-        real(WP), dimension(NDIM_LOGG) :: speclib_logg = 0.0
+        real(WP), dimension(NDIM_LOGT) :: speclib_logt = 0.0_wp
+        real(WP), dimension(NDIM_LOGG) :: speclib_logg = 0.0_wp
         real(kind(1.0)), pointer :: speclib(:, :, :, :) => null()
-        real(WP), dimension(NDIM_WMB_LOGT) :: wmb_logt = 0.0
-        real(WP), dimension(NDIM_WMB_LOGG) :: wmb_logg = 0.0
+        real(WP), dimension(NDIM_WMB_LOGT) :: wmb_logt = 0.0_wp
+        real(WP), dimension(NDIM_WMB_LOGG) :: wmb_logg = 0.0_wp
         real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
         real(WP), pointer :: agb_spec_o(:, :) => null()
         real(WP), pointer :: agb_logt_o(:, :) => null()
         real(WP), pointer :: agb_spec_c(:, :) => null()
         real(WP), pointer :: agb_logt_c(:) => null()
-        real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0
+        real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0_wp
         real(WP), pointer :: agb_spec_car(:, :) => null()
         real(WP), pointer :: pagb_spec(:, :, :) => null()
-        real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0
+        real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0_wp
         real(WP), pointer :: wrn_spec(:, :, :) => null()
         real(WP), pointer :: wrc_spec(:, :, :) => null()
-        real(WP), dimension(NDIM_WR) :: wrn_logt = 0.0
-        real(WP), dimension(NDIM_WR) :: wrc_logt = 0.0
+        real(WP), dimension(NDIM_WR) :: wrn_logt = 0.0_wp
+        real(WP), dimension(NDIM_WR) :: wrc_logt = 0.0_wp
         integer :: ndim_dustem = 0
         integer :: numin_dustem = 0
         integer :: nqpah_dustem = 0
@@ -101,19 +101,22 @@ module fsps_context_types
         real(WP), pointer :: dustem_dustem(:, :) => null()
         real(WP), pointer :: dustem2_dustem(:, :, :) => null()
         real(WP), pointer :: flux_dagb(:, :, :, :) => null()
-        real(WP), dimension(2, NTAU_DAGB) :: tau1_dagb = 0.0
-        real(WP), dimension(2, NTEFF_DAGB) :: teff_dagb = 0.0
-        real(WP), dimension(NEMLINE) :: nebem_line_pos = 0.0
-        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: nebem_line = 0.0
-        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: xnebem_line = 0.0
+        real(WP), dimension(2, NTAU_DAGB) :: tau1_dagb = 0.0_wp
+        real(WP), dimension(2, NTEFF_DAGB) :: teff_dagb = 0.0_wp
+        real(WP), dimension(NEMLINE) :: nebem_line_pos = 0.0_wp
+        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: nebem_line = 0.0_wp
+        real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: xnebem_line = 0.0_wp
         real(WP), pointer :: nebem_cont(:, :, :, :) => null()
         real(WP), pointer :: xnebem_cont(:, :, :, :) => null()
-        real(WP), dimension(NEBNZ) :: nebem_logz = 0.0
-        real(WP), dimension(NEBNAGE) :: nebem_age = 0.0
-        real(WP), dimension(NEBNIP) :: nebem_logu = 0.0
+        real(WP), dimension(NEBNZ) :: nebem_logz = 0.0_wp
+        real(WP), dimension(NEBNAGE) :: nebem_age = 0.0_wp
+        real(WP), dimension(NEBNIP) :: nebem_logu = 0.0_wp
         real(WP), pointer :: neb_res_min(:) => null()
         real(WP), pointer :: gaussnebarr(:, :) => null()
-        real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0
+        !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
+        !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
+        logical :: owns_gaussnebarr = .false.
+        real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0_wp
         real(WP), pointer :: agndust_spec(:, :) => null()
         real(WP), pointer :: mact_isoc(:, :, :) => null()
         real(WP), pointer :: logl_isoc(:, :, :) => null()
@@ -202,14 +205,15 @@ module fsps_context_types
         character(len=250) :: output_home = ''
         type(fsps_setup_cache_t), pointer :: setup_cache => null()
         type(fsps_context_state_t) :: state
-        real(WP) :: om0_val = 0.0
-        real(WP) :: ol0_val = 0.0
-        real(WP) :: H0_val = 0.0
-        real(WP) :: tiny_logt_val = 0.0
-        real(WP) :: imf_upper_limit_val = 0.0
-        real(WP) :: imf_lower_limit_val = 0.0
-        real(WP) :: logt_wmb_hot_val = 0.0
-        real(WP) :: nebular_smooth_init_val = 0.0
+        real(WP) :: om0_val = 0.0_wp
+        real(WP) :: ol0_val = 0.0_wp
+        real(WP) :: H0_val = 0.0_wp
+        real(WP) :: tiny_logt_val = 0.0_wp
+        ! Same defaults as fsps_context_create: these now drive the IMF limits used by the physics
+        real(WP) :: imf_upper_limit_val = 120.0_wp
+        real(WP) :: imf_lower_limit_val = 0.08_wp
+        real(WP) :: logt_wmb_hot_val = 0.0_wp
+        real(WP) :: nebular_smooth_init_val = 0.0_wp
         integer :: imf_type_val = 0
         integer :: tpagb_norm_type_val = 0
         integer :: pzcon_val = 0
@@ -276,7 +280,12 @@ contains
         if (associated(state%nebem_cont)) nullify (state%nebem_cont)
         if (associated(state%xnebem_cont)) nullify (state%xnebem_cont)
         if (associated(state%neb_res_min)) nullify (state%neb_res_min)
-        if (associated(state%gaussnebarr)) nullify (state%gaussnebarr)
+        if (state%owns_gaussnebarr) then
+            if (associated(state%gaussnebarr)) deallocate (state%gaussnebarr)
+            state%owns_gaussnebarr = .false.
+        else if (associated(state%gaussnebarr)) then
+            nullify (state%gaussnebarr)
+        end if
         if (associated(state%agndust_spec)) nullify (state%agndust_spec)
         if (associated(state%mact_isoc)) nullify (state%mact_isoc)
         if (associated(state%logl_isoc)) nullify (state%logl_isoc)
@@ -368,32 +377,32 @@ contains
         state%ssp_temp_nspec = 0
         state%ssp_temp_nstars = 0
         state%check_sps_setup = 0
-        state%tuniv = 0.0
+        state%tuniv = 0.0_wp
         state%whlam5000 = 0
         state%whlylim = 0
-        state%zsol = 0.0
-        state%zsol_spec = 0.0
-        state%zpow2 = 1.0
+        state%zsol = 0.0_wp
+        state%zsol_spec = 0.0_wp
+        state%zpow2 = 1.0_wp
         state%ntabsfh = 0
-        state%lsfinfo%minlam = 0.0
-        state%lsfinfo%maxlam = 0.0
+        state%lsfinfo%minlam = 0.0_wp
+        state%lsfinfo%maxlam = 0.0_wp
         state%str_dustem = 'DL07'
-        state%imf_alpha = 1.3
-        state%imf_vdmc = 0.08
-        state%imf_mdave = 0.5
+        state%imf_alpha = 1.3_wp
+        state%imf_vdmc = 0.08_wp
+        state%imf_mdave = 0.5_wp
         state%n_user_imf = 0
-        state%imf_user_alpha = 0.0
-        state%salp_ind = 2.35
-        state%imf_lower_limit = 0.08
-        state%imf_upper_limit = 120.0
-        state%imf_lower_bound = 0.0
-        state%mlim_bh = 40.0
-        state%mlim_ns = 8.5
+        state%imf_user_alpha = 0.0_wp
+        state%salp_ind = 2.35_wp
+        state%imf_lower_limit = 0.08_wp
+        state%imf_upper_limit = 120.0_wp
+        state%imf_lower_bound = 0.0_wp
+        state%mlim_bh = 40.0_wp
+        state%mlim_ns = 8.5_wp
         state%alt_filter_file = ''
-        state%powell_data%zred = 0.0
-        state%powell_data%logsmass = 0.0
-        state%sedfit_data%zred = 0.0
-        state%sedfit_data%logsmass = 0.0
+        state%powell_data%zred = 0.0_wp
+        state%powell_data%logsmass = 0.0_wp
+        state%sedfit_data%zred = 0.0_wp
+        state%sedfit_data%logsmass = 0.0_wp
         state%ssp_basis_is_dirty = .true.
         
     end subroutine fsps_context_state_destroy

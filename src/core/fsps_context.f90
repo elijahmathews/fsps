@@ -62,19 +62,19 @@ contains
         ctx%sps_home = ''
         ctx%data_home = ''
         ctx%output_home = ''
-        ctx%om0_val = 0.27
-        ctx%ol0_val = 0.73
-        ctx%H0_val = 72.0
+        ctx%om0_val = 0.27_wp
+        ctx%ol0_val = 0.73_wp
+        ctx%H0_val = 72.0_wp
         ctx%tpagb_norm_type_val = 2
         ctx%pzcon_val = 0
         ctx%interpolation_type_val = 0
-        ctx%tiny_logt_val = 0.0
+        ctx%tiny_logt_val = 0.0_wp
         ctx%compute_light_ages_val = 0
         ctx%add_dust_emission_val = 1
         ctx%add_agn_dust_val = 1
         ctx%add_agb_dust_model_val = 1
         ctx%use_wr_spectra_val = 1
-        ctx%logt_wmb_hot_val = 0.0
+        ctx%logt_wmb_hot_val = 0.0_wp
         ctx%add_neb_emission_val = 0
         ctx%add_neb_continuum_val = 1
         ctx%cloudy_dust_val = 0
@@ -91,10 +91,10 @@ contains
         ctx%redshift_colors_val = 0
         ctx%use_isoc_mdot_val = 0
         ctx%setup_nebular_gaussians_val = 0
-        ctx%nebular_smooth_init_val = 100.0
+        ctx%nebular_smooth_init_val = 100.0_wp
         ctx%nebemlineinspec_val = 1
-        ctx%imf_lower_limit_val = 0.08
-        ctx%imf_upper_limit_val = 120.0
+        ctx%imf_lower_limit_val = 0.08_wp
+        ctx%imf_upper_limit_val = 120.0_wp
     end subroutine fsps_context_create
 
     !> @brief Initialize a context by loading data and binding cache resources.
@@ -115,9 +115,9 @@ contains
         if (present(spec_type_in)) ctx%spec_type_name = trim(spec_type_in)
         if (present(dust_type_in)) ctx%dust_type_name = trim(dust_type_in)
 
-        !$omp critical(fsps_setup_initialize)
+        ! fsps_initialize_data serializes itself with the process-wide setup lock, which (unlike an
+        ! OpenMP critical section) also covers non-OpenMP builds and fsps_context_ensure_setup
         call fsps_initialize_data(ctx, zin, isoc_type_in, spec_type_in, dust_type_in)
-        !$omp end critical(fsps_setup_initialize)
 
         ctx%initialized = .true.
         if (len_trim(ctx%isoc_type_name) == 0) then
@@ -639,7 +639,7 @@ contains
         case ('zmet', 'wgp1', 'wgp2', 'wgp3', 'evtype', 'imf_type', 'tpagb_norm_type', &
               'interpolation_type', 'use_wr_spectra', 'add_neb_emission', 'add_neb_continuum', &
               'add_xrb_emission', 'add_stellar_remnants', 'smooth_velocity', 'smooth_lsf', &
-              'smoothspec_fast', 'vactoair_flag', 'use_isoc_mdot')
+              'smoothspec_fast', 'vactoair_flag', 'use_isoc_mdot', 'add_agb_dust_model')
             is_sensitive = .true.
         end select
     end function is_ssp_sensitive_int_param
@@ -652,7 +652,7 @@ contains
         case ('tiny_logt', 'imf_upper_limit', 'imf_lower_limit', 'logt_wmb_hot', 'nebular_smooth_init', &
               'imf1', 'imf2', 'imf3', 'vdmc', 'mdave', 'dell', 'delt', 'sbss', 'fbhb', 'pagb', &
               'redgb', 'agb', 'masscut', 'fcstar', 'frac_xrb', 'sigma_smooth', 'min_wave_smooth', &
-              'max_wave_smooth', 'gas_logu', 'gas_logz')
+              'max_wave_smooth', 'gas_logu', 'gas_logz', 'agb_dust', 'frac_obrun')
             is_sensitive = .true.
         end select
     end function is_ssp_sensitive_float_param
@@ -699,6 +699,10 @@ contains
         if (old_pset%max_wave_smooth /= new_pset%max_wave_smooth) changed = .true.
         if (old_pset%gas_logu /= new_pset%gas_logu) changed = .true.
         if (old_pset%gas_logz /= new_pset%gas_logz) changed = .true.
+        ! Circumstellar AGB dust screen (get_stellar_spectrum) and the ionizing-flux escape
+        ! fraction used when nebular emission is added to the SSPs (add_neb_emission = 2)
+        if (old_pset%agb_dust /= new_pset%agb_dust) changed = .true.
+        if (old_pset%frac_obrun /= new_pset%frac_obrun) changed = .true.
         if (trim(old_pset%imf_filename) /= trim(new_pset%imf_filename)) changed = .true.
 
         if (allocated(old_pset%ssp_gen_age) .neqv. allocated(new_pset%ssp_gen_age)) then

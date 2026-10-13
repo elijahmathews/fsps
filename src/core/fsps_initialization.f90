@@ -20,7 +20,7 @@ module fsps_initialization
                               NT_BASTI, NZ_BASTI, NT_GENEVA, NZ_GENEVA
     use fsps_strings, only: to_lower
     use fsps_context_types, only: fsps_context_t
-    use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup
+    use fsps_cache, only: fsps_setup_cache_t, fsps_cache_get_setup, fsps_setup_lock, fsps_setup_unlock
     use fsps_environment, only: fsps_resolve_paths, fsps_cleanup
     use fsps_io, only: load_zlegend_file, load_wavelength_grid, load_spectral_resolution, &
                        read_isochrone_database, read_spectral_binary, read_bpass_data, &
@@ -67,6 +67,10 @@ contains
         character(len=512) :: cache_key
         type(fsps_setup_cache_t), pointer :: cache_ptr
         character(len=64) :: isoc_name, spec_name, dust_name
+
+        ! Serialize the whole setup: cache lookup, population of a new entry and the loaders all
+        ! write into memory shared with every context using the same entry (released below)
+        call fsps_setup_lock()
 
         call fsps_cleanup(ctx)
         ctx%zin = zin
@@ -119,6 +123,8 @@ contains
 
         ctx%state%check_sps_setup = 1
         ctx%initialized = .true.
+
+        call fsps_setup_unlock()
 
         if (VERBOSE == 1) then
             write (*, '(A)') '      ...done'
@@ -689,7 +695,16 @@ contains
         ctx%state%nebem_cont => cache%nebem_cont
         ctx%state%xnebem_cont => cache%xnebem_cont
         ctx%state%neb_res_min => cache%neb_res_min
-        ctx%state%gaussnebarr => cache%gaussnebarr
+        if (ctx%setup_nebular_gaussians_val == 1) then
+            ! Kernels fixed at setup: read-only after setup, safe to share
+            ctx%state%gaussnebarr => cache%gaussnebarr
+        else
+            ! Kernels rebuilt on every nebular call from this context's sigma_smooth: the array
+            ! must be private, or concurrent contexts overwrite each other's line profiles
+            allocate (ctx%state%gaussnebarr(size(cache%gaussnebarr, 1), size(cache%gaussnebarr, 2)))
+            ctx%state%gaussnebarr = 0.0_wp
+            ctx%state%owns_gaussnebarr = .true.
+        end if
         ctx%state%agndust_spec => cache%agndust_spec
         ctx%state%mact_isoc => cache%mact_isoc
         ctx%state%logl_isoc => cache%logl_isoc
@@ -854,11 +869,15 @@ contains
         integer, intent(in) :: zin
         character(len=*), intent(out) :: cache_key
 
-        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A)') &
+        ! nebular_smooth_init sets the shared setup-time line kernels (setup_nebular_gaussians = 1),
+        ! so contexts that differ in it must not share a cache entry
+        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
+                           &"|",ES24.16)') &
             trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
-            ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file)
+            ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &
+            ctx%nebular_smooth_init_val
     end subroutine build_cache_key
 
     subroutine populate_cache_metadata(ctx, cache)
