@@ -1,340 +1,246 @@
-name: FSPS CI
+# Per-change CI: every push to develop/master and every pull request.
+#
+# Breadth over compilers and hardware, each job running the full unit + regression suites
+# (physics oracles, regression references, the 34-case parameterized matrix), plus two sanitizer
+# jobs aimed at memory errors and thread safety. Heavier runs (long stress tests, newest
+# compilers, GPUs) are in nightly.yml, packaging in packaging.yml. See doc/CI.md.
+
+name: CI
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [master, develop]
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'tools/**'
+      - 'CITATION.bib'
+      - 'LICENSE.md'
+      - '.github/workflows/nightly.yml'
+      - '.github/workflows/packaging.yml'
   pull_request:
-    branches: [ master, develop ]
-  workflow_dispatch: # Allow manual triggering from the GitHub Actions tab
+    branches: [master, develop]
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'tools/**'
+      - 'CITATION.bib'
+      - 'LICENSE.md'
+      - '.github/workflows/nightly.yml'
+      - '.github/workflows/packaging.yml'
+  workflow_dispatch:
+
+# A newer push to the same pull request supersedes the running one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
-  # ------------------------------------------------------------------
-  # Native Environments
-  # ------------------------------------------------------------------
-  native-tests:
-    name: Native Tests (${{ matrix.os }}, ${{ matrix.compiler }}${{ matrix.variant }})
+  test:
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux + GFortran (standard target configuration)
-          - os: ubuntu-latest
-            compiler: gfortran
-            fflags: "-ffpe-summary=invalid,zero,overflow"
-            # Enable coverage for GFortran builds on Linux only
-            build_args: "-Db_coverage=true"
+          # Reference build: the only job that checks out the 600 MB C3K library; coverage
+          - name: gfortran / Linux x86-64 / coverage
+            os: ubuntu-24.04
+            install: apt-gfortran
+            full_data: true
             coverage: true
-            stress_args: "-Denable_stress_testing=true -Db_sanitize=address,undefined"
-            stress_env: "FSPS_STRESS_ITERS=5"
-            # gcovr only required for coverage reports
-            install_cmd: |
-              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build gcovr
+            setup_args: -Db_coverage=true
 
-          # Linux + GFortran (OpenMP)
-          - os: ubuntu-latest
-            compiler: gfortran
-            variant: " (OpenMP)"
-            fflags: "-ffpe-summary=invalid,zero,overflow"
-            # Use Meson-managed OpenMP detection/flags
-            build_args: "-Denable_openmp=true"
-            coverage: false
-            stress_args: "-Denable_openmp=true -Denable_stress_testing=true -Db_sanitize=thread"
-            stress_env: 'FSPS_STRESS_ITERS=5 TSAN_OPTIONS="suppressions=$PWD/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1"'
-            install_cmd: |
-              sudo apt-get update && sudo apt-get install -y gfortran meson ninja-build
-          
-          # Linux + LLVM Flang (experimental)
-          # This is currently pinned to Flang-20, consider bumping in the future.
-          - os: ubuntu-latest
-            compiler: flang-20
-            fflags: ""
-            build_args: ""
-            coverage: false
-            install_cmd: |
-              sudo apt-get update && sudo apt-get install -y flang-20 ninja-build python3-pip
-              sudo apt-get remove -y meson || true
-              sudo pip3 install --break-system-packages meson
+          - name: gfortran / Linux arm64
+            os: ubuntu-24.04-arm
+            install: apt-gfortran
 
-          # MacOS + GFortran
-          - os: macos-latest
-            compiler: gfortran-homebrew
-            fflags: "-ffpe-summary=invalid,zero,overflow"
-            build_args: ""
-            coverage: false
-            install_cmd: |
-              brew install gcc meson ninja
+          - name: gfortran / macOS arm64
+            os: macos-15
+            install: setup-fortran
+            toolchain: gcc
+            version: 14
+
+          - name: LLVM flang / Linux x86-64
+            os: ubuntu-24.04
+            install: apt-flang
+
+          - name: Intel ifx / Linux x86-64
+            os: ubuntu-24.04
+            install: setup-fortran
+            toolchain: intel
+            version: '2026.1'
+
+          # OpenACC directive paths, executed on host cores (hosted runners have no GPU)
+          - name: nvfortran / OpenACC multicore / Linux x86-64
+            os: ubuntu-24.04
+            install: setup-fortran
+            toolchain: nvidia-hpc
+            version: '26.1'
+            setup_args: -Daccel=multicore
+            fflags: -Minfo=accel
 
     env:
-      FC: "ccache ${{ matrix.compiler }}"
       FFLAGS: ${{ matrix.fflags }}
-      OMP_NUM_THREADS: 2
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-    
-    - name: Setup Compiler Cache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        # Create a unique cache bucket for each matrix permutation
-        key: ${{ matrix.os }}-${{ matrix.compiler }}${{ matrix.variant }}
-        max-size: '500M'
+      - name: Checkout (without the C3K library)
+        if: ${{ !matrix.full_data }}
+        uses: actions/checkout@v6
+        with:
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/data/spectra/C3K/
 
-    - name: Install Dependencies
-      run: ${{ matrix.install_cmd }}
-    
-    - name: Set Compiler Path (MacOS Only)
-      if: matrix.os == 'macos-latest'
-      run: |
-        # Ask Homebrew for the gcc package lives
-        GCC_PREFIX=$(brew --prefix gcc)
-        # Find the gfortran binary inside that prefix (e.g., bin/gfortran-14)
-        # We sort by version (-V) and take the last one to ensure we get the latest
-        GFORTRAN_BIN=$(ls $GCC_PREFIX/bin/gfortran-* | sort -V | tail -n1)
-        
-        echo "Found GFortran at: $GFORTRAN_BIN"
-        
-        # Export this path to $FC for all future steps
-        echo "FC=ccache $GFORTRAN_BIN" >> $GITHUB_ENV
+      - name: Checkout (full data)
+        if: ${{ matrix.full_data }}
+        uses: actions/checkout@v6
 
-    - name: Verify Compiler Version
-      run: $FC --version
+      - name: Install gfortran (apt)
+        if: matrix.install == 'apt-gfortran'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gfortran ccache
+          echo "FC=ccache gfortran" >> "$GITHUB_ENV"
+          echo "CC=ccache gcc" >> "$GITHUB_ENV"
 
-    - name: Configure Build
-      # Coverage build requires extra flags
-      run: meson setup build ${{ matrix.build_args }}
+      - name: Install LLVM flang (apt)
+        if: matrix.install == 'apt-flang'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flang-20 clang-20 ccache
+          echo "FC=ccache flang-20" >> "$GITHUB_ENV"
+          echo "CC=ccache clang-20" >> "$GITHUB_ENV"
 
-    - name: Compile FSPS
-      run: meson compile -C build
+      - name: Install ${{ matrix.toolchain }} ${{ matrix.version }}
+        if: matrix.install == 'setup-fortran'
+        uses: fortran-lang/setup-fortran@v1
+        with:
+          compiler: ${{ matrix.toolchain }}
+          version: ${{ matrix.version }}
 
-    - name: Run Unit Tests
-      # Verbose output for CI logs
-      run: meson test -v -C build --suite unit
-    
-    - name: Run Regression Tests
-      run: meson test -v -C build --suite regression --print-errorlogs
-    
-    - name: Generate Coverage Report
-      if: matrix.coverage == true
-      run: ninja -C build coverage-xml
+      - name: Cache compiler output
+        if: startsWith(matrix.install, 'apt-')
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.install }}
+          max-size: 200M
 
-    - name: Upload Coverage Report to Codecov.io
-      if: matrix.coverage == true
-      uses: codecov/codecov-action@v5
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: ./build/meson-logs/coverage.xml
-        fail_ci_if_error: true
-    
-    - name: Configure Stress Build
-      # Run if previous tests failed, but only if this matrix entry has stress_args
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: meson setup build_stress ${{ matrix.stress_args }}
+      - name: Install Meson, Ninja and gcovr
+        run: |
+          pipx install meson
+          pipx install ninja
+          if [ "${{ matrix.coverage }}" = "true" ]; then pipx install gcovr; fi
 
-    - name: Compile Stress Tests
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: meson compile -C build_stress
+      - name: Toolchain versions
+        run: |
+          $FC --version
+          meson --version
 
-    - name: Run Stress Tests
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: ${{ matrix.stress_env }} meson test -v -C build_stress --suite stress --print-errorlogs
+      - name: Configure
+        run: meson setup build --buildtype=release ${{ matrix.setup_args }}
 
-  # ------------------------------------------------------------------
-  # Containerized Environments
-  # ------------------------------------------------------------------
-  container-tests:
-    name: Container Tests (${{ matrix.compiler.name }})
-    runs-on: ubuntu-latest
-    
+      - name: Build
+        run: meson compile -C build
+
+      - name: Unit and regression tests
+        run: meson test -C build --suite unit --suite regression --print-errorlogs
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: testlog-${{ strategy.job-index }}
+          path: build/meson-logs/
+          retention-days: 7
+
+      - name: Coverage report
+        if: matrix.coverage
+        run: ninja -C build coverage-xml
+
+      # Pull requests from forks have no Codecov token; the push build reports their coverage
+      - name: Upload coverage to Codecov
+        if: matrix.coverage && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./build/meson-logs/coverage.xml
+          fail_ci_if_error: true
+
+  # Each sanitizer runs the stress phases it is suited to: AddressSanitizer the leak and
+  # reallocation phases (A, C), ThreadSanitizer the concurrent compute and setup/release phases
+  # (B, D; the test harness makes its threads with OpenMP). Nightly runs every phase for longer.
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          # NVIDIA HPC SDK (Rocky Linux)
-          - compiler: { name: 'nvfortran', fc: 'nvfortran', cc: 'nvc' }
-            # Keep compiler diagnostics in CI logs while OpenACC targeting is
-            # configured through Meson options.
-            fflags: "-Minfo=accel"
-            build_args: "-Daccel=multicore"
-            stress_args: "-Denable_stress_testing=true -Daccel=multicore"
-            stress_env: "FSPS_STRESS_ITERS=20"
-            image: nvcr.io/nvidia/nvhpc:26.1-devel-cuda_multi-rockylinux9
-            install_cmd: |
-              dnf update --assumeyes --refresh
-              dnf install --assumeyes python3-pip
-              pip3 install meson ninja
-          
-          # Intel oneAPI HPC Toolkit (Ubuntu)
-          - compiler: { name: 'ifx', fc: 'ifx', cc: 'icx' }
-            fflags: ""
-            build_args: ""
-            image: intel/oneapi-hpckit:devel-ubuntu22.04
-            install_cmd: |
-              apt-get update -y
-              apt-get install -y python3-pip
-              PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install meson ninja
-    
-    container:
-      image: ${{ matrix.image }}
-    
+          - name: AddressSanitizer + UBSan / stress A, C
+            setup_args: -Db_sanitize=address,undefined
+            stress_env: FSPS_STRESS_PHASES=AC FSPS_STRESS_ITERS=3
+
+          - name: ThreadSanitizer / stress B, D
+            setup_args: -Db_sanitize=thread -Denable_openmp=true
+            stress_env: FSPS_STRESS_PHASES=BD FSPS_STRESS_ITERS=4
+            tsan: true
+
     env:
-      FC: ${{ matrix.compiler.fc }}
-      CC: ${{ matrix.compiler.cc }}
-      FFLAGS: ${{ matrix.fflags }}
+      FFLAGS: -ffpe-summary=invalid,zero,overflow
+      OMP_NUM_THREADS: 4
+      FC: ccache gfortran
+      CC: ccache gcc
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/data/spectra/C3K/
 
-    - name: Install Dependencies
-      run: ${{ matrix.install_cmd }}
-
-    - name: Verify Compiler Version
-      run: $FC --version
-
-    - name: Configure Build
-      run: meson setup build ${{ matrix.build_args }}
-
-    - name: Compile FSPS
-      run: meson compile -C build
-
-    - name: Run Unit Tests
-      run: meson test -v -C build --suite unit
-
-    - name: Run Regression Tests
-      run: meson test -v -C build --suite regression --print-errorlogs
-    
-    - name: Configure Stress Build
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: meson setup build_stress ${{ matrix.stress_args }}
-
-    - name: Compile Stress Tests
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: meson compile -C build_stress
-
-    - name: Run Stress Tests
-      if: ${{ (success() || failure()) && matrix.stress_args != '' }}
-      run: ${{ matrix.stress_env }} meson test -v -C build_stress --suite stress --print-errorlogs
-
-  # ------------------------------------------------------------------
-  # Packaging Tests
-  # ------------------------------------------------------------------
-  build-rpm:
-    name: Build Fedora RPM
-    runs-on: ubuntu-latest
-
-    # Run the job inside a pristine Fedora container
-    container:
-      image: fedora:latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      
-      - name: Install RPM Build Dependencies
+      - name: Install toolchain
         run: |
-          dnf update -y
-          # Install core packaging tools
-          dnf install -y rpm-build rpmdevtools
-          
-          # Use dnf builddep to automatically read the .spec file 
-          # and install gcc-gfortran, meson, and ninja-build
-          dnf builddep -y packaging/fsps.spec
-      
-      - name: Prepare RPM Workspace
+          sudo apt-get update -q
+          sudo apt-get install -y -q gfortran ccache
+          pipx install meson
+          pipx install ninja
+
+      - name: Cache compiler output
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: sanitizer-${{ strategy.job-index }}
+          max-size: 200M
+
+      - name: Configure
+        run: meson setup build -Denable_stress_testing=true ${{ matrix.setup_args }}
+
+      - name: Build
+        run: meson compile -C build
+
+      - name: Unit tests
+        run: meson test -C build --suite unit --print-errorlogs
+
+      - name: Stress tests
         run: |
-          # Create ~/rpmbuild/SOURCES, SPECS, RPMS, etc.
-          rpmdev-setuptree
-          
-          # Copy the spec file into the workspace
-          cp packaging/fsps.spec ~/rpmbuild/SPECS/
-      
-      - name: Generate Source Tarball
-        run: |
-          VERSION=$(grep -i '^Version:' packaging/fsps.spec | awk '{print $2}')
-          echo "Packaging version: $VERSION"
-          
-          # We use tar to bundle the workspace.
-          # --transform renames the root in the tarball to fsps-3.2.0/ to match %autosetup
-          # --exclude='.git' is a safety measure in case a partial repo exists
-          tar -czvf ~/rpmbuild/SOURCES/fsps-$VERSION.tar.gz \
-              --transform "s|^\.|fsps-$VERSION|" \
-              --exclude='.git' .
-      
-      - name: Build RPMs
-        run: |
-          # Build binary and source RPMs (-ba)
-          rpmbuild -ba ~/rpmbuild/SPECS/fsps.spec
-      
-      - name: Verify Installation
-        run: |
-          # Actually install the newly built RPMs into the container
-          dnf install -y ~/rpmbuild/RPMS/x86_64/*.rpm
-          
-          # Verify the library was installed and the linker can find it
-          ldconfig -p | grep libfsps
-      
-      - name: Upload RPM Artifacts
+          if [ "${{ matrix.tsan }}" = "true" ]; then
+            export TSAN_OPTIONS="suppressions=$PWD/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1"
+          fi
+          env ${{ matrix.stress_env }} meson test -C build --suite stress --print-errorlogs
+
+      - name: Upload test log on failure
+        if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: fedora-latest-rpms
-          path: |
-            ~/rpmbuild/RPMS/*/*.rpm
-            ~/rpmbuild/SRPMS/*.rpm
-          retention-days: 7
-  
-  build-deb:
-    name: Build Ubuntu DEB
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Debian Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            debhelper \
-            build-essential \
-            gfortran \
-            meson \
-            ninja-build \
-            pkgconf \
-            devscripts
-
-      - name: Set debian/rules permissions
-        run: chmod +x debian/rules
-
-      - name: Build Debian Packages
-        run: |
-          # dpkg-buildpackage handles the entire lifecycle:
-          # configure, build, test (dh_auto_test), and package.
-          # -us -uc skips signing the packages (not needed for CI)
-          # -b builds only binary packages
-          dpkg-buildpackage -us -uc -b
-
-      - name: Verify Installation
-        run: |
-          # Install the generated .debs from the parent directory
-          sudo apt-get install -y ../libfsps3_*.deb ../libfsps-dev_*.deb
-          
-          # Verify shared library registration
-          sudo ldconfig
-          ldconfig -p | grep libfsps
-
-      - name: Stage Artifacts
-        run: |
-          # Create a local staging directory
-          mkdir -p dist/debian
-          # Move the artifacts from the parent directory into the workspace
-          mv ../libfsps3_*.deb ../libfsps-dev_*.deb ../fsps_*.buildinfo ../fsps_*.changes dist/debian/
-
-      - name: Upload DEB Artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: ubuntu-latest-debs
-          path: dist/debian/
+          name: sanitizer-log-${{ strategy.job-index }}
+          path: build/meson-logs/
           retention-days: 7
