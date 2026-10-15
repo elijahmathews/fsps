@@ -146,8 +146,6 @@ module fsps_dust
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
     real(WP), parameter :: REDDY_UV_COEFFS(0:3) = [-5.726_wp, 4.004_wp, -0.525_wp, 0.029_wp]
     
-    ! Blueward Extrapolation Value (< 0.15 um)
-    real(WP), parameter :: REDDY_UV_EXTRAP_VAL = 10.36_wp
 
     ! Optical/NIR Polynomial Coefficients (0.60 <= lambda < 2.85 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
