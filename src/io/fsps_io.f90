@@ -802,11 +802,19 @@ contains
         do i = 1, NEBNZ
             do j = 1, NEBNAGE
                 do k = 1, NEBNIP
-                    ! Metadata (redundant overwrite, but consistent with file structure)
+                    ! The line table must be on the continuum table's grid. (Legacy FSPS takes the
+                    ! age and Z axes from .lines; from 2023 until upstream fc7db5a the MIST, PDVA and
+                    ! PRSC .lines files carried the BPASS grid labels over unchanged MIST-grid data.)
                     read(u_file, *) val_logz, val_age, val_logu
-
-                    ! Store the age, as legacy code did
-                    ctx%state%nebem_age(j) = val_age
+                    if (abs(val_logz - ctx%state%nebem_logz(i)) > 1.0e-4_wp .or. &
+                        abs(val_age - ctx%state%nebem_age(j)) > 1.0e-4_wp * val_age .or. &
+                        abs(val_logu - ctx%state%nebem_logu(k)) > 1.0e-4_wp) then
+                        write(error_unit, '(3A)') '[FSPS_IO] Error: nebular line grid labels differ from ', &
+                            'the continuum grid in ', trim(file_path_lines)
+                        write(error_unit, '(A,3ES12.4,A,3ES12.4)') '  lines: ', val_logz, val_age, val_logu, &
+                            '  continuum: ', ctx%state%nebem_logz(i), ctx%state%nebem_age(j), ctx%state%nebem_logu(k)
+                        error stop 1
+                    end if
                     
                     ! Read Line Luminosities directly into state
                     read(u_file, *) ctx%state%nebem_line(:, i, j, k)
