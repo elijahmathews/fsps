@@ -99,11 +99,16 @@ contains
         ! Logic flag for XRB (BPSS models)
         use_xrb_grid = (ctx%state%isoc_type == 'bpss') .and. (ctx%add_xrb_emission_val == 1)
 
-        ! Ensure Gaussian smoothing kernels are ready (Run on Host or Device?)
-        ! compute_line_gaussians is likely expensive.
+        ! Per-call line kernels depend only on sigma_smooth and smooth_velocity: rebuild them (about
+        ! 1e6 exponentials) only when those change
         if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
-            call compute_line_gaussians(ctx, pset)
-            !$acc update device(ctx%state%gaussnebarr(:,:))
+            if (pset%sigma_smooth /= ctx%state%gauss_built_sigma .or. &
+                ctx%smooth_velocity_val /= ctx%state%gauss_built_velocity) then
+                call compute_line_gaussians(ctx, pset)
+                !$acc update device(ctx%state%gaussnebarr(:,:))
+                ctx%state%gauss_built_sigma = pset%sigma_smooth
+                ctx%state%gauss_built_velocity = ctx%smooth_velocity_val
+            end if
         end if
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
@@ -344,18 +349,54 @@ contains
 
         integer :: i, j
         real(WP) :: sum_val
+        real(WP) :: amp(NEMLINE)   ! Line luminosities (10**log * Q), computed once per call
+        real(WP), parameter :: LINE_PROFILE_CUT = 1.0e-14_wp
+        integer :: n, jc, j_lo, j_hi
+        real(WP) :: cut
 
-        ! Manual Matmul
-        ! spectrum(j) = sum(gauss(j, i) * flux(i))
-        !$acc parallel loop gang vector present(ctx, spectrum, line_lum_log) private(sum_val, i) firstprivate(t_idx, q_val)
+        ! Line amplitudes once per call: in the wavelength loop below, 10** would be evaluated for
+        ! every line at every pixel (~1e6 times per SSP age), which dominated nebular CSP calls
+        !$acc data create(amp)
+        !$acc parallel loop present(line_lum_log) firstprivate(q_val)
+        do i = 1, NEMLINE
+            amp(i) = (10.0_wp**line_lum_log(i)) * q_val
+        end do
+
+#ifdef _OPENACC
+        ! spectrum(j) = sum(gauss(j, i) * amp(i)): one thread per pixel suits the device
+        !$acc parallel loop gang vector present(ctx, spectrum, amp) private(sum_val, i) firstprivate(t_idx)
         do j = 1, size(spectrum, 1)
             sum_val = 0.0_wp
             do i = 1, NEMLINE
-                sum_val = sum_val + ctx%state%gaussnebarr(j, i) * (10.0_wp**line_lum_log(i)) * q_val
+                sum_val = sum_val + ctx%state%gaussnebarr(j, i) * amp(i)
             end do
             spectrum(j, t_idx) = spectrum(j, t_idx) + sum_val
         end do
-
+#else
+        ! On the CPU, add each line only where its profile is non-negligible: a line spans tens of
+        ! the ~6000 pixels, so the dense sum is ~99% multiplications by (nearly) zero. The window
+        ! extends from the pixel nearest the line centre until the profile falls below
+        ! LINE_PROFILE_CUT of its peak (~8 sigma; the neglected tails are ~1e-15 of the line).
+        n = size(spectrum, 1)
+        do i = 1, NEMLINE
+            if (amp(i) == 0.0_wp) cycle
+            jc = max(1, min(find_interval(ctx%state%spec_lambda(1:n), ctx%state%nebem_line_pos(i)), n))
+            j_hi = min(jc + 1, n)
+            cut = LINE_PROFILE_CUT * max(ctx%state%gaussnebarr(jc, i), ctx%state%gaussnebarr(j_hi, i))
+            if (cut <= 0.0_wp) cycle
+            j_lo = jc
+            do while (j_lo > 1)
+                if (ctx%state%gaussnebarr(j_lo - 1, i) <= cut) exit
+                j_lo = j_lo - 1
+            end do
+            do while (j_hi < n)
+                if (ctx%state%gaussnebarr(j_hi + 1, i) <= cut) exit
+                j_hi = j_hi + 1
+            end do
+            spectrum(j_lo:j_hi, t_idx) = spectrum(j_lo:j_hi, t_idx) + amp(i) * ctx%state%gaussnebarr(j_lo:j_hi, i)
+        end do
+#endif
+        !$acc end data
     end subroutine add_lines_to_spectrum
 
     !> @brief

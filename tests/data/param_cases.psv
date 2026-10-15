@@ -29,6 +29,7 @@ csp_igm|mist|miles|DL07|csp|imf_type=1 sfh=1 tau=1.0 tage=10.0 zred=3.0 add_igm_
 csp_agn|mist|miles|DL07|csp|imf_type=1 sfh=1 tau=1.0 tage=10.0 add_agn_dust=1 fagn=0.1 agn_tau=20.0
 csp_smooth|mist|miles|DL07|csp|imf_type=1 sfh=1 tau=1.0 tage=10.0 sigma_smooth=150.0 smooth_velocity=1
 lib_padova_basel|pdva|basel|DL07||imf_type=1 zmet=20 sfh=1 tau=1.0 tage=10.0 dust2=0.3
+lib_padova_basel_offgrid|pdva|basel|DL07||imf_type=1 zmet=10 sfh=1 tau=1.0 tage=10.0 dust2=0.3
 lib_mist_c3k|mist|c3k_afe+0.0|DL07||imf_type=1 sfh=1 tau=1.0 tage=10.0 dust2=0.3
 lib_themis|mist|miles|themis|csp|imf_type=1 sfh=1 tau=1.0 tage=10.0 dust1=0.5 dust2=0.3 dust_type=2
 lib_bpass|bpss|bpass|DL07||imf_type=1 sfh=1 tau=1.0 tage=10.0 dust2=0.3

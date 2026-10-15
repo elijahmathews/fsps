@@ -85,6 +85,13 @@ module fsps_context_types
         real(WP), pointer :: agb_logt_c(:) => null()
         real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0_wp
         real(WP), pointer :: agb_spec_car(:, :) => null()
+        !> Templates used for dusty AGB stars, smoothed as legacy ADD_AGB_DUST smooths each such star
+        !> (10^4 km/s, lambda >= 3 um); only the smoothed segment lambda >= AGB_SMOOTH_LAMBDA_MIN is
+        !> stored. O-rich and Lancon-Wood C-rich templates include their lambda^2/c factor.
+        real(WP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
+        real(WP), pointer :: agb_spec_o_smooth(:, :) => null()
+        real(WP), pointer :: agb_spec_c_smooth(:, :) => null()
+        real(WP), pointer :: agb_spec_car_smooth(:, :) => null()
         real(WP), pointer :: pagb_spec(:, :, :) => null()
         real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0_wp
         real(WP), pointer :: wrn_spec(:, :, :) => null()
@@ -116,6 +123,10 @@ module fsps_context_types
         !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
         !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
         logical :: owns_gaussnebarr = .false.
+        !> sigma_smooth and smooth_velocity the per-call line kernels (gaussnebarr) were last built
+        !> for; compute_line_gaussians is skipped while they are unchanged (negative: not built)
+        real(WP) :: gauss_built_sigma = -1.0_wp
+        integer :: gauss_built_velocity = -1
         real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0_wp
         real(WP), pointer :: agndust_spec(:, :) => null()
         real(WP), pointer :: mact_isoc(:, :, :) => null()
@@ -268,6 +279,10 @@ contains
         if (associated(state%agb_spec_c)) nullify (state%agb_spec_c)
         if (associated(state%agb_logt_c)) nullify (state%agb_logt_c)
         if (associated(state%agb_spec_car)) nullify (state%agb_spec_car)
+        if (associated(state%speclib_agb_smooth)) nullify (state%speclib_agb_smooth)
+        if (associated(state%agb_spec_o_smooth)) nullify (state%agb_spec_o_smooth)
+        if (associated(state%agb_spec_c_smooth)) nullify (state%agb_spec_c_smooth)
+        if (associated(state%agb_spec_car_smooth)) nullify (state%agb_spec_car_smooth)
         if (associated(state%pagb_spec)) nullify (state%pagb_spec)
         if (associated(state%wrn_spec)) nullify (state%wrn_spec)
         if (associated(state%wrc_spec)) nullify (state%wrc_spec)

@@ -36,6 +36,8 @@ module fsps_initialization
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
+    use fsps_smoothing, only: velocity_kernel_t, build_velocity_kernel, apply_velocity_kernel
+    use fsps_dust, only: AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX
     
 
     implicit none
@@ -88,7 +90,97 @@ contains
         call load_index_definitions(ctx)
         call build_time_grid(ctx)
         call compute_frequency_grid(ctx)
+        if (ctx%add_agb_dust_model_val == 1) call precompute_agb_smoothed_templates(ctx)
     end subroutine load_shared_data
+
+    !> @brief Pre-smooths the templates that dusty AGB stars are built from.
+    !>
+    !> @details
+    !> Legacy ADD_AGB_DUST smooths each dusty AGB star's spectrum (Gaussian of 10^4 km/s for
+    !> 3 um <= lambda <= 1e8 A) before applying the DUSTY transfer function; without it the
+    !> transfer function, about 6 at 65 um, amplifies the templates' far-IR pixel structure into
+    !> ~10% jitter. A star's spectrum is a linear combination of templates times a
+    !> wavelength-independent scale (and lambda^2/c for the O-rich and Lancon-Wood C-rich
+    !> families), so smoothing commutes with it: smoothing the templates once here gives the same
+    !> spectra as smoothing every dusty AGB star, which took ~90% of SSP generation in legacy
+    !> (cconroy20/fsps#80). The smoothing is always in velocity, by direct integration, whatever
+    !> smooth_velocity and smoothspec_fast are set to (they describe the output smoothing; legacy
+    !> applies them here too, and with smooth_velocity = 0 smooths these stars by 1 um).
+    !> Only the changed segment, lambda >= AGB_SMOOTH_LAMBDA_MIN, is stored.
+    subroutine precompute_agb_smoothed_templates(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        type(fsps_setup_cache_t), pointer :: cache
+        type(velocity_kernel_t) :: kernel
+        real(WP), allocatable :: work(:), lam2c(:)
+        integer :: nspec, i0, n_ir, iz, it, ig, k
+
+        cache => ctx%setup_cache
+        if (.not. associated(cache)) return
+        nspec = ctx%state%nspec
+        ! First pixel at or above the smoothing range (a loop: nvfortran lacks logical FINDLOC)
+        i0 = 0
+        do k = 1, nspec
+            if (ctx%state%spec_lambda(k) >= AGB_SMOOTH_LAMBDA_MIN) then
+                i0 = k
+                exit
+            end if
+        end do
+        if (i0 == 0) return
+        n_ir = nspec - i0 + 1
+        allocate (work(nspec))
+        lam2c = ctx%state%spec_lambda(1:nspec)**2 / C_LIGHT
+
+        ! The smoothing weights depend only on the wavelength grid: build them once
+        call build_velocity_kernel(ctx%state%spec_lambda(1:nspec), AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, &
+                                   AGB_SMOOTH_LAMBDA_MAX, kernel)
+
+        if (associated(ctx%state%speclib)) then
+            allocate (cache%speclib_agb_smooth(n_ir, size(ctx%state%speclib, 2), size(ctx%state%speclib, 3), &
+                                               size(ctx%state%speclib, 4)))
+            do ig = 1, size(ctx%state%speclib, 4)
+                do it = 1, size(ctx%state%speclib, 3)
+                    do iz = 1, size(ctx%state%speclib, 2)
+                        work = real(ctx%state%speclib(1:nspec, iz, it, ig), WP)
+                        if (any(work(i0:) > 0.0_wp)) then
+                            call apply_velocity_kernel(kernel, work, i0, cache%speclib_agb_smooth(:, iz, it, ig))
+                        else
+                            cache%speclib_agb_smooth(:, iz, it, ig) = work(i0:)
+                        end if
+                    end do
+                end do
+            end do
+            ctx%state%speclib_agb_smooth => cache%speclib_agb_smooth
+        end if
+
+        if (associated(ctx%state%agb_spec_o)) then
+            allocate (cache%agb_spec_o_smooth(n_ir, size(ctx%state%agb_spec_o, 2)))
+            do k = 1, size(ctx%state%agb_spec_o, 2)
+                work = lam2c * ctx%state%agb_spec_o(1:nspec, k)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_o_smooth(:, k))
+            end do
+            ctx%state%agb_spec_o_smooth => cache%agb_spec_o_smooth
+        end if
+
+        if (associated(ctx%state%agb_spec_c)) then
+            allocate (cache%agb_spec_c_smooth(n_ir, size(ctx%state%agb_spec_c, 2)))
+            do k = 1, size(ctx%state%agb_spec_c, 2)
+                work = lam2c * ctx%state%agb_spec_c(1:nspec, k)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_c_smooth(:, k))
+            end do
+            ctx%state%agb_spec_c_smooth => cache%agb_spec_c_smooth
+        end if
+
+        if (associated(ctx%state%agb_spec_car)) then
+            allocate (cache%agb_spec_car_smooth(n_ir, size(ctx%state%agb_spec_car, 2)))
+            do k = 1, size(ctx%state%agb_spec_car, 2)
+                work = ctx%state%agb_spec_car(1:nspec, k)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_car_smooth(:, k))
+            end do
+            ctx%state%agb_spec_car_smooth => cache%agb_spec_car_smooth
+        end if
+
+    end subroutine precompute_agb_smoothed_templates
 
     !> @brief Main entry point for initializing an FSPS context.
     !>
@@ -373,6 +465,7 @@ contains
         integer, intent(in) :: zin
         integer :: z, zmin, zmax, i, i1, j, k, nzinit
         real(WP) :: dz, log_spec_val
+        real(WP), parameter :: LIBRARY_FLOOR = 1.0e-70_wp  ! legacy FSPS tiny_number
         real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
 
         call load_zlegend_file(ctx, ctx%state%isoc_type, .false.)
@@ -425,12 +518,21 @@ contains
                   log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
             dz = min(max(dz, 0.0_wp), 1.0_wp)
 
+            ! Interpolate log flux in metallicity with legacy FSPS's 1e-70 floor (tiny_number), so that
+            ! a template present at only one library metallicity becomes ~1e-68 here, not ~1e-150 as
+            ! with a 1e-308 floor (which also sends pow into its slow underflow path).
             do k = 1, NDIM_LOGG
                 do j = 1, NDIM_LOGT
                     do i = 1, ctx%state%nspec
-                        log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + SAFE_FLOOR) + &
-                                       dz * log10(speclibinit(i, i1 + 1, j, k) + SAFE_FLOOR)
-                        ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                        if (dz <= 0.0_wp) then
+                            ctx%state%speclib(i, z, j, k) = speclibinit(i, i1, j, k)
+                        else if (dz >= 1.0_wp) then
+                            ctx%state%speclib(i, z, j, k) = speclibinit(i, i1 + 1, j, k)
+                        else
+                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + LIBRARY_FLOOR) + &
+                                           dz * log10(speclibinit(i, i1 + 1, j, k) + LIBRARY_FLOOR)
+                            ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                        end if
                     end do
                 end do
             end do
@@ -501,7 +603,9 @@ contains
             call load_xray_nebular_grid(ctx)
         end if
 
-        call load_xrb_spectra(ctx)
+        ! X-ray binary spectra (11 x 10 tables read as text, ~2 s) are only used with
+        ! add_xrb_emission = 1, which is part of the setup-cache key
+        if (ctx%add_xrb_emission_val == 1) call load_xrb_spectra(ctx)
 
     end subroutine load_interstellar_physics
 
@@ -853,6 +957,10 @@ contains
         ctx%state%agb_spec_c => cache%agb_spec_c
         ctx%state%agb_logt_c => cache%agb_logt_c
         ctx%state%agb_spec_car => cache%agb_spec_car
+        if (associated(cache%speclib_agb_smooth)) ctx%state%speclib_agb_smooth => cache%speclib_agb_smooth
+        if (associated(cache%agb_spec_o_smooth)) ctx%state%agb_spec_o_smooth => cache%agb_spec_o_smooth
+        if (associated(cache%agb_spec_c_smooth)) ctx%state%agb_spec_c_smooth => cache%agb_spec_c_smooth
+        if (associated(cache%agb_spec_car_smooth)) ctx%state%agb_spec_car_smooth => cache%agb_spec_car_smooth
         ctx%state%pagb_spec => cache%pagb_spec
         ctx%state%wrn_spec => cache%wrn_spec
         ctx%state%wrc_spec => cache%wrc_spec
@@ -874,6 +982,7 @@ contains
             allocate (ctx%state%gaussnebarr(size(cache%gaussnebarr, 1), size(cache%gaussnebarr, 2)))
             ctx%state%gaussnebarr = 0.0_wp
             ctx%state%owns_gaussnebarr = .true.
+            ctx%state%gauss_built_sigma = -1.0_wp
         end if
         ctx%state%agndust_spec => cache%agndust_spec
         ctx%state%mact_isoc => cache%mact_isoc

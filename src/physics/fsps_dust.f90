@@ -31,6 +31,8 @@ module fsps_dust
     public :: apply_dust_attenuation_and_emission
     public :: compute_attenuation_curve_point
     public :: apply_agb_dust_screen
+    public :: agb_circumstellar_tau
+    public :: AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX
     public :: apply_agn_dust_emission
     public :: interpolate_draine_li_dust_model
     public :: compute_circumstellar_optical_depth
@@ -47,7 +49,9 @@ module fsps_dust
     ! ------------------------------------------------------------------------
 
     ! Region Boundaries (in inverse microns, x = 1/lambda)
-    real(WP), parameter :: CCM_X_IR_MIN  = 0.3_wp
+    ! The IR power law (CCM89 eq. 2, defined for 0.3 <= x < 1.1) is extended to x = 0.1 (10 um)
+    ! as in legacy FSPS (mwdindex(1)); IR extinction follows a similar power law over 3-10 um
+    real(WP), parameter :: CCM_X_IR_MIN  = 0.1_wp
     real(WP), parameter :: CCM_X_OPT_MIN = 1.1_wp
     real(WP), parameter :: CCM_X_NUV_MIN = 3.3_wp
     real(WP), parameter :: CCM_X_MUV_MIN = 5.9_wp
@@ -94,9 +98,7 @@ module fsps_dust
     ! --------------------------------------------------------------------------
 
     ! Region Boundaries (Angstroms)
-    real(WP), parameter :: CALZ_LAM_UV_MIN = 1200.0_wp  ! 0.12 microns
     real(WP), parameter :: CALZ_LAM_BREAK  = 6300.0_wp  ! 0.63 microns
-    real(WP), parameter :: CALZ_LAM_IR_MAX = 22000.0_wp ! 2.20 microns
 
     ! General Parameters
     real(WP), parameter :: CALZ_R_V   = 4.05_wp
@@ -144,9 +146,6 @@ module fsps_dust
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
     real(WP), parameter :: REDDY_UV_COEFFS(0:3) = [-5.726_wp, 4.004_wp, -0.525_wp, 0.029_wp]
     
-    ! Blueward Extrapolation Value (< 0.15 um)
-    real(WP), parameter :: REDDY_UV_EXTRAP_VAL = 10.36_wp
-
     ! Optical/NIR Polynomial Coefficients (0.60 <= lambda < 2.85 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
     real(WP), parameter :: REDDY_OPT_COEFFS(0:3) = [-2.672_wp, -0.010_wp, 1.532_wp, -0.412_wp]
@@ -541,35 +540,21 @@ contains
         integer  :: c_rich_flag ! 0 = O-rich, 1 = C-rich
         integer  :: idx_teff, idx_tau
         integer  :: n_teff_grid, n_tau_grid
-        real(WP) :: tau_1um, log_g_local
+        real(WP) :: tau_1um
         real(WP) :: teff_linear, log_tau
         real(WP) :: w_teff, w_tau ! Interpolation weights
         real(WP) :: c00, c10, c11, c01, transfer_val
         integer  :: i
 
-        ! 1. Determine Chemistry (C-rich vs O-rich)
-        ! -----------------------------------------
+        ! 1. Chemistry (C-rich vs O-rich) and circumstellar optical depth at 1 micron
+        ! ----------------------------------------------------------------------------
         if (c_o_ratio > 1.0_wp) then
             c_rich_flag = 1
         else
             c_rich_flag = 0
         end if
 
-        ! 2. Handle Log(g) for BaSTI Isochrones
-        ! -------------------------------------
-        ! BaSTI does not always tabulate log(g), so we compute it physically.
-        if (ctx%state%isoc_type == 'bsti') then
-            log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_wp**log_l)) + 4.0_wp * log_t
-        else
-            log_g_local = log_g
-        end if
-
-        ! 3. Compute Circumstellar Optical Depth (tau at 1 micron)
-        ! -------------------------------------------------------
-        tau_1um = compute_circumstellar_optical_depth(ctx, c_rich_flag, mass_act, log_l, log_g_local, log_mdot)
-        
-        ! Apply user scaling weight
-        tau_1um = tau_1um * weight
+        tau_1um = agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot)
 
         ! Early exit if optical depth is negligible
         if (tau_1um <= SAFE_FLOOR) return
@@ -619,6 +604,49 @@ contains
         end do
 
     end subroutine apply_agb_dust_screen
+
+    !> @brief
+    !> Optical depth at 1 micron of the circumstellar dust shell of an AGB star.
+    !>
+    !> @details
+    !> Scaled by the user weight (agb_dust). A star whose optical depth is not above SAFE_FLOOR
+    !> receives no dust screen, and (as in legacy FSPS) its spectrum is not smoothed either:
+    !> get_stellar_spectrum uses this to choose between the raw and the pre-smoothed templates.
+    !>
+    !> @param[in] ctx        FSPS context.
+    !> @param[in] weight     User scaling of the optical depth (agb_dust).
+    !> @param[in] mass_act   Actual stellar mass (M_sol).
+    !> @param[in] log_t      Log10 effective temperature (K).
+    !> @param[in] log_l      Log10 luminosity (L_sol).
+    !> @param[in] log_g      Log10 surface gravity (cm/s^2).
+    !> @param[in] c_o_ratio  Carbon/oxygen ratio.
+    !> @param[in] log_mdot   Log10 mass-loss rate (M_sol/yr) from the isochrone.
+    !> @return    tau_1um    Optical depth at 1 micron.
+    function agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot) &
+            result(tau_1um)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in) :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
+        real(WP) :: tau_1um
+        integer  :: c_rich_flag
+        real(WP) :: log_g_local
+
+        if (c_o_ratio > 1.0_wp) then
+            c_rich_flag = 1
+        else
+            c_rich_flag = 0
+        end if
+
+        ! BaSTI does not always tabulate log(g), so compute it physically
+        if (ctx%state%isoc_type == 'bsti') then
+            log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_wp**log_l)) + 4.0_wp * log_t
+        else
+            log_g_local = log_g
+        end if
+
+        tau_1um = weight * compute_circumstellar_optical_depth(ctx, c_rich_flag, mass_act, log_l, &
+                                                               log_g_local, log_mdot)
+    end function agb_circumstellar_tau
 
     !> @brief
     !> Adds AGN emission (accretion disk + torus) to the spectrum.
@@ -918,6 +946,13 @@ contains
 
 
     !> Implementation of Calzetti et al. (2000) starburst attenuation curve.
+    !>
+    !> Eq. 4 of Calzetti et al. (2000), defined for 0.12-2.2 um, is extended beyond both ends as in
+    !> legacy FSPS: the polynomial below 0.63 um and the linear law above it, with k clipped at
+    !> zero where the linear law crosses it (~3.1 um). Cutting k to zero at 0.12 and 2.2 um instead
+    !> leaves the far-UV and ionizing continuum unattenuated and puts a step into the near-IR.
+    !> The coefficients are those of eq. 4 (2.659, R_V = 4.05); legacy writes the curve as
+    !> (1.17 poly + 1.78)/0.44, i.e. R_V = 4.0455, which raises A/A_V by 3.4e-4/4.05 everywhere.
     elemental function get_calzetti_curve_point(wavelength) result(curve)
         !$acc routine seq
         real(WP), intent(in) :: wavelength
@@ -926,17 +961,12 @@ contains
 
         ! Convert to inverse microns (x = 1/lambda_um)
         wavenumber = get_wavenumber_point(wavelength)
-        
-        extinction_k = 0.0_wp
-        
-        ! Optical / NIR (0.63um < lambda <= 2.2um)
-        if (wavelength > CALZ_LAM_BREAK .and. wavelength <= CALZ_LAM_IR_MAX) then
+
+        if (wavelength > CALZ_LAM_BREAK) then
+            ! Optical / NIR linear law (eq. 4: 0.63-2.2 um), extended to longer wavelengths
             extinction_k = CALZ_SCALE * (CALZ_OPT_COEFFS(0) + CALZ_OPT_COEFFS(1) * wavenumber) + CALZ_R_V
-        end if
-        
-        ! UV / Optical (0.12um <= lambda <= 0.63um)
-        if (wavelength >= CALZ_LAM_UV_MIN .and. wavelength <= CALZ_LAM_BREAK) then
-            ! Use nested multiplication (Horner's method) for clarity and efficiency
+        else
+            ! UV / optical polynomial (eq. 4: 0.12-0.63 um), extended to shorter wavelengths
             extinction_k = CALZ_R_V + CALZ_SCALE * ( &
                 CALZ_UV_COEFFS(0) + wavenumber * ( &
                     CALZ_UV_COEFFS(1) + wavenumber * ( &
@@ -946,8 +976,8 @@ contains
             )
         end if
 
-        ! Result is A_lambda / A_V = k_lambda / R_V
-        curve = extinction_k / CALZ_R_V
+        ! Result is A_lambda / A_V = k_lambda / R_V (no attenuation beyond the zero crossing)
+        curve = max(extinction_k, 0.0_wp) / CALZ_R_V
     end function get_calzetti_curve_point
 
 

@@ -252,8 +252,7 @@ contains
         real(WP) :: area
 
         integer :: l1, l2, k
-        real(WP) :: f_lo, f_hi
-        real(WP) :: c_lo, c_hi
+        real(WP) :: r_lo, r_hi
         real(WP) :: current_lam, next_lam, current_flux, next_flux
         real(WP) :: current_cont, next_cont, term_val, next_term_val
         
@@ -261,18 +260,20 @@ contains
         l1 = max(min(find_interval(lam, lo), size(lam) - 1), 1)
         l2 = max(min(find_interval(lam, hi), size(lam) - 1), 1)
         
-        ! 2. Compute continuum at endpoints
-        c_lo = slope * (lo - x_ref) + intercept
-        c_hi = slope * (hi - x_ref) + intercept
-        
-        ! 3. Interpolate Flux at endpoints
-        f_lo = interpolate_linear_point(lam(l1), func(l1), lam(l1+1), func(l1+1), lo)
-        f_hi = interpolate_linear_point(lam(l2), func(l2), lam(l2+1), func(l2+1), hi)
+        ! 2-3. Flux/continuum at the endpoints, interpolated from the ratio at the neighbouring grid
+        !      points as legacy FSPS (INTIND on spec/fc) does. Interpolating the flux and dividing by
+        !      the continuum at the endpoint is no more accurate (neither matches the exact integral of
+        !      the piecewise-linear spectrum better) and differed from legacy by up to 0.03 A in
+        !      HgammaA on the 20 A BaSeL grid.
+        r_lo = interpolate_linear_point(lam(l1), func(l1) / (slope * (lam(l1) - x_ref) + intercept), &
+                                        lam(l1+1), func(l1+1) / (slope * (lam(l1+1) - x_ref) + intercept), lo)
+        r_hi = interpolate_linear_point(lam(l2), func(l2) / (slope * (lam(l2) - x_ref) + intercept), &
+                                        lam(l2+1), func(l2+1) / (slope * (lam(l2+1) - x_ref) + intercept), hi)
 
         ! 4. Handle sub-pixel vs multi-pixel case
         if (l1 == l2) then
             ! Ratio at lo and hi
-            area = ((f_lo/c_lo) + (f_hi/c_hi)) * 0.5_wp * (hi - lo)
+            area = (r_lo + r_hi) * 0.5_wp * (hi - lo)
         else
             ! 1. Start with the partial start triangle
             ! Continuum and Flux at grid point l1+1
@@ -282,7 +283,7 @@ contains
             term_val = current_flux / current_cont
             
             ! Add the "left" tip
-            area = (current_lam - lo) * ((f_lo/c_lo) + term_val) * 0.5_wp
+            area = (current_lam - lo) * (r_lo + term_val) * 0.5_wp
             
             ! 2. Accumulate central trapezoids
             ! Iterate through the full grid points inside the range
@@ -300,7 +301,7 @@ contains
             end do
             
             ! 3. Add the "right" tip
-            area = area + (hi - lam(l2)) * ((f_hi/c_hi) + term_val) * 0.5_wp
+            area = area + (hi - lam(l2)) * (r_hi + term_val) * 0.5_wp
         end if
 
     end function integrate_ratio_interval

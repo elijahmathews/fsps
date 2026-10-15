@@ -2,7 +2,8 @@ module test_fsps_smoothing_mod
     use fsps_precision, only: WP
     use fsps_constants, only: C_LIGHT, SAFE_FLOOR
     use fsps_context_types, only: fsps_context_t
-    use fsps_smoothing, only: apply_smoothing
+    use fsps_smoothing, only: apply_smoothing, smooth_velocity, velocity_kernel_t, build_velocity_kernel, &
+                              apply_velocity_kernel
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_true, assert_relative_error
     implicit none
@@ -31,6 +32,7 @@ contains
         call test_flat_field_identity()
         call test_log_linear_edge_renormalization()
         call test_window_cut_passthrough()
+        call test_velocity_kernel_matches_convolution()
 
         call print_summary_line("Module Summary", total_tests - total_failures, total_tests)
     end subroutine run_fsps_smoothing_tests
@@ -577,5 +579,38 @@ contains
             total = total + 0.5_wp * (spec(i) + spec(i+1)) * (lambda(i+1) - lambda(i))
         end do
     end function integrate_trapezoid
+
+    !> The precomputed sparse kernel (used to pre-smooth the AGB templates) must reproduce the
+    !> direct convolution it mirrors, including where the grid spacing changes and at the window
+    !> limits.
+    subroutine test_velocity_kernel_matches_convolution()
+        integer, parameter :: n = 600
+        real(WP) :: lambda(n), spec(n), direct(n), smoothed(n)
+        type(velocity_kernel_t) :: kernel
+        integer :: i, i_first
+
+        call print_group("Velocity Kernel Matches Direct Convolution")
+
+        ! Grid with a spacing jump (fine, then coarse), spectrum with lines on a power law
+        do i = 1, n
+            if (i <= 300) then
+                lambda(i) = 2.0e4_wp + 20.0_wp * i
+            else
+                lambda(i) = lambda(300) + 400.0_wp * (i - 300)
+            end if
+            spec(i) = (lambda(i) / 3.0e4_wp)**(-2) * (1.0_wp - 0.5_wp * exp(-0.5_wp * ((lambda(i) - 2.6e4_wp) / 60.0_wp)**2))
+        end do
+
+        direct = spec
+        call smooth_velocity(lambda, direct, 1.0e4_wp, 3.0e4_wp, 1.0e8_wp)
+        call build_velocity_kernel(lambda, 1.0e4_wp, 3.0e4_wp, 1.0e8_wp, kernel)
+        i_first = 200
+        call apply_velocity_kernel(kernel, spec, i_first, smoothed(1:n - i_first + 1))
+
+        call assert_true(maxval(abs(smoothed(1:n - i_first + 1) - direct(i_first:)) / abs(direct(i_first:))) < 1.0e-12_wp, &
+                         "kernel application equals smooth_velocity (rel. 1e-12)", total_tests, total_failures)
+        call assert_true(any(abs(direct(i_first:) - spec(i_first:)) > 1.0e-3_wp * spec(i_first:)), &
+                         "smoothing changes the spectrum (non-trivial check)", total_tests, total_failures)
+    end subroutine test_velocity_kernel_matches_convolution
 
 end module test_fsps_smoothing_mod

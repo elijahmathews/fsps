@@ -26,6 +26,7 @@ contains
         call test_sloped_continuum_normalization()
         call test_grid_gap_integration()
         call test_single_interior_point()
+        call test_ratio_endpoints_legacy()
 
         call test_equivalent_width_identity()
         call test_magnitude_identity()
@@ -135,6 +136,25 @@ contains
         call assert_float_equals(12.5_wp * (1.0_wp + (4090.125_wp - 4070.0_wp) / 10.0_wp), result, 1.0e-10_wp, &
                                  "area across one interior grid point", total_tests, total_failures)
     end subroutine test_single_interior_point
+
+    !> Flux/continuum at a band edge is interpolated from the ratio at the neighbouring grid points,
+    !> as legacy FSPS (INTIND on spec/fc) does, not from the interpolated flux divided by the
+    !> continuum at the edge. On a coarse grid with a sloped continuum the two differ: here
+    !> 52.946 (ratio) vs 53.373 (flux).
+    subroutine test_ratio_endpoints_legacy()
+        real(WP), dimension(4) :: lambda, spec
+        real(WP) :: result
+
+        call print_group("Ratio Integral Endpoints (legacy INTIND)")
+
+        lambda = [4000.0_wp, 4020.0_wp, 4040.0_wp, 4060.0_wp]
+        spec = [1.0_wp, 2.0_wp, 4.0_wp, 8.0_wp]
+
+        ! Continuum 1 + 0.01 (lambda - 4000)
+        result = integrate_ratio_interval(lambda, spec, 4005.0_wp, 4035.0_wp, 0.01_wp, 1.0_wp, 4000.0_wp)
+        call assert_float_equals(52.94642857142857_wp, result, 1.0e-10_wp, &
+                                 "endpoint ratios interpolated from grid-point ratios", total_tests, total_failures)
+    end subroutine test_ratio_endpoints_legacy
 
     ! ------------------------------------------------------------------------
     ! Group 2: Index Types

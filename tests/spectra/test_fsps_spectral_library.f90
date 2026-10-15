@@ -396,6 +396,13 @@ contains
 
         call assert_relative_error(expected, spec(1), 1.0e-6_wp, "Snaps to valid corner", total_tests, total_failures)
 
+        ! With several valid corners, legacy FSPS keeps the last valid one in the order (j,k), (j+1,k),
+        ! (j,k+1), (j+1,k+1), even when another has a larger bilinear weight (here (j,k) does)
+        ctx%state%speclib(:, 1, 2, 2) = real(300.0_wp, kind=kind(ctx%state%speclib))
+        call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
+        call assert_relative_error(300.0_wp * scale_factor, spec(1), 1.0e-6_wp, &
+                                   "Legacy corner order: (j+1,k+1) over (j,k)", total_tests, total_failures)
+
         deallocate(spec)
         call teardown_context(ctx)
         deallocate(ctx)
