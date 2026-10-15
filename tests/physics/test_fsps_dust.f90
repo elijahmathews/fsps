@@ -26,9 +26,7 @@ module test_fsps_dust_mod
     real(WP), parameter :: KC13_BUMP_WIDTH = 350.0_wp
     real(WP), parameter :: KC13_R_V_BASE = 4.05_wp
 
-    real(WP), parameter :: CALZ_LAM_UV_MIN = 1200.0_wp
     real(WP), parameter :: CALZ_LAM_BREAK  = 6300.0_wp
-    real(WP), parameter :: CALZ_LAM_IR_MAX = 22000.0_wp
     real(WP), parameter :: CALZ_R_V   = 4.05_wp
     real(WP), parameter :: CALZ_SCALE = 2.659_wp
     real(WP), parameter :: CALZ_UV_COEFFS(0:3) = [-2.156_wp, 1.509_wp, -0.198_wp, 0.011_wp]
@@ -222,6 +220,7 @@ contains
         real(WP), dimension(2) :: res_break
         real(WP), dimension(1) :: w_v
         real(WP), dimension(1) :: res_v
+        real(WP), dimension(6) :: w_ext, res_ext
 
         call print_group("Calzetti (Type 2)")
 
@@ -239,6 +238,18 @@ contains
         res_v = compute_attenuation_curve(w_v, 2, settings, ctx)
         call assert_float_equals(1.0_wp, res_v(1), 1.0e-3_wp, &
                                  "Calzetti V-band normalization", total_tests, total_failures)
+
+        ! Test 3.3: eq. 4 is extended beyond 0.12-2.2 um (as in legacy FSPS), not cut to zero
+        w_ext = [21999.0_wp, 22001.0_wp, 1000.0_wp, 25000.0_wp, 35000.0_wp, 1.0e5_wp]
+        res_ext = compute_attenuation_curve(w_ext, 2, settings, ctx)
+        call assert_true(abs(res_ext(1) - res_ext(2)) <= 1.0e-4_wp, "2.2um continuity (curve extended)", &
+                         total_tests, total_failures)
+        call assert_true(res_ext(3) > 2.0_wp, "far-UV (1000 A) attenuated by the extended polynomial", &
+                         total_tests, total_failures)
+        call assert_true(res_ext(4) > 0.0_wp, "2.5um attenuated by the extended linear law", &
+                         total_tests, total_failures)
+        call assert_true(res_ext(5) == 0.0_wp .and. res_ext(6) == 0.0_wp, &
+                         "no attenuation beyond the zero crossing (~3.1um)", total_tests, total_failures)
 
         call fsps_context_remove_from_device(ctx)
         deallocate(ctx)
@@ -1478,11 +1489,12 @@ contains
         wavenumbers = 1.0e4_wp / wavelengths
         extinction_k = 0.0_wp
 
-        where (wavelengths > CALZ_LAM_BREAK .and. wavelengths <= CALZ_LAM_IR_MAX)
+        ! Eq. 4 of Calzetti et al. (2000), extended beyond 0.12-2.2 um and clipped at zero
+        where (wavelengths > CALZ_LAM_BREAK)
             extinction_k = CALZ_SCALE * (CALZ_OPT_COEFFS(0) + CALZ_OPT_COEFFS(1) * wavenumbers) + CALZ_R_V
         end where
 
-        where (wavelengths >= CALZ_LAM_UV_MIN .and. wavelengths <= CALZ_LAM_BREAK)
+        where (wavelengths <= CALZ_LAM_BREAK)
             extinction_k = CALZ_R_V + CALZ_SCALE * ( &
                 CALZ_UV_COEFFS(0) + wavenumbers * ( &
                     CALZ_UV_COEFFS(1) + wavenumbers * ( &
@@ -1492,7 +1504,7 @@ contains
             )
         end where
 
-        curve = extinction_k / CALZ_R_V
+        curve = max(extinction_k, 0.0_wp) / CALZ_R_V
 
     end function calc_calzetti_curve
 

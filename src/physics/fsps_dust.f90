@@ -96,9 +96,7 @@ module fsps_dust
     ! --------------------------------------------------------------------------
 
     ! Region Boundaries (Angstroms)
-    real(WP), parameter :: CALZ_LAM_UV_MIN = 1200.0_wp  ! 0.12 microns
     real(WP), parameter :: CALZ_LAM_BREAK  = 6300.0_wp  ! 0.63 microns
-    real(WP), parameter :: CALZ_LAM_IR_MAX = 22000.0_wp ! 2.20 microns
 
     ! General Parameters
     real(WP), parameter :: CALZ_R_V   = 4.05_wp
@@ -949,6 +947,13 @@ contains
 
 
     !> Implementation of Calzetti et al. (2000) starburst attenuation curve.
+    !>
+    !> Eq. 4 of Calzetti et al. (2000), defined for 0.12-2.2 um, is extended beyond both ends as in
+    !> legacy FSPS: the polynomial below 0.63 um and the linear law above it, with k clipped at
+    !> zero where the linear law crosses it (~3.1 um). Cutting k to zero at 0.12 and 2.2 um instead
+    !> leaves the far-UV and ionizing continuum unattenuated and puts a step into the near-IR.
+    !> The coefficients are those of eq. 4 (2.659, R_V = 4.05); legacy writes the curve as
+    !> (1.17 poly + 1.78)/0.44, i.e. R_V = 4.0455, which raises A/A_V by 3.4e-4/4.05 everywhere.
     elemental function get_calzetti_curve_point(wavelength) result(curve)
         !$acc routine seq
         real(WP), intent(in) :: wavelength
@@ -957,17 +962,12 @@ contains
 
         ! Convert to inverse microns (x = 1/lambda_um)
         wavenumber = get_wavenumber_point(wavelength)
-        
-        extinction_k = 0.0_wp
-        
-        ! Optical / NIR (0.63um < lambda <= 2.2um)
-        if (wavelength > CALZ_LAM_BREAK .and. wavelength <= CALZ_LAM_IR_MAX) then
+
+        if (wavelength > CALZ_LAM_BREAK) then
+            ! Optical / NIR linear law (eq. 4: 0.63-2.2 um), extended to longer wavelengths
             extinction_k = CALZ_SCALE * (CALZ_OPT_COEFFS(0) + CALZ_OPT_COEFFS(1) * wavenumber) + CALZ_R_V
-        end if
-        
-        ! UV / Optical (0.12um <= lambda <= 0.63um)
-        if (wavelength >= CALZ_LAM_UV_MIN .and. wavelength <= CALZ_LAM_BREAK) then
-            ! Use nested multiplication (Horner's method) for clarity and efficiency
+        else
+            ! UV / optical polynomial (eq. 4: 0.12-0.63 um), extended to shorter wavelengths
             extinction_k = CALZ_R_V + CALZ_SCALE * ( &
                 CALZ_UV_COEFFS(0) + wavenumber * ( &
                     CALZ_UV_COEFFS(1) + wavenumber * ( &
@@ -977,8 +977,8 @@ contains
             )
         end if
 
-        ! Result is A_lambda / A_V = k_lambda / R_V
-        curve = extinction_k / CALZ_R_V
+        ! Result is A_lambda / A_V = k_lambda / R_V (no attenuation beyond the zero crossing)
+        curve = max(extinction_k, 0.0_wp) / CALZ_R_V
     end function get_calzetti_curve_point
 
 
