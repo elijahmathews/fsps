@@ -118,7 +118,14 @@ contains
         cache => ctx%setup_cache
         if (.not. associated(cache)) return
         nspec = ctx%state%nspec
-        i0 = findloc(ctx%state%spec_lambda(1:nspec) >= AGB_SMOOTH_LAMBDA_MIN, .true., dim=1)
+        ! First pixel at or above the smoothing range (a loop: nvfortran lacks logical FINDLOC)
+        i0 = 0
+        do k = 1, nspec
+            if (ctx%state%spec_lambda(k) >= AGB_SMOOTH_LAMBDA_MIN) then
+                i0 = k
+                exit
+            end if
+        end do
         if (i0 == 0) return
         n_ir = nspec - i0 + 1
         allocate (work(nspec))
