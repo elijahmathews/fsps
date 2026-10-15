@@ -458,6 +458,7 @@ contains
         integer, intent(in) :: zin
         integer :: z, zmin, zmax, i, i1, j, k, nzinit
         real(WP) :: dz, log_spec_val
+        real(WP), parameter :: LIBRARY_FLOOR = 1.0e-70_wp  ! legacy FSPS tiny_number
         real(WP), allocatable :: speclibinit(:, :, :, :), speclib_slice(:, :, :)
 
         call load_zlegend_file(ctx, ctx%state%isoc_type, .false.)
@@ -510,11 +511,9 @@ contains
                   log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
             dz = min(max(dz, 0.0_wp), 1.0_wp)
 
-            ! Interpolate log flux in metallicity. A template that is empty (zero) at either library
-            ! metallicity is empty here too, as in legacy FSPS (its 1e-70 floor is 0 in single
-            ! precision): with a 1e-308 floor the result would be ~1e-150, which the corner-validity
-            ! test (> SAFE_FLOOR) would accept as a real spectrum, and which also sends pow into its
-            ! slow underflow path (most of setup time).
+            ! Interpolate log flux in metallicity with legacy FSPS's 1e-70 floor (tiny_number), so that
+            ! a template present at only one library metallicity becomes ~1e-68 here, not ~1e-150 as
+            ! with a 1e-308 floor (which also sends pow into its slow underflow path).
             do k = 1, NDIM_LOGG
                 do j = 1, NDIM_LOGT
                     do i = 1, ctx%state%nspec
@@ -522,12 +521,9 @@ contains
                             ctx%state%speclib(i, z, j, k) = speclibinit(i, i1, j, k)
                         else if (dz >= 1.0_wp) then
                             ctx%state%speclib(i, z, j, k) = speclibinit(i, i1 + 1, j, k)
-                        else if (speclibinit(i, i1, j, k) <= SAFE_FLOOR .or. &
-                                 speclibinit(i, i1 + 1, j, k) <= SAFE_FLOOR) then
-                            ctx%state%speclib(i, z, j, k) = 0.0
                         else
-                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k)) + &
-                                           dz * log10(speclibinit(i, i1 + 1, j, k))
+                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + LIBRARY_FLOOR) + &
+                                           dz * log10(speclibinit(i, i1 + 1, j, k) + LIBRARY_FLOOR)
                             ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
                         end if
                     end do
