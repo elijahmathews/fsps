@@ -170,6 +170,7 @@ contains
         real(WP), dimension(2) :: res_fuv
         real(WP), dimension(1) :: w_bump
         real(WP), dimension(1) :: res_uvb0, res_uvb1
+        real(WP), dimension(3) :: w_ir, res_ir
 
         call print_group("CCM89 Milky Way (Type 1)")
 
@@ -204,6 +205,13 @@ contains
         settings%uvb = 1.0_wp
         res_uvb1 = compute_attenuation_curve(w_bump, 1, settings, ctx)
         call assert_true(res_uvb1(1) > res_uvb0(1), "UV bump scaling (uvb 0 -> 1)", total_tests, total_failures)
+
+        ! IR power law extended from 3.3 um to 10 um (x = 0.1), as in legacy FSPS; zero beyond
+        w_ir = [3.8e4_wp, 8.0e4_wp, 1.2e5_wp]
+        res_ir = compute_attenuation_curve(w_ir, 1, settings, ctx)
+        call assert_true(res_ir(1) > res_ir(2) .and. res_ir(2) > 0.0_wp, &
+                         "IR power law extended to 10 um (L' and 8 um attenuated)", total_tests, total_failures)
+        call assert_true(res_ir(3) == 0.0_wp, "no attenuation beyond 10 um", total_tests, total_failures)
 
         call fsps_context_remove_from_device(ctx)
         deallocate(ctx)

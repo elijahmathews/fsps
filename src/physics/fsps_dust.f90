@@ -49,7 +49,9 @@ module fsps_dust
     ! ------------------------------------------------------------------------
 
     ! Region Boundaries (in inverse microns, x = 1/lambda)
-    real(WP), parameter :: CCM_X_IR_MIN  = 0.3_wp
+    ! The IR power law (CCM89 eq. 2, defined for 0.3 <= x < 1.1) is extended to x = 0.1 (10 um)
+    ! as in legacy FSPS (mwdindex(1)); IR extinction follows a similar power law over 3-10 um
+    real(WP), parameter :: CCM_X_IR_MIN  = 0.1_wp
     real(WP), parameter :: CCM_X_OPT_MIN = 1.1_wp
     real(WP), parameter :: CCM_X_NUV_MIN = 3.3_wp
     real(WP), parameter :: CCM_X_MUV_MIN = 5.9_wp
