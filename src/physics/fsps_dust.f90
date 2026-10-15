@@ -146,7 +146,6 @@ module fsps_dust
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
     real(WP), parameter :: REDDY_UV_COEFFS(0:3) = [-5.726_wp, 4.004_wp, -0.525_wp, 0.029_wp]
     
-
     ! Optical/NIR Polynomial Coefficients (0.60 <= lambda < 2.85 um)
     ! Polynomial in (1/lambda_microns): c0 + c1*x + c2*x^2 + c3*x^3
     real(WP), parameter :: REDDY_OPT_COEFFS(0:3) = [-2.672_wp, -0.010_wp, 1.532_wp, -0.412_wp]
