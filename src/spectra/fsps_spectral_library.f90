@@ -886,34 +886,24 @@ contains
 
         else
             ! --- Edge Case: Partial Overlap ---
-            ! The legacy code blindly overwrote spectra based on loop order.
-            ! We improve this by snapping to the valid corner with the HIGHEST weight.
-            ! This minimizes the jump when crossing from a valid region to a partial hole.
-
-            w1 = (1.0_wp - t) * (1.0_wp - u)
-            w2 = t * (1.0_wp - u)
-            w3 = t * u
-            w4 = (1.0_wp - t) * u
-            
-            ! Zero out weights for invalid corners
-            if (.not. v1) w1 = -1.0_wp
-            if (.not. v2) w2 = -1.0_wp
-            if (.not. v3) w3 = -1.0_wp
-            if (.not. v4) w4 = -1.0_wp
-
-            ! Find max weight
-            if (w1 >= w2 .and. w1 >= w3 .and. w1 >= w4) then
-                spec = ctx%state%speclib(:, nz, jlo, klo) * scale_factor
-                c(1) = scale_factor
-            else if (w2 >= w1 .and. w2 >= w3 .and. w2 >= w4) then
-                spec = ctx%state%speclib(:, nz, jlo+1, klo) * scale_factor
-                c(2) = scale_factor
-            else if (w3 >= w1 .and. w3 >= w2 .and. w3 >= w4) then
+            ! Use a single valid corner, chosen as legacy FSPS does: the last valid one in the order
+            ! (j,k), (j+1,k), (j,k+1), (j+1,k+1), i.e. corners 1, 2, 4, 3 here. Legacy calls this
+            ! "a very crude hack"; choosing the corner with the largest bilinear weight is no more
+            ! physical, and keeping legacy's choice keeps the fork's spectra identical to legacy's
+            ! (it decides the spectrum of e.g. the cool, dusty E-AGB stars at log t ~ 7.8).
+            c = 0.0_wp
+            if (v3) then
                 spec = ctx%state%speclib(:, nz, jlo+1, klo+1) * scale_factor
                 c(3) = scale_factor
-            else
+            else if (v4) then
                 spec = ctx%state%speclib(:, nz, jlo, klo+1) * scale_factor
                 c(4) = scale_factor
+            else if (v2) then
+                spec = ctx%state%speclib(:, nz, jlo+1, klo) * scale_factor
+                c(2) = scale_factor
+            else
+                spec = ctx%state%speclib(:, nz, jlo, klo) * scale_factor
+                c(1) = scale_factor
             end if
 
         end if
