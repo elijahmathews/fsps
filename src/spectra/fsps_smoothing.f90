@@ -19,6 +19,7 @@ module fsps_smoothing
 
     public :: apply_smoothing
     public :: smooth_velocity
+    public :: velocity_kernel_t, build_velocity_kernel, apply_velocity_kernel
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS
@@ -26,6 +27,14 @@ module fsps_smoothing
 
     real(WP), parameter :: N_SIGMA_RANGE = 4.0_wp !> Range of kernel in sigmas
     real(WP), parameter :: INV_SQRT_2PI = 1.0_wp / sqrt(2.0_wp * PI) !> 1/sqrt(2π)
+
+    !> Sparse, fixed-sigma velocity smoothing operator on a wavelength grid: row i (if active) is
+    !> smoothed(i) = sum(coef(off(i):off(i)+hi(i)-lo(i)) * spec(lo(i):hi(i))). The weights depend
+    !> only on the grid, so applying the operator to many spectra avoids recomputing them.
+    type :: velocity_kernel_t
+        integer, allocatable :: lo(:), hi(:), off(:)   ! lo(i) = 0: pixel i is left unchanged
+        real(WP), allocatable :: coef(:)
+    end type velocity_kernel_t
 
 contains
 
@@ -511,6 +520,111 @@ contains
         spec = spec_smooth
 
     end subroutine convolve_variable_resolution
+
+    !> @brief
+    !> Builds the operator applied by convolve_variable_resolution for a fixed sigma (no ires):
+    !> the same window (+-N_SIGMA_RANGE sigma in ln lambda), Gaussian weights in ln lambda divided
+    !> by lambda, trapezoid rule over the grid, and normalization. apply_velocity_kernel then
+    !> reproduces convolve_variable_resolution to rounding (tested in test_fsps_smoothing).
+    subroutine build_velocity_kernel(lambda, sigma, minl, maxl, kernel)
+        real(WP), dimension(:), intent(in), contiguous :: lambda
+        real(WP), intent(in) :: sigma, minl, maxl
+        type(velocity_kernel_t), intent(out) :: kernel
+
+        integer :: i, m, n, il, ih, nw, n_total
+        integer, allocatable :: win_lo(:), win_hi(:)
+        real(WP) :: sig_beta, inv_2sigma2, factor_blue, factor_red, val_l, val_h, total_weight, d_left, d_right
+        real(WP), allocatable :: w(:)
+
+        n = size(lambda)
+        allocate(kernel%lo(n), kernel%hi(n), kernel%off(n), win_lo(n), win_hi(n), w(n))
+        kernel%lo = 0
+        kernel%hi = -1
+        kernel%off = 0
+        win_lo = 0
+        win_hi = -1
+        if (n < 2 .or. sigma <= SAFE_FLOOR) then
+            allocate(kernel%coef(0))
+            return
+        end if
+
+        sig_beta = sigma / (C_LIGHT * 1.0e-13_wp)
+        inv_2sigma2 = 0.5_wp * (1.0_wp / sig_beta)**2
+        factor_blue = exp(-N_SIGMA_RANGE * sig_beta)
+        factor_red = exp(N_SIGMA_RANGE * sig_beta)
+
+        ! Pass 1: windows (the same hunting search as convolve_variable_resolution)
+        il = 1
+        ih = 1
+        n_total = 0
+        do i = 1, n
+            if (lambda(i) < minl .or. lambda(i) > maxl) cycle
+            val_l = lambda(i) * factor_blue
+            val_h = lambda(i) * factor_red
+            do while (il > 1 .and. lambda(il) > val_l)
+                il = il - 1
+            end do
+            do while (il < n .and. lambda(il) < val_l)
+                il = il + 1
+            end do
+            if (il > 1 .and. lambda(il) > val_l) il = il - 1
+            if (ih < il) ih = il
+            do while (ih > il .and. lambda(ih) > val_h)
+                ih = ih - 1
+            end do
+            do while (ih < n .and. lambda(ih) < val_h)
+                ih = ih + 1
+            end do
+            if (ih - il + 1 < 2) cycle
+            win_lo(i) = il
+            win_hi(i) = ih
+            n_total = n_total + (ih - il + 1)
+        end do
+
+        ! Pass 2: normalized trapezoid coefficients
+        allocate(kernel%coef(n_total))
+        n_total = 0
+        do i = 1, n
+            if (win_lo(i) == 0) cycle
+            il = win_lo(i)
+            ih = win_hi(i)
+            nw = ih - il + 1
+            w(1:nw) = exp(-inv_2sigma2 * ((log(lambda(i)) - log(lambda(il:ih)))**2)) / lambda(il:ih)
+            total_weight = 0.0_wp
+            do m = 1, nw
+                d_left = 0.0_wp
+                d_right = 0.0_wp
+                if (m > 1) d_left = lambda(il + m - 1) - lambda(il + m - 2)
+                if (m < nw) d_right = lambda(il + m) - lambda(il + m - 1)
+                w(m) = 0.5_wp * w(m) * (d_left + d_right)
+                total_weight = total_weight + w(m)
+            end do
+            if (total_weight <= SAFE_FLOOR) cycle
+            kernel%lo(i) = il
+            kernel%hi(i) = ih
+            kernel%off(i) = n_total + 1
+            kernel%coef(n_total + 1:n_total + nw) = w(1:nw) / total_weight
+            n_total = n_total + nw
+        end do
+    end subroutine build_velocity_kernel
+
+    !> @brief Applies a velocity_kernel_t to the pixels i_first..size(spec) of a spectrum.
+    subroutine apply_velocity_kernel(kernel, spec, i_first, smoothed)
+        type(velocity_kernel_t), intent(in) :: kernel
+        real(WP), dimension(:), intent(in) :: spec
+        integer, intent(in) :: i_first
+        real(WP), dimension(:), intent(out) :: smoothed   ! size(spec) - i_first + 1
+        integer :: i
+
+        do i = i_first, size(spec)
+            if (kernel%lo(i) == 0) then
+                smoothed(i - i_first + 1) = spec(i)
+            else
+                smoothed(i - i_first + 1) = dot_product(kernel%coef(kernel%off(i):kernel%off(i) + kernel%hi(i) - &
+                                                                    kernel%lo(i)), spec(kernel%lo(i):kernel%hi(i)))
+            end if
+        end do
+    end subroutine apply_velocity_kernel
 
     !> @brief
     !> smooth_velocity=0 (Constant Wavelength Dispersion)

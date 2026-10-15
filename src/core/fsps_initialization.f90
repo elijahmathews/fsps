@@ -36,7 +36,7 @@ module fsps_initialization
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
-    use fsps_smoothing, only: smooth_velocity
+    use fsps_smoothing, only: velocity_kernel_t, build_velocity_kernel, apply_velocity_kernel
     use fsps_dust, only: AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX
     
 
@@ -111,6 +111,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
 
         type(fsps_setup_cache_t), pointer :: cache
+        type(velocity_kernel_t) :: kernel
         real(WP), allocatable :: work(:), lam2c(:)
         integer :: nspec, i0, n_ir, iz, it, ig, k
 
@@ -123,6 +124,10 @@ contains
         allocate (work(nspec))
         lam2c = ctx%state%spec_lambda(1:nspec)**2 / C_LIGHT
 
+        ! The smoothing weights depend only on the wavelength grid: build them once
+        call build_velocity_kernel(ctx%state%spec_lambda(1:nspec), AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, &
+                                   AGB_SMOOTH_LAMBDA_MAX, kernel)
+
         if (associated(ctx%state%speclib)) then
             allocate (cache%speclib_agb_smooth(n_ir, size(ctx%state%speclib, 2), size(ctx%state%speclib, 3), &
                                                size(ctx%state%speclib, 4)))
@@ -130,8 +135,11 @@ contains
                 do it = 1, size(ctx%state%speclib, 3)
                     do iz = 1, size(ctx%state%speclib, 2)
                         work = real(ctx%state%speclib(1:nspec, iz, it, ig), WP)
-                        if (any(work(i0:) > 0.0_wp)) call smooth_agb(work)
-                        cache%speclib_agb_smooth(:, iz, it, ig) = work(i0:)
+                        if (any(work(i0:) > 0.0_wp)) then
+                            call apply_velocity_kernel(kernel, work, i0, cache%speclib_agb_smooth(:, iz, it, ig))
+                        else
+                            cache%speclib_agb_smooth(:, iz, it, ig) = work(i0:)
+                        end if
                     end do
                 end do
             end do
@@ -142,8 +150,7 @@ contains
             allocate (cache%agb_spec_o_smooth(n_ir, size(ctx%state%agb_spec_o, 2)))
             do k = 1, size(ctx%state%agb_spec_o, 2)
                 work = lam2c * ctx%state%agb_spec_o(1:nspec, k)
-                call smooth_agb(work)
-                cache%agb_spec_o_smooth(:, k) = work(i0:)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_o_smooth(:, k))
             end do
             ctx%state%agb_spec_o_smooth => cache%agb_spec_o_smooth
         end if
@@ -152,8 +159,7 @@ contains
             allocate (cache%agb_spec_c_smooth(n_ir, size(ctx%state%agb_spec_c, 2)))
             do k = 1, size(ctx%state%agb_spec_c, 2)
                 work = lam2c * ctx%state%agb_spec_c(1:nspec, k)
-                call smooth_agb(work)
-                cache%agb_spec_c_smooth(:, k) = work(i0:)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_c_smooth(:, k))
             end do
             ctx%state%agb_spec_c_smooth => cache%agb_spec_c_smooth
         end if
@@ -162,19 +168,11 @@ contains
             allocate (cache%agb_spec_car_smooth(n_ir, size(ctx%state%agb_spec_car, 2)))
             do k = 1, size(ctx%state%agb_spec_car, 2)
                 work = ctx%state%agb_spec_car(1:nspec, k)
-                call smooth_agb(work)
-                cache%agb_spec_car_smooth(:, k) = work(i0:)
+                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_car_smooth(:, k))
             end do
             ctx%state%agb_spec_car_smooth => cache%agb_spec_car_smooth
         end if
 
-    contains
-
-        subroutine smooth_agb(spec)
-            real(WP), intent(inout) :: spec(:)
-            call smooth_velocity(ctx%state%spec_lambda(1:nspec), spec, AGB_SMOOTH_SIGMA, &
-                                 AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX)
-        end subroutine smooth_agb
     end subroutine precompute_agb_smoothed_templates
 
     !> @brief Main entry point for initializing an FSPS context.
