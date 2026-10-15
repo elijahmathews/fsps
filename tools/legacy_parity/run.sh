@@ -34,8 +34,8 @@ cp "$HERE/ssp_dump.f90" "$OUT/src/"
 (cd "$OUT" && SPS_HOME="$LEGACY_HOME" ./src/ssp_dump "$IMF_TYPE" "$AGB_DUST" > legacy.log 2>&1)
 
 # 2. Fork
-meson compile -C "$ROOT/build" generate_opensps_fixtures > /dev/null
-(cd "$OUT" && SPS_HOME="$ROOT" FSPS_DATA_HOME="$ROOT" "$ROOT/build/generate_opensps_fixtures" \
+meson compile -C "$ROOT/${BUILD:-build}" generate_opensps_fixtures > /dev/null
+(cd "$OUT" && SPS_HOME="$ROOT" FSPS_DATA_HOME="$ROOT" "$ROOT/${BUILD:-build}/generate_opensps_fixtures" \
     --isoc mist --spec miles --dust DL07 --out fork_ssp.opsf \
     zmet=10 imf_type="$IMF_TYPE" add_agb_dust_model="$AGB_DUST" > fork.log 2>&1)
 
