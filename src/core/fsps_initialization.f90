@@ -965,6 +965,7 @@ contains
             allocate (ctx%state%gaussnebarr(size(cache%gaussnebarr, 1), size(cache%gaussnebarr, 2)))
             ctx%state%gaussnebarr = 0.0_wp
             ctx%state%owns_gaussnebarr = .true.
+            ctx%state%gauss_built_sigma = -1.0_wp
         end if
         ctx%state%agndust_spec => cache%agndust_spec
         ctx%state%mact_isoc => cache%mact_isoc

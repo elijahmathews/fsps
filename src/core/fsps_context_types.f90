@@ -123,6 +123,10 @@ module fsps_context_types
         !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
         !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
         logical :: owns_gaussnebarr = .false.
+        !> sigma_smooth and smooth_velocity the per-call line kernels (gaussnebarr) were last built
+        !> for; compute_line_gaussians is skipped while they are unchanged (negative: not built)
+        real(WP) :: gauss_built_sigma = -1.0_wp
+        integer :: gauss_built_velocity = -1
         real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0_wp
         real(WP), pointer :: agndust_spec(:, :) => null()
         real(WP), pointer :: mact_isoc(:, :, :) => null()
