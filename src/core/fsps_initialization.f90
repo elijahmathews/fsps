@@ -588,7 +588,9 @@ contains
             call load_xray_nebular_grid(ctx)
         end if
 
-        call load_xrb_spectra(ctx)
+        ! X-ray binary spectra (11 x 10 tables read as text, ~2 s) are only used with
+        ! add_xrb_emission = 1, which is part of the setup-cache key
+        if (ctx%add_xrb_emission_val == 1) call load_xrb_spectra(ctx)
 
     end subroutine load_interstellar_physics
 
