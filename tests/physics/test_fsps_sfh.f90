@@ -1104,9 +1104,12 @@ contains
     !>     sum_j w_j     = int SFR(t) dt
     !>     sum_j w_j x_j = int SFR(t) x(t) dt      (x = log10 t, or t for linear interpolation)
     !> The first-moment antiderivative M1 cancels out of sum_j w_j, so mass-conservation tests are
-    !> blind to errors in M1; the second identity pins M1 directly. tage is placed exactly on a
-    !> node: a segment clipped at tage is distributed on [x_j, x(tage)], so the identity only holds
-    !> with node positions when no segment is partial. SFR is the derivative of the
+    !> blind to errors in M1; the second identity pins M1 directly. Hat functions on the grid nodes
+    !> reproduce linear functions exactly, so both identities hold for any integration interval:
+    !> tage is placed both on a node and between nodes. (When the kernel nodes were taken to be the
+    !> clamped limits, a window edge inside a bin, e.g. tage = 12 Gyr, moved weight between the
+    !> bin's two SSPs; legacy FSPS and brute-force quadrature keep the grid ages.) SFR is the
+    !> derivative of the
     !> zeroth-moment antiderivative in lookback time t: 1 (constant), e^(t/tau)/tau (tau model),
     !> (tage - t) e^(t/tau)/tau (delayed tau) and slope_fac + sf_slope t (Simha linear segment).
     subroutine test_moments_match_quadrature()
@@ -1114,22 +1117,28 @@ contains
         type(sfhparams) :: sfh
         real(WP), allocatable :: time_full(:), weights(:), x_nodes(:)
         real(WP) :: m0_ref, m1_ref, w_sum
-        integer :: interp, k
+        integer :: interp, k, i_tage
         integer, parameter :: sfh_types(4) = [0, 1, 4, 5]
-        character(len=96) :: label
+        character(len=16), parameter :: tage_names(2) = [character(len=16) :: "tage on node", "tage off node"]
+        character(len=128) :: label
 
         call print_group("Moment Method: Oracle vs Quadrature (all analytic types)")
 
         allocate(time_full(60), weights(60), x_nodes(60))
         call fill_log_grid(time_full, 6.0_wp, 10.2_wp)
 
+        do i_tage = 1, 2
         do interp = 0, 1
             do k = 1, size(sfh_types)
                 call setup_sfh_context(ctx, time_full, interpolation_type=interp, tiny_logt=4.0_wp)
 
                 sfh%type = sfh_types(k)
                 sfh%tau = 2.0e9_wp
-                sfh%tage = 10.0_wp**time_full(55)        ! ~6.9 Gyr, exactly on a node
+                if (i_tage == 1) then
+                    sfh%tage = 10.0_wp**time_full(55)                              ! ~6.9 Gyr, on a node
+                else
+                    sfh%tage = 10.0_wp**(0.3_wp * time_full(55) + 0.7_wp * time_full(56))  ! between nodes
+                end if
                 sfh%tq = 0.0_wp
                 sfh%t0 = 0.0_wp
                 sfh%tb = 0.0_wp
@@ -1150,19 +1159,22 @@ contains
                 call sfh_moments_quadrature(sfh, 10.0_wp**time_full(1), sfh%tage, interp, m0_ref, m1_ref)
                 w_sum = sum(weights)
 
-                write(label, '(A,I0,A,I0,A)') "sum(w) = int SFR dt (sfh=", sfh_types(k), ", interp=", interp, ")"
+                write(label, '(A,I0,A,I0,3A)') "sum(w) = int SFR dt (sfh=", sfh_types(k), ", interp=", interp, &
+                                               ", ", trim(tage_names(i_tage)), ")"
                 call assert_relative_error(m0_ref, w_sum, 1.0e-6_wp, trim(label), total_tests, total_failures)
 
-                write(label, '(A,I0,A,I0,A)') "mean x = int SFR x dt / int SFR dt (sfh=", sfh_types(k), &
-                                              ", interp=", interp, ")"
+                write(label, '(A,I0,A,I0,3A)') "mean x = int SFR x dt / int SFR dt (sfh=", sfh_types(k), &
+                                               ", interp=", interp, ", ", trim(tage_names(i_tage)), ")"
                 call assert_relative_error(m1_ref / m0_ref, sum(weights * x_nodes) / w_sum, 1.0e-8_wp, &
                                            trim(label), total_tests, total_failures)
 
-                write(label, '(A,I0,A,I0,A)') "weights non-negative (sfh=", sfh_types(k), ", interp=", interp, ")"
+                write(label, '(A,I0,A,I0,3A)') "weights non-negative (sfh=", sfh_types(k), ", interp=", interp, &
+                                               ", ", trim(tage_names(i_tage)), ")"
                 call assert_true(all(weights >= 0.0_wp), trim(label), total_tests, total_failures)
 
                 call teardown_sfh_context(ctx)
             end do
+        end do
         end do
 
         deallocate(time_full, weights, x_nodes)

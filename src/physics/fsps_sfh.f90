@@ -93,7 +93,7 @@ contains
 
         integer :: j, nt
         integer :: j_start, j_end
-        real(WP) :: dt_bin, inv_dt
+        real(WP) :: inv_dt
         real(WP) :: m0, m1
         real(WP), dimension(2) :: limits
         real(WP) :: log_tb, burst_dt
@@ -101,7 +101,7 @@ contains
         ! Optimization variables (carry-over)
         real(WP) :: m0_prev, m1_prev
         real(WP) :: m0_curr, m1_curr
-        real(WP) :: node_val_prev, node_val_curr
+        real(WP) :: node_lo, node_hi, lim_prev
         logical :: is_tabular
         
         ! Pre-calculated boundaries
@@ -153,80 +153,71 @@ contains
         ! 3. Initialize Loop State (Carry-Over Optimization)
         is_tabular = (sfh%type == 2 .or. sfh%type == 3)
         
-        ! Pre-calculate the "previous" values for the first iteration (j=j_start)
+        ! The SSPs are interpolated linearly (in log or linear age) between the grid ages, so the
+        ! weight of node j is the integral of the SFR times the hat kernel centred on time_full(j).
+        ! The integration limits are clamped to the star-forming window [t_start, t_end], but the
+        ! kernel's nodes are always the grid ages themselves: a window edge (tage, sf_start, sf_trunc,
+        ! ...) inside a bin shortens the integral, not the bin.
+
+        ! Pre-calculate the lower integration limit and its moments for the first segment
         limits(1) = min(max(ctx%state%time_full(j_start), log_t_start), log_t_end)
-        
+        lim_prev = limits(1)
+
         if (.not. is_tabular) then
             if (ctx%interpolation_type_val == 0) then
-                node_val_prev = limits(1)
                 call eval_indefinite_moments_log(limits(1), sfh, m0_prev, m1_prev)
             else
-                node_val_prev = 10.0_wp**limits(1)
-                call eval_indefinite_moments_lin(node_val_prev, sfh, m0_prev, m1_prev)
-            end if
-        else
-            ! Tabular doesn't use indefinite moments carry-over, 
-            ! but we still pre-calc the node value for dt_bin.
-            if (ctx%interpolation_type_val == 0) then
-                node_val_prev = limits(1)
-            else
-                node_val_prev = 10.0_wp**limits(1)
+                call eval_indefinite_moments_lin(10.0_wp**limits(1), sfh, m0_prev, m1_prev)
             end if
         end if
 
         ! 4. Iterate over SEGMENTS [j, j+1]
         do j = j_start, j_end
-            
+
             limits(2) = min(max(ctx%state%time_full(j+1), log_t_start), log_t_end)
 
-            ! Compute "Current" values (Upper bound of this segment)
-            if (ctx%interpolation_type_val == 0) then
-                node_val_curr = limits(2)
-            else
-                node_val_curr = 10.0_wp**limits(2)
-            end if
-
-            ! Calc dt by simple difference (avoids re-calling pow/log)
-            dt_bin = node_val_curr - node_val_prev
-
-            if (dt_bin <= SAFE_FLOOR) then
-                ! Skip empty/invalid segments, but carry over state
-                node_val_prev = node_val_curr
-
-                ! No need to call eval_indefinite_moments here; m0_prev/m1_prev are unchanged.
+            ! Skip segments outside the star-forming window (the moments are unchanged)
+            if (limits(2) <= lim_prev) then
+                lim_prev = limits(2)
                 cycle
             end if
-            
-            inv_dt = 1.0_wp / dt_bin
 
-            ! Compute Moments M0 and M1
+            ! Compute Moments M0 and M1 over the clamped limits
             if (is_tabular) then
                 ! Tabular must integrate the specific interval every time
-                ! Limits array needs both bounds
-                limits(1) = min(max(ctx%state%time_full(j), log_t_start), log_t_end)
+                limits(1) = lim_prev
                 call compute_tabular_moments(ctx, limits, m0, m1)
             else
                 ! Analytic: Use the Cached Carry-Over
                 if (ctx%interpolation_type_val == 0) then
                     call eval_indefinite_moments_log(limits(2), sfh, m0_curr, m1_curr)
                 else
-                    call eval_indefinite_moments_lin(node_val_curr, sfh, m0_curr, m1_curr)
+                    call eval_indefinite_moments_lin(10.0_wp**limits(2), sfh, m0_curr, m1_curr)
                 end if
-                
+
                 m0 = m0_curr - m0_prev
                 m1 = m1_curr - m1_prev
-                
+
                 ! Update cache for next iteration
                 m0_prev = m0_curr
                 m1_prev = m1_curr
             end if
 
-            ! Distribute to Nodes
-            weights(j)   = weights(j)   + (node_val_curr * m0 - m1) * inv_dt
-            weights(j+1) = weights(j+1) + (m1 - node_val_prev * m0) * inv_dt
+            ! Hat-kernel nodes: the grid ages of this bin
+            if (ctx%interpolation_type_val == 0) then
+                node_lo = ctx%state%time_full(j)
+                node_hi = ctx%state%time_full(j+1)
+            else
+                node_lo = 10.0_wp**ctx%state%time_full(j)
+                node_hi = 10.0_wp**ctx%state%time_full(j+1)
+            end if
+            inv_dt = 1.0_wp / (node_hi - node_lo)
 
-            ! Shift "Current" to "Previous" for next loop
-            node_val_prev = node_val_curr
+            ! Distribute to Nodes
+            weights(j)   = weights(j)   + (node_hi * m0 - m1) * inv_dt
+            weights(j+1) = weights(j+1) + (m1 - node_lo * m0) * inv_dt
+
+            lim_prev = limits(2)
 
         end do
 
