@@ -31,6 +31,8 @@ module fsps_dust
     public :: apply_dust_attenuation_and_emission
     public :: compute_attenuation_curve_point
     public :: apply_agb_dust_screen
+    public :: agb_circumstellar_tau
+    public :: AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX
     public :: apply_agn_dust_emission
     public :: interpolate_draine_li_dust_model
     public :: compute_circumstellar_optical_depth
@@ -541,35 +543,21 @@ contains
         integer  :: c_rich_flag ! 0 = O-rich, 1 = C-rich
         integer  :: idx_teff, idx_tau
         integer  :: n_teff_grid, n_tau_grid
-        real(WP) :: tau_1um, log_g_local
+        real(WP) :: tau_1um
         real(WP) :: teff_linear, log_tau
         real(WP) :: w_teff, w_tau ! Interpolation weights
         real(WP) :: c00, c10, c11, c01, transfer_val
         integer  :: i
 
-        ! 1. Determine Chemistry (C-rich vs O-rich)
-        ! -----------------------------------------
+        ! 1. Chemistry (C-rich vs O-rich) and circumstellar optical depth at 1 micron
+        ! ----------------------------------------------------------------------------
         if (c_o_ratio > 1.0_wp) then
             c_rich_flag = 1
         else
             c_rich_flag = 0
         end if
 
-        ! 2. Handle Log(g) for BaSTI Isochrones
-        ! -------------------------------------
-        ! BaSTI does not always tabulate log(g), so we compute it physically.
-        if (ctx%state%isoc_type == 'bsti') then
-            log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_wp**log_l)) + 4.0_wp * log_t
-        else
-            log_g_local = log_g
-        end if
-
-        ! 3. Compute Circumstellar Optical Depth (tau at 1 micron)
-        ! -------------------------------------------------------
-        tau_1um = compute_circumstellar_optical_depth(ctx, c_rich_flag, mass_act, log_l, log_g_local, log_mdot)
-        
-        ! Apply user scaling weight
-        tau_1um = tau_1um * weight
+        tau_1um = agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot)
 
         ! Early exit if optical depth is negligible
         if (tau_1um <= SAFE_FLOOR) return
@@ -619,6 +607,49 @@ contains
         end do
 
     end subroutine apply_agb_dust_screen
+
+    !> @brief
+    !> Optical depth at 1 micron of the circumstellar dust shell of an AGB star.
+    !>
+    !> @details
+    !> Scaled by the user weight (agb_dust). A star whose optical depth is not above SAFE_FLOOR
+    !> receives no dust screen, and (as in legacy FSPS) its spectrum is not smoothed either:
+    !> get_stellar_spectrum uses this to choose between the raw and the pre-smoothed templates.
+    !>
+    !> @param[in] ctx        FSPS context.
+    !> @param[in] weight     User scaling of the optical depth (agb_dust).
+    !> @param[in] mass_act   Actual stellar mass (M_sol).
+    !> @param[in] log_t      Log10 effective temperature (K).
+    !> @param[in] log_l      Log10 luminosity (L_sol).
+    !> @param[in] log_g      Log10 surface gravity (cm/s^2).
+    !> @param[in] c_o_ratio  Carbon/oxygen ratio.
+    !> @param[in] log_mdot   Log10 mass-loss rate (M_sol/yr) from the isochrone.
+    !> @return    tau_1um    Optical depth at 1 micron.
+    function agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot) &
+            result(tau_1um)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in) :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
+        real(WP) :: tau_1um
+        integer  :: c_rich_flag
+        real(WP) :: log_g_local
+
+        if (c_o_ratio > 1.0_wp) then
+            c_rich_flag = 1
+        else
+            c_rich_flag = 0
+        end if
+
+        ! BaSTI does not always tabulate log(g), so compute it physically
+        if (ctx%state%isoc_type == 'bsti') then
+            log_g_local = log10(GRAVITY_L_M_T_COEFF * mass_act / (10.0_wp**log_l)) + 4.0_wp * log_t
+        else
+            log_g_local = log_g
+        end if
+
+        tau_1um = weight * compute_circumstellar_optical_depth(ctx, c_rich_flag, mass_act, log_l, &
+                                                               log_g_local, log_mdot)
+    end function agb_circumstellar_tau
 
     !> @brief
     !> Adds AGN emission (accretion disk + torus) to the spectrum.

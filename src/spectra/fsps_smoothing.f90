@@ -18,6 +18,7 @@ module fsps_smoothing
     private
 
     public :: apply_smoothing
+    public :: smooth_velocity
 
     ! --------------------------------------------------------------------------
     ! CONSTANTS
@@ -111,6 +112,22 @@ contains
         end if
 
     end subroutine apply_smoothing
+
+    !> @brief
+    !> Gaussian smoothing in velocity (sigma in km/s) by direct integration.
+    !>
+    !> @details
+    !> The velocity path of apply_smoothing (smooth_velocity = 1, smoothspec_fast = 1), for
+    !> internal uses that must not depend on the user's output-smoothing settings. Only pixels
+    !> with minl <= lambda <= maxl change.
+    subroutine smooth_velocity(lambda, spec, sigma, minl, maxl)
+        real(WP), dimension(:), intent(in), contiguous :: lambda
+        real(WP), dimension(:), intent(inout), contiguous :: spec
+        real(WP), intent(in) :: sigma, minl, maxl
+
+        if (size(lambda) < 2 .or. sigma <= SAFE_FLOOR) return
+        call convolve_variable_resolution(lambda, spec, sigma, minl, maxl)
+    end subroutine smooth_velocity
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPER KERNELS

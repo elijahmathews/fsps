@@ -892,6 +892,22 @@ contains
             !$acc enter data copyin(ctx%state%agb_spec_car)
             !$acc enter data attach(ctx%state%agb_spec_car)
         end if
+        if (associated(ctx%state%speclib_agb_smooth)) then
+            !$acc enter data copyin(ctx%state%speclib_agb_smooth)
+            !$acc enter data attach(ctx%state%speclib_agb_smooth)
+        end if
+        if (associated(ctx%state%agb_spec_o_smooth)) then
+            !$acc enter data copyin(ctx%state%agb_spec_o_smooth)
+            !$acc enter data attach(ctx%state%agb_spec_o_smooth)
+        end if
+        if (associated(ctx%state%agb_spec_c_smooth)) then
+            !$acc enter data copyin(ctx%state%agb_spec_c_smooth)
+            !$acc enter data attach(ctx%state%agb_spec_c_smooth)
+        end if
+        if (associated(ctx%state%agb_spec_car_smooth)) then
+            !$acc enter data copyin(ctx%state%agb_spec_car_smooth)
+            !$acc enter data attach(ctx%state%agb_spec_car_smooth)
+        end if
         if (associated(ctx%state%pagb_spec)) then
             !$acc enter data copyin(ctx%state%pagb_spec)
             !$acc enter data attach(ctx%state%pagb_spec)
@@ -1379,6 +1395,18 @@ contains
             end if
             if (associated(s%agb_spec_car)) then
                 !$acc exit data delete(s%agb_spec_car)
+            end if
+            if (associated(s%speclib_agb_smooth)) then
+                !$acc exit data delete(s%speclib_agb_smooth)
+            end if
+            if (associated(s%agb_spec_o_smooth)) then
+                !$acc exit data delete(s%agb_spec_o_smooth)
+            end if
+            if (associated(s%agb_spec_c_smooth)) then
+                !$acc exit data delete(s%agb_spec_c_smooth)
+            end if
+            if (associated(s%agb_spec_car_smooth)) then
+                !$acc exit data delete(s%agb_spec_car_smooth)
             end if
             if (associated(s%agb_logt_c)) then
                 !$acc exit data delete(s%agb_logt_c)

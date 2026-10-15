@@ -114,6 +114,13 @@ module fsps_cache
         real(WP), pointer :: agb_spec_c(:, :) => null()
         real(WP), pointer :: agb_logt_c(:) => null()
         real(WP), pointer :: agb_spec_car(:, :) => null()
+        !> Templates used for dusty AGB stars, smoothed as legacy ADD_AGB_DUST smooths each such star
+        !> (10^4 km/s, lambda >= 3 um); only the smoothed segment lambda >= AGB_SMOOTH_LAMBDA_MIN is
+        !> stored. O-rich and Lancon-Wood C-rich templates include their lambda^2/c factor.
+        real(WP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
+        real(WP), pointer :: agb_spec_o_smooth(:, :) => null()
+        real(WP), pointer :: agb_spec_c_smooth(:, :) => null()
+        real(WP), pointer :: agb_spec_car_smooth(:, :) => null()
         real(WP), pointer :: pagb_spec(:, :, :) => null()
         real(WP), pointer :: wrn_spec(:, :, :) => null()
         real(WP), pointer :: wrc_spec(:, :, :) => null()
@@ -250,6 +257,10 @@ contains
         if (associated(entry%agb_spec_c)) deallocate (entry%agb_spec_c)
         if (associated(entry%agb_logt_c)) deallocate (entry%agb_logt_c)
         if (associated(entry%agb_spec_car)) deallocate (entry%agb_spec_car)
+        if (associated(entry%speclib_agb_smooth)) deallocate (entry%speclib_agb_smooth)
+        if (associated(entry%agb_spec_o_smooth)) deallocate (entry%agb_spec_o_smooth)
+        if (associated(entry%agb_spec_c_smooth)) deallocate (entry%agb_spec_c_smooth)
+        if (associated(entry%agb_spec_car_smooth)) deallocate (entry%agb_spec_car_smooth)
         if (associated(entry%pagb_spec)) deallocate (entry%pagb_spec)
         if (associated(entry%wrn_spec)) deallocate (entry%wrn_spec)
         if (associated(entry%wrc_spec)) deallocate (entry%wrc_spec)

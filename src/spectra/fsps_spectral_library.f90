@@ -40,7 +40,7 @@ module fsps_spectral_library
     use fsps_constants, only: SAFE_FLOOR, PI, YEAR_TO_SECOND, C_LIGHT, G_NEWTON, GRAVITY_L_M_T_COEFF, &
                               M_SOL, L_SOL, NDIM_WR, NDIM_PAGB, N_AGB_C, N_AGB_O, N_AGB_CAR, CSTAR_ARINGER
     use fsps_interpolation, only: find_interval
-    use fsps_dust, only: apply_agb_dust_screen
+    use fsps_dust, only: apply_agb_dust_screen, agb_circumstellar_tau
 
     implicit none
     private
@@ -102,9 +102,21 @@ contains
         real(WP) :: gravity_cgs, logt_cut_wmb
         integer  :: library_source
         integer  :: i_phase
+        logical  :: agb_dust_star, smooth_ir
         
         ! 1. Determine Spectral Library
         i_phase = int(phase)
+
+        ! AGB stars (phases 4, 5) with a circumstellar dust shell are built from the pre-smoothed
+        ! templates beyond 3 um (see precompute_agb_smoothed_templates), as legacy FSPS smooths
+        ! their spectra before applying the DUSTY transfer function
+        agb_dust_star = (i_phase == 4 .or. i_phase == 5) .and. ctx%add_agb_dust_model_val == 1 .and. &
+                        pset%agb_dust > SAFE_FLOOR
+        smooth_ir = .false.
+        if (agb_dust_star .and. associated(ctx%state%speclib_agb_smooth)) then
+            smooth_ir = agb_circumstellar_tau(ctx, pset%agb_dust, mact, logt, log10(lbol), logg, ffco, lmdot) &
+                        > SAFE_FLOOR
+        end if
 
         ! Default to main library
         library_source = SRC_MAIN_LIB
@@ -174,11 +186,11 @@ contains
             
         case (SRC_AGB_O)
             ! Oxygen-rich TP-AGB (Lancon & Mouhcine)
-            call get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec)
+            call get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec, smooth_ir)
             
         case (SRC_AGB_C)
             ! Carbon-rich TP-AGB (Aringer or Lancon & Wood)
-            call get_agb_c_spectrum(ctx, logt, scale_factor, spec)
+            call get_agb_c_spectrum(ctx, logt, scale_factor, spec, smooth_ir)
             
         case (SRC_WMBASIC)
             ! Hot Main Sequence (WMBasic)
@@ -188,15 +200,13 @@ contains
         case default ! SRC_MAIN_LIB
             ! Standard Library (BaSeL/MILES/etc)
             ! Note: Uses the CALCULATED logg_calc
-            call get_main_lib_spectrum(ctx, pset, logt, logg_calc, scale_factor, spec)
+            call get_main_lib_spectrum(ctx, pset, logt, logg_calc, scale_factor, spec, smooth_ir)
             
         end select
 
         ! 5. Apply AGB Circumstellar Dust (If applicable)
         !    Only for AGB phases (4=RGB/E-AGB, 5=TP-AGB) if model is enabled.
-        if ( (i_phase == 4 .or. i_phase == 5) .and. &
-             ctx%add_agb_dust_model_val == 1 .and. &
-             pset%agb_dust > SAFE_FLOOR ) then
+        if (agb_dust_star) then
              
              ! Note: Passing LOG10(lbol) as expected by the legacy interface.
              ! Note: Passing input 'logg' to match legacy behavior exactly.
@@ -528,7 +538,7 @@ contains
     !> @param[in]    logt           Log(Temperature).
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
-    pure subroutine get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec)
+    pure subroutine get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec, smooth_ir)
         !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
@@ -538,6 +548,8 @@ contains
 
         integer  :: jlo, nz
         real(WP) :: t, w1, w2
+        logical,  intent(in), optional :: smooth_ir  ! use the pre-smoothed templates beyond 3 um
+        integer  :: i0
         
         nz = pset%zmet
 
@@ -556,6 +568,15 @@ contains
         spec = (scale_factor / C_LIGHT) * (ctx%state%spec_lambda**2) * &
                ( w1 * ctx%state%agb_spec_o(:, jlo) + &
                  w2 * ctx%state%agb_spec_o(:, jlo+1) )
+
+        ! Dusty AGB stars: pre-smoothed templates beyond 3 um (lambda^2/c already included)
+        if (present(smooth_ir)) then
+            if (smooth_ir .and. associated(ctx%state%agb_spec_o_smooth)) then
+                i0 = size(spec) - size(ctx%state%agb_spec_o_smooth, 1) + 1
+                spec(i0:) = scale_factor * (w1 * ctx%state%agb_spec_o_smooth(:, jlo) + &
+                                            w2 * ctx%state%agb_spec_o_smooth(:, jlo+1))
+            end if
+        end if
 
     end subroutine get_agb_o_spectrum
 
@@ -620,7 +641,7 @@ contains
     !> @param[in]    logt           Log(Temperature).
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
-    pure subroutine get_agb_c_spectrum(ctx, logt, scale_factor, spec)
+    pure subroutine get_agb_c_spectrum(ctx, logt, scale_factor, spec, smooth_ir)
         !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         real(WP),             intent(in)  :: logt
@@ -630,6 +651,8 @@ contains
         ! Local variables
         integer  :: jlo, n_grid
         real(WP) :: t, w1, w2
+        logical,  intent(in), optional :: smooth_ir  ! use the pre-smoothed templates beyond 3 um
+        integer  :: i0
         
         ! 1. Select the Library Source
         if (CSTAR_ARINGER == 1) then
@@ -652,6 +675,13 @@ contains
             ! 4. Interpolate (Units are already F_nu)
             spec = w1 * ctx%state%agb_spec_car(:, jlo) + &
                    w2 * ctx%state%agb_spec_car(:, jlo+1)
+            if (present(smooth_ir)) then
+                if (smooth_ir .and. associated(ctx%state%agb_spec_car_smooth)) then
+                    i0 = size(spec) - size(ctx%state%agb_spec_car_smooth, 1) + 1
+                    spec(i0:) = w1 * ctx%state%agb_spec_car_smooth(:, jlo) + &
+                                w2 * ctx%state%agb_spec_car_smooth(:, jlo+1)
+                end if
+            end if
 
         else
             ! --- Lancon & Wood (2002) ---
@@ -675,6 +705,13 @@ contains
             spec = (scale_factor / C_LIGHT) * (ctx%state%spec_lambda**2) * &
                ( w1 * ctx%state%agb_spec_c(:, jlo) + &
                  w2 * ctx%state%agb_spec_c(:, jlo+1) )
+            if (present(smooth_ir)) then
+                if (smooth_ir .and. associated(ctx%state%agb_spec_c_smooth)) then
+                    i0 = size(spec) - size(ctx%state%agb_spec_c_smooth, 1) + 1
+                    spec(i0:) = scale_factor * (w1 * ctx%state%agb_spec_c_smooth(:, jlo) + &
+                                                w2 * ctx%state%agb_spec_c_smooth(:, jlo+1))
+                end if
+            end if
 
         end if
 
@@ -766,7 +803,7 @@ contains
     !> @param[in]    logg           Log(Gravity) of the star.
     !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
     !> @param[out]   spec           Interpolated Surface Flux (normalized units).
-    pure subroutine get_main_lib_spectrum(ctx, pset, logt, logg, scale_factor, spec)
+    pure subroutine get_main_lib_spectrum(ctx, pset, logt, logg, scale_factor, spec, smooth_ir)
         !$acc routine seq
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
@@ -784,7 +821,13 @@ contains
         ! Validity flags
         logical  :: v1, v2, v3, v4
 
+        ! Use the pre-smoothed templates beyond 3 um (dusty AGB stars)
+        logical, intent(in), optional :: smooth_ir
+        real(WP) :: c(4)   ! Coefficients of the four corners, as applied to spec
+        integer  :: i0
+
         ! 1. Setup & Dimensions
+        c = 0.0_wp
         nz = pset%zmet
         nt = size(ctx%state%speclib_logt)
         ng = size(ctx%state%speclib_logg)
@@ -828,6 +871,7 @@ contains
             w2 = scale_factor * t * (1.0_wp - u)
             w3 = scale_factor * t * u
             w4 = scale_factor * (1.0_wp - t) * u
+            c = [w1, w2, w3, w4]
 
             ! Vectorized accumulation
             ! Note: Accessing speclib is contiguous in the first dimension (wavelength).
@@ -860,14 +904,30 @@ contains
             ! Find max weight
             if (w1 >= w2 .and. w1 >= w3 .and. w1 >= w4) then
                 spec = ctx%state%speclib(:, nz, jlo, klo) * scale_factor
+                c(1) = scale_factor
             else if (w2 >= w1 .and. w2 >= w3 .and. w2 >= w4) then
                 spec = ctx%state%speclib(:, nz, jlo+1, klo) * scale_factor
+                c(2) = scale_factor
             else if (w3 >= w1 .and. w3 >= w2 .and. w3 >= w4) then
                 spec = ctx%state%speclib(:, nz, jlo+1, klo+1) * scale_factor
+                c(3) = scale_factor
             else
                 spec = ctx%state%speclib(:, nz, jlo, klo+1) * scale_factor
+                c(4) = scale_factor
             end if
 
+        end if
+
+        ! 6. Dusty AGB stars: the same combination of the pre-smoothed templates beyond 3 um
+        !    (all-invalid corners keep the SAFE_FLOOR spectrum)
+        if (present(smooth_ir)) then
+            if (smooth_ir .and. any(c /= 0.0_wp)) then
+                i0 = size(spec) - size(ctx%state%speclib_agb_smooth, 1) + 1
+                spec(i0:) = c(1) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo)   + &
+                            c(2) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo)   + &
+                            c(3) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo+1) + &
+                            c(4) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo+1)
+            end if
         end if
 
     end subroutine get_main_lib_spectrum
