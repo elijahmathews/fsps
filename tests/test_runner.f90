@@ -54,7 +54,6 @@ program test_runner
     type(COMPSPOUT), allocatable, dimension(:) :: ref_ocompsp
 
     ! New data (computed on the fly)
-    real(WP), allocatable, dimension(:, :) :: new_spec_ssp
     real(WP), allocatable, dimension(:, :) :: new_spec_ssp_ctx
     real(WP), allocatable, dimension(:, :) :: new_spec_ssp_cmp
     real(WP), allocatable, dimension(:, :, :) :: new_spec_ssp3
@@ -263,7 +262,6 @@ program test_runner
     allocate(ref_lbol_ssp(ntfull_ctx))
     allocate(ref_ocompsp(ntfull_ctx))
 
-    allocate(new_spec_ssp(ntfull_ctx, nspec_ctx))
     allocate(new_spec_ssp_ctx(nspec_ctx, ntfull_ctx))
     allocate(new_spec_ssp_cmp(nspec_ctx, ntfull_ctx))
     allocate(new_mass_ssp(ntfull_ctx))
