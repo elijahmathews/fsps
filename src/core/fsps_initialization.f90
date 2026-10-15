@@ -510,12 +510,26 @@ contains
                   log10(ctx%state%zlegendinit(i1)/ctx%state%zsol_spec))
             dz = min(max(dz, 0.0_wp), 1.0_wp)
 
+            ! Interpolate log flux in metallicity. A template that is empty (zero) at either library
+            ! metallicity is empty here too, as in legacy FSPS (its 1e-70 floor is 0 in single
+            ! precision): with a 1e-308 floor the result would be ~1e-150, which the corner-validity
+            ! test (> SAFE_FLOOR) would accept as a real spectrum, and which also sends pow into its
+            ! slow underflow path (most of setup time).
             do k = 1, NDIM_LOGG
                 do j = 1, NDIM_LOGT
                     do i = 1, ctx%state%nspec
-                        log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k) + SAFE_FLOOR) + &
-                                       dz * log10(speclibinit(i, i1 + 1, j, k) + SAFE_FLOOR)
-                        ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                        if (dz <= 0.0_wp) then
+                            ctx%state%speclib(i, z, j, k) = speclibinit(i, i1, j, k)
+                        else if (dz >= 1.0_wp) then
+                            ctx%state%speclib(i, z, j, k) = speclibinit(i, i1 + 1, j, k)
+                        else if (speclibinit(i, i1, j, k) <= SAFE_FLOOR .or. &
+                                 speclibinit(i, i1 + 1, j, k) <= SAFE_FLOOR) then
+                            ctx%state%speclib(i, z, j, k) = 0.0
+                        else
+                            log_spec_val = (1.0_wp - dz) * log10(speclibinit(i, i1, j, k)) + &
+                                           dz * log10(speclibinit(i, i1 + 1, j, k))
+                            ctx%state%speclib(i, z, j, k) = 10.0_wp**log_spec_val
+                        end if
                     end do
                 end do
             end do
