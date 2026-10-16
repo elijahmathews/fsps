@@ -48,7 +48,7 @@ if accel_target != 'none'
             accel_defs = ['-DACC_MULTICORE']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
-            accel_args = ['-acc=gpu', '-gpu=cc70,cc80,cc90,ptx']
+            accel_args = ['-acc=gpu', '-gpu=' + get_option('gpu_arch')]
             accel_defs = ['-DACC_GPU']
         endif
     endif

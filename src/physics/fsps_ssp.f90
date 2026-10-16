@@ -144,6 +144,9 @@ contains
         type(isochrone_buffer_t) :: buf
         integer :: n_curr, n_times, i_time, out_idx
         real(WP) :: time_log_yr
+        ! Main-library template weights of every age (templates x ages), summed after the age
+        ! loop as one blocked product (CPU template-sum path)
+        real(WP), allocatable :: w_main_all(:,:)
 
         ! --------------------------------------------------------------------
         ! 1. INITIALIZATION
@@ -221,6 +224,12 @@ contains
         ! --------------------------------------------------------------------
         
         n_times = ctx%state%nt
+#ifndef _OPENACC
+        if (.not. ssp_per_star) then
+            allocate(w_main_all(size(ctx%state%speclib, 3) * size(ctx%state%speclib, 4), n_times))
+            w_main_all = 0.0_wp
+        end if
+#endif
 
         !$acc data present(ctx, buf) copy(spec_grid)
         do i_time = 1, n_times
@@ -261,10 +270,19 @@ contains
 
             ! D. ACCUMULATE SPECTRA
             !    Sum individual stellar spectra into the grid
-            call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx))
+            if (allocated(w_main_all)) then
+                call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx), w_main_all(:, i_time))
+            else
+                call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx))
+            end if
 
         end do
         !$acc end data
+
+        if (allocated(w_main_all)) then
+            call add_main_library_templates(ctx, pset, w_main_all, spec_grid)
+            deallocate(w_main_all)
+        end if
 
         ! Release buffer memory from device
         !$acc exit data delete(buf%initial_mass, buf%current_mass, buf%log_lum, buf%log_teff)
@@ -613,11 +631,14 @@ contains
     !> @param[in]     pset      User settings (for EVTYPE/MASSCUT).
     !> @param[in]     buf       The isochrone buffer.
     !> @param[in,out] spec_out  The output spectrum accumulator (L_sol/Hz).
-    subroutine accumulate_spectrum(ctx, pset, buf, spec_out)
+    subroutine accumulate_spectrum(ctx, pset, buf, spec_out, w_main_out)
         type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)            :: pset
         type(isochrone_buffer_t), intent(in):: buf
         real(WP), intent(inout), contiguous :: spec_out(:)
+        !> If present (template path), the main-library template weights are returned here instead
+        !> of summed, and spec_out holds the rest, unfloored (see add_main_library_templates)
+        real(WP), intent(inout), optional   :: w_main_out(:)
 
         ! Local variables
         integer :: j, i_spec
@@ -669,7 +690,7 @@ contains
 #ifndef _OPENACC
         ! Template-sum form; the per-star loop below is the OpenACC kernel and the reference
         if (n_active > 0 .and. .not. ssp_per_star) then
-            call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out)
+            call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out, w_main_out)
             deallocate(active_idx, active_w)
             return
         end if
@@ -787,12 +808,13 @@ contains
     !> template sum touches each used template once, instead of up to four times per star.
     !> Stars that are not such a combination (AGB stars with a dust shell, degenerate cases) are
     !> added from get_stellar_spectrum.
-    subroutine accumulate_by_templates(ctx, pset, buf, idx, spec_out)
+    subroutine accumulate_by_templates(ctx, pset, buf, idx, spec_out, w_main_out)
         type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)                    :: pset
         type(isochrone_buffer_t), intent(in)        :: buf
         integer, intent(in)                         :: idx(:)
         real(WP), intent(inout), contiguous         :: spec_out(:)
+        real(WP), intent(inout), optional           :: w_main_out(:)
 
         real(WP), allocatable :: w_main(:,:), w_wmb(:,:), w_pagb(:,:), w_wrn(:), w_wrc(:), &
                                  w_agbo(:), w_agbc(:), w_car(:)
@@ -882,13 +904,17 @@ contains
             end do
         end do
 
-        ! 2. Sum the templates with non-zero weight
-        do b = 1, size(w_main, 2)
-            do a = 1, size(w_main, 1)
-                if (w_main(a, b) /= 0.0_wp) &
-                    call add_column_sp(acc, comp, real(w_main(a, b), KP), ctx%state%speclib(1:nspec, nz, a, b))
+        ! 2. Sum the templates with non-zero weight (the main library after the age loop, if batched)
+        if (present(w_main_out)) then
+            w_main_out = w_main_out + reshape(w_main, [size(w_main)])
+        else
+            do b = 1, size(w_main, 2)
+                do a = 1, size(w_main, 1)
+                    if (w_main(a, b) /= 0.0_wp) &
+                        call add_column_sp(acc, comp, real(w_main(a, b), KP), ctx%state%speclib(1:nspec, nz, a, b))
+                end do
             end do
-        end do
+        end if
         do b = 1, size(w_wmb, 2)
             do a = 1, size(w_wmb, 1)
                 if (w_wmb(a, b) /= 0.0_wp) &
@@ -969,7 +995,11 @@ contains
             end do
         end if
 
-        spec_out = max(real(acc, WP), SAFE_FLOOR)
+        if (present(w_main_out)) then
+            spec_out = real(acc, WP)   ! floored after the main-library templates are added
+        else
+            spec_out = max(real(acc, WP), SAFE_FLOOR)
+        end if
 
     contains
 
@@ -1050,6 +1080,69 @@ contains
         end subroutine add_column
 
     end subroutine accumulate_by_templates
+
+    !> @brief Adds the main-library templates of all ages: spec_grid += templates . W.
+    !>
+    !> @details
+    !> One matrix product (pixels x templates) . (templates x ages) instead of one sum per age,
+    !> blocked over pixels so that a block of each template and the accumulators of all ages stay
+    !> in cache: each template is read once per SSP grid. Compensated at FP32 kernel precision.
+    !> Ages with no stars are left at zero; computed ages are floored as in the per-age path.
+    subroutine add_main_library_templates(ctx, pset, w, spec_grid)
+        type(fsps_context_t), intent(in)    :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: w(:,:)          ! (templates, ages)
+        real(WP), intent(inout), contiguous :: spec_grid(:,:)  ! (pixels, output ages)
+        integer, parameter :: PIX_BLOCK = 512
+        real(KP), allocatable :: acc(:,:), comp(:,:)
+        integer, allocatable :: used(:)
+        logical, allocatable :: has_stars(:)
+        integer :: nspec, nt_lib, n_used, t, a, b, i_time, out_idx, p0, p1, i, k
+        real(KP) :: wk, term, tsum
+
+        nspec = size(spec_grid, 1)
+        nt_lib = size(ctx%state%speclib, 3)
+        used = pack([(t, t = 1, size(w, 1))], any(w /= 0.0_wp, dim=2))
+        n_used = size(used)
+        allocate(acc(PIX_BLOCK, size(w, 2)), comp(PIX_BLOCK, size(w, 2)), has_stars(size(w, 2)))
+        ! Ages without stars stay at zero, as in the per-age path
+        do i_time = 1, size(w, 2)
+            out_idx = 1 + (i_time - 1) * TIME_RES_INCR
+            has_stars(i_time) = pset%ssp_gen_age(i_time) /= 0 .and. &
+                                (any(w(:, i_time) /= 0.0_wp) .or. any(spec_grid(:, out_idx) /= 0.0_wp))
+        end do
+        do p0 = 1, nspec, PIX_BLOCK
+            p1 = min(p0 + PIX_BLOCK - 1, nspec)
+            acc = 0.0_KP; comp = 0.0_KP
+            do k = 1, n_used
+                t = used(k)
+                a = mod(t - 1, nt_lib) + 1
+                b = (t - 1) / nt_lib + 1
+                do i_time = 1, size(w, 2)
+                    if (w(t, i_time) == 0.0_wp) cycle
+                    wk = real(w(t, i_time), KP)
+                    if (KP == WP) then
+                        do i = p0, p1
+                            acc(i - p0 + 1, i_time) = acc(i - p0 + 1, i_time) + wk * ctx%state%speclib(i, pset%zmet, a, b)
+                        end do
+                    else
+                        do i = p0, p1
+                            term = wk * ctx%state%speclib(i, pset%zmet, a, b) - comp(i - p0 + 1, i_time)
+                            tsum = acc(i - p0 + 1, i_time) + term
+                            comp(i - p0 + 1, i_time) = (tsum - acc(i - p0 + 1, i_time)) - term
+                            acc(i - p0 + 1, i_time) = tsum
+                        end do
+                    end if
+                end do
+            end do
+            do i_time = 1, size(w, 2)
+                if (.not. has_stars(i_time)) cycle
+                out_idx = 1 + (i_time - 1) * TIME_RES_INCR
+                spec_grid(p0:p1, out_idx) = max(spec_grid(p0:p1, out_idx) + real(acc(1:p1 - p0 + 1, i_time), WP), &
+                                                SAFE_FLOOR)
+            end do
+        end do
+    end subroutine add_main_library_templates
 
     ! ------------------------------------------------------------------------
     ! POST-PROCESSING HELPERS

@@ -1,6 +1,6 @@
-# GPU plan: first A100 session
+# GPU plan: first GPU session (A100 or P100)
 
-Runbook for the first session on an NVIDIA A100 node. The goal is to measure, then build the two
+Runbook for the first session on an NVIDIA GPU node (A100, or P100: see below). The goal is to measure, then build the two
 kernels that matter, with every step validated against the CPU build. Work on a branch
 (`gpu/a100-<topic>`), commit and push as you go (`git push origin <branch>`), and do not merge.
 
@@ -17,11 +17,45 @@ kernels that matter, with every step validated against the CPU build. Work on a 
   physics oracle `check_template_vs_per_star` asserts the two agree.
 - **FP32 kernels** (`-Dkernel_precision=single`) reproduce FP64 to ~3e-7 per pixel and 2e-7 mag;
   rules and evidence in `doc/MIXED_PRECISION.md`. Use them on the GPU from the start.
-- **Existing GPU code** is OpenACC (nvfortran, `-Daccel=gpu`, `-gpu=cc70,cc80,cc90`): device
+- **Existing GPU code** is OpenACC (nvfortran, `-Daccel=gpu`, targets from `-Dgpu_arch`, default `cc80,cc90`): device
   residency in `fsps_context.f90`, kernels in SSP (per star), dust, gas, CSP and indices, with
   host orchestration and `update host/device` between stages. It has only been run on CPU cores
   (OpenACC multicore) in CI; it has not been validated on a GPU recently. The long-term
   direction is OpenMP target offload (portable to AMD and Intel GPUs; `doc/CI.md`).
+
+## Known before starting (laptop compile of `-Daccel=gpu`, HPC SDK 26.1, both precisions)
+
+- Both precisions compile for the GPU without errors. HPC SDK 26.1 rejects `cc70` (Volta),
+  which the build used to hard-code; `-Dgpu_arch=cc80` is enough on an A100 (use `cc70` only
+  with an SDK older than 26 on V100s).
+- `-Minfo=accel` reports, to look at on the device:
+  - the CSP age sum serializes when several output ages are computed (`tage = 0`): "loop carried
+    reuse of `spec_young` / `csp_emlin_young`" in `integrate_csp_step`; the single-age path
+    used in fitting is parallel; the batched GEMM form replaces both;
+  - the Romberg integrator calls a function through a procedure argument, which device code
+    cannot do; it runs on the host (IMF weights) today, but keeps IMF weights off the GPU
+    (the exact Chabrier integrals on branch `perf/imf-analytic` would remove it);
+  - `pset` / `settings` are copied in implicitly on each kernel launch (small per-call cost).
+- nvfortran needs `CC=nvc` (the C sources get the OpenACC flags). If it fails with "Error in
+  path /usr/lib/gcc/...", its `localrc` is stale after a GCC upgrade: rerun
+  `makelocalrc -x <bindir>` (or point `NVLOCALRC` at a regenerated copy).
+
+## On a P100 node (ICDS cluster)
+
+The first session may run on a P100 (Pascal, `cc60`) instead of an A100. HPC SDK 26.x ships
+only CUDA 13 (`cc75` and newer), so load `nvhpc/25.1` (CUDA 12, still supports Pascal):
+
+```
+module load nvhpc/25.1
+FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu -Dgpu_arch=cc60
+```
+
+(If `meson`/`ninja` are missing: `python3 -m pip install --user meson ninja`.) CI tests
+nvfortran 26.1 only, so an older-compiler front-end issue may appear at the first build; fix
+it in place. A P100 answers the correctness and where-the-time-goes questions as well as an
+A100; it cannot measure A100 absolute speed, TF32 or FP64 tensor-core GEMMs, and Nsight
+Compute does not support Pascal (Nsight Systems and `compute-sanitizer` do). Its FP64 runs at
+half the FP32 rate, so FP32 gains there (~2x) understate those on consumer GPUs.
 
 ## Session goals, in order
 
@@ -30,8 +64,8 @@ kernels that matter, with every step validated against the CPU build. Work on a 
 ```
 module load nvhpc            # or whatever provides nvfortran / nvc on the cluster
 nvfortran --version; nvidia-smi
-FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu
-FC=nvfortran CC=nvc meson setup build_gpu32 --buildtype=release -Daccel=gpu -Dkernel_precision=single
+FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu -Dgpu_arch=cc80
+FC=nvfortran CC=nvc meson setup build_gpu32 --buildtype=release -Daccel=gpu -Dgpu_arch=cc80 -Dkernel_precision=single
 meson compile -C build_gpu && meson compile -C build_gpu32
 export SPS_HOME=$PWD FSPS_DATA_HOME=$PWD
 meson test -C build_gpu   --suite unit --suite regression
@@ -50,7 +84,12 @@ pass under OpenACC multicore, that is a device data-residency bug (missing `upda
 
 Make `accumulate_by_templates` (or a batched variant over all ages) run on the device:
 
-- Keep the weight aggregation on the CPU (FP64) at first: it produces W(templates x ages).
+- Keep the weight aggregation on the CPU (FP64) at first: it already produces the main-library
+  W(templates x ages) for the whole grid (`w_main_all` in `generate_ssp_grid`), and
+  `add_main_library_templates` is the single CPU routine that does spectra += templates . W.
+  Replace that routine's body with the device GEMM. The remaining per-age work (small
+  libraries, dust-shell corners, ~20% of SSP time) can follow the same pattern: one product
+  per dust corner over all ages, then times that corner's transfer function.
 - Device: templates resident (main library slice `speclib(:, zmet, :, :)` is FP32 already,
   ~31 MB for MILES), one GEMM per SSP grid. Prototype with cuBLAS SGEMM (through `iso_c_binding`
   or nvfortran's `cublas` module) to find the ceiling, then an OpenMP target (`!$omp target teams
@@ -77,6 +116,15 @@ for N = 1, 100, 10 000:
 Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
 
 ## Validation tools
+
+- **GPU against CPU, all 36 cases, one command each:**
+  ```
+  tools/compare_builds/run_cases.sh build_cpu out_cpu       # reference (FP64 CPU)
+  tools/compare_builds/run_cases.sh build_gpu32 out_gpu32   # build under test
+  python3 tools/compare_builds/compare_builds.py out_gpu32 out_cpu   # exits non-zero on failure
+  ```
+  Defaults fit FP32 kernels against FP64 (laptop FP32-vs-FP64 worst case: 3.3e-7 per pixel,
+  2e-7 mag); an FP64 GPU build against the CPU should pass with `--rtol 1e-10`.
 
 - `meson test --suite unit --suite regression` (31 tests), in both precisions.
 - `tools/legacy_parity/run_matrix.sh LEGACY_SRC LEGACY_SPS_HOME OUT` with `BUILD=build_gpu32`
