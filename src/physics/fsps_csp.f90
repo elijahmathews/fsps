@@ -39,6 +39,7 @@ module fsps_csp
 
     !> Spectra Modules
     use fsps_photometry, only: compute_magnitudes
+    use fsps_batch_photometry, only: compute_magnitudes_columns
     use fsps_spectral_indices, only: compute_spectral_indices
 
     implicit none
@@ -90,7 +91,9 @@ contains
 
         integer :: i, nt, nspec, n_outputs, start_idx
         integer :: k, i_spec, i_em
-        
+        logical :: dev_mags
+        real(WP), allocatable :: mags_all(:,:)
+
         call fsps_context_sync_device_settings(ctx)
         if (present(status)) status = 0
 
@@ -216,6 +219,25 @@ contains
 
         ! 6. POPULATE DERIVED TYPES ON HOST CPU (Cache-Coherent)
         ! -----------------------
+        ! On the GPU the magnitudes of all outputs are computed at once from the device spectra
+        ! (fsps_batch_photometry), when no step between here and compute_magnitudes changes them
+        ! (smoothing) or the redshift per output (redshift_colors), and without light-weighted ages
+        dev_mags = .false.
+#ifdef _OPENACC
+        dev_mags = (.not. ctx%fast_mode) .and. pset%compute_mags == 1 .and. pset%sigma_smooth <= 0.0_wp .and. &
+                   ctx%redshift_colors_val == 0 .and. ctx%compute_light_ages_val == 0
+#endif
+        if (dev_mags) then
+            allocate(mags_all(ctx%state%nbands, n_outputs))
+            if (allocated(pset%mag_compute)) then
+                call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
+                                                mags_all, pset%mag_compute)
+            else
+                call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
+                                                mags_all)
+            end if
+        end if
+
         do i = 1, n_outputs
             if (.not. allocated(results(i)%spec)) allocate(results(i)%spec(nspec))
             if (.not. allocated(results(i)%emlines)) allocate(results(i)%emlines(NEMLINE))
@@ -253,6 +275,16 @@ contains
             if (.not. ctx%fast_mode) then
                 if (.not. allocated(results(i)%mags)) allocate(results(i)%mags(ctx%state%nbands))
                 if (.not. allocated(results(i)%indx)) allocate(results(i)%indx(ctx%state%nindx))
+
+                if (dev_mags) then
+                    results(i)%mags = mags_all(:, i)
+                    if (pset%compute_indices == 1) then
+                        call compute_spectral_indices(ctx, ctx%state%spec_lambda, results(i)%spec, results(i)%indx)
+                    else
+                        results(i)%indx = -99.0_wp
+                    end if
+                    cycle
+                end if
 
                 ! Safely route the spectrum into the mapped device scratchpad
                 ctx%state%csp_spec_final(:) = results(i)%spec(:)
