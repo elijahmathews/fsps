@@ -50,6 +50,10 @@ if accel_target != 'none'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
             accel_args = ['-acc=gpu', '-gpu=' + get_option('gpu_arch')]
             accel_defs = ['-DACC_GPU']
+            if get_option('cublas')
+                accel_args += ['-cudalib=cublas']
+                accel_defs += ['-DFSPS_CUBLAS']
+            endif
         endif
     endif
 endif
@@ -240,6 +244,7 @@ executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : 
 executable('generate_opensps_fixtures', 'tests/generate_opensps_fixtures.f90', dependencies : fsps_dep, link_language : 'fortran')
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep, link_language : 'fortran')
 executable('benchmark_phases', 'tests/benchmark_phases.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('benchmark_csp_batch', 'tests/benchmark_csp_batch.f90', dependencies : fsps_dep, link_language : 'fortran')
 
 if get_option('enable_stress_testing')
     stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep, link_language : 'fortran')

@@ -17,6 +17,9 @@ module fsps_csp_batch
     !> 4. Magnitudes: per (band, model) filter integrals over each band's support, compensated
     !>    at FP32 kernel precision.
     !>
+    !> The two matrix products (age sums, band fluxes) use cuBLAS when built with -Dcublas=true
+    !> (NVIDIA only; a ceiling for the portable OpenACC loops, which are the default).
+    !>
     !> Not supported (status 2): nebular emission, AGN, velocity smoothing, redshifted colors,
     !> light-weighted ages, and models with tage <= 0 (all-ages output). Models must share
     !> zred and igm_factor. Spectral indices are not computed.
@@ -35,11 +38,23 @@ module fsps_csp_batch
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_special_functions, only: mag_from_flux
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
+#ifdef FSPS_CUBLAS
+    use cublas
+    use openacc, only: acc_get_cuda_stream, acc_async_sync
+#endif
 
     implicit none
     private
 
     public :: compute_csp_batch
+
+    !> Pixels per block of the split-K band product (cuBLAS path): each block is a plain FP32 sum
+    !> of at most 256 positive terms; the blocks are added in FP64
+    integer, parameter :: BAND_BLOCK = 256
+#ifdef FSPS_CUBLAS
+    type(cublasHandle), save :: blas
+    logical, save :: blas_ready = .false.
+#endif
 
     real(WP), parameter :: AB_ZEROPOINT = 48.60_wp
     real(WP), parameter :: V_BAND_ANGSTROMS = 5500.0_wp   ! as in fsps_dust
@@ -71,7 +86,7 @@ contains
         logical  :: igm, any_emis
 
         ! Per-model parameters and results on the host
-        real(KP), allocatable :: w_young(:,:), w_old(:,:)
+        real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
         real(WP), allocatable :: weights(:,:,:), lum_linear(:)
         integer,  allocatable :: iq(:), iu(:), i_lo(:), j_lo(:), j_hi(:), do_band(:)
         real(WP), allocatable :: wq(:), wu(:), gam(:), t_obs(:)
@@ -82,7 +97,9 @@ contains
         real(KP), allocatable :: wt(:), wtl(:), wl(:), bands_t(:,:), igm_t(:)
 
         ! Work arrays (pixels x models) at kernel precision
-        real(KP), allocatable :: total(:,:), absorbed(:,:), fband(:,:)
+        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:)
+        real(WP), allocatable :: fband(:,:)
+        integer :: npad
 
         call fsps_context_sync_device_settings(ctx)
         status = 0
@@ -123,7 +140,7 @@ contains
         ! ------------------------------------------------------------------
         ! 1. Host: SFH weights, mass, L_bol, SFR (FP64); per-model dust emission indices
         ! ------------------------------------------------------------------
-        allocate(w_young(nt, n_mod), w_old(nt, n_mod), weights(nt, 1, 1), lum_linear(nt))
+        allocate(w2(nt, 2 * n_mod), weights(nt, 1, 1), lum_linear(nt))
         allocate(iq(n_mod), iu(n_mod), wq(n_mod), wu(n_mod), gam(n_mod), emis(n_mod))
         lum_linear = 10.0_wp**ctx%state%ssp_basis_lbol(1:nt, 1)
         do m = 1, n_mod
@@ -145,9 +162,9 @@ contains
                     w = 0.0_wp
                 end if
                 if (k <= it_tesc) then
-                    w_young(k, m) = real(w, KP); w_old(k, m) = 0.0_KP
+                    w2(k, m) = real(w, KP); w2(k, n_mod + m) = 0.0_KP
                 else
-                    w_young(k, m) = 0.0_KP; w_old(k, m) = real(w, KP)
+                    w2(k, m) = 0.0_KP; w2(k, n_mod + m) = real(w, KP)
                 end if
             end do
             if (present(mass)) mass(m) = msum
@@ -184,14 +201,21 @@ contains
         ! ------------------------------------------------------------------
         ! 2-3. Device: age sums, attenuation, dust emission
         ! ------------------------------------------------------------------
-        allocate(total(nspec, n_mod), absorbed(nspec, n_mod))
+        ! The absorbed-light array later holds the observed spectrum / lambda for the band product,
+        ! padded with zero rows to whole pixel blocks on the cuBLAS path
+        npad = nspec
+#ifdef FSPS_CUBLAS
+        npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
+#endif
+        allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(npad, n_mod))
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod))
 
-        !$acc data present(ctx) copyin(psets, w_young, w_old, iq, iu, wq, wu, gam, emis, wt) &
-        !$acc      create(total, absorbed, igm_t) copyout(s_abs, s_norm, s_esc)
+        !$acc data present(ctx) copyin(psets, w2, iq, iu, wq, wu, gam, emis, wt) &
+        !$acc      create(yo, total, absorbed, igm_t) copyout(s_abs, s_norm, s_esc)
         if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, psets(1)%igm_factor, igm_t)
 
-        call attenuate_batch(ctx, psets, n_mod, nspec, nt, w_young, w_old, emis, total, absorbed)
+        call age_sums(nspec, nt, 2 * n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, yo)
+        call attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
         if (any_emis) then
             call dust_emission_reductions(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, wt, &
                                           absorbed, s_abs, s_norm, s_esc)
@@ -273,8 +297,12 @@ contains
         ! The absorbed-light array is free again: it holds the observed spectrum / lambda
         allocate(fband(nbands, n_mod))
         !$acc data copyin(i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wtl) copyout(fband)
-        call band_fluxes(n_mod, nspec, nbands, i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wtl, &
-                         total, absorbed, fband)
+        call observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, absorbed)
+#ifdef FSPS_CUBLAS
+        call band_fluxes_gemm(ctx, n_mod, nspec, npad, nbands, wtl, absorbed, fband)
+#else
+        call band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wtl, absorbed, fband)
+#endif
         !$acc end data
 
         if (present(spec)) then
@@ -289,7 +317,7 @@ contains
             mags(:, m) = ieee_value(1.0_wp, ieee_quiet_nan)
             do b = 1, nbands
                 if (do_band(b) == 0) cycle
-                flux = real(fband(b, m), WP)
+                flux = fband(b, m)
                 mags(b, m) = mag_from_flux(flux) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist_term
             end do
             if (ctx%compute_vega_mags_val == 1) then
@@ -367,32 +395,64 @@ contains
     end subroutine diffuse_transmission
 
     !> Age sums (young and old) and attenuation; absorbed light density for dust emission.
-    subroutine attenuate_batch(ctx, psets, n_mod, nspec, nt, w_young, w_old, emis, total, absorbed)
+    !> Age sums of all models: yo = basis . w2 (pixels x ages . ages x 2N), plain sums over the ages
+    !> at kernel precision as in compute_csp_scenario.
+    subroutine age_sums(nspec, nt, n2, basis, w2, yo)
+        integer, intent(in)              :: nspec, nt, n2
+        real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
+        real(KP), intent(out)            :: yo(:,:)
+#ifdef FSPS_CUBLAS
+        integer :: istat
+
+        call blas_init()
+        !$acc host_data use_device(basis, w2, yo)
+#ifdef KERNEL_SINGLE_PRECISION
+        istat = cublasSgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, n2, nt, 1.0_KP, basis, nspec, &
+                               w2, nt, 0.0_KP, yo, nspec)
+#else
+        istat = cublasDgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, n2, nt, 1.0_KP, basis, nspec, &
+                               w2, nt, 0.0_KP, yo, nspec)
+#endif
+        !$acc end host_data
+        if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
+#else
+        integer  :: m, i, k
+        real(KP) :: acc
+
+        !$acc parallel loop gang vector collapse(2) present(basis, w2, yo) private(acc, k)
+        do m = 1, n2
+            do i = 1, nspec
+                acc = 0.0_KP
+                !$acc loop seq
+                do k = 1, nt
+                    acc = acc + w2(k, m) * basis(i, k)
+                end do
+                yo(i, m) = acc
+            end do
+        end do
+#endif
+    end subroutine age_sums
+
+    subroutine attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: psets(:)
-        integer, intent(in)              :: n_mod, nspec, nt
-        real(KP), intent(in)             :: w_young(:,:), w_old(:,:)
+        integer, intent(in)              :: n_mod, nspec
+        real(KP), intent(in)             :: yo(:,:)   ! young (1:N), old (N+1:2N)
         logical, intent(in)              :: emis(:)
         real(KP), intent(out)            :: total(:,:), absorbed(:,:)
 
-        integer  :: m, i, k
-        real(KP) :: young, old, bk
+        integer  :: m, i
+        real(KP) :: young, old
         real(WP) :: curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust
         real(WP) :: one_m_tb, one_m_to, one_m_td, a_young, spec_sum
 
-        !$acc parallel loop gang vector collapse(2) present(ctx, psets, w_young, w_old, emis, total, absorbed) &
-        !$acc private(young, old, bk, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
-        !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum, k)
+        !$acc parallel loop gang vector collapse(2) present(ctx, psets, yo, emis, total, absorbed) &
+        !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
+        !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
         do m = 1, n_mod
             do i = 1, nspec
-                young = 0.0_KP
-                old = 0.0_KP
-                !$acc loop seq
-                do k = 1, nt
-                    bk = ctx%state%ssp_basis_spec(i, k, 1)
-                    young = young + w_young(k, m) * bk
-                    old = old + w_old(k, m) * bk
-                end do
+                young = yo(i, m)
+                old = yo(i, n_mod + m)
 
                 frac_obrun = psets(m)%frac_obrun
                 frac_nodust = psets(m)%frac_nodust
@@ -511,29 +571,107 @@ contains
         end do
     end subroutine add_dust_emission
 
-    !> Band fluxes: observed-frame spectrum / lambda, then the trapezoid filter integral over each
-    !> band's support, compensated at FP32 kernel precision.
-    subroutine band_fluxes(n_mod, nspec, nbands, i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wt, &
-                           total, fobs, fband)
-        integer, intent(in)     :: n_mod, nspec, nbands, i_lo(:), j_lo(:), j_hi(:), do_band(:)
+    !> Observed-frame spectrum / lambda (prepare_observed_spectrum), zero in the padding rows.
+    subroutine observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, fobs)
+        integer, intent(in)     :: n_mod, nspec, npad, i_lo(:)
         real(WP), intent(in)    :: t_obs(:)
-        real(KP), intent(in)    :: wl(:), bands_t(:,:), wt(:), total(:,:)
-        real(KP), intent(inout) :: fobs(:,:)
-        real(KP), intent(out)   :: fband(:,:)
+        real(KP), intent(in)    :: wl(:), total(:,:)
+        real(KP), intent(out)   :: fobs(:,:)
 
-        integer  :: m, j, b, il
+        integer  :: m, j, il
         real(WP) :: v
-        real(KP) :: s, c, term, tsum
 
         !$acc parallel loop gang vector collapse(2) present(i_lo, t_obs, wl, total, fobs) private(il, v)
         do m = 1, n_mod
-            do j = 1, nspec
-                il = i_lo(j)
-                v = real(total(il, m), WP) + t_obs(j) * (real(total(il + 1, m), WP) - real(total(il, m), WP))
-                if (v /= v) v = 0.0_wp
-                fobs(j, m) = real(max(v, 0.0_wp), KP) * wl(j)
+            do j = 1, npad
+                if (j <= nspec) then
+                    il = i_lo(j)
+                    v = real(total(il, m), WP) + t_obs(j) * (real(total(il + 1, m), WP) - real(total(il, m), WP))
+                    if (v /= v) v = 0.0_wp
+                    fobs(j, m) = real(max(v, 0.0_wp), KP) * wl(j)
+                else
+                    fobs(j, m) = 0.0_KP
+                end if
             end do
         end do
+    end subroutine observed_frame
+
+#ifdef FSPS_CUBLAS
+    !> Band fluxes as a split-K matrix product: per block of BAND_BLOCK pixels,
+    !> partial = C^T . fobs with C(j, b) = (dl(j-1) + dl(j)) / 2 * band(j, b) (the trapezoid rule
+    !> regrouped by pixel, formed in FP64); the blocks are summed in FP64.
+    subroutine band_fluxes_gemm(ctx, n_mod, nspec, npad, nbands, wtl, fobs, fband)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)     :: n_mod, nspec, npad, nbands
+        real(KP), intent(in)    :: wtl(:), fobs(:,:)
+        real(WP), intent(out)   :: fband(:,:)
+
+        real(KP), allocatable :: cmat(:,:), partial(:,:,:)
+        integer  :: j, b, m, q, nkb, istat
+        real(WP) :: sw
+
+        nkb = npad / BAND_BLOCK
+        allocate(cmat(npad, nbands), partial(nbands, n_mod, nkb))
+        do b = 1, nbands
+            do j = 1, npad
+                if (j > nspec) then
+                    cmat(j, b) = 0.0_KP
+                else
+                    sw = real(wtl(j), WP)
+                    if (j > 1) sw = sw + real(wtl(j - 1), WP)
+                    cmat(j, b) = real(sw * ctx%state%bands(j, b), KP)
+                end if
+            end do
+        end do
+        call blas_init()
+        !$acc data copyin(cmat) create(partial) present(fobs, fband)
+        !$acc host_data use_device(cmat, fobs, partial)
+        do q = 1, nkb
+#ifdef KERNEL_SINGLE_PRECISION
+            istat = cublasSgemm_v2(blas, CUBLAS_OP_T, CUBLAS_OP_N, nbands, n_mod, BAND_BLOCK, 1.0_KP, &
+                                   cmat((q - 1) * BAND_BLOCK + 1, 1), npad, fobs((q - 1) * BAND_BLOCK + 1, 1), npad, &
+                                   0.0_KP, partial(1, 1, q), nbands)
+#else
+            istat = cublasDgemm_v2(blas, CUBLAS_OP_T, CUBLAS_OP_N, nbands, n_mod, BAND_BLOCK, 1.0_KP, &
+                                   cmat((q - 1) * BAND_BLOCK + 1, 1), npad, fobs((q - 1) * BAND_BLOCK + 1, 1), npad, &
+                                   0.0_KP, partial(1, 1, q), nbands)
+#endif
+            if (istat /= 0) exit
+        end do
+        !$acc end host_data
+        if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
+        !$acc parallel loop gang vector collapse(2) present(partial, fband) private(sw, q)
+        do m = 1, n_mod
+            do b = 1, nbands
+                sw = 0.0_wp
+                !$acc loop seq
+                do q = 1, nkb
+                    sw = sw + real(partial(b, m, q), WP)
+                end do
+                fband(b, m) = sw
+            end do
+        end do
+        !$acc end data
+    end subroutine band_fluxes_gemm
+
+    subroutine blas_init()
+        integer :: istat
+        if (blas_ready) return
+        istat = cublasCreate(blas)
+        istat = cublasSetStream(blas, acc_get_cuda_stream(acc_async_sync))
+        blas_ready = .true.
+    end subroutine blas_init
+#endif
+
+    !> Band fluxes: the trapezoid filter integral of fobs over each band's support, compensated at
+    !> FP32 kernel precision.
+    subroutine band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wt, fobs, fband)
+        integer, intent(in)     :: n_mod, nbands, j_lo(:), j_hi(:), do_band(:)
+        real(KP), intent(in)    :: bands_t(:,:), wt(:), fobs(:,:)
+        real(WP), intent(out)   :: fband(:,:)
+
+        integer  :: m, j, b
+        real(KP) :: s, c, term, tsum
 
         !$acc parallel loop gang vector collapse(2) present(bands_t, j_lo, j_hi, do_band, wt, fobs, fband) &
         !$acc private(s, c, term, tsum, j)
@@ -554,7 +692,7 @@ contains
                         end if
                     end do
                 end if
-                fband(b, m) = s
+                fband(b, m) = real(s, WP)
             end do
         end do
     end subroutine band_fluxes

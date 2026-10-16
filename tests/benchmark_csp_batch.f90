@@ -1,0 +1,136 @@
+program benchmark_csp_batch
+    !> Per-model cost of the batched CSP (compute_csp_batch) against one compute_csp_scenario
+    !> call per model, on the benchmark_phases setup (MIST + MILES + DL07, tau model with dust and
+    !> dust emission). Tau, age and the dust parameters vary across the batch.
+    !> Usage: benchmark_csp_batch [n_max [n_single]]. Prints one line per metric: name, value.
+
+    use fsps_precision, only: WP
+    use fsps_types, only: PARAMS, COMPSPOUT
+    use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
+    use fsps_csp, only: compute_csp_scenario
+    use fsps_csp_batch, only: compute_csp_batch
+    use fsps_ssp, only: generate_ssp_grid
+    use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
+                            fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
+                            fsps_context_set_param_int, fsps_context_set_param_float
+    use fsps_context_types, only: fsps_context_t
+    implicit none
+
+    type(fsps_context_t), allocatable :: ctx
+    type(PARAMS) :: pset
+    type(PARAMS), allocatable :: psets(:)
+    type(COMPSPOUT), allocatable :: results(:)
+    real(WP), allocatable :: spec_ssp(:, :), mass_ssp(:), lbol_ssp(:), mags(:, :), spec(:, :)
+    character(len=32) :: arg
+    integer(8) :: t0, t1, rate
+    integer :: n_max = 10000, n_single = 200, status, nspec, ntfull, i, n, rep, n_rep, k
+    integer, parameter :: sizes(4) = [1, 100, 1000, 10000]
+    real(WP) :: dt, total
+
+    call get_command_argument(1, arg)
+    if (len_trim(arg) > 0) read(arg, *) n_max
+    call get_command_argument(2, arg)
+    if (len_trim(arg) > 0) read(arg, *) n_single
+    call system_clock(count_rate=rate)
+
+    allocate(ctx)
+    call fsps_create(ctx)
+    ctx%pset%zmet = 10
+    call fsps_setup(ctx, 10, isoc_type_in='mist', spec_type_in='miles', dust_type_in='DL07')
+    call fsps_context_move_to_device(ctx)
+    call set_int('imf_type', 1)
+    call set_int('zmet', 10)
+    call set_int('sfh', 1)
+    call set_float('tau', 1.0_wp)
+    call set_float('tage', 10.0_wp)
+    call set_float('dust2', 0.3_wp)
+    call set_int('compute_indices', 0)
+    call fsps_context_prepare_pset(ctx)
+    call fsps_context_get_pset(ctx, pset)
+
+    nspec = ctx%state%nspec
+    ntfull = ctx%state%ntfull
+    allocate(spec_ssp(nspec, ntfull), mass_ssp(ntfull), lbol_ssp(ntfull))
+    call fsps_context_set_pset(ctx, pset)
+    call generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
+    call fsps_context_update_ssp_basis(ctx, reshape(spec_ssp, [nspec, ntfull, 1]), &
+                                       reshape(mass_ssp, [ntfull, 1]), reshape(lbol_ssp, [ntfull, 1]), 1)
+
+    ! One compute_csp_scenario call per model (the existing path)
+    total = 0.0_wp
+    call compute_csp_scenario(ctx, pset, 1, results, status)
+    call system_clock(t0)
+    do i = 1, n_single
+        call vary(pset, i)
+        call compute_csp_scenario(ctx, pset, 1, results, status)
+        if (status /= 0) stop 1
+        total = total + results(1)%mags(1)
+    end do
+    call system_clock(t1)
+    write(*, '(A,F14.3)') 'single_call_us_per_model ', 1.0e6_wp * real(t1 - t0, WP) / rate / n_single
+
+    ! Batched, magnitudes only and with spectra
+    allocate(psets(n_max))
+    do i = 1, n_max
+        psets(i) = pset
+        call vary(psets(i), i)
+    end do
+    allocate(mags(ctx%state%nbands, n_max))
+    do k = 1, size(sizes)
+        n = sizes(k)
+        if (n > n_max) exit
+        n_rep = max(3, min(200, 20000 / n))
+        call compute_csp_batch(ctx, psets(1:n), mags, status)   ! warm-up
+        if (status /= 0) stop 2
+        call system_clock(t0)
+        do rep = 1, n_rep
+            call compute_csp_batch(ctx, psets(1:n), mags, status)
+        end do
+        call system_clock(t1)
+        dt = real(t1 - t0, WP) / rate / n_rep
+        write(*, '(A,I0,A,F14.3)') 'batch_', n, '_mags_us_per_model ', 1.0e6_wp * dt / n
+        total = total + mags(1, 1)
+
+        allocate(spec(nspec, n))
+        call system_clock(t0)
+        do rep = 1, n_rep
+            call compute_csp_batch(ctx, psets(1:n), mags, status, spec=spec)
+        end do
+        call system_clock(t1)
+        dt = real(t1 - t0, WP) / rate / n_rep
+        write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_us_per_model ', 1.0e6_wp * dt / n
+        total = total + spec(1000, 1)
+        deallocate(spec)
+    end do
+    if (total /= total) write(*, *) total   ! keep the results live
+
+    call fsps_destroy(ctx)
+
+contains
+
+    !> Model i: tau, age and dust vary over a fitting-like range.
+    subroutine vary(p, i)
+        type(PARAMS), intent(inout) :: p
+        integer, intent(in) :: i
+        p%tau = 0.3_wp + 0.05_wp * mod(i, 97)
+        p%tage = 1.0_wp + 0.1_wp * mod(i, 113)
+        p%dust2 = 0.05_wp + 0.01_wp * mod(i, 89)
+        p%dust1 = 0.02_wp * mod(i, 53)
+        p%duste_umin = 1.0_wp + 0.2_wp * mod(i, 71)
+    end subroutine vary
+
+    subroutine set_int(key, value)
+        character(len=*), intent(in) :: key
+        integer, intent(in) :: value
+        call fsps_context_set_param_int(ctx, key, value, status)
+        if (status /= 0) stop 1
+    end subroutine set_int
+
+    subroutine set_float(key, value)
+        character(len=*), intent(in) :: key
+        real(WP), intent(in) :: value
+        call fsps_context_set_param_float(ctx, key, value, status)
+        if (status /= 0) stop 1
+    end subroutine set_float
+
+end program benchmark_csp_batch
