@@ -137,6 +137,7 @@ lib_sources = files(
     'src/physics/fsps_stellar_modifications.f90',
 
     # Spectra Modules
+    'src/spectra/fsps_batch_photometry.f90',
     'src/spectra/fsps_photometry.f90',
     'src/spectra/fsps_smoothing.f90',
     'src/spectra/fsps_spectral_indices.f90',
