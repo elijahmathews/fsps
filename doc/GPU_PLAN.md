@@ -117,6 +117,15 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
 
 ## Validation tools
 
+- **GPU against CPU, all 36 cases, one command each:**
+  ```
+  tools/compare_builds/run_cases.sh build_cpu out_cpu       # reference (FP64 CPU)
+  tools/compare_builds/run_cases.sh build_gpu32 out_gpu32   # build under test
+  python3 tools/compare_builds/compare_builds.py out_gpu32 out_cpu   # exits non-zero on failure
+  ```
+  Defaults fit FP32 kernels against FP64 (laptop FP32-vs-FP64 worst case: 3.3e-7 per pixel,
+  2e-7 mag); an FP64 GPU build against the CPU should pass with `--rtol 1e-10`.
+
 - `meson test --suite unit --suite regression` (31 tests), in both precisions.
 - `tools/legacy_parity/run_matrix.sh LEGACY_SRC LEGACY_SPS_HOME OUT` with `BUILD=build_gpu32`
   (needs a legacy FSPS source and data tree on the node; optional).
