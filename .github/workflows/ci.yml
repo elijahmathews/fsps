@@ -84,6 +84,21 @@ jobs:
             setup_args: -Daccel=multicore
             fflags: -Minfo=accel
 
+          # FP32 kernels (-Dkernel_precision=single), the configuration a consumer GPU would run;
+          # the regression suite checks them against the FP64 references
+          - name: gfortran / FP32 kernels / Linux x86-64
+            os: ubuntu-24.04
+            install: apt-gfortran
+            setup_args: -Dkernel_precision=single
+
+          - name: nvfortran / OpenACC multicore / FP32 kernels / Linux x86-64
+            os: ubuntu-24.04
+            install: setup-fortran
+            toolchain: nvidia-hpc
+            version: '26.1'
+            setup_args: -Daccel=multicore -Dkernel_precision=single
+            fflags: -Minfo=accel
+
     env:
       FFLAGS: ${{ matrix.fflags }}
 

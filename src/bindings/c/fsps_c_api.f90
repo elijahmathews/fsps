@@ -7,7 +7,7 @@ module fsps_c_api
     !> This module owns the legacy global state and handle-based context pool.
 
     use iso_c_binding
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, NM, BHB_SBS_TIME, GRAVITY_L_M_T_COEFF
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy, &
@@ -396,7 +396,7 @@ contains
         end if
 
         call c_to_f_string(c_key, key)
-        call fsps_set_param_float(ctx_pool(handle), TRIM(key), value, status)
+        call fsps_set_param_float(ctx_pool(handle), TRIM(key), real(value, WP), status)
     end subroutine fsps_context_set_float_handle
 
     subroutine fsps_context_set_str_handle(handle, c_key, c_val, status) &
@@ -452,6 +452,7 @@ contains
         real(c_double), pointer :: spec_ptr(:, :)
         real(c_double), pointer :: mass_ptr(:)
         real(c_double), pointer :: lbol_ptr(:)
+        real(WP), allocatable :: spec(:, :), mass(:), lbol(:)
         integer :: n_spec, n_time
 
         status = 0
@@ -469,7 +470,12 @@ contains
         call c_f_pointer(c_spec, spec_ptr, [n_spec, n_time])
         call c_f_pointer(c_mass, mass_ptr, [n_time])
         call c_f_pointer(c_lbol, lbol_ptr, [n_time])
-        call fsps_compute_ssp(ctx_pool(handle), mass_ptr, lbol_ptr, spec_ptr)
+        ! Computed in the working precision, returned as double (the C API is double throughout)
+        allocate (spec(n_spec, n_time), mass(n_time), lbol(n_time))
+        call fsps_compute_ssp(ctx_pool(handle), mass, lbol, spec)
+        spec_ptr = spec
+        mass_ptr = mass
+        lbol_ptr = lbol
     end subroutine fsps_context_compute_ssp_handle
 
     subroutine fsps_context_get_paths_handle(handle, c_sps, sps_len, c_data, data_len, c_out, out_len) &
@@ -1473,6 +1479,7 @@ contains
         real(c_double), value :: mact, logt, lbol, logg, phase, ffco, lmdot, wght
         type(c_ptr), value :: c_spec
         real(WP), pointer :: f_spec(:)
+        real(KP), allocatable :: kspec(:)
 
         if (.not. ASSOCIATED(global_pset)) then
             call fsps_set_error(308, "[FSPS-C] Error: fsps_stellar_spectrum called before initialize!")
@@ -1481,8 +1488,10 @@ contains
 
         call fsps_ensure_default_ctx()
         call C_F_POINTER(c_spec, f_spec, [fsps_default_ctx%state%nspec])
+        allocate (kspec(size(f_spec)))
         call get_stellar_spectrum(fsps_default_ctx, global_pset, real(mact, WP), real(logt, WP), real(lbol, WP), &
-                                  real(logg, WP), real(phase, WP), real(ffco, WP), real(lmdot, WP), f_spec)
+                                  real(logg, WP), real(phase, WP), real(ffco, WP), real(lmdot, WP), kspec)
+        f_spec = kspec
     end subroutine fsps_stellar_spectrum
 
     ! -------------------------------------------------------------------------
@@ -1808,6 +1817,7 @@ contains
         real(WP) :: dz, loggi, hb_wght
         real(WP), dimension(NM) :: wght
         real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: kspec(:)
         real(WP), allocatable :: mags_tmp(:)
         real(WP), allocatable :: time_grid(:)
         real(WP), allocatable :: mini(:, :), mact(:, :), logl(:, :), logt(:, :), logg(:, :), &
@@ -1834,7 +1844,7 @@ contains
             timestep_isoc => fsps_default_ctx%state%timestep_isoc, &
             mact_isoc_full => fsps_default_ctx%state%mact_isoc)
 
-            allocate (spec(nspec))
+            allocate (spec(nspec), kspec(nspec))
             allocate (mags_tmp(nbands))
             allocate (mini(nt, NM), mact(nt, NM), logl(nt, NM), logt(nt, NM), logg(nt, NM))
             allocate (ffco(nt, NM), phase(nt, NM), lmdot(nt, NM))
@@ -1878,7 +1888,8 @@ contains
 
                 do i = 1, nmass(tt)
                     call get_stellar_spectrum(fsps_default_ctx, global_pset, mact(tt, i), logt(tt, i), 10**logl(tt, i), &
-                                              logg(tt, i), phase(tt, i), ffco(tt, i), lmdot(tt, i), spec)
+                                              logg(tt, i), phase(tt, i), ffco(tt, i), lmdot(tt, i), kspec)
+                    spec = kspec
                     call compute_magnitudes(fsps_default_ctx, dz, spec, mags_tmp)
 
                     if (isoc_type .eq. 'bsti') then

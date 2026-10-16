@@ -21,6 +21,9 @@ program test_runner
     !>
     !> Environment controls:
     !> - `FSPS_TEST_RTOL`: relative tolerance override.
+    !> - `FSPS_TEST_INDX_ATOL`: absolute tolerance floor for spectral indices (default 1e-30, i.e.
+    !>   purely relative); set for kernel-precision (FP32) builds, where weak indices near zero
+    !>   differ from the FP64 references by ~1e-5 in absolute terms.
     !> - `FSPS_TEST_VERBOSE`: enables detailed mismatch output.
     !> - `FSPS_TEST_MAXFAIL`: caps mismatch lines unless verbose mode is enabled.
     !>
@@ -75,6 +78,7 @@ program test_runner
 
     ! Comparison stats
     real(WP) :: rtol
+    real(WP) :: indx_atol = 1.0e-30_wp
     logical :: test_passed
     integer :: nfail
     logical :: verbose_output
@@ -170,6 +174,11 @@ program test_runner
     else
         rtol = DEFAULT_RTOL
         write(*, *) 'Using default RTOL: ', rtol
+    end if
+    call get_environment_variable('FSPS_TEST_INDX_ATOL', value=env_buffer, status=status)
+    if (status == 0) then
+        read(env_buffer, *) indx_atol
+        write(*, *) 'Using index ATOL from environment: ', indx_atol
     end if
 
     ! Optional verbose output
@@ -384,7 +393,7 @@ program test_runner
         ! Check Arrays for EVERY time step
         call check_mags_1d('CSP Mags (flux)', ref_ocompsp(i)%mags, new_results(i)%mags, nbands_ctx)
 
-        call check_array_1d('CSP Indx', ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx)
+        call check_array_1d('CSP Indx', ref_ocompsp(i)%indx, new_results(i)%indx, nindx_ctx, atol=indx_atol)
         call check_array_1d('CSP Emlines', ref_ocompsp(i)%emlines, new_results(i)%emlines, NEMLINE)
 
         ! Check Spectrum
@@ -486,10 +495,11 @@ contains
     !> @param[in] ref   Reference vector.
     !> @param[in] new   Newly generated vector.
     !> @param[in] d1    Vector length.
-    subroutine check_array_1d(label, ref, new, d1)
+    subroutine check_array_1d(label, ref, new, d1, atol)
         character(*), intent(in) :: label
         integer, intent(in) :: d1
         real(WP), dimension(d1), intent(in) :: ref, new
+        real(WP), intent(in), optional :: atol
         real(WP) :: delta, threshold, max_delta, max_rel, ref_val
         integer :: j, mj, mrj
 
@@ -518,6 +528,7 @@ contains
                 mj = j
             end if
             threshold = max(abs(ref_val) * rtol, 1.0e-30_wp)
+            if (present(atol)) threshold = max(threshold, atol)
             if (delta > threshold) then
                 test_passed = .false.
                 nfail = nfail + 1

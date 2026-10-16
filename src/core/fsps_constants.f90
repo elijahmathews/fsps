@@ -6,6 +6,7 @@ module fsps_constants
     !> This module consolidates all physical constants, array limits, and configuration
     !> parameters used throughout the FSPS codebase.
 
+    use, intrinsic :: iso_fortran_env, only: real64
     use fsps_precision, only: WP
 
     implicit none
@@ -64,20 +65,27 @@ module fsps_constants
     !> @brief Solar mass [g].
     real(WP), parameter :: M_SOL = M_SOL_PAR/G_NEWTON
 
+    ! Products of these overflow single precision (K_BOLTZMANN**4 ~ 4e-63, (10 pc)**2 ~ 1e39),
+    ! so they are evaluated in double precision and converted once.
+
     !> @brief Stefan-Boltzmann constant [erg cm⁻² s⁻¹ K⁻⁴].
-    real(WP), parameter :: SIGMA_SB = (2.0_wp*PI**5*K_BOLTZMANN**4)/ &
-                           (15.0_wp*(C_LIGHT*1.0e-8_wp)**2*H_PLANCK**3)
+    real(WP), parameter :: SIGMA_SB = real((2.0_real64*acos(-1.0_real64)**5*1.380649e-16_real64**4)/ &
+                           (15.0_real64*(2.99792458e18_real64*1.0e-8_real64)**2*6.62607015e-27_real64**3), WP)
 
     !> @brief Coefficient to calculate surface gravity (g) from L, M, and Teff.
     !> Derivation: From g = GM/R² and L = 4πR²σT⁴, we substitute R² to get:
     !>             g = (4π * G * σ_sb) * (M * T⁴ / L)
     !> This constant contains the (4π * G * σ_sb) term, adjusted for solar units.
-    real(WP), parameter :: GRAVITY_L_M_T_COEFF = 4.0_wp*PI*SIGMA_SB*G_NEWTON*(M_SOL/L_SOL)
+    real(WP), parameter :: GRAVITY_L_M_T_COEFF = real(4.0_real64*acos(-1.0_real64)* &
+        ((2.0_real64*acos(-1.0_real64)**5*1.380649e-16_real64**4)/ &
+         (15.0_real64*(2.99792458e18_real64*1.0e-8_real64)**2*6.62607015e-27_real64**3))* &
+        1.3271244e26_real64/3.828e33_real64, WP)
 
     !> @brief Reference log-flux for absolute bolometric magnitude [log10(erg s⁻¹ cm⁻²)].
     !> Represents the log10 flux of 1.0 solar luminosity at a distance of 10 parsecs.
     !> Used to convert theoretical luminosity to absolute magnitude (M_bol).
-    real(WP), parameter :: ABS_MAG_ZEROPOINT_LOG = log10(L_SOL/(4.0_wp*PI*(10.0_wp*PARSEC)**2))
+    real(WP), parameter :: ABS_MAG_ZEROPOINT_LOG = real(log10(3.828e33_real64/(4.0_real64*acos(-1.0_real64)* &
+        (10.0_real64*(648000.0_real64/acos(-1.0_real64))*1.495978707e13_real64)**2)), WP)
 
     !> @brief Julian year [s].
     real(WP), parameter :: YEAR_TO_SECOND = 3.15576e7_wp

@@ -15,7 +15,7 @@ module fsps_cosmology
     !> All calculations utilize the `fsps_context_t` for state access (e.g., cosmology parameters H0, Om0, Ol0)
     !> and adhere to `WP` precision.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_context_types, only: fsps_context_t
     use fsps_constants, only: C_LIGHT
     use fsps_interpolation, only: find_interval, interpolate_linear
@@ -291,7 +291,7 @@ contains
         real(WP), dimension(:), intent(in) :: wavelength_grid
         real(WP), intent(in) :: source_redshift
         real(WP), intent(in) :: optical_depth_factor
-        real(WP), dimension(:), intent(out) :: transmission
+        real(KP), dimension(:), intent(out) :: transmission
 
         real(WP) :: one_plus_z, observed_wavelength, lambda_ratio, tau_val
         real(WP) :: max_tau

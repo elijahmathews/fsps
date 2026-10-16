@@ -1,5 +1,5 @@
 module test_fsps_gas_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
@@ -325,7 +325,7 @@ contains
         type(params) :: pset
         real(WP), dimension(5) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
         integer :: tmp_add_neb_cont, tmp_nebemlineinspec
         real(WP) :: tmp_nebem_cont_val, tmp_nebem_line_val
         integer :: n_wave
@@ -381,7 +381,7 @@ contains
         type(params) :: pset
         real(WP), dimension(5) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), dimension(5,1) :: spec_in, spec_out
+        real(KP), dimension(5,1) :: spec_in, spec_out
         real(WP) :: q_val, expected_q
         integer :: whlylim
 
@@ -396,7 +396,7 @@ contains
         pset%frac_obrun = 0.0_wp
 
         call process_ionizing_radiation(ctx, pset, spec_in, spec_out, 1, q_val)
-        expected_q = compute_expected_q(ctx, spec_in(:,1), pset%frac_obrun)
+        expected_q = compute_expected_q(ctx, real(spec_in(:,1), WP), pset%frac_obrun)
 
         whlylim = ctx%state%whlylim
         call assert_true(all(abs(spec_out(1:whlylim,1)) <= EPS), "Ionizing flux fully absorbed", total_tests, total_failures)
@@ -410,7 +410,7 @@ contains
         type(params) :: pset
         real(WP), dimension(5) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), dimension(5,1) :: spec_in, spec_out
+        real(KP), dimension(5,1) :: spec_in, spec_out
         real(WP) :: q_val, expected_q
         integer :: whlylim
 
@@ -425,7 +425,7 @@ contains
         pset%frac_obrun = 0.3_wp
 
         call process_ionizing_radiation(ctx, pset, spec_in, spec_out, 1, q_val)
-        expected_q = compute_expected_q(ctx, spec_in(:,1), pset%frac_obrun)
+        expected_q = compute_expected_q(ctx, real(spec_in(:,1), WP), pset%frac_obrun)
 
         whlylim = ctx%state%whlylim
         call assert_true(all(abs(spec_out(1:whlylim,1) - 0.3_wp * spec_in(1:whlylim,1)) <= EPS), &
@@ -440,7 +440,7 @@ contains
         type(params) :: pset
         real(WP), allocatable :: lambda(:)
         real(WP), dimension(1) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
         real(WP), allocatable :: line_wpec(:)
         real(WP) :: q_val, expected_fwhm, fwhm
         real(WP) :: sigma_angstroms
@@ -466,8 +466,10 @@ contains
         nebemline = 0.0_wp
         line_wpec = 0.0_wp
 
+        ! Physical scales (ionizing continuum ~1e-13 L_sun/Hz per M_sun; log L/Q ~ -45 for a strong
+        ! line), so that the spectra stay within FP32 range in kernel-precision builds
         sspi(:,1) = 0.0_wp
-        sspi(1:3,1) = 1.0_wp
+        sspi(1:3,1) = 1.0e-13_wp
 
         pset%frac_obrun = 0.0_wp
         pset%gas_logz = 0.0_wp
@@ -477,12 +479,12 @@ contains
         ctx%add_neb_continuum_val = 0
         ctx%nebemlineinspec_val = 1
         ctx%smooth_velocity_val = 1
-        ctx%state%nebem_line = -30.0_wp
-        ctx%state%nebem_line(1,:,:,:) = 0.0_wp
+        ctx%state%nebem_line = -75.0_wp
+        ctx%state%nebem_line(1,:,:,:) = -45.0_wp
         ctx%state%nebem_line_pos(1) = 1500.0_wp
         tmp_line_pos1 = ctx%state%nebem_line_pos(1)
-        ctx%state%nebem_line = -30.0_wp
-        ctx%state%nebem_line(1,:,:,:) = 0.0_wp
+        ctx%state%nebem_line = -75.0_wp
+        ctx%state%nebem_line(1,:,:,:) = -45.0_wp
         ctx%state%nebem_line_pos(1) = tmp_line_pos1
         !$acc update device(ctx%state%nebem_line, ctx%state%nebem_line_pos)
 
@@ -501,6 +503,7 @@ contains
         !$acc end data
 
         line_wpec = sspo(:,1) - sspi(:,1)
+        line_wpec(1:3) = 0.0_wp   ! ionizing pixels (absorbed by the gas), not line flux
         q_val = nebemline(1,1)
 
         sigma_angstroms = ctx%state%nebem_line_pos(1) * pset%sigma_smooth * (1.0e13_wp / C_LIGHT)
@@ -523,7 +526,7 @@ contains
         type(params) :: pset
         real(WP), dimension(4) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:)
         integer :: tmp_add_neb_cont, tmp_nebemlineinspec, tmp_add_xrb
         real(WP) :: tmp_nebem_cont_val, tmp_xnebem_cont_val
 
@@ -597,7 +600,7 @@ contains
         type(params) :: pset
         real(WP), dimension(4) :: lambda
         real(WP), dimension(2) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:)
         integer :: tmp_add_neb_cont, tmp_nebemlineinspec
         real(WP) :: tmp_nebem_cont_val
 
@@ -646,7 +649,7 @@ contains
         type(params) :: pset
         real(WP), dimension(4) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
         integer :: tmp_add_neb_cont, tmp_nebemlineinspec
         real(WP) :: tmp_nebem_cont_val
 
@@ -720,7 +723,7 @@ contains
         type(params) :: pset
         real(WP), dimension(4) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
+        real(KP), allocatable :: sspi(:,:), sspo(:,:), nebemline(:,:)
         integer :: tmp_add_neb_cont, tmp_nebemlineinspec, tmp_add_xrb
 
         call print_group("XRB Switch for Lines (BPSS grid)")
@@ -778,7 +781,7 @@ contains
         type(params) :: pset
         real(WP), dimension(3) :: lambda
         real(WP), dimension(1) :: time_full
-        real(WP), dimension(3,1) :: spec_in, spec_out
+        real(KP), dimension(3,1) :: spec_in, spec_out
         real(WP) :: q_val
 
         call print_group("No Ionizing Wavelengths (whlylim < 2)")

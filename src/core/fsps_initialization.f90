@@ -13,7 +13,7 @@ module fsps_initialization
     !> 4. Pre-calculates derived physical quantities (redshift grids, cosmology).
 
     use iso_fortran_env, only: error_unit
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: VERBOSE, TIME_RES_INCR, SAFE_FLOOR, C_LIGHT, L_SOL, PI, &
                               NM, NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
                               NDIM_PAGB, NDIM_WR, N_AGB_O, N_AGB_C, N_AGB_CAR, &
@@ -112,7 +112,7 @@ contains
 
         type(fsps_setup_cache_t), pointer :: cache
         type(velocity_kernel_t) :: kernel
-        real(WP), allocatable :: work(:), lam2c(:)
+        real(WP), allocatable :: work(:), lam2c(:), sm(:)  ! smoothing runs in WP; results are stored as KP
         integer :: nspec, i0, n_ir, iz, it, ig, k
 
         cache => ctx%setup_cache
@@ -128,7 +128,7 @@ contains
         end do
         if (i0 == 0) return
         n_ir = nspec - i0 + 1
-        allocate (work(nspec))
+        allocate (work(nspec), sm(n_ir))
         lam2c = ctx%state%spec_lambda(1:nspec)**2 / C_LIGHT
 
         ! The smoothing weights depend only on the wavelength grid: build them once
@@ -143,9 +143,10 @@ contains
                     do iz = 1, size(ctx%state%speclib, 2)
                         work = real(ctx%state%speclib(1:nspec, iz, it, ig), WP)
                         if (any(work(i0:) > 0.0_wp)) then
-                            call apply_velocity_kernel(kernel, work, i0, cache%speclib_agb_smooth(:, iz, it, ig))
+                            call apply_velocity_kernel(kernel, work, i0, sm)
+                            cache%speclib_agb_smooth(:, iz, it, ig) = real(sm, KP)
                         else
-                            cache%speclib_agb_smooth(:, iz, it, ig) = work(i0:)
+                            cache%speclib_agb_smooth(:, iz, it, ig) = real(work(i0:), KP)
                         end if
                     end do
                 end do
@@ -157,7 +158,8 @@ contains
             allocate (cache%agb_spec_o_smooth(n_ir, size(ctx%state%agb_spec_o, 2)))
             do k = 1, size(ctx%state%agb_spec_o, 2)
                 work = lam2c * ctx%state%agb_spec_o(1:nspec, k)
-                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_o_smooth(:, k))
+                call apply_velocity_kernel(kernel, work, i0, sm)
+                cache%agb_spec_o_smooth(:, k) = real(sm, KP)
             end do
             ctx%state%agb_spec_o_smooth => cache%agb_spec_o_smooth
         end if
@@ -166,7 +168,8 @@ contains
             allocate (cache%agb_spec_c_smooth(n_ir, size(ctx%state%agb_spec_c, 2)))
             do k = 1, size(ctx%state%agb_spec_c, 2)
                 work = lam2c * ctx%state%agb_spec_c(1:nspec, k)
-                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_c_smooth(:, k))
+                call apply_velocity_kernel(kernel, work, i0, sm)
+                cache%agb_spec_c_smooth(:, k) = real(sm, KP)
             end do
             ctx%state%agb_spec_c_smooth => cache%agb_spec_c_smooth
         end if
@@ -175,7 +178,8 @@ contains
             allocate (cache%agb_spec_car_smooth(n_ir, size(ctx%state%agb_spec_car, 2)))
             do k = 1, size(ctx%state%agb_spec_car, 2)
                 work = ctx%state%agb_spec_car(1:nspec, k)
-                call apply_velocity_kernel(kernel, work, i0, cache%agb_spec_car_smooth(:, k))
+                call apply_velocity_kernel(kernel, work, i0, sm)
+                cache%agb_spec_car_smooth(:, k) = real(sm, KP)
             end do
             ctx%state%agb_spec_car_smooth => cache%agb_spec_car_smooth
         end if

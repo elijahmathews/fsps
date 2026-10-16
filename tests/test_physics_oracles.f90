@@ -15,7 +15,7 @@ program test_physics_oracles
     !>   5. Single-age vs all-ages CSP: tage on a time-grid node reproduces that node of the
     !>      tage = 0 (all ages) output.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, L_SOL, H_PLANCK, C_LIGHT
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
@@ -33,6 +33,10 @@ program test_physics_oracles
 
     integer :: total_tests = 0
     integer :: total_failures = 0
+
+    ! Relative rounding floor of the kernel precision KP (2.2e-14 for FP64, 1.2e-5 for FP32); tolerances on
+    ! KP-computed quantities use max(tol, KP_RTOL) so the FP64 build keeps its original tolerance
+    real(WP), parameter :: KP_RTOL = 100.0_wp * real(epsilon(1.0_KP), WP)
 
     call print_major_header("Physics Oracles (independent identities and published values)")
 
@@ -109,7 +113,7 @@ contains
             call run_csp(ctx, results)
             l_dusty = spectral_lbol(ctx, results(1)%spec)
             write(label, '(A,I0)') "L_bol conserved, dust_type = ", dust_type
-            call assert_relative_error(l_ref, l_dusty, 1.0e-8_wp, trim(label), total_tests, total_failures)
+            call assert_relative_error(l_ref, l_dusty, max(1.0e-8_wp, KP_RTOL), trim(label), total_tests, total_failures)
         end do
 
         ! Control: without dust emission the absorbed light must be missing

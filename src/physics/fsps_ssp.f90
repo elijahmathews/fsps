@@ -22,7 +22,7 @@ module fsps_ssp
     !>   to keep the accumulator in L1 cache, maximizing vectorization throughput.
     !> - **Vectorization:** Critical loops are marked `contiguous` to enable SIMD.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NM, M_SOL, L_SOL, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR, SAFE_FLOOR
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
@@ -130,6 +130,7 @@ contains
         real(WP), intent(out), contiguous   :: lbol_grid(:)
         real(WP), intent(out), contiguous   :: spec_grid(:,:)
         real(WP), allocatable               :: temp_spec_grid(:,:)
+        real(KP), allocatable               :: kp_in(:,:), kp_out(:,:)
 
         ! Local variables
         type(isochrone_buffer_t) :: buf
@@ -277,15 +278,13 @@ contains
 
         ! B. NEBULAR EMISSION
         if (ctx%add_neb_emission_val == 2) then
-            ! Allocate a temp grid to avoid aliasing arguments
-            allocate(temp_spec_grid(size(spec_grid,1), size(spec_grid,2)))
-
-            ! Pass spec_grid as input, temp_grid as output
-            call apply_nebular_emission(ctx, pset, spec_grid, temp_spec_grid)
-
-            ! Copy back
-            spec_grid = temp_spec_grid
-            deallocate(temp_spec_grid)
+            ! Kernel-precision copies in and out (also avoids aliasing the arguments)
+            allocate(kp_in(size(spec_grid,1), size(spec_grid,2)), kp_out(size(spec_grid,1), size(spec_grid,2)))
+            kp_in = real(spec_grid, KP)
+            kp_out = 0.0_KP
+            call apply_nebular_emission(ctx, pset, kp_in, kp_out)
+            spec_grid = real(kp_out, WP)
+            deallocate(kp_in, kp_out)
         end if
 
         ! C. X-RAY BINARIES
@@ -617,7 +616,9 @@ contains
         integer :: nspec, nstars, n_active, ia
         real(WP) :: linear_lbol, current_weight
         integer, allocatable :: active_idx(:)
-        real(WP), allocatable :: active_w(:)
+        real(KP), allocatable :: active_w(:)
+        real(KP) :: acc, comp, term, tsum
+        real(KP), allocatable :: acc_v(:), comp_v(:)
         
         nspec  = size(spec_out)
         nstars = buf%n_stars
@@ -654,7 +655,7 @@ contains
 
             n_active = n_active + 1
             active_idx(n_active) = j
-            active_w(n_active) = current_weight
+            active_w(n_active) = real(current_weight, KP)
         end do
 
         if (n_active == 0) then
@@ -696,15 +697,64 @@ contains
             ! ----------------------------------------------------------------
             ! PHASE 2: REDUCTION
             ! ----------------------------------------------------------------
-            !$acc parallel loop gang vector private(ia) present(ctx, spec_out)
-            do i_spec = 1, nspec
-                spec_out(i_spec) = 0.0_wp
-                do ia = 1, n_active
-                    spec_out(i_spec) = spec_out(i_spec) + &
-                                       ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia)
+            ! Weighted sum over stars at kernel precision (a matrix-vector product). With FP32
+            ! kernels the sum over thousands of stars is compensated (Kahan): a plain FP32 sum
+            ! loses up to 1e-5 of the result, the compensated one stays at FP32 rounding (~1e-7).
+            ! KP == WP is a compile-time constant, so each build keeps one loop.
+#ifdef _OPENACC
+            ! One thread per pixel, summing over the stars
+            if (KP == WP) then
+                !$acc parallel loop gang vector private(ia, acc) present(ctx, spec_out)
+                do i_spec = 1, nspec
+                    acc = 0.0_KP
+                    do ia = 1, n_active
+                        acc = acc + ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia)
+                    end do
+                    spec_out(i_spec) = max(real(acc, WP), SAFE_FLOOR)
                 end do
-                spec_out(i_spec) = max(spec_out(i_spec), SAFE_FLOOR)
+            else
+                !$acc parallel loop gang vector private(ia, acc, comp, term, tsum) present(ctx, spec_out)
+                do i_spec = 1, nspec
+                    acc = 0.0_KP
+                    comp = 0.0_KP
+                    do ia = 1, n_active
+                        term = ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia) - comp
+                        tsum = acc + term
+                        comp = (tsum - acc) - term
+                        acc = tsum
+                    end do
+                    spec_out(i_spec) = max(real(acc, WP), SAFE_FLOOR)
+                end do
+            end if
+#else
+            ! Stars outer, pixels inner: contiguous and vectorizable, with one accumulator (and
+            ! compensation) per pixel; each pixel still sums the stars in the same order
+            allocate(acc_v(nspec))
+            acc_v = 0.0_KP
+            if (KP == WP) then
+                do ia = 1, n_active
+                    do i_spec = 1, nspec
+                        acc_v(i_spec) = acc_v(i_spec) + ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia)
+                    end do
+                end do
+            else
+                allocate(comp_v(nspec))
+                comp_v = 0.0_KP
+                do ia = 1, n_active
+                    do i_spec = 1, nspec
+                        term = ctx%state%ssp_temp_grid(i_spec, ia) * active_w(ia) - comp_v(i_spec)
+                        tsum = acc_v(i_spec) + term
+                        comp_v(i_spec) = (tsum - acc_v(i_spec)) - term
+                        acc_v(i_spec) = tsum
+                    end do
+                end do
+                deallocate(comp_v)
+            end if
+            do i_spec = 1, nspec
+                spec_out(i_spec) = max(real(acc_v(i_spec), WP), SAFE_FLOOR)
             end do
+            deallocate(acc_v)
+#endif
         end if
 
         !$acc end data
@@ -1159,7 +1209,8 @@ contains
         character(34) :: fmt
         real(WP) :: zero, hb_wght
         real(WP), dimension(NM) :: wght
-        real(WP), allocatable :: tspec(:), tspec2(:), spec1(:), spec2(:)
+        real(KP), allocatable :: tspec(:)
+        real(WP), allocatable :: tspec2(:), spec1(:), spec2(:)
         real(WP), allocatable :: mags(:)
         real(WP), allocatable :: mini(:, :), mact(:, :), logl(:, :), logt(:, :), logg(:, :)
         real(WP), allocatable :: ffco(:, :), phase(:, :), lmdot(:, :)
@@ -1226,8 +1277,8 @@ contains
                 do j = 1, nmass(i)
                     call get_stellar_spectrum(ctx, pset, mact(i, j), logt(i, j), 10.0_wp**logl(i, j), logg(i, j), &
                         phase(i, j), ffco(i, j), lmdot(i, j), tspec)
-                    spec2 = spec2 + wght(j)*tspec**2
-                    spec1 = spec1 + wght(j)*tspec
+                    spec2 = spec2 + wght(j)*real(tspec, WP)**2
+                    spec1 = spec1 + wght(j)*real(tspec, WP)
                 end do
 
                 tspec2 = spec2/spec1

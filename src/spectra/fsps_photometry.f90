@@ -10,7 +10,7 @@ module fsps_photometry
     !> 3. Integrating the spectrum over filter transmission curves.
     !> 4. Converting fluxes to AB or Vega magnitudes.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, ABS_MAG_ZEROPOINT_LOG
     use fsps_context_types, only: fsps_context_t
     use fsps_interpolation, only: interpolate_linear, find_interval
@@ -57,10 +57,10 @@ contains
         
         ! Scratch arrays allocated on host.
         real(WP), allocatable :: obs_frame_spec(:)
-        real(WP), allocatable :: flux_over_lambda(:)
+        real(KP), allocatable :: flux_over_lambda(:)
         
         real(WP) :: dist_mod_term, integrated_flux
-        real(WP) :: x1, x2, y1, y2
+        real(KP) :: s_band, c_band, t_band, u_band   ! filter integral at kernel precision, compensated
         logical :: do_vega, do_light_ages
 
         ! 1. Setup and Validation
@@ -104,9 +104,9 @@ contains
         ! 4. Pre-calculate terms for Integration
         do i = 1, n_spec
             if (ctx%state%spec_lambda(i) > tiny(0.0_wp)) then
-                flux_over_lambda(i) = obs_frame_spec(i) / ctx%state%spec_lambda(i)
+                flux_over_lambda(i) = real(obs_frame_spec(i) / ctx%state%spec_lambda(i), KP)
             else
-                flux_over_lambda(i) = 0.0_wp
+                flux_over_lambda(i) = 0.0_KP
             end if
         end do
 
@@ -114,16 +114,26 @@ contains
         do i = 1, n_bands
             if (work_flags(i) == 0) cycle
 
-            integrated_flux = 0.0_wp
-
+            s_band = 0.0_KP
+            c_band = 0.0_KP
             do j = 1, n_spec - 1
-                x1 = ctx%state%spec_lambda(j)
-                x2 = ctx%state%spec_lambda(j + 1)
-                y1 = flux_over_lambda(j) * ctx%state%bands(j, i)
-                y2 = flux_over_lambda(j + 1) * ctx%state%bands(j + 1, i)
-
-                integrated_flux = integrated_flux + 0.5_wp * abs(x2 - x1) * (y1 + y2)
+                ! 0.5 |dlambda| depends only on the grid (precomputable); the products and the
+                ! sum run at kernel precision
+                if (KP == WP) then   ! compile-time constant: plain sum, no call
+                    s_band = s_band + real(0.5_wp * abs(ctx%state%spec_lambda(j + 1) - ctx%state%spec_lambda(j)), KP) * &
+                             (flux_over_lambda(j) * real(ctx%state%bands(j, i), KP) + &
+                              flux_over_lambda(j + 1) * real(ctx%state%bands(j + 1, i), KP))
+                else
+                    ! Compensated sum, inline (this loop runs bands x pixels times per spectrum)
+                    t_band = real(0.5_wp * abs(ctx%state%spec_lambda(j + 1) - ctx%state%spec_lambda(j)), KP) * &
+                             (flux_over_lambda(j) * real(ctx%state%bands(j, i), KP) + &
+                              flux_over_lambda(j + 1) * real(ctx%state%bands(j + 1, i), KP)) - c_band
+                    u_band = s_band + t_band
+                    c_band = (u_band - s_band) - t_band
+                    s_band = u_band
+                end if
             end do
+            integrated_flux = real(s_band, WP)
 
             if (.not. do_light_ages) then
                 mags(i) = mag_from_flux(integrated_flux) - &

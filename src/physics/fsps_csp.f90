@@ -22,7 +22,7 @@ module fsps_csp
     !> - **Pre-calculation:** SFH weights are computed into a contiguous buffer 
     !>   before spectral integration to maximize memory locality.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, SAFE_FLOOR, C_LIGHT, VERBOSE
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
@@ -320,8 +320,8 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
         integer, intent(in)                 :: n_outputs, nzin
-        real(WP), intent(in), contiguous    :: ssp_grid(:,:,:)
-        real(WP), intent(in), contiguous    :: emlin_grid(:,:,:)
+        real(KP), intent(in), contiguous    :: ssp_grid(:,:,:)
+        real(KP), intent(in), contiguous    :: emlin_grid(:,:,:)
         real(WP), intent(in), contiguous    :: mass_ssp(:,:)
         real(WP), intent(in), contiguous    :: ssp_lum_linear(:,:)
 
@@ -331,8 +331,8 @@ contains
         real(WP) :: dust_age_log
         real(WP) :: linear_lbol_sum
         real(WP) :: weight_ik
-        real(WP) :: sum_young, sum_old
-        real(WP) :: sum_em_young, sum_em_old
+        real(KP) :: sum_young, sum_old
+        real(KP) :: sum_em_young, sum_em_old
 
         nt    = ctx%state%ntfull
         nspec = size(ssp_grid, 1)
@@ -444,7 +444,7 @@ contains
                     do i = 1, i_tesc
                         weight_ik = ctx%state%csp_weights(i, k, i_out)
                         if (weight_ik > SAFE_FLOOR) then
-                            sum_young = sum_young + (weight_ik * ssp_grid(i_spec, i, k))
+                            sum_young = sum_young + (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                         end if
                     end do
                     ! Old stars
@@ -452,7 +452,7 @@ contains
                     do i = i_tesc + 1, nt
                         weight_ik = ctx%state%csp_weights(i, k, i_out)
                         if (weight_ik > SAFE_FLOOR) then
-                            sum_old = sum_old + (weight_ik * ssp_grid(i_spec, i, k))
+                            sum_old = sum_old + (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                         end if
                     end do
                 end do
@@ -474,7 +474,7 @@ contains
                             !$acc loop vector
                             do i_spec = 1, nspec
                                 ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
-                                    (weight_ik * ssp_grid(i_spec, i, k))
+                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                             end do
                         end if
                     end do
@@ -486,7 +486,7 @@ contains
                             !$acc loop vector
                             do i_spec = 1, nspec
                                 ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
-                                    (weight_ik * ssp_grid(i_spec, i, k))
+                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                             end do
                         end if
                     end do
@@ -506,7 +506,7 @@ contains
                         ! Stride-1 inner loop for CPU vectorization/cache
                         do i_spec = 1, nspec
                             ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
-                                (weight_ik * ssp_grid(i_spec, i, k))
+                                (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                         end do
                     end if
                 end do
@@ -516,7 +516,7 @@ contains
                     if (weight_ik > SAFE_FLOOR) then
                         do i_spec = 1, nspec
                             ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
-                                (weight_ik * ssp_grid(i_spec, i, k))
+                                (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
                         end do
                     end if
                 end do
@@ -543,7 +543,7 @@ contains
                     do i = 1, i_tesc
                         weight_ik = ctx%state%csp_weights(i, k, i_out)
                         if (weight_ik > SAFE_FLOOR) then
-                            sum_em_young = sum_em_young + (weight_ik * emlin_grid(i_em, i, k))
+                            sum_em_young = sum_em_young + (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                         end if
                     end do
                     ! Old stars
@@ -551,7 +551,7 @@ contains
                     do i = i_tesc + 1, nt
                         weight_ik = ctx%state%csp_weights(i, k, i_out)
                         if (weight_ik > SAFE_FLOOR) then
-                            sum_em_old = sum_em_old + (weight_ik * emlin_grid(i_em, i, k))
+                            sum_em_old = sum_em_old + (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                         end if
                     end do
                 end do
@@ -573,7 +573,7 @@ contains
                             !$acc loop vector
                             do i_em = 1, nem
                                 ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
-                                    (weight_ik * emlin_grid(i_em, i, k))
+                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                             end do
                         end if
                     end do
@@ -585,7 +585,7 @@ contains
                             !$acc loop vector
                             do i_em = 1, nem
                                 ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
-                                    (weight_ik * emlin_grid(i_em, i, k))
+                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                             end do
                         end if
                     end do
@@ -605,7 +605,7 @@ contains
                         ! Stride-1 inner loop for CPU vectorization/cache
                         do i_em = 1, nem
                             ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
-                                (weight_ik * emlin_grid(i_em, i, k))
+                                (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                         end do
                     end if
                 end do
@@ -615,7 +615,7 @@ contains
                     if (weight_ik > SAFE_FLOOR) then
                         do i_em = 1, nem
                             ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
-                                (weight_ik * emlin_grid(i_em, i, k))
+                                (real(weight_ik, KP) * emlin_grid(i_em, i, k))
                         end do
                     end if
                 end do
@@ -668,7 +668,7 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: pset
         integer, intent(in)                 :: n_outputs
-        real(WP), intent(in), optional      :: igm_transmission(:)
+        real(KP), intent(in), optional      :: igm_transmission(:)
 
         integer  :: i_out, i_spec, i_em
         integer  :: nspec, nem

@@ -6,7 +6,7 @@ module fsps_context_types
     !> Provides the `fsps_context_t` and `fsps_context_state_t` structures along
     !> with lifecycle helpers for releasing associated memory.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: &
         NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
         N_AGB_CAR, NDIM_PAGB, NDIM_WR, NTAU_DAGB, NTEFF_DAGB, &
@@ -79,23 +79,23 @@ module fsps_context_types
         real(WP), dimension(NDIM_WMB_LOGT) :: wmb_logt = 0.0_wp
         real(WP), dimension(NDIM_WMB_LOGG) :: wmb_logg = 0.0_wp
         real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
-        real(WP), pointer :: agb_spec_o(:, :) => null()
+        real(KP), pointer :: agb_spec_o(:, :) => null()
         real(WP), pointer :: agb_logt_o(:, :) => null()
-        real(WP), pointer :: agb_spec_c(:, :) => null()
+        real(KP), pointer :: agb_spec_c(:, :) => null()
         real(WP), pointer :: agb_logt_c(:) => null()
         real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0_wp
-        real(WP), pointer :: agb_spec_car(:, :) => null()
+        real(KP), pointer :: agb_spec_car(:, :) => null()
         !> Templates used for dusty AGB stars, smoothed as legacy ADD_AGB_DUST smooths each such star
         !> (10^4 km/s, lambda >= 3 um); only the smoothed segment lambda >= AGB_SMOOTH_LAMBDA_MIN is
         !> stored. O-rich and Lancon-Wood C-rich templates include their lambda^2/c factor.
-        real(WP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
-        real(WP), pointer :: agb_spec_o_smooth(:, :) => null()
-        real(WP), pointer :: agb_spec_c_smooth(:, :) => null()
-        real(WP), pointer :: agb_spec_car_smooth(:, :) => null()
-        real(WP), pointer :: pagb_spec(:, :, :) => null()
+        real(KP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
+        real(KP), pointer :: agb_spec_o_smooth(:, :) => null()
+        real(KP), pointer :: agb_spec_c_smooth(:, :) => null()
+        real(KP), pointer :: agb_spec_car_smooth(:, :) => null()
+        real(KP), pointer :: pagb_spec(:, :, :) => null()
         real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0_wp
-        real(WP), pointer :: wrn_spec(:, :, :) => null()
-        real(WP), pointer :: wrc_spec(:, :, :) => null()
+        real(KP), pointer :: wrn_spec(:, :, :) => null()
+        real(KP), pointer :: wrc_spec(:, :, :) => null()
         real(WP), dimension(NDIM_WR) :: wrn_logt = 0.0_wp
         real(WP), dimension(NDIM_WR) :: wrc_logt = 0.0_wp
         integer :: ndim_dustem = 0
@@ -107,7 +107,7 @@ module fsps_context_types
         real(WP), pointer :: lambda_dustem(:) => null()
         real(WP), pointer :: dustem_dustem(:, :) => null()
         real(WP), pointer :: dustem2_dustem(:, :, :) => null()
-        real(WP), pointer :: flux_dagb(:, :, :, :) => null()
+        real(KP), pointer :: flux_dagb(:, :, :, :) => null()
         real(WP), dimension(2, NTAU_DAGB) :: tau1_dagb = 0.0_wp
         real(WP), dimension(2, NTEFF_DAGB) :: teff_dagb = 0.0_wp
         real(WP), dimension(NEMLINE) :: nebem_line_pos = 0.0_wp
@@ -119,7 +119,7 @@ module fsps_context_types
         real(WP), dimension(NEBNAGE) :: nebem_age = 0.0_wp
         real(WP), dimension(NEBNIP) :: nebem_logu = 0.0_wp
         real(WP), pointer :: neb_res_min(:) => null()
-        real(WP), pointer :: gaussnebarr(:, :) => null()
+        real(KP), pointer :: gaussnebarr(:, :) => null()
         !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
         !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
         logical :: owns_gaussnebarr = .false.
@@ -146,9 +146,9 @@ module fsps_context_types
         real(WP), allocatable :: lbol_ssp_zz(:, :)
         real(WP), pointer :: time_full(:) => null()
         real(WP), allocatable :: weight_ssp(:, :)
-        real(WP), allocatable :: spec_young(:,:)
-        real(WP), allocatable :: spec_old(:,:)
-        real(WP), allocatable :: ssp_temp_grid(:, :)
+        real(KP), allocatable :: spec_young(:,:)
+        real(KP), allocatable :: spec_old(:,:)
+        real(KP), allocatable :: ssp_temp_grid(:, :)
         integer, allocatable :: ssp_active_idx(:)
         real(WP), allocatable :: ssp_active_w(:)
         integer :: ssp_temp_nspec = 0
@@ -164,31 +164,31 @@ module fsps_context_types
         type(OBSDAT) :: sedfit_data
 
         ! --- Persistent CSP Workspace ---
-        real(WP), allocatable :: ssp_basis_spec(:, :, :)
+        real(KP), allocatable :: ssp_basis_spec(:, :, :)
         real(WP), allocatable :: ssp_basis_mass(:, :)
         real(WP), allocatable :: ssp_basis_lbol(:, :)
         logical :: ssp_basis_is_dirty = .true.
-        real(WP), allocatable :: csp_ssp_grid(:,:,:)
-        real(WP), allocatable :: csp_emlin_grid(:,:,:)
+        real(KP), allocatable :: csp_ssp_grid(:,:,:)
+        real(KP), allocatable :: csp_emlin_grid(:,:,:)
         real(WP), allocatable :: csp_ssp_lum_linear(:,:)
-        real(WP), allocatable :: csp_igm_transmission(:)
+        real(KP), allocatable :: csp_igm_transmission(:)
         real(WP), allocatable :: csp_spec_final(:)
         real(WP), allocatable :: csp_emlin_final(:)
 
         ! --- Replacements for csp_buffer_t ---
         real(WP), allocatable :: csp_weights(:,:,:)
-        real(WP), allocatable :: csp_emlin_young(:,:)
-        real(WP), allocatable :: csp_emlin_old(:,:)
+        real(KP), allocatable :: csp_emlin_young(:,:)
+        real(KP), allocatable :: csp_emlin_old(:,:)
 
         ! --- Persistent Physics Workspaces (Dust & Gas) ---
-        real(WP), allocatable :: dust_transmission_diffuse(:)
+        real(KP), allocatable :: dust_transmission_diffuse(:)
         real(WP), allocatable :: dust_frequencies(:)
-        real(WP), allocatable :: dust_spec_total_work(:,:)
-        real(WP), allocatable :: dust_emission_shape(:)
-        real(WP), allocatable :: dust_emission_final(:,:)
-        real(WP), allocatable :: gas_neb_cont_reduced(:,:)
+        real(KP), allocatable :: dust_spec_total_work(:,:)
+        real(KP), allocatable :: dust_emission_shape(:)
+        real(KP), allocatable :: dust_emission_final(:,:)
+        real(WP), allocatable :: gas_neb_cont_reduced(:,:)   ! log10 values: kept in WP (an FP32 log loses ln(10)*|x|*eps ~ 5e-6 in 10**x)
         real(WP), allocatable :: gas_neb_line_reduced(:,:)
-        real(WP), allocatable :: gas_current_step_cont(:)
+        real(WP), allocatable :: gas_current_step_cont(:)   ! log10 values: kept in WP (an FP32 log loses ln(10)*|x|*eps ~ 5e-6 in 10**x)
         real(WP), allocatable :: gas_current_step_lines(:)
         real(WP), allocatable :: scalar_reductions(:)
         real(WP), allocatable :: sfh_t_calc(:)
@@ -198,7 +198,7 @@ module fsps_context_types
         real(WP), allocatable :: sfh_w_tmp2(:,:)
 
         ! --- Fused Loop Output Buffers ---
-        real(WP), allocatable :: out_csp_spec(:,:)     ! (nspec, n_outputs)
+        real(KP), allocatable :: out_csp_spec(:,:)     ! (nspec, n_outputs)
         real(WP), allocatable :: out_csp_emlin(:,:)    ! (nemline, n_outputs)
         real(WP), allocatable :: out_mass_csp(:)       ! (n_outputs)
         real(WP), allocatable :: out_lbol_csp(:)       ! (n_outputs)

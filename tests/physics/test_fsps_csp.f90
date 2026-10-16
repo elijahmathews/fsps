@@ -1,5 +1,5 @@
 module test_fsps_csp_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, NEMLINE, C_LIGHT, NTABMAX
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
@@ -18,6 +18,9 @@ module test_fsps_csp_mod
 
     real(WP), parameter :: EPS = 1.0e-6_wp
     real(WP), parameter :: REL_EPS = 1.0e-3_wp
+    ! Relative rounding floor of the kernel precision KP (2.2e-14 for FP64, 1.2e-5 for FP32); tolerances on
+    ! KP-computed quantities use max(tol, KP_RTOL) so the FP64 build keeps its original tolerance
+    real(WP), parameter :: KP_RTOL = 100.0_wp * real(epsilon(1.0_KP), WP)
 
     public :: run_fsps_csp_tests, total_failures, total_tests
 
@@ -413,8 +416,9 @@ contains
             ctx%state%nebem_age(i) = 6.0_wp + 0.4_wp * real(i - 1, WP)
         end do
 
+        ! Physical scale (Halpha: log L/Q ~ -45.4 in L_sun per photon/s), within FP32 range
         ctx%state%nebem_line = -99.0_wp
-        ctx%state%nebem_line(1, :, :, :) = 5.0_wp
+        ctx%state%nebem_line(1, :, :, :) = -45.0_wp
 
         if (associated(ctx%state%neb_res_min)) then
             !$acc enter data copyin(ctx%state%neb_res_min)
@@ -762,7 +766,8 @@ contains
         type(params) :: pset
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        real(KP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:)
+        real(WP), allocatable :: mass_ssp(:,:), ssp_lum(:,:)
         integer :: n
 
         call print_group("CSP Integrator: All Old Limit")
@@ -813,7 +818,8 @@ contains
         type(params) :: pset
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        real(KP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:)
+        real(WP), allocatable :: mass_ssp(:,:), ssp_lum(:,:)
         integer :: n
 
         call print_group("CSP Integrator: All Young Limit")
@@ -865,7 +871,8 @@ contains
         type(params) :: pset
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        real(KP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:)
+        real(WP), allocatable :: mass_ssp(:,:), ssp_lum(:,:)
         real(WP) :: expected_young, expected_old
         integer :: n, k
 
@@ -911,9 +918,9 @@ contains
         expected_young = sum(ctx%state%csp_weights(1:k, 1, 1))
         expected_old = sum(ctx%state%csp_weights(k+1:n, 1, 1))
 
-        call assert_relative_error(expected_young, ctx%state%spec_young(1, 1), REL_EPS, &
+        call assert_relative_error(expected_young, real(ctx%state%spec_young(1, 1), WP), REL_EPS, &
                                    "Young sum matches weights", total_tests, total_failures)
-        call assert_relative_error(expected_old, ctx%state%spec_old(1, 1), REL_EPS, &
+        call assert_relative_error(expected_old, real(ctx%state%spec_old(1, 1), WP), REL_EPS, &
                                    "Old sum matches weights", total_tests, total_failures)
 
         deallocate(time_full, spec_lambda, ssp_grid, emlin_grid, mass_ssp, ssp_lum)
@@ -925,7 +932,8 @@ contains
         type(params) :: pset
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        real(KP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:)
+        real(WP), allocatable :: mass_ssp(:,:), ssp_lum(:,:)
         integer :: n
 
         call print_group("CSP Integrator: Mass Sum Consistency")
@@ -979,7 +987,8 @@ contains
         type(params) :: pset
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:), mass_ssp(:,:), ssp_lum(:,:)
+        real(KP), allocatable :: ssp_grid(:,:,:), emlin_grid(:,:,:)
+        real(WP), allocatable :: mass_ssp(:,:), ssp_lum(:,:)
         integer :: n, k, i, ispec, iem
         integer, parameter :: nz_mock = 3  ! Test multiple metallicities
 
@@ -1183,7 +1192,8 @@ contains
         type(compspout) :: result_no, result_yes
         real(WP), allocatable :: time_full(:)
         real(WP), allocatable :: spec_lambda(:)
-        real(WP), allocatable :: spec_no(:), spec_yes(:), emlines(:), igm(:)
+        real(WP), allocatable :: spec_no(:), spec_yes(:), emlines(:)
+        real(KP), allocatable :: igm(:)
         integer :: i_blue, i_red
 
         call print_group("IGM: Absorption Toggle")
@@ -1437,7 +1447,7 @@ contains
         allocate(tspec_ssp(nspec, n, 1))
         allocate(mass_ssp(n, 1))
         allocate(lbol_ssp(n, 1))
-        tspec_ssp = 1.0_wp
+        tspec_ssp = 1.0e-13_wp   ! a physical SSP level (L_sun/Hz per M_sun), within FP32 range
         mass_ssp = 1.0_wp
         lbol_ssp = 0.0_wp
 
@@ -1749,7 +1759,7 @@ contains
             do l = 1, nspec
                 expected = sum(weights * tspec_ssp(l, :, 1))
                 write(label, '(A,I0,A,I0,A)') "spec = sum(w * spec_ssp) (sfh=", sfh_types(k), ", lambda #", l, ")"
-                call assert_relative_error(expected, results(1)%spec(l), 1.0e-10_wp, &
+                call assert_relative_error(expected, results(1)%spec(l), max(1.0e-10_wp, KP_RTOL), &
                                            trim(label), total_tests, total_failures)
             end do
 

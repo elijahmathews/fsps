@@ -1,5 +1,5 @@
 module test_fsps_spectral_library_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, PI, C_LIGHT, L_SOL, M_SOL, G_NEWTON, GRAVITY_L_M_T_COEFF, &
                               NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, NDIM_WR, NDIM_PAGB, &
                               N_AGB_O, N_AGB_C, N_AGB_CAR, NTEFF_DAGB, NTAU_DAGB
@@ -48,7 +48,7 @@ contains
     subroutine test_hot_star_handoff()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: expected_main, scale_factor
         integer :: nlam
@@ -74,14 +74,15 @@ contains
 
         ctx%logt_wmb_hot_val = 4.7_wp
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        call assert_float_equals(7.0_wp, spec(1), 1.0e-6_wp, "WMBasic used when logt > cutoff", total_tests, total_failures)
+        call assert_float_equals(7.0_wp, real(spec(1), WP), 1.0e-6_wp, &
+                                 "WMBasic used when logt > cutoff", total_tests, total_failures)
 
         ctx%logt_wmb_hot_val = 4.9_wp
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
 
         scale_factor = compute_scale_factor_main(mact, lbol, logt, logg)
         expected_main = scale_factor * 1.0_wp
-        call assert_relative_error(expected_main, spec(1), 1.0e-6_wp, &
+        call assert_relative_error(expected_main, real(spec(1), WP), 1.0e-6_wp, &
                                    "Main lib used when cutoff higher", total_tests, total_failures)
 
         deallocate(spec)
@@ -92,7 +93,7 @@ contains
     subroutine test_carbon_star_fork()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: expected_o
         integer :: nlam
@@ -117,12 +118,13 @@ contains
 
         ffco = 1.01_wp
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        call assert_float_equals(20.0_wp, spec(1), 1.0e-6_wp, "C-rich uses AGB C library", total_tests, total_failures)
+        call assert_float_equals(20.0_wp, real(spec(1), WP), 1.0e-6_wp, "C-rich uses AGB C library", total_tests, total_failures)
 
         ffco = 1.0_wp
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
         expected_o = (ctx%state%spec_lambda(1)**2 / C_LIGHT) * 2.0_wp
-        call assert_relative_error(expected_o, spec(1), 1.0e-6_wp, "O-rich uses AGB O library", total_tests, total_failures)
+        call assert_relative_error(expected_o, real(spec(1), WP), 1.0e-6_wp, &
+                                   "O-rich uses AGB O library", total_tests, total_failures)
 
         deallocate(spec)
         call teardown_context(ctx)
@@ -132,7 +134,7 @@ contains
     subroutine test_wr_enable_switch()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: expected_main, scale_factor
         integer :: nlam
@@ -160,11 +162,12 @@ contains
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
         scale_factor = compute_scale_factor_main(mact, lbol, logt, logg)
         expected_main = scale_factor * 1.0_wp
-        call assert_relative_error(expected_main, spec(1), 1.0e-6_wp, "WR disabled -> Main library", total_tests, total_failures)
+        call assert_relative_error(expected_main, real(spec(1), WP), 1.0e-6_wp, &
+                                   "WR disabled -> Main library", total_tests, total_failures)
 
         ctx%use_wr_spectra_val = 1
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        call assert_float_equals(33.0_wp, spec(1), 1.0e-6_wp, "WR enabled -> WR library", total_tests, total_failures)
+        call assert_float_equals(33.0_wp, real(spec(1), WP), 1.0e-6_wp, "WR enabled -> WR library", total_tests, total_failures)
 
         deallocate(spec)
         call teardown_context(ctx)
@@ -177,7 +180,8 @@ contains
     subroutine test_stefan_boltzmann_identity()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:), nu(:)
+        real(KP), allocatable :: spec(:)
+        real(WP), allocatable :: nu(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: scale_factor, hnu, total_lbol
         integer :: nlam
@@ -204,7 +208,7 @@ contains
         ctx%state%speclib = real(hnu, kind=kind(ctx%state%speclib))
 
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        total_lbol = integrate_trapezoid(reverse_array(nu), reverse_array(spec))
+        total_lbol = integrate_trapezoid(reverse_array(nu), reverse_array(real(spec, WP)))
 
         call assert_relative_error(lbol, total_lbol, 1.0e-6_wp, "Integrated Lbol matches L_sol", total_tests, total_failures)
 
@@ -216,7 +220,7 @@ contains
     subroutine test_recalculated_gravity_check()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg_in, phase, ffco, lmdot
         real(WP) :: logg_calc, scale_factor
         integer :: nlam, j, k
@@ -261,7 +265,7 @@ contains
     subroutine test_zero_luminosity_safety()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         integer :: nlam
 
@@ -287,7 +291,9 @@ contains
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
 
         call assert_true(all(.not. ieee_is_nan(spec)), "No NaNs for lbol=0", total_tests, total_failures)
-        call assert_float_equals(SAFE_FLOOR, spec(1), 0.0_wp, "SAFE_FLOOR output for lbol=0", total_tests, total_failures)
+        ! The floor is tiny(1.0_KP): SAFE_FLOOR in the default build
+        call assert_float_equals(real(tiny(1.0_KP), WP), real(spec(1), WP), 0.0_wp, "SAFE_FLOOR output for lbol=0", &
+                                 total_tests, total_failures)
 
         deallocate(spec)
         call teardown_context(ctx)
@@ -300,7 +306,7 @@ contains
     subroutine test_bilinear_plane()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: scale_factor, expected, target_logg
         integer :: nlam, j, k
@@ -352,7 +358,7 @@ contains
     subroutine test_partial_overlap_snap()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: scale_factor, expected, target_logg
         real(WP) :: logt_lo, logg_lo, dlogt, dlogg
@@ -394,13 +400,13 @@ contains
         scale_factor = compute_scale_factor_main(mact, lbol, logt, logg)
         expected = 100.0_wp * scale_factor
 
-        call assert_relative_error(expected, spec(1), 1.0e-6_wp, "Snaps to valid corner", total_tests, total_failures)
+        call assert_relative_error(expected, real(spec(1), WP), 1.0e-6_wp, "Snaps to valid corner", total_tests, total_failures)
 
         ! With several valid corners, legacy FSPS keeps the last valid one in the order (j,k), (j+1,k),
         ! (j,k+1), (j+1,k+1), even when another has a larger bilinear weight (here (j,k) does)
         ctx%state%speclib(:, 1, 2, 2) = real(300.0_wp, kind=kind(ctx%state%speclib))
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        call assert_relative_error(300.0_wp * scale_factor, spec(1), 1.0e-6_wp, &
+        call assert_relative_error(300.0_wp * scale_factor, real(spec(1), WP), 1.0e-6_wp, &
                                    "Legacy corner order: (j+1,k+1) over (j,k)", total_tests, total_failures)
 
         deallocate(spec)
@@ -411,7 +417,7 @@ contains
     subroutine test_agb_o_stack_allocation()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: expected
         integer :: nlam, i
@@ -438,7 +444,7 @@ contains
         do i = 1, 100
             call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
         end do
-        call assert_relative_error(expected, spec(1), 1.0e-6_wp, "Repeated calls stable", total_tests, total_failures)
+        call assert_relative_error(expected, real(spec(1), WP), 1.0e-6_wp, "Repeated calls stable", total_tests, total_failures)
 
         deallocate(spec)
         call teardown_context(ctx)
@@ -451,7 +457,7 @@ contains
     subroutine test_wr_wind_temperature()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec(:)
+        real(KP), allocatable :: spec(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         integer :: nlam, j
 
@@ -482,7 +488,8 @@ contains
 
         ctx%state%isoc_type = 'padova'
         call get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
-        call assert_relative_error(logt, spec(1), 1.0e-6_wp, "Padova uses photospheric temperature", total_tests, total_failures)
+        call assert_relative_error(logt, real(spec(1), WP), 1.0e-6_wp, &
+                                   "Padova uses photospheric temperature", total_tests, total_failures)
 
         deallocate(spec)
         call teardown_context(ctx)
@@ -492,7 +499,7 @@ contains
     subroutine test_agb_dust_screen()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec_raw(:), spec_dust(:)
+        real(KP), allocatable :: spec_raw(:), spec_dust(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: tau1
         integer :: nlam, i
@@ -549,7 +556,7 @@ contains
     subroutine test_scaled_output_identity()
         type(fsps_context_t), allocatable :: ctx
         type(params) :: pset
-        real(WP), allocatable :: spec_fused(:), spec_raw(:)
+        real(KP), allocatable :: spec_fused(:), spec_raw(:)
         real(WP) :: mact, logt, lbol, logg, phase, ffco, lmdot
         real(WP) :: max_diff
         integer :: nlam, i

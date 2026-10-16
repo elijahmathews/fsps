@@ -77,6 +77,12 @@ endif
 # -----------------------------------
 # CPU Architecture Optimization
 # -----------------------------------
+# Kernel precision: FP32 per-pixel kernels (see src/core/fsps_precision.f90)
+kernel_precision = get_option('kernel_precision')
+if kernel_precision == 'single'
+    add_project_arguments('-DKERNEL_SINGLE_PRECISION', language: 'fortran')
+endif
+
 cpu_baseline = get_option('cpu_baseline')
 if get_option('buildtype') == 'release' and fc_id == 'gcc'
     if cpu_baseline == 'native'
@@ -252,7 +258,14 @@ if not c3k_available
     message('data/spectra/C3K not found: C3K regression tests are skipped')
 endif
 regression_env = environment()
-regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
+if kernel_precision == 'single'
+    # FP32 kernels against the FP64 references: spectra and magnitudes agree to ~1e-6, weak
+    # spectral indices (values near zero) to ~2e-5 in absolute terms
+    regression_env.set('FSPS_TEST_RTOL', '1.0E-4')
+    regression_env.set('FSPS_TEST_INDX_ATOL', '1.0E-4')
+else
+    regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
+endif
 regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
 # Programs built on tests/test_utils.f90 report each assertion as TAP
 regression_env.set('FSPS_TEST_TAP', '1')

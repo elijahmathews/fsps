@@ -1,5 +1,5 @@
 module test_fsps_dust_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, C_LIGHT, GRAVITY_L_M_T_COEFF, NTEFF_DAGB, NTAU_DAGB, &
                               NAGNDUST, M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, SAFE_FLOOR, PI
     use fsps_types, only: params
@@ -35,6 +35,9 @@ module test_fsps_dust_mod
     real(WP), parameter :: EPS = 1.0e-6_wp
     real(WP), parameter :: SMALL_DELTA = 1.0e-4_wp
     real(WP), parameter :: LESS_SMALL_DELTA = 1.0e-2_wp
+    ! Relative rounding floor of the kernel precision KP (2.2e-14 for FP64, 1.2e-5 for FP32); tolerances on
+    ! KP-computed quantities use max(tol, KP_RTOL) so the FP64 build keeps its original tolerance
+    real(WP), parameter :: KP_RTOL = 100.0_wp * real(epsilon(1.0_KP), WP)
 
     ! AGB / VW93 constants (copied from fsps_dust for test expectations)
     real(WP), parameter :: AGB_DELTA_C_RICH = 0.0025_wp
@@ -381,7 +384,7 @@ contains
         integer, parameter :: nlam = 5
         integer :: tmp_dust_type
         real(WP), dimension(nlam) :: wavelengths
-        real(WP), dimension(nlam, 1) :: spectrum
+        real(KP), dimension(nlam, 1) :: spectrum
         real(WP), dimension(nlam) :: expected
         real(WP), dimension(1) :: test_log_lbol
 
@@ -594,7 +597,8 @@ contains
     subroutine test_agb_dust_screen()
         type(fsps_context_t), allocatable :: ctx
         integer, parameter :: nlam = 5
-        real(WP), dimension(nlam) :: spectrum, expected
+        real(KP), dimension(nlam) :: spectrum
+        real(WP), dimension(nlam) :: expected
         real(WP) :: mass_act, log_t, log_l, log_g, log_mdot, c_o_ratio
         real(WP) :: log_g_local, tau_1um
 
@@ -651,9 +655,9 @@ contains
         type(params) :: settings
         integer, parameter :: nlam = 5
         integer :: tmp_dust_type
-        real(WP), dimension(nlam, 1) :: spectrum
+        real(KP), dimension(nlam, 1) :: spectrum
         real(WP), dimension(nlam) :: wavelengths
-        real(WP), dimension(nlam) :: spectrum_out
+        real(KP), dimension(nlam) :: spectrum_out
         real(WP), dimension(nlam) :: freqs
         real(WP), dimension(1) :: test_log_lbol
         real(WP) :: lbol_in, lbol_out
@@ -667,7 +671,7 @@ contains
 
         ! Test 4.1: AGN energy conservation (template normalized)
         spectrum(:, 1) = 1.0_wp
-        lbol_in = integrate_trapezoid_array(freqs, spectrum(:, 1))
+        lbol_in = integrate_trapezoid_array(freqs, real(spectrum(:, 1), WP))
 
         norm_template = lbol_in
         ctx%state%agndust_spec(:, :) = 1.0_wp / norm_template
@@ -690,15 +694,15 @@ contains
         call apply_agn_dust_emission(ctx, settings, 1, wavelengths, test_log_lbol, spectrum)
         !$acc update self(spectrum)
         !$acc end data
-        lbol_out = integrate_trapezoid_array(freqs, spectrum(:, 1))
+        lbol_out = integrate_trapezoid_array(freqs, real(spectrum(:, 1), WP))
         call assert_relative_error(lbol_in * 1.1_wp, lbol_out, 1.0e-6_wp, "AGN energy conservation", total_tests, total_failures)
 
         ! Test 4.2: AGB energy conservation (attenuation only)
         call set_flux_dagb_constant(ctx, nlam, 0.5_wp)
         spectrum_out = 1.0_wp
-        lbol_in = integrate_trapezoid_array(freqs, spectrum_out)
+        lbol_in = integrate_trapezoid_array(freqs, real(spectrum_out, WP))
         call apply_agb_dust_screen(ctx, 1.0_wp, spectrum_out, 1.0_wp, 3.6_wp, 3.0_wp, 0.0_wp, 1.5_wp, -5.0_wp)
-        lbol_out = integrate_trapezoid_array(freqs, spectrum_out)
+        lbol_out = integrate_trapezoid_array(freqs, real(spectrum_out, WP))
         call assert_true(lbol_out < lbol_in, "AGB screen reduces flux", total_tests, total_failures)
 
         call teardown_physics_context(ctx)
@@ -807,7 +811,8 @@ contains
         !$acc wait(1)
         !$acc update host(ctx%state%csp_emlin_young(:, 1), ctx%state%csp_emlin_old(:, 1))
 
-        call assert_float_equals(exp(-1.0_wp), ctx%state%csp_emlin_young(1, 1) + ctx%state%csp_emlin_old(1, 1), 1.0e-6_wp, &
+        call assert_float_equals(exp(-1.0_wp), real(ctx%state%csp_emlin_young(1, 1) + ctx%state%csp_emlin_old(1, 1), WP), &
+                                 1.0e-6_wp, &
                                  "Nebular line attenuation", total_tests, total_failures)
 
         !$acc exit data delete(settings)
@@ -824,7 +829,8 @@ contains
         type(params) :: settings
         integer, parameter :: nlam = 5
         real(WP), dimension(nlam) :: spec_young, spec_old, spec_out
-        real(WP), dimension(nlam) :: freqs, dust_shape
+        real(WP), dimension(nlam) :: freqs
+        real(KP), dimension(nlam) :: dust_shape
         real(WP), dimension(NEMLINE) :: neb_young, neb_old, neb_out
         real(WP) :: dust_mass, lbol_in, lbol_out
         real(WP) :: lbol_atten, lbol_abs, emission_norm
@@ -866,13 +872,13 @@ contains
         dust_mass = ctx%state%sfh_w_tmp1(3, 1)
 
         freqs = C_LIGHT / ctx%state%spec_lambda
-        lbol_in = integrate_trapezoid_array(freqs, ctx%state%spec_young(:, 1))
-        lbol_out = integrate_trapezoid_array(freqs, ctx%state%dust_spec_total_work(:, 1))
+        lbol_in = integrate_trapezoid_array(freqs, real(ctx%state%spec_young(:, 1), WP))
+        lbol_out = integrate_trapezoid_array(freqs, real(ctx%state%dust_spec_total_work(:, 1), WP))
         call assert_relative_error(lbol_in, lbol_out, 1.0e-6_wp, "Energy conservation", total_tests, total_failures)
 
         call interpolate_draine_li_dust_model(ctx, settings, dust_shape)
         call assert_true(all(abs(dust_shape - 1.9_wp) <= EPS), "Draine-Li gamma weighting", total_tests, total_failures)
-        emission_norm = integrate_trapezoid_array(freqs, dust_shape)
+        emission_norm = integrate_trapezoid_array(freqs, real(dust_shape, WP))
         spec_atten = 100.0_wp * exp(-1.0_wp)
         lbol_atten = integrate_trapezoid_array(freqs, spec_atten)
         lbol_abs = lbol_in - lbol_atten
@@ -1075,7 +1081,7 @@ contains
         !$acc update device(settings)
         call apply_dust_attenuation_and_emission(ctx, settings, 1)
         !$acc update host(ctx%state%dust_spec_total_work(:, 1))
-        call assert_float_equals(99.0_wp, ctx%state%dust_spec_total_work(1, 1), EPS, &
+        call assert_float_equals(99.0_wp, real(ctx%state%dust_spec_total_work(1, 1), WP), EPS, &
                                  "Early return triggered for uvb < 0", total_tests, total_failures)
 
         ! 2. wgp1 < 1
@@ -1085,7 +1091,7 @@ contains
         !$acc update device(settings)
         call apply_dust_attenuation_and_emission(ctx, settings, 1)
         !$acc update host(ctx%state%dust_spec_total_work(:, 1))
-        call assert_float_equals(99.0_wp, ctx%state%dust_spec_total_work(1, 1), EPS, &
+        call assert_float_equals(99.0_wp, real(ctx%state%dust_spec_total_work(1, 1), WP), EPS, &
                                  "Early return triggered for wgp1 < 1", total_tests, total_failures)
 
         !$acc exit data delete(settings)
@@ -1144,7 +1150,8 @@ contains
         ! Output evaluates purely to: spec_young * trans_birth + spec_old * trans_old
         ! With obrun=1.0, trans_birth=1.0. With W&G, curve=1.0, so trans_old=exp(-2.0*1.0)
         call assert_float_equals(100.0_wp + 100.0_wp * exp(-2.0_wp), &
-                                 ctx%state%dust_spec_total_work(1, 1), EPS, &
+                                 real(ctx%state%dust_spec_total_work(1, 1), WP), &
+                                 max(EPS, KP_RTOL * (100.0_wp + 100.0_wp * exp(-2.0_wp))), &
                                  "Evaluates correct fallback logic with nodust=1 and obrun=1", &
                                  total_tests, total_failures)
 
