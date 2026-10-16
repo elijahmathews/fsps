@@ -206,6 +206,9 @@ module fsps_context_types
 
     type :: fsps_context_t
         logical :: initialized = .false.
+        !> True between fsps_context_move_to_device and fsps_context_remove_from_device: setup and
+        !> destroy release the device copies first, so freed host arrays leave no stale mappings
+        logical :: on_device = .false.
         logical :: fast_mode = .false.
         integer :: zin = 0
         character(len=64) :: isoc_type_name = ''

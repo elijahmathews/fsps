@@ -745,8 +745,10 @@ contains
         interpolation_weight = max(0.0_wp, min(interpolation_weight, 1.0_wp))
 
 #ifdef _OPENACC
-        !$acc parallel loop gang present(ctx, wavelengths, spectrum_inout, log_lbol_stellar, settings) &
-        !$acc private(luminosity_agn_bolometric, agn_template_interpolated, galaxy_attenuation_curve, i)
+        ! settings is the caller's (host) parameter set: copied in, not present. The spectrum is
+        ! written by the CSP kernels on queue 1, so wait for them (this kernel is synchronous)
+        !$acc parallel loop gang present(ctx, wavelengths, spectrum_inout, log_lbol_stellar) copyin(settings) &
+        !$acc private(luminosity_agn_bolometric, agn_template_interpolated, galaxy_attenuation_curve, i) wait(1)
         do i_out = 1, n_outputs
             luminosity_agn_bolometric = (10.0_wp**log_lbol_stellar(i_out)) * settings%fagn
             

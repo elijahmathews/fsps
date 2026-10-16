@@ -110,6 +110,8 @@ contains
         character(len=*), intent(in), optional :: spec_type_in
         character(len=*), intent(in), optional :: dust_type_in
 
+        ! Setup repoints and reallocates the state arrays: drop the old device copies first
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
         ctx%zin = zin
         if (present(isoc_type_in)) ctx%isoc_type_name = trim(isoc_type_in)
         if (present(spec_type_in)) ctx%spec_type_name = trim(spec_type_in)
@@ -191,6 +193,7 @@ contains
     subroutine fsps_context_destroy(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
         if (ctx%initialized) then
             call fsps_cleanup(ctx)
             ctx%initialized = .false.
@@ -798,6 +801,10 @@ contains
     subroutine fsps_context_move_to_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        ! A second call refreshes the device copies rather than stacking reference counts
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
+        ctx%on_device = .true.
+
         ! Pre-allocate CSP workspace so it gets mapped correctly
         call fsps_context_prepare_csp_workspace(ctx)
 
@@ -1239,6 +1246,10 @@ contains
     subroutine fsps_context_remove_from_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        ! Nothing mapped (also avoids an exit data before any OpenACC initialization, which
+        ! crashes in the HPC SDK 25.1 runtime)
+        if (.not. ctx%on_device) return
+
         associate(s => ctx%state)
             if (allocated(s%sedfit_data%specerr)) then
                 !$acc exit data delete(s%sedfit_data%specerr)
@@ -1572,6 +1583,7 @@ contains
 
         !$acc exit data delete(ctx%state)
         !$acc exit data delete(ctx)
+        ctx%on_device = .false.
     end subroutine fsps_context_remove_from_device
 
 end module fsps_context
