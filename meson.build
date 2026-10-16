@@ -46,6 +46,11 @@ if accel_target != 'none'
         if accel_target == 'multicore'
             accel_args = ['-acc=multicore']
             accel_defs = ['-DACC_MULTICORE']
+        elif accel_target == 'omp_gpu'
+            # OpenMP target offload of the kernels with an OMP_TARGET version; OpenACC is off,
+            # so the rest runs on the host (run with OMP_TARGET_OFFLOAD=MANDATORY to catch fallback)
+            accel_args = ['-mp=gpu', '-gpu=' + get_option('gpu_arch')]
+            accel_defs = ['-DOMP_TARGET']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
             accel_args = ['-acc=gpu', '-gpu=' + get_option('gpu_arch')]

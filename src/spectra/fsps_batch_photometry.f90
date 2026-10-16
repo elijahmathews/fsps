@@ -342,6 +342,32 @@ contains
         integer  :: m, j, b, mb, ml
         real(KP) :: s, c, term, tsum
 
+#ifdef OMP_TARGET
+        ! OpenMP target offload (-Daccel=omp_gpu): consecutive threads take consecutive models of
+        ! one band (coalesced reads of fobs_t, one trip count), compensated at FP32
+        !$omp target teams distribute parallel do collapse(2) private(s, c, term, tsum, j) &
+        !$omp map(to: bands_t, j_lo, j_hi, do_band, wt, fobs_t) map(from: fband)
+        do b = 1, nbands
+            do m = 1, n_mod
+                s = 0.0_KP
+                c = 0.0_KP
+                if (do_band(b) /= 0) then
+                    do j = j_lo(b), j_hi(b)
+                        if (KP == WP) then
+                            s = s + wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1))
+                        else
+                            term = wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1)) - c
+                            tsum = s + term
+                            c = (tsum - s) - term
+                            s = tsum
+                        end if
+                    end do
+                end if
+                fband(b, m) = real(s, WP)
+            end do
+        end do
+        return
+#endif
 #ifdef _OPENACC
         if (n_mod < SMALL_N) then
             ! Few spectra: a gang per (band, spectrum), the pixels reduced across its threads

@@ -1526,6 +1526,10 @@ contains
         end do
         return
 #endif
+#ifdef OMP_TARGET
+        call main_templates_omp(ctx, pset%zmet, w, used, has_stars, spec_grid)
+        return
+#endif
         do p0 = 1, nspec, PIX_BLOCK
             p1 = min(p0 + PIX_BLOCK - 1, nspec)
             acc = 0.0_KP; comp = 0.0_KP
@@ -1558,6 +1562,66 @@ contains
             end do
         end do
     end subroutine add_main_library_templates
+
+#ifdef OMP_TARGET
+    !> add_main_library_templates with OpenMP target offload (-Daccel=omp_gpu): the kernel of the
+    !> OpenACC build, one thread per (pixel, age) summing the used templates in the host order,
+    !> compensated at FP32. The library slice is copied and mapped for the call.
+    subroutine main_templates_omp(ctx, zmet, w, used, has_stars, spec_grid)
+        type(fsps_context_t), intent(in)    :: ctx
+        integer, intent(in)                 :: zmet, used(:)
+        real(WP), intent(in)                :: w(:,:)
+        logical, intent(in)                 :: has_stars(:)
+        real(WP), intent(inout), contiguous :: spec_grid(:,:)
+
+        real(kind(1.0)), allocatable :: lib(:,:,:)
+        real(KP), allocatable :: w_used(:,:), t_sum(:,:)
+        integer, allocatable  :: a_used(:), b_used(:)
+        integer  :: nspec, nt_lib, n_used, n_ages, k, i, i_time, out_idx
+        real(KP) :: acc1, comp1, wk, term, tsum
+
+        nspec = size(spec_grid, 1)
+        nt_lib = size(ctx%state%speclib, 3)
+        n_used = size(used)
+        n_ages = size(w, 2)
+        allocate(lib(nspec, nt_lib, size(ctx%state%speclib, 4)))
+        lib = ctx%state%speclib(1:nspec, zmet, :, :)
+        allocate(w_used(n_used, n_ages), a_used(n_used), b_used(n_used), t_sum(nspec, n_ages))
+        do k = 1, n_used
+            a_used(k) = mod(used(k) - 1, nt_lib) + 1
+            b_used(k) = (used(k) - 1) / nt_lib + 1
+            w_used(k, :) = real(w(used(k), :), KP)
+        end do
+        !$omp target teams distribute parallel do collapse(2) private(acc1, comp1, wk, term, tsum, k) &
+        !$omp map(to: lib, w_used, a_used, b_used, has_stars) map(from: t_sum)
+        do i_time = 1, n_ages
+            do i = 1, nspec
+                acc1 = 0.0_KP
+                comp1 = 0.0_KP
+                if (has_stars(i_time)) then
+                    do k = 1, n_used
+                        wk = w_used(k, i_time)
+                        if (wk == 0.0_KP) cycle
+                        if (KP == WP) then
+                            acc1 = acc1 + wk * lib(i, a_used(k), b_used(k))
+                        else
+                            term = wk * lib(i, a_used(k), b_used(k)) - comp1
+                            tsum = acc1 + term
+                            comp1 = (tsum - acc1) - term
+                            acc1 = tsum
+                        end if
+                    end do
+                end if
+                t_sum(i, i_time) = acc1
+            end do
+        end do
+        do i_time = 1, n_ages
+            if (.not. has_stars(i_time)) cycle
+            out_idx = 1 + (i_time - 1) * TIME_RES_INCR
+            spec_grid(:, out_idx) = max(spec_grid(:, out_idx) + real(t_sum(:, i_time), WP), SAFE_FLOOR)
+        end do
+    end subroutine main_templates_omp
+#endif
 
     ! ------------------------------------------------------------------------
     ! POST-PROCESSING HELPERS

@@ -323,6 +323,29 @@ contains
 #endif
         !$acc end host_data
         if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
+#elif defined(OMP_TARGET)
+        ! OpenMP target offload (-Daccel=omp_gpu): one thread per (pixel, model), one pass over
+        ! the ages (young or old per model), the arrays mapped for the call
+        integer  :: m, i, k
+        real(KP) :: y, o
+
+        !$omp target teams distribute parallel do collapse(2) private(y, o, k) &
+        !$omp map(to: basis, w2, it_tesc) map(from: yo)
+        do m = 1, n_mod
+            do i = 1, nspec
+                y = 0.0_KP
+                o = 0.0_KP
+                do k = 1, nt
+                    if (k <= it_tesc(m)) then
+                        y = y + w2(k, m) * basis(i, k)
+                    else
+                        o = o + w2(k, n_mod + m) * basis(i, k)
+                    end if
+                end do
+                yo(i, m) = y
+                yo(i, n_mod + m) = o
+            end do
+        end do
 #else
         ! Each age is young or old for a given model, so one pass with one product per age; each
         ! thread does 4 models of one pixel, reusing every basis value it loads. Same sums, in the
