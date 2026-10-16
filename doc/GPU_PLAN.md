@@ -17,11 +17,28 @@ kernels that matter, with every step validated against the CPU build. Work on a 
   physics oracle `check_template_vs_per_star` asserts the two agree.
 - **FP32 kernels** (`-Dkernel_precision=single`) reproduce FP64 to ~3e-7 per pixel and 2e-7 mag;
   rules and evidence in `doc/MIXED_PRECISION.md`. Use them on the GPU from the start.
-- **Existing GPU code** is OpenACC (nvfortran, `-Daccel=gpu`, `-gpu=cc70,cc80,cc90`): device
+- **Existing GPU code** is OpenACC (nvfortran, `-Daccel=gpu`, targets from `-Dgpu_arch`, default `cc80,cc90`): device
   residency in `fsps_context.f90`, kernels in SSP (per star), dust, gas, CSP and indices, with
   host orchestration and `update host/device` between stages. It has only been run on CPU cores
   (OpenACC multicore) in CI; it has not been validated on a GPU recently. The long-term
   direction is OpenMP target offload (portable to AMD and Intel GPUs; `doc/CI.md`).
+
+## Known before starting (laptop compile of `-Daccel=gpu`, HPC SDK 26.1, both precisions)
+
+- Both precisions compile for the GPU without errors. HPC SDK 26.1 rejects `cc70` (Volta),
+  which the build used to hard-code; `-Dgpu_arch=cc80` is enough on an A100 (use `cc70` only
+  with an SDK older than 26 on V100s).
+- `-Minfo=accel` reports, to look at on the device:
+  - the CSP age sum serializes when several output ages are computed (`tage = 0`): "loop carried
+    reuse of `spec_young` / `csp_emlin_young`" in `integrate_csp_step`; the single-age path
+    used in fitting is parallel; the batched GEMM form replaces both;
+  - the Romberg integrator calls a function through a procedure argument, which device code
+    cannot do; it runs on the host (IMF weights) today, but keeps IMF weights off the GPU
+    (the exact Chabrier integrals on branch `perf/imf-analytic` would remove it);
+  - `pset` / `settings` are copied in implicitly on each kernel launch (small per-call cost).
+- nvfortran needs `CC=nvc` (the C sources get the OpenACC flags). If it fails with "Error in
+  path /usr/lib/gcc/...", its `localrc` is stale after a GCC upgrade: rerun
+  `makelocalrc -x <bindir>` (or point `NVLOCALRC` at a regenerated copy).
 
 ## Session goals, in order
 
@@ -30,8 +47,8 @@ kernels that matter, with every step validated against the CPU build. Work on a 
 ```
 module load nvhpc            # or whatever provides nvfortran / nvc on the cluster
 nvfortran --version; nvidia-smi
-FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu
-FC=nvfortran CC=nvc meson setup build_gpu32 --buildtype=release -Daccel=gpu -Dkernel_precision=single
+FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu -Dgpu_arch=cc80
+FC=nvfortran CC=nvc meson setup build_gpu32 --buildtype=release -Daccel=gpu -Dgpu_arch=cc80 -Dkernel_precision=single
 meson compile -C build_gpu && meson compile -C build_gpu32
 export SPS_HOME=$PWD FSPS_DATA_HOME=$PWD
 meson test -C build_gpu   --suite unit --suite regression
