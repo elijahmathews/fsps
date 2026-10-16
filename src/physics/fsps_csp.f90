@@ -431,9 +431,10 @@ contains
         ! =====================================================================
         ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
         ! =====================================================================
-        if (n_outputs == 1) then
-            i_out = 1
-            !$acc parallel loop gang vector present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i) async(1)
+        ! One thread per (output, pixel), summing the ages in order (young up to i_tesc, then old)
+        !$acc parallel loop gang vector collapse(2) present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i) &
+        !$acc async(1)
+        do i_out = 1, n_outputs
             do i_spec = 1, nspec
                 sum_young = 0.0_wp
                 sum_old   = 0.0_wp
@@ -462,38 +463,7 @@ contains
                 ctx%state%spec_young(i_spec, i_out) = sum_young
                 ctx%state%spec_old(i_spec, i_out)   = sum_old
             end do
-        else
-            !$acc parallel loop gang present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i, i_spec) async(1)
-            do i_out = 1, n_outputs
-                !$acc loop seq
-                do k = 1, nzin
-                    ! Young stars
-                    !$acc loop seq
-                    do i = 1, i_tesc
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_spec = 1, nspec
-                                ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
-                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
-                            end do
-                        end if
-                    end do
-                    ! Old stars
-                    !$acc loop seq
-                    do i = i_tesc + 1, nt
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_spec = 1, nspec
-                                ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
-                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
-                            end do
-                        end if
-                    end do
-                end do
-            end do
-        end if
+        end do
 #else
         ! =====================================================================
         ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
@@ -530,9 +500,9 @@ contains
         ! =====================================================================
         ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
         ! =====================================================================
-        if (n_outputs == 1) then
-            i_out = 1
-            !$acc parallel loop gang vector present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i) async(1)
+        !$acc parallel loop gang vector collapse(2) present(ctx, emlin_grid) &
+        !$acc private(sum_em_young, sum_em_old, weight_ik, k, i) async(1)
+        do i_out = 1, n_outputs
             do i_em = 1, nem
                 sum_em_young = 0.0_wp
                 sum_em_old   = 0.0_wp
@@ -560,39 +530,7 @@ contains
                 ctx%state%csp_emlin_young(i_em, i_out) = sum_em_young
                 ctx%state%csp_emlin_old(i_em, i_out)   = sum_em_old
             end do
-        else
-            ! Original N > 1 path
-            !$acc parallel loop gang present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i, i_em) async(1)
-            do i_out = 1, n_outputs
-                !$acc loop seq
-                do k = 1, nzin
-                    ! Young stars
-                    !$acc loop seq
-                    do i = 1, i_tesc
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_em = 1, nem
-                                ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
-                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
-                            end do
-                        end if
-                    end do
-                    ! Old stars
-                    !$acc loop seq
-                    do i = i_tesc + 1, nt
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_em = 1, nem
-                                ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
-                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
-                            end do
-                        end if
-                    end do
-                end do
-            end do
-        end if
+        end do
 #else
         ! =====================================================================
         ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
