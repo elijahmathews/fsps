@@ -57,8 +57,10 @@ contains
         real(WP), allocatable :: fband(:,:)
         real(KP), allocatable :: fobs(:,:)
         real(WP) :: flux
+        logical  :: done
 #ifdef FSPS_CUBLAS
         integer :: npad
+        integer, parameter :: GEMM_MIN_COLS = 16
 #endif
 
         nspec = ctx%state%nspec
@@ -74,20 +76,27 @@ contains
         end if
 
         associate(g => ctx%state%batch)
+        done = .false.
 #ifdef FSPS_CUBLAS
-        npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
-        allocate(fobs(npad, n_col))
-        !$acc data present(spec) create(fobs) copyout(fband)
-        call observed_frame(n_col, nspec, npad, g%i_lo, g%t_obs, g%wl, spec, fobs)
-        call band_fluxes_gemm(n_col, npad, nbands, g%cmat, fobs, fband)
-        !$acc end data
-#else
-        allocate(fobs(n_col, nspec))
-        !$acc data present(spec) copyin(do_band) create(fobs) copyout(fband)
-        call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
-        call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
-        !$acc end data
+        ! cuBLAS for many spectra; a few (single CSP calls) take the compensated kernels below,
+        ! which are more accurate (no plain FP32 block sums) and as fast there
+        if (n_col >= GEMM_MIN_COLS) then
+            npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
+            allocate(fobs(npad, n_col))
+            !$acc data present(spec) create(fobs) copyout(fband)
+            call observed_frame(n_col, nspec, npad, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            call band_fluxes_gemm(n_col, npad, nbands, g%cmat, fobs, fband)
+            !$acc end data
+            done = .true.
+        end if
 #endif
+        if (.not. done) then
+            allocate(fobs(n_col, nspec))
+            !$acc data present(spec) copyin(do_band) create(fobs) copyout(fband)
+            call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
+            !$acc end data
+        end if
         end associate
 
         ! The cache's device copies are released with the context's (remove_from_device); a context

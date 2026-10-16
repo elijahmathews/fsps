@@ -1,9 +1,75 @@
-# GPU results (P100 session)
+# GPU results (P100 and A100 sessions)
 
-Running log of the first GPU session (plan: `doc/GPU_PLAN.md`, "On a P100 node"). Newest
-status at the top; dated entries below.
+Running log of the GPU sessions (plan: `doc/GPU_PLAN.md`). Newest status at the top; dated
+entries below. The A100 session (2026-10-16) is first; the P100 session's status and entries follow.
 
-## Status
+## Questions for Elijah
+
+(Decisions that are yours; the agent took the conservative option in each case and kept working.)
+
+1. *(none yet)*
+
+## Status (A100 session, 2026-10-16)
+
+If restarted: read this section, then `git log` of the newest `gpu/a100-*` branch.
+
+**Setup**
+- Node `p-gc-3009`, NVIDIA A100-PCIE-40GB, driver 580.178.04 (CUDA 13.0 driver API), 2x Xeon
+  Gold 6248R (Cascade Lake, 3.0 GHz), 12 cores allocated. Slurm job 56476035, 9 h.
+- Compiler: `module load nvhpc/25.1` (nvfortran/nvc 25.1-0, CUDA 12.6). `module avail nvhpc`
+  lists 21.9, 23.1 and 25.1; the driver could run HPC SDK 26.x (CUDA 13), but 25.1 is the newest
+  installed and supports cc80. CPU references: nvfortran 25.1 without accel (`build_a100_nvcpu`,
+  `build_a100_nvcpu32`) and gfortran 13.4 (`module load gcc/13.4.0`; `build_a100_cpu`,
+  `build_a100_cpu32`).
+- Builds (all `--buildtype=release`, GPU ones `-Dgpu_arch=cc80`): `build_a100_gpu` / `gpu32`
+  (OpenACC FP64 / FP32), `build_a100_gpucb` / `gpu32cb` (`-Dcublas=true`), `build_a100_omp` /
+  `omp32` (`-Daccel=omp_gpu`, run with `OMP_TARGET_OFFLOAD=MANDATORY`). The P100 session's
+  `build_*` directories target cc60 and are not used.
+
+**Done**
+- Step 0: the P100 session's uncommitted change (cuBLAS band product only for >= 16 spectra)
+  moved onto branch `gpu/a100-cublas-threshold` from `develop` (9dc0c19). (A stale worktree of
+  `develop` from an earlier session, whose directory no longer existed, was pruned.)
+  `test_csp_batch` now also runs a 24-model batch: the 12-model batch never reached the
+  many-spectra band kernels (OpenACC `band_fluxes` switches at 16 spectra too) nor, with the
+  threshold, the cuBLAS product.
+- Item 1 (all configurations validated on the A100, branch `gpu/a100-cublas-threshold`):
+  unit + regression 32/32 in all ten builds (OpenMP ones with `OMP_TARGET_OFFLOAD=MANDATORY`:
+  the first device run of the OpenMP target code); `test_csp_batch` 32/32 everywhere. Case
+  matrix (35 cases) against `build_a100_nvcpu`, worst case:
+
+  | Build | spec (912 A-2.5 um) | spec (all) | mag | indx | lines | result |
+  |---|---|---|---|---|---|---|
+  | OpenACC FP64 (`--rtol 1e-10`) | 1.6e-11 | 3.4e-11 | 1.3e-11 | 8.5e-12 | 3.3e-16 | PASS |
+  | cuBLAS FP64 (`--rtol 1e-10`) | 1.6e-11 | 3.4e-11 | 1.3e-11 | 8.5e-12 | 3.3e-16 | PASS |
+  | OpenMP target FP64 (`--rtol 1e-10`) | 2.2e-16 | 7.1e-15 | 1.4e-14 | 2.4e-16 | 0 | PASS |
+  | OpenACC FP32 | 4.2e-7 | 4.2e-7 | 5.1e-7 | 3.0e-6 | 3.5e-7 | PASS |
+  | cuBLAS FP32 | 4.2e-7 | 4.2e-7 | 5.1e-7 | 3.0e-6 | 3.5e-7 | PASS |
+  | OpenMP target FP32 | 4.2e-7 | 4.4e-7 | 1.7e-7 | 3.4e-6 | 3.5e-7 | PASS |
+
+  (OpenMP FP64 is near bit-identical to the CPU because in that mode only the template product
+  and the batch kernels are offloaded; the OpenACC FP64 builds run the per-star SSP kernel and
+  device dust and nebular kernels.)
+
+**In progress / queue** (user-added items first, in order)
+- Nebular emission (continuum, lines) and AGN dust emission in `compute_csp_batch`, plus
+  indices and line luminosities as outputs (branch `gpu/a100-batch-nebular`, written, being
+  validated; line attenuation still missing).
+- Then: velocity smoothing in the batch and a device kernel for the single call; per-model
+  metallicity (log Z interpolation between resident bases); the full real-world benchmark
+  (dust1 0.5, dust2 0.3, DL07, nebular, IGM at z = 0.5, fagn 0.1, indices, sigma_smooth 150);
+  then the FP32 speed work, TF32 / FP64 tensor-core experiments and the write-up.
+
+**Open problems**
+- Nsight Compute: `RmProfilingAdminOnly: 1` on this node (GPU performance counters for admins
+  only); to be confirmed with a run.
+- OpenACC FP64 GPU builds: `test_csp_batch` spectra differ from `compute_csp_scenario` by up to
+  8.6e-11 (tolerance 1e-10) and mass / L_bol / SFR by 7.7e-13, against <= 6e-16 and 0 in the
+  CPU and OpenMP builds. The batch computes SFH weights on the device, the single-output
+  scenario on the host (since the P100 session), so the difference is device vs host libm /
+  FMA in the SFH weights; not yet investigated (small margin to the tolerance).
+
+## P100 session status (final)
 
 **Done**
 - Environment checks: GPU visible (`nvidia-smi`: Tesla P100-PCIE-12GB, driver 580.178.04);

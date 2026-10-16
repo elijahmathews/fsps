@@ -124,9 +124,9 @@ contains
         real(WP), allocatable :: spec(:, :), mags(:, :), ref_spec(:, :), ref_mags(:, :)
         real(WP) :: mass(N_MOD), lbol(N_MOD), mdust(N_MOD), sfr(N_MOD)
         real(WP) :: ref_mass(N_MOD), ref_lbol(N_MOD), ref_mdust(N_MOD), ref_sfr(N_MOD)
-        real(WP) :: d_spec, d_mag, d_scal, peak
-        integer :: m, status, nspec, nbands, i
-        logical :: bright(size(ctx%state%bands, 2))
+        real(WP), allocatable :: spec2(:, :), mags2(:, :)
+        real(WP) :: d_spec, d_mag, d_scal
+        integer :: m, status, nspec, nbands
 
         call print_group("Batched CSP: " // label)
         nspec = ctx%state%nspec
@@ -156,20 +156,7 @@ contains
         call assert_true(status == 0, "status 0", total_tests, total_failures)
         if (status /= 0) return
 
-        d_spec = 0.0_wp
-        d_mag = 0.0_wp
-        do m = 1, N_MOD
-            peak = maxval(ref_spec(:, m))
-            do i = 1, nspec
-                if (ref_spec(i, m) > 1.0e-6_wp * peak) &
-                    d_spec = max(d_spec, abs(spec(i, m) / ref_spec(i, m) - 1.0_wp))
-            end do
-            ! Bands within 30 mag of the brightest (fainter ones carry numerically zero flux)
-            bright = ref_mags(:, m) == ref_mags(:, m)
-            where (bright) bright = ref_mags(:, m) < minval(ref_mags(:, m), mask=bright) + 30.0_wp
-            d_mag = max(d_mag, maxval(abs(mags(:, m) - ref_mags(:, m)), mask=bright))
-            if (any(bright .neqv. (mags(:, m) == mags(:, m) .and. bright))) d_mag = huge(1.0_wp)
-        end do
+        call max_differences(spec, mags, ref_spec, ref_mags, d_spec, d_mag)
         d_scal = max(maxval(abs(mass / ref_mass - 1.0_wp)), maxval(abs(lbol - ref_lbol)), &
                      maxval(abs(sfr - ref_sfr) / max(abs(ref_sfr), tiny(1.0_wp))))
         write(*, '(A,4ES10.2)') "# max difference (spectrum, mag, mass/lbol/sfr, mdust): ", d_spec, d_mag, d_scal, &
@@ -179,7 +166,44 @@ contains
         call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol, SFR", total_tests, total_failures)
         call assert_true(maxval(abs(mdust / ref_mdust - 1.0_wp)) <= SPEC_RTOL, "dust mass", &
                          total_tests, total_failures)
+
+        ! The same models twice: 24 >= 16 spectra take the many-spectra band kernels (and the
+        ! cuBLAS product with -Dcublas=true), which the 12 above do not reach
+        allocate(spec2(nspec, 2 * N_MOD), mags2(nbands, 2 * N_MOD))
+        call compute_csp_batch(ctx, [psets, psets], mags2, status, spec=spec2)
+        call assert_true(status == 0, "status 0 (24 models)", total_tests, total_failures)
+        if (status /= 0) return
+        call max_differences(spec2, mags2, reshape([ref_spec, ref_spec], [nspec, 2 * N_MOD]), &
+                             reshape([ref_mags, ref_mags], [nbands, 2 * N_MOD]), d_spec, d_mag)
+        write(*, '(A,2ES10.2)') "# max difference, 24 models (spectrum, mag): ", d_spec, d_mag
+        call assert_true(d_spec <= SPEC_RTOL, "spectra (24 models)", total_tests, total_failures)
+        call assert_true(d_mag <= MAG_TOL, "magnitudes (24 models)", total_tests, total_failures)
     end subroutine check_batch
+
+    !> Largest relative spectrum difference (pixels above 1e-6 of each peak) and magnitude
+    !> difference (bands within 30 mag of the brightest) over the columns.
+    subroutine max_differences(spec, mags, ref_spec, ref_mags, d_spec, d_mag)
+        real(WP), intent(in)  :: spec(:, :), mags(:, :), ref_spec(:, :), ref_mags(:, :)
+        real(WP), intent(out) :: d_spec, d_mag
+        real(WP) :: peak
+        integer  :: m, i
+        logical  :: bright(size(ref_mags, 1))
+
+        d_spec = 0.0_wp
+        d_mag = 0.0_wp
+        do m = 1, size(ref_spec, 2)
+            peak = maxval(ref_spec(:, m))
+            do i = 1, size(ref_spec, 1)
+                if (ref_spec(i, m) > 1.0e-6_wp * peak) &
+                    d_spec = max(d_spec, abs(spec(i, m) / ref_spec(i, m) - 1.0_wp))
+            end do
+            ! Bands within 30 mag of the brightest (fainter ones carry numerically zero flux)
+            bright = ref_mags(:, m) == ref_mags(:, m)
+            where (bright) bright = ref_mags(:, m) < minval(ref_mags(:, m), mask=bright) + 30.0_wp
+            d_mag = max(d_mag, maxval(abs(mags(:, m) - ref_mags(:, m)), mask=bright))
+            if (any(bright .neqv. (mags(:, m) == mags(:, m) .and. bright))) d_mag = huge(1.0_wp)
+        end do
+    end subroutine max_differences
 
     subroutine set_int(key, value)
         character(len=*), intent(in) :: key
