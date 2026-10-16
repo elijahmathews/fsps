@@ -364,8 +364,14 @@ contains
                 ok = all(abs(spec_t - spec_s) <= KP_RTOL * abs(spec_s) .or. &
                          spec_s <= 1.0e-6_wp * spread(maxval(spec_s, dim=1), 1, size(spec_s, 1)))
             end if
-            call assert_true(ok .and. all(mass_t == mass_s) .and. all(lbol_t == lbol_s), trim(what(pass)), &
-                             total_tests, total_failures)
+            ! Mass and L_bol come from parallel reductions under OpenACC, which are not bitwise
+            ! reproducible from run to run
+            ok = ok .and. all(abs(mass_t - mass_s) <= 1.0e-12_wp * abs(mass_s)) .and. &
+                 all(abs(lbol_t - lbol_s) <= 1.0e-12_wp * max(abs(lbol_s), 1.0_wp))
+            write(*, '(A,3ES10.2)') "# max relative difference (spectrum, mass, L_bol): ", &
+                maxval(abs(spec_t - spec_s) / max(abs(spec_s), 1.0e-30_wp * maxval(spec_s))), &
+                maxval(abs(mass_t - mass_s) / max(abs(mass_s), tiny(1.0_wp))), maxval(abs(lbol_t - lbol_s))
+            call assert_true(ok, trim(what(pass)), total_tests, total_failures)
         end do
         call set_float(ctx, 'sbss', 0.0_wp)
         call set_float(ctx, 'fbhb', 0.0_wp)
