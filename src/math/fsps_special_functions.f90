@@ -144,7 +144,7 @@ contains
         real(WP), intent(in) :: arg
         real(WP) :: res
         
-        real(WP) :: sum_term, term, prefactor, real_power
+        real(WP) :: sum_term, term, prefactor, real_power, log_fact
         integer :: k
 
         if (arg < 0.0_WP) then
@@ -182,7 +182,12 @@ contains
                     if (abs(term) <= 10.0_wp * epsilon(1.0_wp) * abs(sum_term)) exit
                 end do
 
-                prefactor = exp(real_power * log(arg) - arg - log_gamma(real_power + 1.0_wp))
+                ! log(power!) as a sum (power is an integer; avoids log_gamma, which has no GPU libm on AMD)
+                log_fact = 0.0_wp
+                do k = 2, power
+                    log_fact = log_fact + log(real(k, WP))
+                end do
+                prefactor = exp(real_power * log(arg) - arg - log_fact)
                 res = prefactor * sum_term
             else
                 sum_term = 1.0_WP
