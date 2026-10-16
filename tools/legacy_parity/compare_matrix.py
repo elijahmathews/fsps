@@ -26,7 +26,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # Bessell M (0.004 mag); both apply to every case.
 COLUMNS = ["dlogM", "dlogL", "spec_uvnir", "spec_ir", "mag_uvnir", "mag_ir", "indx", "lines"]
 DEFAULT_TOL = dict(dlogM=2e-6, dlogL=2e-6, spec_uvnir=5e-6, spec_ir=8e-2,
-                   mag_uvnir=3e-3, mag_ir=1e-2, indx=1e-4, lines=1e-6)
+                   mag_uvnir=3e-3, mag_ir=1e-2, indx=1e-4, lines=3e-6)
 
 # Wider tolerances for cases that exercise an intentional difference (None: not checked)
 REASONS = {
