@@ -562,6 +562,7 @@ contains
     !> optical depth (no screen).
     subroutine get_agb_dust_terms(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot, &
                                   c_rich_flag, idx_teff, idx_tau, c, active)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in)  :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
         integer,  intent(out) :: c_rich_flag, idx_teff, idx_tau
@@ -622,6 +623,7 @@ contains
     !> @param[in]    log_mdot     Log10 Mass Loss Rate (M_sol/yr) from isochrone (optional).
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
+        !$acc routine seq
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
         real(KP), dimension(:), intent(inout) :: spectrum
