@@ -36,6 +36,7 @@ module fsps_dust
     public :: apply_agn_dust_emission
     public :: interpolate_draine_li_dust_model
     public :: compute_circumstellar_optical_depth
+    public :: one_minus_trans   ! used by the batched CSP (fsps_csp_batch)
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS: General Dust Parameters

@@ -25,7 +25,7 @@ module fsps_ssp
     use fsps_precision, only: WP, KP
     use fsps_constants, only: NM, M_SOL, L_SOL, VERBOSE, BHB_SBS_TIME, TIME_RES_INCR, SAFE_FLOOR
     use fsps_types, only: params
-    use fsps_context_types, only: fsps_context_t
+    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
     
     !> Physics Modules
     use fsps_imf, only: compute_imf_weights
@@ -152,6 +152,7 @@ contains
         ! 1. INITIALIZATION
         ! --------------------------------------------------------------------
         
+        call fsps_context_sync_device_settings(ctx)
         ! Initialize outputs to zero
         mass_grid = 0.0_wp
         lbol_grid = 0.0_wp

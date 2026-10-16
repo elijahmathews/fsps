@@ -25,7 +25,7 @@ module fsps_csp
     use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, SAFE_FLOOR, C_LIGHT, VERBOSE
     use fsps_types, only: params, sfhparams, compspout
-    use fsps_context_types, only: fsps_context_t
+    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
 
     !> Physics Modules
     use fsps_sfh, only: get_sfh_properties_at_age, compute_ssp_weights
@@ -91,6 +91,7 @@ contains
         integer :: i, nt, nspec, n_outputs, start_idx
         integer :: k, i_spec, i_em
         
+        call fsps_context_sync_device_settings(ctx)
         if (present(status)) status = 0
 
         ! 1. SETUP

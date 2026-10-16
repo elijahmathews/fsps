@@ -20,6 +20,7 @@ module fsps_context_types
     public :: fsps_context_state_t
     public :: fsps_context_t
     public :: fsps_context_state_destroy
+    public :: fsps_context_sync_device_settings
 
     ! ---------------------------------------------------------------------
     ! Module constants
@@ -209,6 +210,10 @@ module fsps_context_types
         !> True between fsps_context_move_to_device and fsps_context_remove_from_device: setup and
         !> destroy release the device copies first, so freed host arrays leave no stale mappings
         logical :: on_device = .false.
+        !> True when a scalar setting (*_val, fast_mode) changed on the host after the context was
+        !> moved to the device: device kernels read the device copy of ctx, so the compute entry
+        !> points refresh it first (fsps_context_sync_device_settings)
+        logical :: settings_dirty = .false.
         logical :: fast_mode = .false.
         integer :: zin = 0
         character(len=64) :: isoc_type_name = ''
@@ -257,6 +262,26 @@ module fsps_context_types
     end type fsps_context_t
 
 contains
+
+    !> @brief Copies the scalar settings of a device-resident context to its device copy, if any
+    !> changed on the host since the last copy (settings_dirty). Called by the compute entry points.
+    subroutine fsps_context_sync_device_settings(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+
+        if (.not. (ctx%on_device .and. ctx%settings_dirty)) return
+        !$acc update device(ctx%fast_mode, ctx%om0_val, ctx%ol0_val, ctx%H0_val, ctx%tiny_logt_val, &
+        !$acc   ctx%imf_upper_limit_val, ctx%imf_lower_limit_val, ctx%logt_wmb_hot_val, &
+        !$acc   ctx%nebular_smooth_init_val, ctx%imf_type_val, ctx%tpagb_norm_type_val, ctx%pzcon_val, &
+        !$acc   ctx%interpolation_type_val, ctx%add_agb_dust_model_val, ctx%dust_type_val, &
+        !$acc   ctx%add_dust_emission_val, ctx%compute_vega_mags_val, ctx%vactoair_flag_val, &
+        !$acc   ctx%add_agn_dust_val, ctx%use_wr_spectra_val, ctx%add_neb_emission_val, &
+        !$acc   ctx%add_neb_continuum_val, ctx%cloudy_dust_val, ctx%add_igm_absorption_val, &
+        !$acc   ctx%nebemlineinspec_val, ctx%add_xrb_emission_val, ctx%add_stellar_remnants_val, &
+        !$acc   ctx%smooth_velocity_val, ctx%smooth_lsf_val, ctx%smoothspec_fast_val, &
+        !$acc   ctx%redshift_colors_val, ctx%compute_light_ages_val, ctx%use_isoc_mdot_val, &
+        !$acc   ctx%setup_nebular_gaussians_val)
+        ctx%settings_dirty = .false.
+    end subroutine fsps_context_sync_device_settings
 
     !> @brief Release pointer members in a context state object.
     !> @param[inout] state State to detach from shared cache arrays.

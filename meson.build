@@ -124,6 +124,7 @@ lib_sources = files(
     # Physics Modules
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_csp.f90',
+    'src/physics/fsps_csp_batch.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
@@ -291,6 +292,18 @@ physics_oracles_exe = executable('test_physics_oracles', 'tests/test_physics_ora
     link_language : 'fortran'
 )
 test('physics_oracles', physics_oracles_exe,
+    protocol : 'tap',
+    env : regression_env,
+    suite : 'regression',
+    timeout : 900
+)
+
+# Integration test: the batched CSP (fsps_csp_batch) against compute_csp_scenario, model by model
+csp_batch_exe = executable('test_csp_batch', 'tests/test_csp_batch.f90',
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
+test('csp_batch', csp_batch_exe,
     protocol : 'tap',
     env : regression_env,
     suite : 'regression',
