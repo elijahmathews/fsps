@@ -99,7 +99,7 @@ contains
         !$acc routine seq
         !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in) :: lambda, spec
+        real(WP), dimension(:), intent(in), contiguous :: lambda, spec
         integer, intent(in) :: j
         real(WP) :: val
 
@@ -254,7 +254,7 @@ contains
     pure function integrate_interval(lam, func, lo, hi) result(area)
         !$acc routine seq
         !$omp declare target
-        real(WP), dimension(:), intent(in) :: lam, func
+        real(WP), dimension(:), intent(in), contiguous :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP) :: area
 
@@ -303,7 +303,7 @@ contains
     pure function integrate_ratio_interval(lam, func, lo, hi, slope, intercept, x_ref) result(area)
         !$acc routine seq
         !$omp declare target
-        real(WP), dimension(:), intent(in) :: lam, func
+        real(WP), dimension(:), intent(in), contiguous :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP), intent(in) :: slope, intercept, x_ref
         real(WP) :: area
