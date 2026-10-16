@@ -71,7 +71,7 @@ contains
         imf_type_base = mod(ctx%imf_type_val, 10)
 
         select case (imf_type_base)
-        case (0, 2, 4, 5)
+        case (0, 1, 2, 4, 5)
             use_analytic = .true.
         case default
             use_analytic = .false.
@@ -191,6 +191,16 @@ contains
         case (0)
             int_val = integrate_powerlaw(lo, hi, ctx%state%salp_ind, mass_weighted, 1.0_wp)
 
+        case (1)
+            ! Chabrier (2003): lognormal below 1 M_sun (closed form with erf), power law above
+            seg_lo = lo
+            seg_hi = min(hi, 1.0_wp)
+            if (seg_hi > seg_lo) int_val = int_val + integrate_chabrier_lognormal(seg_lo, seg_hi, mass_weighted)
+            seg_lo = max(lo, 1.0_wp)
+            seg_hi = hi
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, CHAB_IND + 1.0_wp, &
+                                                                       mass_weighted, CHAB_HIGH_NORM)
+
         case (2)
             a1 = ctx%state%imf_alpha(1)
             a2 = ctx%state%imf_alpha(2)
@@ -252,6 +262,29 @@ contains
             int_val = 0.0_wp
         end select
     end function integrate_imf_interval_analytic
+
+    !> Integral of the Chabrier lognormal, exp(-(log10 m - log10 mc)^2 / (2 sigma^2)) / m, over
+    !> [m1, m2] (m2 <= 1), or of m times it when mass_weighted. With x = log10 m and k = ln 10:
+    !>   number: k sigma sqrt(pi/2) [erf((x2 - a)/(sigma sqrt 2)) - erf((x1 - a)/(sigma sqrt 2))], a = log10 mc
+    !>   mass:   the same about b = a + k sigma^2, times exp(k a + k^2 sigma^2 / 2)
+    pure function integrate_chabrier_lognormal(m1, m2, mass_weighted) result(val)
+        !$acc routine seq
+        real(WP), intent(in) :: m1, m2
+        logical,  intent(in) :: mass_weighted
+        real(WP) :: val
+        real(WP), parameter :: K = log(10.0_wp)
+        real(WP) :: sig, centre, scale
+        sig = sqrt(CHAB_SIGMA2)
+        if (mass_weighted) then
+            centre = CHAB_LOG_MC + K * CHAB_SIGMA2
+            scale = exp(K * CHAB_LOG_MC + 0.5_wp * K * K * CHAB_SIGMA2)
+        else
+            centre = CHAB_LOG_MC
+            scale = 1.0_wp
+        end if
+        val = scale * K * sig * sqrt(0.5_wp * acos(-1.0_wp)) * &
+              (erf((log10(m2) - centre) / (sig * sqrt(2.0_wp))) - erf((log10(m1) - centre) / (sig * sqrt(2.0_wp))))
+    end function integrate_chabrier_lognormal
 
     !> @brief Integral of coeff * m^(-alpha) or coeff * m^(1-alpha) over [lo, hi].
     pure function integrate_powerlaw(lo, hi, alpha, mass_weighted, coeff) result(val)
