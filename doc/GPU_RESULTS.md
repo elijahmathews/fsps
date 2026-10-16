@@ -202,3 +202,77 @@ small-library and dust-corner sums to the device as products over all ages (cont
 1); the IMF weights need the analytic integrals (branch `perf/imf-analytic`) to leave the host.
 A batch of grids with different IMF parameters would currently be host-bound at ~0.38 s per
 grid, so it was not timed separately.
+
+### 2026-10-16: goal 3, batched CSP (branch `gpu/p100-batched-csp`)
+
+**New entry point** `compute_csp_batch(ctx, psets, mags, status [, spec, mass, lbol, mdust, sfr])`
+in `src/physics/fsps_csp_batch.f90` (`compute_csp_scenario` unchanged). N single-age models
+(`tage > 0`) against the resident SSP basis (one metallicity), sharing zred / igm_factor;
+SFH, dust attenuation (dust1/2/3, indices, birth-cloud age, frac_obrun, frac_nodust, curve
+parameters) and dust emission (U_min, q_PAH, gamma) vary per model. Status 2 for nebular
+emission, AGN, smoothing, redshifted colors, light ages, tage <= 0 (decided to keep v1 to the
+stages that are matrix products or element-wise; these are listed as open items). Stages:
+
+1. SFH weights per model on the device in FP64 (`sfh_weights_core`, one thread per model;
+   factored out of `compute_sfh_weights` with caller-provided scratch), split into young/old
+   at each model's `dust_tesc`, cast once to KP; mass and L_bol from them (FP64).
+2. Age sums: one product basis(pixels x ages) . [W_young W_old](ages x 2N).
+3. Attenuation + absorbed light density: element-wise over (pixel, model), as in `fsps_dust`.
+4. Dust emission: per-model reductions (gang per model), Draine & Li template interpolated per
+   model on the device from the resident grid, added with the energy-balance normalization.
+5. Magnitudes: observed-frame interpolation, then per-(band, model) filter integrals over each
+   band's support (Kahan at FP32), or with `-Dcublas=true` a split-K product (256-pixel blocks,
+   blocks summed in FP64).
+
+**Validation.** `tests/test_csp_batch.f90` (regression suite, all builds): 12 models x 4
+configurations (Calzetti z = 0; power law z = 0.5 with IGM; Cardelli z = 0; Kriek & Conroy
+z = 1.2; SFH types 0, 1, 4, 5, bursts, constant, sf_start/trunc/slope, dust emission on)
+against `compute_csp_scenario` model by model:
+
+| Build | spectrum (rel.) | magnitudes | mass, L_bol, SFR | dust mass |
+|---|---|---|---|---|
+| gfortran CPU FP64 | 0 (bit-identical) | 1.4e-14 | 0 | 0 |
+| GPU FP32, OpenACC | 2.6e-7 | 2.7e-7 | 1.1e-16 | 1.1e-7 |
+| GPU FP32, cuBLAS | 6.8e-7 | 4.4e-7 | 1.1e-16 | 1.1e-7 |
+
+All builds pass unit + regression (32 tests, including the new one); case matrix unchanged
+(FP64 GPU = nvfortran CPU to 1.6e-11; FP32 GPU vs FP64 CPU 3.1e-7 / 2e-7 mag).
+
+**Bugs found while building it** (all fixed on this branch):
+- *Stale settings on the device.* Kernels read scalar settings (`dust_type`,
+  `add_igm_absorption`, ...) from the device copy of `ctx`, written only by `move_to_device`.
+  A setting changed afterwards had no effect on the GPU: the test's IGM case came out without
+  IGM absorption, and all dust types used the first one. This affects `compute_csp_scenario`
+  too (any caller that changes a setting after moving the context). Fix: the setters mark the
+  context dirty and the compute entry points refresh the device copy
+  (`fsps_context_sync_device_settings`).
+- *Device heap exhaustion.* The batch crashed at N = 10000 (illegal address; fine at 1000;
+  `compute-sanitizer` pointed at local memory in `compute_ssp_weights`; a larger stack did not
+  help, a 256 MB device heap did). Device code allocated temporaries on the 8 MB device heap
+  in every thread: the context's state arrays are pointers, so passing them to `contiguous`
+  dummies (`find_interval`, ...) needed a runtime contiguity copy, and the tabular SFH code
+  passed the strided row `sfh_tab(1, :)`. Fix: state pointer arrays are declared `contiguous`
+  (they always point to whole allocated arrays) and the table search runs in place. A scan of
+  the PTX of every module (`-gpu=keep`, grep `malloc`) now finds no device allocations.
+- An out-of-bounds read in the new observed-frame kernel at z = 0 (found with a
+  `-fcheck=all` gfortran build).
+
+**Speed** (`build_x/benchmark_csp_batch 10000 200`; microseconds per model; tau, age, dust1/2
+and U_min vary; `mags` = magnitudes only, `spec` = also copying the spectra back):
+
+| N | GPU FP32 OpenACC | GPU FP32 cuBLAS | GPU FP64 OpenACC | GPU FP64 cuBLAS |
+|---|---|---|---|---|
+| one `compute_csp_scenario` call | 5837 | 5754 | 1832 | 1916 |
+| 1 | 5859 | 7932 | 6827 | 10267 |
+| 100 | 89 | 119 | 110 | 119 |
+| 1000 | 51 | 22 | 64 | 22 |
+| 10000 (mags) | 41.9 | 10.9 | 57.6 | 12.5 |
+| 10000 (spec) | 62.2 | 31.4 | 86.9 | 40.8 |
+
+(The FP32 single call is slower than FP64 because its band integrals run on the host,
+compensated and serial per band; `doc/MIXED_PRECISION.md` notes the same on the CPU.)
+Against the forecast of ~4 us per model (A100, FP32, large N), the P100 reaches 10.9 us with
+cuBLAS. Where the rest goes, N = 10000, OpenACC FP32 before the last kernel changes (timers in
+the driver): host stage (indices, SFR) and transfers small; device stages: age sums +
+attenuation + dust emission ~128 ms; band fluxes ~237 ms; host magnitude assembly 22 ms;
+spectra copy-back ~200 ms (240 MB pageable D2H).

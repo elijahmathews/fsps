@@ -98,7 +98,7 @@ contains
         real(KP), allocatable :: wt(:), wtl(:), wl(:), bands_t(:,:), igm_t(:)
 
         ! Work arrays (pixels x models) at kernel precision
-        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:)
+        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), fobs_t(:,:)
         real(WP), allocatable :: fband(:,:)
         integer :: npad
 
@@ -298,13 +298,14 @@ contains
         wtl(nspec) = 0.0_KP
 
         ! The absorbed-light array is free again: it holds the observed spectrum / lambda
-        allocate(fband(nbands, n_mod))
-        !$acc data copyin(i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wtl) copyout(fband)
-        call observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, absorbed)
+        allocate(fband(nbands, n_mod), fobs_t(n_mod, nspec))
+        !$acc data copyin(i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wtl) copyout(fband) create(fobs_t)
 #ifdef FSPS_CUBLAS
+        call observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, absorbed)
         call band_fluxes_gemm(ctx, n_mod, nspec, npad, nbands, wtl, absorbed, fband)
 #else
-        call band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wtl, absorbed, fband)
+        call observed_frame_t(n_mod, nspec, i_lo, t_obs, wl, total, fobs_t)
+        call band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wtl, fobs_t, fband)
 #endif
         !$acc end data
 
@@ -611,6 +612,31 @@ contains
         end do
     end subroutine observed_frame
 
+    !> observed_frame, written transposed (models, pixels) for band_fluxes.
+    subroutine observed_frame_t(n_mod, nspec, i_lo, t_obs, wl, total, fobs_t)
+        integer, intent(in)     :: n_mod, nspec, i_lo(:)
+        real(WP), intent(in)    :: t_obs(:)
+        real(KP), intent(in)    :: wl(:), total(:,:)
+        real(KP), intent(out)   :: fobs_t(:,:)
+
+        integer  :: m, j, il
+        real(WP) :: v
+
+        !$acc parallel loop gang vector collapse(2) present(i_lo, t_obs, wl, total, fobs_t) private(il, v)
+        do j = 1, nspec
+            do m = 1, n_mod
+                il = i_lo(j)
+                if (t_obs(j) == 0.0_wp) then
+                    v = real(total(il, m), WP)
+                else
+                    v = real(total(il, m), WP) + t_obs(j) * (real(total(il + 1, m), WP) - real(total(il, m), WP))
+                end if
+                if (v /= v) v = 0.0_wp
+                fobs_t(m, j) = real(max(v, 0.0_wp), KP) * wl(j)
+            end do
+        end do
+    end subroutine observed_frame_t
+
 #ifdef FSPS_CUBLAS
     !> Band fluxes as a split-K matrix product: per block of BAND_BLOCK pixels,
     !> partial = C^T . fobs with C(j, b) = (dl(j-1) + dl(j)) / 2 * band(j, b) (the trapezoid rule
@@ -680,34 +706,44 @@ contains
 
     !> Band fluxes: the trapezoid filter integral of fobs over each band's support, compensated at
     !> FP32 kernel precision.
-    subroutine band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wt, fobs, fband)
+    subroutine band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
         integer, intent(in)     :: n_mod, nbands, j_lo(:), j_hi(:), do_band(:)
-        real(KP), intent(in)    :: bands_t(:,:), wt(:), fobs(:,:)
+        !> Observed spectrum / lambda, transposed (models, pixels): the threads of a gang read
+        !> consecutive models
+        real(KP), intent(in)    :: bands_t(:,:), wt(:), fobs_t(:,:)
         real(WP), intent(out)   :: fband(:,:)
 
-        integer  :: m, j, b
+        !> Models per gang: the threads of a gang share one band, hence one trip count (no
+        !> divergence)
+        integer, parameter :: MBLK = 128
+        integer  :: m, j, b, mb, ml
         real(KP) :: s, c, term, tsum
 
-        !$acc parallel loop gang vector collapse(2) present(bands_t, j_lo, j_hi, do_band, wt, fobs, fband) &
-        !$acc private(s, c, term, tsum, j)
-        do m = 1, n_mod
-            do b = 1, nbands
-                s = 0.0_KP
-                c = 0.0_KP
-                if (do_band(b) /= 0) then
-                    !$acc loop seq
-                    do j = j_lo(b), j_hi(b)
-                        if (KP == WP) then
-                            s = s + wt(j) * (fobs(j, m) * bands_t(b, j) + fobs(j + 1, m) * bands_t(b, j + 1))
-                        else
-                            term = wt(j) * (fobs(j, m) * bands_t(b, j) + fobs(j + 1, m) * bands_t(b, j + 1)) - c
-                            tsum = s + term
-                            c = (tsum - s) - term
-                            s = tsum
+        !$acc parallel loop gang collapse(2) vector_length(MBLK) present(bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
+        do b = 1, nbands
+            do mb = 1, (n_mod + MBLK - 1) / MBLK
+                !$acc loop vector private(m, s, c, term, tsum, j)
+                do ml = 1, MBLK
+                    m = (mb - 1) * MBLK + ml
+                    if (m <= n_mod) then
+                        s = 0.0_KP
+                        c = 0.0_KP
+                        if (do_band(b) /= 0) then
+                            !$acc loop seq
+                            do j = j_lo(b), j_hi(b)
+                                if (KP == WP) then
+                                    s = s + wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1))
+                                else
+                                    term = wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1)) - c
+                                    tsum = s + term
+                                    c = (tsum - s) - term
+                                    s = tsum
+                                end if
+                            end do
                         end if
-                    end do
-                end if
-                fband(b, m) = real(s, WP)
+                        fband(b, m) = real(s, WP)
+                    end if
+                end do
             end do
         end do
     end subroutine band_fluxes
