@@ -116,10 +116,17 @@ The kernels above are fused multiply-adds, exponentials and reductions over spec
 - The SSP sum over stars and the CSP sum over ages are matrix-vector products; batched over
   models they become matrix-matrix products, the shape GPUs execute best.
 
-On the CPU, where this was developed, the FP32 build is faster for SSP generation (0.59 s vs
-0.91 s per grid, 1 core, MIST + MILES) but slower for single CSP calls (3.3 ms vs 1.7 ms),
-because the compensated band integrals are serial per band. CPU speed is not the goal; the
-default stays FP64 there.
+On the CPU, where this was developed, the FP32 build is slightly faster for SSP generation
+(0.133 s vs 0.147 s per grid, 1 core, MIST + MILES) but slower for single CSP calls (3.3 ms vs
+1.7 ms), because the compensated band integrals are serial per band. CPU speed is not the goal;
+the default stays FP64 there.
+
+SSP generation is computed as a sum over library templates (`accumulate_by_templates` in
+`fsps_ssp.f90`): each star is a combination of at most four templates, so the IMF-weighted
+template weights are aggregated in FP64 and each used template is added once; AGB stars with a
+dust shell, which are bilinear (templates times the shell's transfer function), are aggregated
+per dust-grid corner. This is the matrix-vector form (templates x weights); batched over ages
+or models it is a dense matrix product.
 
 ## Caveats
 

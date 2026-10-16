@@ -30,7 +30,7 @@ module fsps_dust
     ! Public Interface
     public :: apply_dust_attenuation_and_emission
     public :: compute_attenuation_curve_point
-    public :: apply_agb_dust_screen
+    public :: apply_agb_dust_screen, get_agb_dust_terms
     public :: agb_circumstellar_tau
     public :: AGB_SMOOTH_SIGMA, AGB_SMOOTH_LAMBDA_MIN, AGB_SMOOTH_LAMBDA_MAX
     public :: apply_agn_dust_emission
@@ -556,6 +556,50 @@ contains
         end select
     end function compute_attenuation_curve_point
 
+    !> @brief The circumstellar dust transfer function of an AGB star as a combination of grid
+    !> corners: transfer = sum(c(n) * flux_dagb(:, rich + 1, corner n)), with corners (it, itau),
+    !> (it + 1, itau), (it + 1, itau + 1), (it, itau + 1). `active` is false when the star has no
+    !> optical depth (no screen).
+    subroutine get_agb_dust_terms(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot, &
+                                  c_rich_flag, idx_teff, idx_tau, c, active)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in)  :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
+        integer,  intent(out) :: c_rich_flag, idx_teff, idx_tau
+        real(WP), intent(out) :: c(4)
+        logical,  intent(out) :: active
+        integer  :: n_teff_grid, n_tau_grid
+        real(WP) :: tau_1um, teff_linear, log_tau, w_teff, w_tau
+
+        if (c_o_ratio > 1.0_wp) then
+            c_rich_flag = 1
+        else
+            c_rich_flag = 0
+        end if
+        idx_teff = 1; idx_tau = 1; c = 0.0_wp
+        tau_1um = agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot)
+        active = tau_1um > SAFE_FLOOR
+        if (.not. active) return
+
+        n_teff_grid = size(ctx%state%teff_dagb, 2)
+        n_tau_grid  = size(ctx%state%tau1_dagb, 2)
+        teff_linear = 10.0_wp**log_t
+        idx_teff = find_interval(ctx%state%teff_dagb(c_rich_flag + 1, :), teff_linear)
+        idx_teff = max(1, min(idx_teff, n_teff_grid - 1))
+        w_teff = (teff_linear - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff)) / &
+                 (ctx%state%teff_dagb(c_rich_flag + 1, idx_teff + 1) - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff))
+        w_teff = max(-1.0_wp, min(w_teff, 1.0_wp)) ! Allow slight extrapolation
+        log_tau = log10(tau_1um)
+        idx_tau = find_interval(ctx%state%tau1_dagb(c_rich_flag + 1, :), log_tau)
+        idx_tau = max(1, min(idx_tau, n_tau_grid - 1))
+        w_tau = (log_tau - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau)) / &
+                (ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau + 1) - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau))
+        w_tau = max(-1.0_wp, min(w_tau, 1.0_wp))
+        c(1) = (1.0_wp - w_teff) * (1.0_wp - w_tau)
+        c(2) = w_teff            * (1.0_wp - w_tau)
+        c(3) = w_teff            * w_tau
+        c(4) = (1.0_wp - w_teff) * w_tau
+    end subroutine get_agb_dust_terms
+
     !> @brief
     !> Applies a circumstellar dust screen to AGB stars (DUSTY models).
     !>
@@ -578,78 +622,25 @@ contains
     !> @param[in]    log_mdot     Log10 Mass Loss Rate (M_sol/yr) from isochrone (optional).
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
-        !$acc routine seq
-        
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
         real(KP), dimension(:), intent(inout) :: spectrum
         real(WP), intent(in)                  :: mass_act, log_t, log_l, log_g
         real(WP), intent(in)                  :: c_o_ratio, log_mdot
-        
-        ! Local variables
-        integer  :: c_rich_flag ! 0 = O-rich, 1 = C-rich
-        integer  :: idx_teff, idx_tau
-        integer  :: n_teff_grid, n_tau_grid
-        real(WP) :: tau_1um
-        real(WP) :: teff_linear, log_tau
-        real(WP) :: w_teff, w_tau ! Interpolation weights
-        real(WP) :: c00, c10, c11, c01
+
+        integer  :: c_rich_flag, idx_teff, idx_tau
+        real(WP) :: c(4)
+        logical  :: active
         real(KP) :: k00, k10, k11, k01, transfer_val   ! per-pixel arithmetic at kernel precision
         integer  :: i
 
-        ! 1. Chemistry (C-rich vs O-rich) and circumstellar optical depth at 1 micron
-        ! ----------------------------------------------------------------------------
-        if (c_o_ratio > 1.0_wp) then
-            c_rich_flag = 1
-        else
-            c_rich_flag = 0
-        end if
-
-        tau_1um = agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot)
-
-        ! Early exit if optical depth is negligible
-        if (tau_1um <= SAFE_FLOOR) return
-
-
-        ! 4. Interpolate DUSTY Model Grid
-        ! -------------------------------
-        ! Grid dimensions: flux_dagb(:, cstar+1, i_teff, i_tau)
-        ! Axes: teff_dagb(cstar+1, :), tau1_dagb(cstar+1, :)
-
-        n_teff_grid = size(ctx%state%teff_dagb, 2)
-        n_tau_grid  = size(ctx%state%tau1_dagb, 2)
-
-        ! A. Interpolate in Teff
-        teff_linear = 10.0_wp**log_t
-
-        idx_teff = find_interval(ctx%state%teff_dagb(c_rich_flag + 1, :), teff_linear)
-        idx_teff = max(1, min(idx_teff, n_teff_grid - 1))
-        
-        w_teff = (teff_linear - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff)) / &
-                 (ctx%state%teff_dagb(c_rich_flag + 1, idx_teff + 1) - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff))
-        w_teff = max(-1.0_wp, min(w_teff, 1.0_wp)) ! Allow slight extrapolation
-
-        ! B. Interpolate in Tau
-        log_tau = log10(tau_1um)
-        idx_tau = find_interval(ctx%state%tau1_dagb(c_rich_flag + 1, :), log_tau)
-        idx_tau = max(1, min(idx_tau, n_tau_grid - 1))
-
-        w_tau = (log_tau - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau)) / &
-                (ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau + 1) - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau))
-        w_tau = max(-1.0_wp, min(w_tau, 1.0_wp))
-
-
-        ! C. Bilinear Interpolation + In-place application
-        ! f(x, y) ~ (1-x)(1-y)F00 + x(1-y)F10 + (1-x)yF01 + xyF11
-        c00 = (1.0_wp - w_teff) * (1.0_wp - w_tau)
-        c10 = w_teff            * (1.0_wp - w_tau)
-        c11 = w_teff            * w_tau
-        c01 = (1.0_wp - w_teff) * w_tau
-
-        k00 = real(c00, KP)
-        k10 = real(c10, KP)
-        k11 = real(c11, KP)
-        k01 = real(c01, KP)
+        call get_agb_dust_terms(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot, &
+                                c_rich_flag, idx_teff, idx_tau, c, active)
+        if (.not. active) return
+        k00 = real(c(1), KP)
+        k10 = real(c(2), KP)
+        k11 = real(c(3), KP)
+        k01 = real(c(4), KP)
         do i = 1, size(spectrum)
             transfer_val = k00 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau)     + &
                            k10 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau)     + &
