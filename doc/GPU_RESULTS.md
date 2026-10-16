@@ -27,8 +27,16 @@ status at the top; dated entries below.
   IMF weights). Fixed an FP32 subnormal problem in the AGB template sums (nvfortran only).
   All builds 31/31; case matrix PASS.
 
+- Goal 3 (branch `gpu/p100-batched-csp`, stacked on `gpu/p100-ssp-templates`): batched CSP
+  entry point `compute_csp_batch` + `tests/test_csp_batch` + `tests/benchmark_csp_batch`.
+  GPU FP32 at N = 10000: 14.6 us per model (OpenACC), 8.1 us (cuBLAS, `-Dcublas=true`),
+  vs 5.9 ms for one `compute_csp_scenario` call (1.8 ms FP64). Also fixed on this branch:
+  stale device copies of changed settings (dust_type, IGM, ... ignored on the GPU) and
+  per-thread device heap allocations (crash at N = 10000). All builds 32/32; case matrix PASS.
+
 **In progress**
-- Goal 3: batched CSP entry point + benchmark (branch `gpu/p100-batched-csp`).
+- Continuation item 2: the multi-age CSP sum (`tage = 0`) in `integrate_csp_step`
+  (branch `gpu/p100-csp-allages`, stacked on `gpu/p100-batched-csp`).
 
 **Open problems**
 - Branches are stacked (each later one contains the earlier ones' commits), because the
@@ -276,3 +284,20 @@ cuBLAS. Where the rest goes, N = 10000, OpenACC FP32 before the last kernel chan
 the driver): host stage (indices, SFR) and transfers small; device stages: age sums +
 attenuation + dust emission ~128 ms; band fluxes ~237 ms; host magnitude assembly 22 ms;
 spectra copy-back ~200 ms (240 MB pageable D2H).
+
+**Kernel work after the first version** (OpenACC FP32 unless noted; us per model, mags only):
+
+| Step | N = 1 | N = 100 | N = 1000 | N = 10000 |
+|---|---|---|---|---|
+| first version (host SFH weights) | 5753 | 99 | 63 | 57.5 |
+| SFH weights on the device, no device heap allocations | 5859 | 89 | 51 | 41.9 |
+| band fluxes per (band, model block), transposed observed spectrum | 6190 | 79 | 30 | 21.4 |
+| age sums: one pass (young or old per age), 4 models per thread | 6665 | 79 | 25 | 17.4 |
+| keep transmission + dust template from the attenuation pass | 6070 | 73 | 23 | 15.4 |
+| cache grid-only data per redshift (on the device) | 1688 | 31 | 16 | 14.6 |
+| same, cuBLAS FP32 | 1076 | 24 | 9.4 | **8.1** |
+
+Profile of the OpenACC FP32 build at N = 10000 before the last two steps (per call): age sums
+81 ms (before the one-pass change), band fluxes 36 ms, attenuation 26 ms, dust reductions
+18 ms, dust emission 13 ms, SFH weights 3.3 ms, observed frame 4 ms. With spectra copied back
+(`spec`), add ~20 us per model at N = 10000: 240 MB through pageable host memory.
