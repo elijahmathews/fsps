@@ -51,11 +51,16 @@ module fsps_ssp
 
     public :: generate_ssp_grid
     public :: isochrone_buffer_t
-    public :: ssp_per_star
+    public :: ssp_per_star, fsps_ssp_set_per_star
 
     !> Sum the SSP over individual star spectra instead of over library templates (the two are
     !> equal; the per-star form is kept for the OpenACC build and to test the template form)
     logical :: ssp_per_star = .false.
+
+    !> Exact power of two keeping the O/C-rich AGB sums (before lambda^2) clear of FP32 subnormals
+    real(WP), parameter :: AGB_SCALE = 2.0_wp**64
+    !> Libraries of the deferred template weights (OpenACC builds: main library, then these)
+    integer, parameter :: L_MAIN = 0, L_WMB = 1, L_PAGB = 2, L_WRN = 3, L_WRC = 4, L_CAR = 5, L_AGBO = 6, L_AGBC = 7
     public :: init_isochrone_buffer, reset_buffer, free_isochrone_buffer
     public :: load_timestep_data
     public :: apply_isochrone_physics
@@ -226,7 +231,13 @@ contains
         
         n_times = ctx%state%nt
         if (.not. ssp_per_star) then
+            ! OpenACC builds also defer the other libraries' template weights (extra rows, summed
+            ! with the main library on the device); CPU builds sum those per age
+#ifdef _OPENACC
+            allocate(w_main_all(size(ctx%state%speclib, 3) * size(ctx%state%speclib, 4) + n_small_templates(ctx), n_times))
+#else
             allocate(w_main_all(size(ctx%state%speclib, 3) * size(ctx%state%speclib, 4), n_times))
+#endif
             w_main_all = 0.0_wp
         end if
 
@@ -843,9 +854,7 @@ contains
         real(KP), allocatable :: tmp(:), tmp_comp(:), low(:), low_comp(:)
         integer  :: nslot, slot, d, rich, it, itau, i0, cdi(4), cdj(4)
         real(WP) :: cd(4)
-        logical  :: active, smooth
-        !> Exact power of two keeping the O/C-rich AGB sums (before lambda^2) clear of FP32 subnormals
-        real(WP), parameter :: AGB_SCALE = 2.0_wp**64
+        logical  :: active, smooth, defer_small
 
         nspec = size(spec_out)
         nz = pset%zmet
@@ -920,9 +929,22 @@ contains
             end do
         end do
 
-        ! 2. Sum the templates with non-zero weight (the main library after the age loop, if batched)
+        ! 2. Sum the templates with non-zero weight (the main library after the age loop, if batched;
+        !    with OpenACC the other libraries too, in the rows after the main library's)
+        defer_small = .false.
+        if (present(w_main_out)) defer_small = size(w_main_out) > size(w_main)
         if (present(w_main_out)) then
-            w_main_out = w_main_out + reshape(w_main, [size(w_main)])
+            n = size(w_main)
+            w_main_out(1:n) = w_main_out(1:n) + reshape(w_main, [n])
+            if (defer_small) then
+                call add_rows(reshape(w_wmb, [size(w_wmb)]))
+                call add_rows(reshape(w_pagb, [size(w_pagb)]))
+                call add_rows(w_wrn)
+                call add_rows(w_wrc)
+                call add_rows(w_car)
+                call add_rows(w_agbo)
+                call add_rows(w_agbc)
+            end if
         else
             do b = 1, size(w_main, 2)
                 do a = 1, size(w_main, 1)
@@ -931,44 +953,46 @@ contains
                 end do
             end do
         end if
-        do b = 1, size(w_wmb, 2)
-            do a = 1, size(w_wmb, 1)
-                if (w_wmb(a, b) /= 0.0_wp) &
-                    call add_column_sp(acc, comp, real(w_wmb(a, b), KP), ctx%state%wmb_spec(1:nspec, nz, a, b))
+        if (.not. defer_small) then
+            do b = 1, size(w_wmb, 2)
+                do a = 1, size(w_wmb, 1)
+                    if (w_wmb(a, b) /= 0.0_wp) &
+                        call add_column_sp(acc, comp, real(w_wmb(a, b), KP), ctx%state%wmb_spec(1:nspec, nz, a, b))
+                end do
             end do
-        end do
-        do b = 1, size(w_pagb, 2)
-            do a = 1, size(w_pagb, 1)
-                if (w_pagb(a, b) /= 0.0_wp) &
-                    call add_column(acc, comp, real(w_pagb(a, b), KP), ctx%state%pagb_spec(1:nspec, a, b))
+            do b = 1, size(w_pagb, 2)
+                do a = 1, size(w_pagb, 1)
+                    if (w_pagb(a, b) /= 0.0_wp) &
+                        call add_column(acc, comp, real(w_pagb(a, b), KP), ctx%state%pagb_spec(1:nspec, a, b))
+                end do
             end do
-        end do
-        do a = 1, size(w_wrn)
-            if (w_wrn(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrn(a), KP), ctx%state%wrn_spec(1:nspec, a, nz))
-        end do
-        do a = 1, size(w_wrc)
-            if (w_wrc(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrc(a), KP), ctx%state%wrc_spec(1:nspec, a, nz))
-        end do
-        do a = 1, size(w_car)
-            if (w_car(a) /= 0.0_wp) call add_column(acc, comp, real(w_car(a), KP), ctx%state%agb_spec_car(1:nspec, a))
-        end do
-        ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library.
-        ! Before lambda^2 (up to 7e14 A^2 in the far IR) the weighted sum is ~1e-37 there, at the
-        ! bottom of the FP32 range, where subnormal handling (kept by gfortran, flushed by
-        ! nvfortran and GPUs) changed the result by 1%: the sum carries an exact factor AGB_SCALE
-        if (any(w_agbo /= 0.0_wp) .or. any(w_agbc /= 0.0_wp)) then
-            allocate(lam_sum(nspec), lam_comp(nspec))
-            lam_sum = 0.0_KP; lam_comp = 0.0_KP
-            do a = 1, size(w_agbo)
-                if (w_agbo(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbo(a) * AGB_SCALE, KP), &
-                                                         ctx%state%agb_spec_o(1:nspec, a))
+            do a = 1, size(w_wrn)
+                if (w_wrn(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrn(a), KP), ctx%state%wrn_spec(1:nspec, a, nz))
             end do
-            do a = 1, size(w_agbc)
-                if (w_agbc(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbc(a) * AGB_SCALE, KP), &
-                                                         ctx%state%agb_spec_c(1:nspec, a))
+            do a = 1, size(w_wrc)
+                if (w_wrc(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrc(a), KP), ctx%state%wrc_spec(1:nspec, a, nz))
             end do
-            call add_column(acc, comp, real(1.0_wp / AGB_SCALE, KP), &
-                            real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
+            do a = 1, size(w_car)
+                if (w_car(a) /= 0.0_wp) call add_column(acc, comp, real(w_car(a), KP), ctx%state%agb_spec_car(1:nspec, a))
+            end do
+            ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library.
+            ! Before lambda^2 (up to 7e14 A^2 in the far IR) the weighted sum is ~1e-37 there, at the
+            ! bottom of the FP32 range, where subnormal handling (kept by gfortran, flushed by
+            ! nvfortran and GPUs) changed the result by 1%: the sum carries an exact factor AGB_SCALE
+            if (any(w_agbo /= 0.0_wp) .or. any(w_agbc /= 0.0_wp)) then
+                allocate(lam_sum(nspec), lam_comp(nspec))
+                lam_sum = 0.0_KP; lam_comp = 0.0_KP
+                do a = 1, size(w_agbo)
+                    if (w_agbo(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbo(a) * AGB_SCALE, KP), &
+                                                             ctx%state%agb_spec_o(1:nspec, a))
+                end do
+                do a = 1, size(w_agbc)
+                    if (w_agbc(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbc(a) * AGB_SCALE, KP), &
+                                                             ctx%state%agb_spec_c(1:nspec, a))
+                end do
+                call add_column(acc, comp, real(1.0_wp / AGB_SCALE, KP), &
+                                real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
+            end if
         end if
 
         ! 3. Dust-shell AGB stars: per dust corner, the template sum (smoothed beyond 3 um, as in
@@ -1024,6 +1048,13 @@ contains
         end if
 
     contains
+
+        !> Appends a library's template weights to the deferred rows (n: rows filled so far).
+        subroutine add_rows(wl)
+            real(WP), intent(in) :: wl(:)
+            w_main_out(n+1:n+size(wl)) = w_main_out(n+1:n+size(wl)) + wl
+            n = n + size(wl)
+        end subroutine add_rows
 
         !> Slot of a dust-grid corner, created (and the slot arrays grown) on first use.
         integer function find_slot(r, kt, ktau)
@@ -1103,6 +1134,69 @@ contains
 
     end subroutine accumulate_by_templates
 
+    !> Number of templates of the libraries other than the main one (deferred rows, OpenACC).
+    integer function n_small_templates(ctx)
+        type(fsps_context_t), intent(in) :: ctx
+        n_small_templates = size(ctx%state%wmb_spec, 3) * size(ctx%state%wmb_spec, 4) + &
+                            size(ctx%state%pagb_spec, 2) * size(ctx%state%pagb_spec, 3) + &
+                            size(ctx%state%wrn_spec, 2) + size(ctx%state%wrc_spec, 2) + &
+                            size(ctx%state%agb_spec_car, 2) + size(ctx%state%agb_spec_o, 2) + &
+                            size(ctx%state%agb_spec_c, 2)
+    end function n_small_templates
+
+    !> Library and template indices of deferred row r (1-based, after the main library), in the
+    !> order of accumulate_by_templates: WMBasic (a, b), post-AGB (a, b), WN, WC, C-rich AGB
+    !> (carbon stars), O-rich and C-rich AGB.
+    subroutine small_template_index(ctx, r, lib, a, b)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)  :: r
+        integer, intent(out) :: lib, a, b
+        integer :: q, n1, n
+
+        q = r
+        b = 1
+        n1 = size(ctx%state%wmb_spec, 3)
+        n = n1 * size(ctx%state%wmb_spec, 4)
+        if (q <= n) then
+            lib = L_WMB; a = mod(q - 1, n1) + 1; b = (q - 1) / n1 + 1; return
+        end if
+        q = q - n
+        n1 = size(ctx%state%pagb_spec, 2)
+        n = n1 * size(ctx%state%pagb_spec, 3)
+        if (q <= n) then
+            lib = L_PAGB; a = mod(q - 1, n1) + 1; b = (q - 1) / n1 + 1; return
+        end if
+        q = q - n
+        n = size(ctx%state%wrn_spec, 2)
+        if (q <= n) then
+            lib = L_WRN; a = q; return
+        end if
+        q = q - n
+        n = size(ctx%state%wrc_spec, 2)
+        if (q <= n) then
+            lib = L_WRC; a = q; return
+        end if
+        q = q - n
+        n = size(ctx%state%agb_spec_car, 2)
+        if (q <= n) then
+            lib = L_CAR; a = q; return
+        end if
+        q = q - n
+        n = size(ctx%state%agb_spec_o, 2)
+        if (q <= n) then
+            lib = L_AGBO; a = q; return
+        end if
+        lib = L_AGBC; a = q - n
+    end subroutine small_template_index
+
+    !> Selects the per-star SSP sum (true) or the template sum (false, default). Callers outside
+    !> the library must use this rather than assign ssp_per_star: with nvfortran, a program that
+    !> assigns the module variable of a shared library changes its own copy, not the library's.
+    subroutine fsps_ssp_set_per_star(flag)
+        logical, intent(in) :: flag
+        ssp_per_star = flag
+    end subroutine fsps_ssp_set_per_star
+
     !> @brief Adds the main-library templates of all ages: spec_grid += templates . W.
     !>
     !> @details
@@ -1123,9 +1217,10 @@ contains
         real(KP) :: wk, term, tsum
 #ifdef _OPENACC
         real(KP), allocatable :: w_used(:,:), t_sum(:,:)
-        integer, allocatable :: a_used(:), b_used(:)
-        real(KP) :: acc1, comp1
-        integer :: zmet, n_ages
+        integer, allocatable :: a_used(:), b_used(:), lib_used(:)
+        real(KP) :: acc1, comp1, lacc, lcomp, x, inv_scale
+        integer :: zmet, n_ages, n_main, r, lib, n2
+        logical :: any_agb
 #endif
 
         nspec = size(spec_grid, 1)
@@ -1145,32 +1240,80 @@ contains
         ! back in t_sum and are added on the host (spec_grid may be mapped by the caller).
         n_ages = size(w, 2)
         zmet = pset%zmet
-        allocate(w_used(n_used, n_ages), a_used(n_used), b_used(n_used), t_sum(nspec, n_ages))
+        ! Rows after the main library's: the other libraries (accumulate_by_templates order)
+        n_main = nt_lib * size(ctx%state%speclib, 4)
+        allocate(w_used(n_used, n_ages), a_used(n_used), b_used(n_used), lib_used(n_used), t_sum(nspec, n_ages))
         do k = 1, n_used
-            a_used(k) = mod(used(k) - 1, nt_lib) + 1
-            b_used(k) = (used(k) - 1) / nt_lib + 1
-            w_used(k, :) = real(w(used(k), :), KP)
+            r = used(k)
+            if (r <= n_main) then
+                lib_used(k) = L_MAIN
+                a_used(k) = mod(r - 1, nt_lib) + 1
+                b_used(k) = (r - 1) / nt_lib + 1
+            else
+                call small_template_index(ctx, r - n_main, lib_used(k), a_used(k), b_used(k))
+            end if
+            if (lib_used(k) == L_AGBO .or. lib_used(k) == L_AGBC) then
+                w_used(k, :) = real(w(r, :) * AGB_SCALE, KP)   ! as lam_sum in accumulate_by_templates
+            else
+                w_used(k, :) = real(w(r, :), KP)
+            end if
         end do
-        !$acc parallel loop gang vector collapse(2) present(ctx) private(acc1, comp1, wk, term, tsum, k) &
-        !$acc copyin(w_used, a_used, b_used, has_stars) copyout(t_sum)
+        any_agb = any(lib_used == L_AGBO .or. lib_used == L_AGBC)
+        inv_scale = real(1.0_wp / AGB_SCALE, KP)
+        !$acc parallel loop gang vector collapse(2) present(ctx) &
+        !$acc private(acc1, comp1, lacc, lcomp, x, lib, wk, term, tsum, k) &
+        !$acc copyin(w_used, a_used, b_used, lib_used, has_stars) copyout(t_sum)
         do i_time = 1, n_ages
             do i = 1, nspec
                 if (has_stars(i_time)) then
                     acc1 = 0.0_KP
                     comp1 = 0.0_KP
+                    lacc = 0.0_KP
+                    lcomp = 0.0_KP
                     !$acc loop seq
                     do k = 1, n_used
                         wk = w_used(k, i_time)
                         if (wk == 0.0_KP) cycle
-                        if (KP == WP) then
-                            acc1 = acc1 + wk * ctx%state%speclib(i, zmet, a_used(k), b_used(k))
+                        lib = lib_used(k)
+                        select case (lib)
+                        case (L_MAIN)
+                            x = ctx%state%speclib(i, zmet, a_used(k), b_used(k))
+                        case (L_WMB)
+                            x = ctx%state%wmb_spec(i, zmet, a_used(k), b_used(k))
+                        case (L_PAGB)
+                            x = ctx%state%pagb_spec(i, a_used(k), b_used(k))
+                        case (L_WRN)
+                            x = ctx%state%wrn_spec(i, a_used(k), zmet)
+                        case (L_WRC)
+                            x = ctx%state%wrc_spec(i, a_used(k), zmet)
+                        case (L_CAR)
+                            x = ctx%state%agb_spec_car(i, a_used(k))
+                        case (L_AGBO)
+                            x = ctx%state%agb_spec_o(i, a_used(k))
+                        case default
+                            x = ctx%state%agb_spec_c(i, a_used(k))
+                        end select
+                        if (lib == L_AGBO .or. lib == L_AGBC) then
+                            ! O/C-rich AGB: summed apart, times lambda^2 below
+                            term = wk * x - lcomp
+                            tsum = lacc + term
+                            lcomp = (tsum - lacc) - term
+                            lacc = tsum
+                        else if (KP == WP) then
+                            acc1 = acc1 + wk * x
                         else
-                            term = wk * ctx%state%speclib(i, zmet, a_used(k), b_used(k)) - comp1
+                            term = wk * x - comp1
                             tsum = acc1 + term
                             comp1 = (tsum - acc1) - term
                             acc1 = tsum
                         end if
                     end do
+                    if (any_agb) then
+                        term = inv_scale * (real(ctx%state%spec_lambda(i), KP)**2 * lacc) - comp1
+                        tsum = acc1 + term
+                        comp1 = (tsum - acc1) - term
+                        acc1 = tsum
+                    end if
                     t_sum(i, i_time) = acc1
                 else
                     t_sum(i, i_time) = 0.0_KP

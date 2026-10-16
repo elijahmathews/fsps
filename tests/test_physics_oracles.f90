@@ -20,7 +20,7 @@ program test_physics_oracles
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_ssp, only: generate_ssp_grid, ssp_per_star
+    use fsps_ssp, only: generate_ssp_grid, fsps_ssp_set_per_star
     use fsps_photometry, only: compute_magnitudes
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
@@ -350,11 +350,11 @@ contains
                 call set_float(ctx, 'fbhb', 0.2_wp)
                 call set_float(ctx, 'agb_dust', 2.0_wp)
             end if
-            ssp_per_star = .false.
+            call fsps_ssp_set_per_star(.false.)
             call run_ssp(ctx, mass_t, lbol_t, spec_t)
-            ssp_per_star = .true.
+            call fsps_ssp_set_per_star(.true.)
             call run_ssp(ctx, mass_s, lbol_s, spec_s)
-            ssp_per_star = .false.
+            call fsps_ssp_set_per_star(.false.)
             ! FP64: every pixel to 1e-10. FP32 kernels: the two summation orders round differently,
             ! to ~1e-7 of the flux, so pixels more than 6 decades below an age's peak (near FP32
             ! underflow) are excluded
