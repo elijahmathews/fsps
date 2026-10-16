@@ -21,10 +21,25 @@ module fsps_context_types
     public :: fsps_context_t
     public :: fsps_context_state_destroy
     public :: fsps_context_sync_device_settings
+    public :: batch_grid_t, batch_grid_release
 
     ! ---------------------------------------------------------------------
     ! Module constants
     ! ---------------------------------------------------------------------
+
+    !> Grid-only data of the batched CSP (fsps_csp_batch) for one redshift: observed-frame map,
+    !> band weights and supports, trapezoid weights, IGM transmission. Built on the first batch
+    !> call for a redshift and kept (on the device too) until the redshift or IGM factor changes.
+    type :: batch_grid_t
+        logical  :: ready = .false.
+        logical  :: igm = .false.
+        real(WP) :: zred = 0.0_wp
+        real(WP) :: igm_factor = 0.0_wp
+        real(WP) :: dist_term = 0.0_wp
+        integer,  allocatable :: i_lo(:), j_lo(:), j_hi(:)
+        real(WP), allocatable :: t_obs(:)
+        real(KP), allocatable :: wt(:), wtl(:), wl(:), bands_t(:,:), cmat(:,:), igm_t(:)
+    end type batch_grid_t
 
     type :: fsps_context_state_t
         real(WP) :: zsol = 0.0_wp
@@ -203,6 +218,7 @@ module fsps_context_types
         real(WP), allocatable :: out_csp_emlin(:,:)    ! (nemline, n_outputs)
         real(WP), allocatable :: out_mass_csp(:)       ! (n_outputs)
         real(WP), allocatable :: out_lbol_csp(:)       ! (n_outputs)
+        type(batch_grid_t) :: batch
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -283,10 +299,27 @@ contains
         ctx%settings_dirty = .false.
     end subroutine fsps_context_sync_device_settings
 
+    !> @brief Drops the batched-CSP grid cache (and its device copies, if mapped).
+    subroutine batch_grid_release(g)
+        type(batch_grid_t), intent(inout) :: g
+
+        if (g%ready) then
+            !$acc exit data delete(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+            if (allocated(g%cmat)) then
+                !$acc exit data delete(g%cmat)
+            end if
+        end if
+        if (allocated(g%i_lo)) deallocate(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+        if (allocated(g%cmat)) deallocate(g%cmat)
+        g%ready = .false.
+    end subroutine batch_grid_release
+
     !> @brief Release pointer members in a context state object.
     !> @param[inout] state State to detach from shared cache arrays.
     subroutine fsps_context_state_destroy(state)
         type(fsps_context_state_t), intent(inout) :: state
+
+        call batch_grid_release(state%batch)
 
         if (associated(state%indexdefined)) nullify (state%indexdefined)
         if (associated(state%wgdust)) nullify (state%wgdust)

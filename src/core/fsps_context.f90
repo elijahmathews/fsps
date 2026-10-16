@@ -9,7 +9,7 @@ module fsps_context
     use fsps_precision, only: WP
     use fsps_constants, only: NEMLINE, NEBNAGE, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT
-    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
+    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy, batch_grid_release
     use fsps_environment, only: fsps_cleanup
     use fsps_initialization, only: fsps_initialize_data
     use fsps_ssp, only: generate_ssp_grid
@@ -1616,6 +1616,7 @@ contains
             !$acc exit data delete(ctx%pset%mag_compute)
         end if
 
+        call batch_grid_release(ctx%state%batch)
         !$acc exit data delete(ctx%state)
         !$acc exit data delete(ctx)
         ctx%on_device = .false.

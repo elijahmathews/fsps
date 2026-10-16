@@ -30,7 +30,7 @@ module fsps_csp_batch
     use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, C_LIGHT, PI, ABS_MAG_ZEROPOINT_LOG
     use fsps_types, only: params
-    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
+    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings, batch_grid_release
     use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
@@ -80,22 +80,18 @@ contains
         real(WP), intent(out), optional     :: spec(:,:)
         real(WP), intent(out), optional     :: mass(:), lbol(:), mdust(:), sfr(:)
 
-        integer :: n_mod, nt, nspec, nbands, m, k, i, j, b, ilo, ihi
-        real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        real(WP) :: z_factor, target, dm, dist_term, flux
+        integer :: n_mod, nt, nspec, nbands, m, k, b
+        real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear, flux
         logical  :: igm, any_emis
 
         ! Per-model parameters and results on the host
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
         real(WP), allocatable :: weights(:,:,:), tmp1(:,:), tmp2(:,:), lum_linear(:), msum(:), lsum(:)
         integer,  allocatable :: it_tesc(:)
-        integer,  allocatable :: iq(:), iu(:), i_lo(:), j_lo(:), j_hi(:), do_band(:)
-        real(WP), allocatable :: wq(:), wu(:), gam(:), t_obs(:)
+        integer,  allocatable :: iq(:), iu(:), do_band(:)
+        real(WP), allocatable :: wq(:), wu(:), gam(:)
         logical,  allocatable :: emis(:)
         real(WP), allocatable :: s_abs(:), s_norm(:), s_esc(:)
-
-        ! Grid-only factors (FP64 formed, KP stored)
-        real(KP), allocatable :: wt(:), wtl(:), wl(:), bands_t(:,:), igm_t(:)
 
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), fobs_t(:,:)
@@ -165,16 +161,9 @@ contains
         end do
         any_emis = any(emis)
 
-        ! Grid-only trapezoid weights in frequency (formed in FP64, rule 4)
-        allocate(wt(nspec))
-        do i = 1, nspec - 1
-            wt(i) = real(0.5_wp * abs(C_LIGHT / ctx%state%spec_lambda(i+1) - C_LIGHT / ctx%state%spec_lambda(i)), KP)
-        end do
-        wt(nspec) = 0.0_KP
-
-        ! IGM transmission (common redshift; computed on the device in OpenACC builds, below)
-        igm = ctx%add_igm_absorption_val == 1 .and. zred > SAFE_FLOOR
-        allocate(igm_t(nspec))
+        ! Grid-only data for this redshift (cached in ctx%state%batch, on the device too)
+        call prepare_batch_grid(ctx, zred, psets(1)%igm_factor)
+        igm = ctx%state%batch%igm
 
         ! ------------------------------------------------------------------
         ! 2-3. Device: age sums, attenuation, dust emission
@@ -188,9 +177,8 @@ contains
         allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(npad, n_mod))
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod))
 
-        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, wt, it_tesc, lum_linear) &
-        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed, igm_t) copyout(s_abs, s_norm, s_esc, msum, lsum)
-        if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, psets(1)%igm_factor, igm_t)
+        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear) &
+        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed) copyout(s_abs, s_norm, s_esc, msum, lsum)
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
@@ -220,93 +208,40 @@ contains
         call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
         if (any_emis) then
-            call dust_emission_reductions(n_mod, nspec, emis, wt, yo, absorbed, s_abs, s_norm, s_esc)
+            call dust_emission_reductions(n_mod, nspec, emis, ctx%state%batch%wt, yo, absorbed, s_abs, s_norm, s_esc)
             call add_dust_emission(n_mod, nspec, emis, yo, s_abs, s_esc, total)
         end if
 
-        ! IGM (common transmission)
-        if (igm) then
-            !$acc parallel loop collapse(2) present(total, igm_t)
-            do m = 1, n_mod
-                do i = 1, nspec
-                    total(i, m) = total(i, m) * igm_t(i)
-                end do
-            end do
-        end if
+        if (igm) call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
 
         ! ------------------------------------------------------------------
         ! 4. Magnitudes
         ! ------------------------------------------------------------------
-        ! Observed-frame interpolation (prepare_observed_spectrum): per pixel, the rest-frame
-        ! interval and position; then flux / lambda into the absorbed-light work array
-        allocate(i_lo(nspec), t_obs(nspec), wl(nspec))
-        if (abs(zred) > SAFE_FLOOR) then
-            z_factor = 1.0_wp + zred
-            do j = 1, nspec
-                target = ctx%state%spec_lambda(j) / z_factor
-                i_lo(j) = max(1, min(find_interval(ctx%state%spec_lambda, target), nspec - 1))
-                t_obs(j) = (target - ctx%state%spec_lambda(i_lo(j))) / &
-                           (ctx%state%spec_lambda(i_lo(j)+1) - ctx%state%spec_lambda(i_lo(j)))
-            end do
-            dm = interpolate_linear(ctx%state%cosmospl(:,1), ctx%state%cosmospl(:,3), zred)
-            if (dm /= dm .or. dm <= SAFE_FLOOR) then
-                dist_term = 0.0_wp
-            else
-                dist_term = 5.0_wp * log10(dm / 10.0_wp) + mag_from_flux(z_factor)
-            end if
-        else
-            i_lo = [(j, j = 1, nspec)]
-            t_obs = 0.0_wp
-            dist_term = 0.0_wp
-        end if
-        do j = 1, nspec
-            if (ctx%state%spec_lambda(j) > tiny(0.0_wp)) then
-                wl(j) = real(1.0_wp / ctx%state%spec_lambda(j), KP)
-            else
-                wl(j) = 0.0_KP
-            end if
-        end do
-
-        ! Bands: transposed at kernel precision, the support of each, trapezoid weights in lambda
-        allocate(bands_t(nbands, nspec), j_lo(nbands), j_hi(nbands), do_band(nbands))
+        ! Bands to compute (psets(1)%mag_compute, as compute_magnitudes)
+        allocate(do_band(nbands))
         do_band = 1
         if (allocated(psets(1)%mag_compute)) then
             b = min(nbands, size(psets(1)%mag_compute))
             do_band(1:b) = psets(1)%mag_compute(1:b)
             if (ctx%compute_vega_mags_val == 1) do_band(IDX_V_BAND) = 1
         end if
-        do b = 1, nbands
-            bands_t(b, :) = real(ctx%state%bands(1:nspec, b), KP)
-            ilo = nspec; ihi = 1
-            do j = 1, nspec
-                if (ctx%state%bands(j, b) /= 0.0_wp) then
-                    ilo = min(ilo, j); ihi = max(ihi, j)
-                end if
-            end do
-            ! Trapezoid intervals touching the support: j = ilo-1 .. ihi
-            j_lo(b) = max(1, ilo - 1)
-            j_hi(b) = min(nspec - 1, ihi)
-            if (ilo > ihi) then
-                j_lo(b) = 1; j_hi(b) = 0
-            end if
-        end do
-        allocate(wtl(nspec))
-        do j = 1, nspec - 1
-            wtl(j) = real(0.5_wp * abs(ctx%state%spec_lambda(j + 1) - ctx%state%spec_lambda(j)), KP)
-        end do
-        wtl(nspec) = 0.0_KP
 
         ! The absorbed-light array is free again: it holds the observed spectrum / lambda
-        allocate(fband(nbands, n_mod), fobs_t(n_mod, nspec))
-        !$acc data copyin(i_lo, t_obs, wl, bands_t, j_lo, j_hi, do_band, wtl) copyout(fband) create(fobs_t)
+        associate(g => ctx%state%batch)
 #ifdef FSPS_CUBLAS
-        call observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, absorbed)
-        call band_fluxes_gemm(ctx, n_mod, nspec, npad, nbands, wtl, absorbed, fband)
-#else
-        call observed_frame_t(n_mod, nspec, i_lo, t_obs, wl, total, fobs_t)
-        call band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wtl, fobs_t, fband)
-#endif
+        allocate(fband(nbands, n_mod))
+        !$acc data copyout(fband)
+        call observed_frame(n_mod, nspec, npad, g%i_lo, g%t_obs, g%wl, total, absorbed)
+        call band_fluxes_gemm(n_mod, npad, nbands, g%cmat, absorbed, fband)
         !$acc end data
+#else
+        allocate(fband(nbands, n_mod), fobs_t(n_mod, nspec))
+        !$acc data copyin(do_band) copyout(fband) create(fobs_t)
+        call observed_frame_t(n_mod, nspec, g%i_lo, g%t_obs, g%wl, total, fobs_t)
+        call band_fluxes(n_mod, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs_t, fband)
+        !$acc end data
+#endif
+        end associate
 
         if (present(spec)) then
             !$acc update self(total)
@@ -329,7 +264,8 @@ contains
             do b = 1, nbands
                 if (do_band(b) == 0) cycle
                 flux = fband(b, m)
-                mags(b, m) = mag_from_flux(flux) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist_term
+                mags(b, m) = mag_from_flux(flux) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + &
+                             ctx%state%batch%dist_term
             end do
             if (ctx%compute_vega_mags_val == 1) then
                 do b = 2, nbands
@@ -406,6 +342,125 @@ contains
     end subroutine diffuse_transmission
 
     !> Age sums (young and old) and attenuation; absorbed light density for dust emission.
+    !> Grid-only data for redshift zred (observed-frame map, distance term, band weights and
+    !> supports, trapezoid weights, IGM transmission), cached in ctx%state%batch and on the device
+    !> until zred or igm_factor change; released with the context's device data.
+    subroutine prepare_batch_grid(ctx, zred, igm_factor)
+        type(fsps_context_t), intent(inout) :: ctx
+        real(WP), intent(in)                :: zred, igm_factor
+
+        integer  :: nspec, nbands, j, b, ilo, ihi, npad
+        real(WP) :: z_factor, target, dm, sw
+        logical  :: igm
+
+        nspec = ctx%state%nspec
+        nbands = ctx%state%nbands
+        igm = ctx%add_igm_absorption_val == 1 .and. zred > SAFE_FLOOR
+        associate(g => ctx%state%batch)
+        if (g%ready) then
+            if (g%zred == zred .and. (g%igm .eqv. igm) .and. g%igm_factor == igm_factor .and. &
+                size(g%wl) == nspec .and. size(g%j_lo) == nbands) return
+        end if
+        call batch_grid_release(g)
+        allocate(g%i_lo(nspec), g%t_obs(nspec), g%wt(nspec), g%wtl(nspec), g%wl(nspec), g%igm_t(nspec), &
+                 g%bands_t(nbands, nspec), g%j_lo(nbands), g%j_hi(nbands))
+        g%zred = zred
+        g%igm = igm
+        g%igm_factor = igm_factor
+
+        ! Trapezoid weights in frequency (dust emission) and wavelength (filters), formed in FP64
+        do j = 1, nspec - 1
+            g%wt(j) = real(0.5_wp * abs(C_LIGHT / ctx%state%spec_lambda(j+1) - C_LIGHT / ctx%state%spec_lambda(j)), KP)
+            g%wtl(j) = real(0.5_wp * abs(ctx%state%spec_lambda(j + 1) - ctx%state%spec_lambda(j)), KP)
+        end do
+        g%wt(nspec) = 0.0_KP
+        g%wtl(nspec) = 0.0_KP
+
+        ! Observed-frame interpolation (prepare_observed_spectrum): per pixel, the rest-frame
+        ! interval and position, and the distance term
+        if (abs(zred) > SAFE_FLOOR) then
+            z_factor = 1.0_wp + zred
+            do j = 1, nspec
+                target = ctx%state%spec_lambda(j) / z_factor
+                g%i_lo(j) = max(1, min(find_interval(ctx%state%spec_lambda, target), nspec - 1))
+                g%t_obs(j) = (target - ctx%state%spec_lambda(g%i_lo(j))) / &
+                             (ctx%state%spec_lambda(g%i_lo(j)+1) - ctx%state%spec_lambda(g%i_lo(j)))
+            end do
+            dm = interpolate_linear(ctx%state%cosmospl(:,1), ctx%state%cosmospl(:,3), zred)
+            if (dm /= dm .or. dm <= SAFE_FLOOR) then
+                g%dist_term = 0.0_wp
+            else
+                g%dist_term = 5.0_wp * log10(dm / 10.0_wp) + mag_from_flux(z_factor)
+            end if
+        else
+            g%i_lo = [(j, j = 1, nspec)]
+            g%t_obs = 0.0_wp
+            g%dist_term = 0.0_wp
+        end if
+        do j = 1, nspec
+            if (ctx%state%spec_lambda(j) > tiny(0.0_wp)) then
+                g%wl(j) = real(1.0_wp / ctx%state%spec_lambda(j), KP)
+            else
+                g%wl(j) = 0.0_KP
+            end if
+        end do
+
+        ! Bands: transposed at kernel precision, and the support of each
+        do b = 1, nbands
+            g%bands_t(b, :) = real(ctx%state%bands(1:nspec, b), KP)
+            ilo = nspec; ihi = 1
+            do j = 1, nspec
+                if (ctx%state%bands(j, b) /= 0.0_wp) then
+                    ilo = min(ilo, j); ihi = max(ihi, j)
+                end if
+            end do
+            ! Trapezoid intervals touching the support: j = ilo-1 .. ihi
+            g%j_lo(b) = max(1, ilo - 1)
+            g%j_hi(b) = min(nspec - 1, ihi)
+            if (ilo > ihi) then
+                g%j_lo(b) = 1; g%j_hi(b) = 0
+            end if
+        end do
+        g%igm_t = 1.0_KP
+        !$acc enter data copyin(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+        if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, igm_factor, g%igm_t)
+
+#ifdef FSPS_CUBLAS
+        ! Filter matrix of the split-K band product, padded to whole pixel blocks
+        npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
+        allocate(g%cmat(npad, nbands))
+        do b = 1, nbands
+            do j = 1, npad
+                if (j > nspec) then
+                    g%cmat(j, b) = 0.0_KP
+                else
+                    sw = real(g%wtl(j), WP)
+                    if (j > 1) sw = sw + real(g%wtl(j - 1), WP)
+                    g%cmat(j, b) = real(sw * ctx%state%bands(j, b), KP)
+                end if
+            end do
+        end do
+        !$acc enter data copyin(g%cmat)
+#endif
+        g%ready = .true.
+        end associate
+    end subroutine prepare_batch_grid
+
+    !> Common IGM transmission.
+    subroutine apply_igm(n_mod, nspec, igm_t, total)
+        integer, intent(in)     :: n_mod, nspec
+        real(KP), intent(in)    :: igm_t(:)
+        real(KP), intent(inout) :: total(:,:)
+        integer :: m, i
+
+        !$acc parallel loop collapse(2) present(total, igm_t)
+        do m = 1, n_mod
+            do i = 1, nspec
+                total(i, m) = total(i, m) * igm_t(i)
+            end do
+        end do
+    end subroutine apply_igm
+
     !> Age sums of all models: yo = basis . w2 (pixels x ages . ages x 2N), plain sums over the ages
     !> at kernel precision as in compute_csp_scenario.
     subroutine age_sums(nspec, nt, n_mod, basis, w2, it_tesc, yo)
@@ -660,32 +715,20 @@ contains
 #ifdef FSPS_CUBLAS
     !> Band fluxes as a split-K matrix product: per block of BAND_BLOCK pixels,
     !> partial = C^T . fobs with C(j, b) = (dl(j-1) + dl(j)) / 2 * band(j, b) (the trapezoid rule
-    !> regrouped by pixel, formed in FP64); the blocks are summed in FP64.
-    subroutine band_fluxes_gemm(ctx, n_mod, nspec, npad, nbands, wtl, fobs, fband)
-        type(fsps_context_t), intent(in) :: ctx
-        integer, intent(in)     :: n_mod, nspec, npad, nbands
-        real(KP), intent(in)    :: wtl(:), fobs(:,:)
+    !> regrouped by pixel, formed in FP64; prepare_batch_grid); the blocks are summed in FP64.
+    subroutine band_fluxes_gemm(n_mod, npad, nbands, cmat, fobs, fband)
+        integer, intent(in)     :: n_mod, npad, nbands
+        real(KP), intent(in)    :: cmat(:,:), fobs(:,:)
         real(WP), intent(out)   :: fband(:,:)
 
-        real(KP), allocatable :: cmat(:,:), partial(:,:,:)
-        integer  :: j, b, m, q, nkb, istat
+        real(KP), allocatable :: partial(:,:,:)
+        integer  :: b, m, q, nkb, istat
         real(WP) :: sw
 
         nkb = npad / BAND_BLOCK
-        allocate(cmat(npad, nbands), partial(nbands, n_mod, nkb))
-        do b = 1, nbands
-            do j = 1, npad
-                if (j > nspec) then
-                    cmat(j, b) = 0.0_KP
-                else
-                    sw = real(wtl(j), WP)
-                    if (j > 1) sw = sw + real(wtl(j - 1), WP)
-                    cmat(j, b) = real(sw * ctx%state%bands(j, b), KP)
-                end if
-            end do
-        end do
+        allocate(partial(nbands, n_mod, nkb))
         call blas_init()
-        !$acc data copyin(cmat) create(partial) present(fobs, fband)
+        !$acc data create(partial) present(cmat, fobs, fband)
         !$acc host_data use_device(cmat, fobs, partial)
         do q = 1, nkb
 #ifdef KERNEL_SINGLE_PRECISION
