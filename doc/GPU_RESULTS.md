@@ -376,7 +376,8 @@ full).
   Validation: suites 33/33, batch test 146/146 in all ten builds, case matrix PASS.
 
 **In progress / queue**
-- Pull request from the tip of the `gpu/a100-*` stack to `develop` (CI); not merged.
+- PR #10 (https://github.com/elijahmathews/fsps/pull/10) from `gpu/a100-final` (the tip of the
+  stack) to `develop`, opened for CI; not merged. Session ended here.
 
 **Open problems**
 - AMD Radeon 780M (LLVM flang 22 + ROCm 7.1.1, `gpu/a100-omp-portability` tip): builds, 31/33
