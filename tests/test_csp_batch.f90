@@ -23,7 +23,9 @@ program test_csp_batch
     integer :: total_failures = 0
     ! Spectra and magnitudes: the batched path sums in a different order (and integrates the
     ! filters over each band's support), so they agree to the rounding of the kernel precision
-    real(WP), parameter :: SPEC_RTOL = merge(1.0e-10_wp, 2.0e-6_wp, KP == WP)
+    ! FP32 kernels: 100 eps(KP), as elsewhere; OpenACC multicore runs the FP32 reductions as
+    ! plain per-core sums (~4e-6), the GPU as trees (~3e-7)
+    real(WP), parameter :: SPEC_RTOL = merge(1.0e-10_wp, 100.0_wp * real(epsilon(1.0_KP), WP), KP == WP)
     real(WP), parameter :: MAG_TOL = merge(1.0e-9_wp, 1.0e-5_wp, KP == WP)
     type(fsps_context_t), allocatable :: ctx
 

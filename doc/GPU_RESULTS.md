@@ -55,9 +55,22 @@ status at the top; dated entries below.
   passes 32/32 with `OMP_TARGET_OFFLOAD=DISABLED` (host fallback). Not runnable on the P100
   (see open problems).
 
+- Item 3 remainder (branch `gpu/p100-pset-resident`): `pset` mapped once per CSP call
+  (0.668 -> 0.639 ms, FP64); spectral indices of all outputs computed on the device
+  (all-ages call with indices 26 -> 6.4 ms); fixed a 25% gfortran FP64 SSP slowdown introduced
+  with the FP32 AGB rescaling (now FP32-only; gfortran FP64 output bit-identical to `develop`).
+- Session ended before item 5 (final write-up) and before restricting cuBLAS to >= 16 spectra
+  (single-spectrum magnitudes with cuBLAS lose accuracy, 5.2e-6, within tolerance, no speed gain).
+
+**Verified on the laptop (2026-10-16, branch tip)**
+- gfortran FP64 and FP32: unit + regression 32/32; FP64 outputs bit-identical to `develop` on
+  all 36 matrix cases; CPU CSP call with nebular emission 17.9 -> 5.8 ms (Ryzen 7840U).
+- nvfortran 26.1 OpenACC multicore FP64 32/32; FP32 failed `csp_batch` at 3-4.7e-6 against a
+  2e-6 tolerance (multicore FP32 reductions are plain per-core sums); tolerance now 100 eps(KP).
+- `-Daccel=gpu` (cc80,cc90, SDK 26.1) compiles in both precisions.
+
 **In progress**
-- Item 3 remainder: map `pset` once per call (implicit per-launch copies), branch
-  `gpu/p100-pset-resident`.
+- Next session (A100): see "Next" in doc/GPU_PLAN.md and the open problems below.
 
 **Open problems**
 - *OpenMP offload cannot run on this node.* nvfortran's OpenMP GPU offload needs compute

@@ -148,3 +148,27 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
 
 Write measurements and findings to `doc/GPU_RESULTS.md` (date, node, GPU, driver, nvfortran
 version, commands, numbers, profiles summarised), commit with the code, and push the branch.
+
+## Next: A100 session (after the P100 session; read doc/GPU_RESULTS.md first)
+
+The P100 session ported the SSP template sum, a batched CSP (`compute_csp_batch`, optional
+cuBLAS), device magnitudes, indices and nebular emission, and OpenMP target versions of the two
+main kernels; see doc/GPU_RESULTS.md. Work on a new branch based on `gpu/p100-pset-resident`
+(or `develop`, once that stack is merged). Build with `module load nvhpc/25.1` and
+`-Dgpu_arch=cc80`. In order:
+
+1. Rebuild all configurations on the A100 (`-Daccel=gpu` FP64/FP32, `-Dcublas=true`, and
+   `-Daccel=omp_gpu`), run the suites and the case matrix against an nvfortran CPU build.
+2. OpenMP target offload on the device (impossible on the P100, cc60): run the suites and the
+   batch test with `OMP_TARGET_OFFLOAD=MANDATORY`; compare speed with the OpenACC build.
+3. Benchmarks against the forecasts: `benchmark_phases`, `benchmark_csp_batch` at
+   N = 1, 100, 10 000, FP64 and FP32, OpenACC and cuBLAS (forecast: ~4 us/model FP32, ~6 us FP64).
+4. A100-only features: cuBLAS TF32 math mode for the batched products (speed and accuracy,
+   expected ~1e-4) and FP64 tensor-core DGEMM for the FP64 batch; Nsight Compute on the
+   batched kernels (not available on Pascal).
+5. Restrict cuBLAS to >= 16 spectra (single-spectrum magnitudes lose accuracy with no gain).
+6. Write the final summary in doc/GPU_RESULTS.md (P100 and A100 numbers side by side, what
+   works, open problems).
+
+Open decision for the user, not for the agent: exact Chabrier IMF integrals (branch
+`perf/imf-analytic`) would remove about half of the remaining host time per SSP grid.
