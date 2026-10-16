@@ -15,7 +15,7 @@ module fsps_dust
     !>    around AGB stars and dusty tori surrounding AGN.
 
     use fsps_precision, only: WP, KP, kahan_add
-    use fsps_constants, only: C_LIGHT, NEMLINE, GRAVITY_L_M_T_COEFF, &
+    use fsps_constants, only: NTEFF_DAGB, NTAU_DAGB, C_LIGHT, NEMLINE, GRAVITY_L_M_T_COEFF, &
                               M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, &
                               SAFE_FLOOR, PI
     use fsps_types, only: params
@@ -527,6 +527,9 @@ contains
     !> @return attenuation_val
     pure function compute_attenuation_curve_point(wavelength, idx, dust_type_id, settings, ctx) result(attenuation_val)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         integer, intent(in)                :: idx, dust_type_id
         type(params), intent(in)           :: settings
@@ -564,6 +567,9 @@ contains
     subroutine get_agb_dust_terms(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot, &
                                   c_rich_flag, idx_teff, idx_tau, c, active)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in)  :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
         integer,  intent(out) :: c_rich_flag, idx_teff, idx_tau
@@ -571,6 +577,7 @@ contains
         logical,  intent(out) :: active
         integer  :: n_teff_grid, n_tau_grid
         real(WP) :: tau_1um, teff_linear, log_tau, w_teff, w_tau
+        real(WP) :: teff_row(NTEFF_DAGB), tau_row(NTAU_DAGB)
 
         if (c_o_ratio > 1.0_wp) then
             c_rich_flag = 1
@@ -585,13 +592,17 @@ contains
         n_teff_grid = size(ctx%state%teff_dagb, 2)
         n_tau_grid  = size(ctx%state%tau1_dagb, 2)
         teff_linear = 10.0_wp**log_t
-        idx_teff = find_interval(ctx%state%teff_dagb(c_rich_flag + 1, :), teff_linear)
+        ! Rows copied to contiguous locals: a strided row section would need a copy-in/out
+        ! temporary from the Fortran runtime, which device code (AMD, OpenMP) does not have
+        teff_row(1:n_teff_grid) = ctx%state%teff_dagb(c_rich_flag + 1, 1:n_teff_grid)
+        tau_row(1:n_tau_grid) = ctx%state%tau1_dagb(c_rich_flag + 1, 1:n_tau_grid)
+        idx_teff = find_interval(teff_row(1:n_teff_grid), teff_linear)
         idx_teff = max(1, min(idx_teff, n_teff_grid - 1))
         w_teff = (teff_linear - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff)) / &
                  (ctx%state%teff_dagb(c_rich_flag + 1, idx_teff + 1) - ctx%state%teff_dagb(c_rich_flag + 1, idx_teff))
         w_teff = max(-1.0_wp, min(w_teff, 1.0_wp)) ! Allow slight extrapolation
         log_tau = log10(tau_1um)
-        idx_tau = find_interval(ctx%state%tau1_dagb(c_rich_flag + 1, :), log_tau)
+        idx_tau = find_interval(tau_row(1:n_tau_grid), log_tau)
         idx_tau = max(1, min(idx_tau, n_tau_grid - 1))
         w_tau = (log_tau - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau)) / &
                 (ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau + 1) - ctx%state%tau1_dagb(c_rich_flag + 1, idx_tau))
@@ -625,6 +636,9 @@ contains
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
         real(KP), dimension(:), intent(inout) :: spectrum
@@ -674,6 +688,9 @@ contains
     function agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot) &
             result(tau_1um)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
         real(WP) :: tau_1um
@@ -865,6 +882,9 @@ contains
     !> Includes the "hack" for smooth transitions used in the original FSPS.
     elemental function get_ccm89_curve_point(wavelength, r_v, uv_bump_strength) result(curve)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: r_v, uv_bump_strength
         real(WP) :: curve
@@ -1006,6 +1026,9 @@ contains
     !> (1.17 poly + 1.78)/0.44, i.e. R_V = 4.0455, which raises A/A_V by 3.4e-4/4.05 everywhere.
     elemental function get_calzetti_curve_point(wavelength) result(curve)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k
@@ -1035,6 +1058,9 @@ contains
     !> Implementation of Kriek & Conroy (2013): Calzetti + UV Bump + Tilt.
     elemental function get_kriek_conroy_curve_point(wavelength, tilt_index) result(curve)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: tilt_index
         real(WP) :: curve
@@ -1065,6 +1091,9 @@ contains
 !> Implementation of Reddy et al. (2015) MOSDEF curve.
     elemental function get_reddy_curve_point(wavelength) result(curve)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k, wavenumber_clamped
@@ -1099,6 +1128,9 @@ contains
     !> Used frequently for dust curve parameterizations (CCM89, Calzetti, etc.).
     elemental function get_wavenumber_point(wavelength) result(wavenumber)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength
         real(WP) :: wavenumber
         
@@ -1110,6 +1142,9 @@ contains
     !> See Villaume et al. (2015).
     pure function compute_circumstellar_optical_depth(ctx, c_rich_flag, m_act, log_l, log_g, log_mdot_iso) result(tau)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: c_rich_flag
         real(WP), intent(in) :: m_act, log_l, log_g, log_mdot_iso
@@ -1192,6 +1227,9 @@ contains
     !> 1 - exp(-x) given t = exp(-x), without cancellation for small x (Fortran has no expm1).
     elemental function one_minus_trans(x, t) result(y)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: x, t
         real(WP) :: y
         if (abs(x) < 1.0e-3_wp) then

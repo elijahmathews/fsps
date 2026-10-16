@@ -39,7 +39,8 @@ module fsps_csp
 
     !> Spectra Modules
     use fsps_photometry, only: compute_magnitudes
-    use fsps_batch_photometry, only: compute_magnitudes_columns
+    use fsps_batch_photometry, only: compute_magnitudes_columns, prepare_batch_grid, smoothing_on_device, &
+                                     prepare_smoothing_kernel, smooth_columns
     use fsps_spectral_indices, only: compute_spectral_indices, compute_spectral_indices_columns
 
     implicit none
@@ -225,10 +226,18 @@ contains
         ! (smoothing) or the redshift per output (redshift_colors), and without light-weighted ages
         dev_mags = .false.
 #ifdef _OPENACC
-        dev_mags = (.not. ctx%fast_mode) .and. pset%compute_mags == 1 .and. pset%sigma_smooth <= 0.0_wp .and. &
+        dev_mags = (.not. ctx%fast_mode) .and. pset%compute_mags == 1 .and. &
+                   (pset%sigma_smooth <= 0.0_wp .or. smoothing_on_device(ctx)) .and. &
                    ctx%redshift_colors_val == 0 .and. ctx%compute_light_ages_val == 0
 #endif
         if (dev_mags) then
+            ! Velocity smoothing of all outputs on the device (the operator of apply_smoothing)
+            if (pset%sigma_smooth > SAFE_FLOOR) then
+                call prepare_batch_grid(ctx, pset%zred, pset%igm_factor)
+                call prepare_smoothing_kernel(ctx, pset%sigma_smooth, pset%min_wave_smooth, pset%max_wave_smooth)
+                call smooth_columns(ctx, ctx%state%out_csp_spec, n_outputs)
+                !$acc update host(ctx%state%out_csp_spec(:, 1:n_outputs))
+            end if
             allocate(mags_all(ctx%state%nbands, n_outputs))
             if (allocated(pset%mag_compute)) then
                 call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
@@ -737,6 +746,9 @@ contains
         real(WP), intent(inout), contiguous :: weights(:,:,:)
 
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
 
         call sfh_weights_core(ctx, pset, tage, nzin, weights(:, :, i_out), ctx%state%sfh_w_tmp1(:, i_out), &
                               ctx%state%sfh_w_tmp2(:, i_out))
@@ -753,6 +765,9 @@ contains
         real(WP), intent(inout), contiguous :: tmp1(:), tmp2(:)    ! scratch (ages)
 
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
 
         ! Local variables
         type(sfhparams) :: sfh

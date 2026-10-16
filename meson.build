@@ -39,7 +39,13 @@ datadir = get_option('datadir')
 accel_target = get_option('accel')
 accel_args = []
 accel_defs = []
-if accel_target != 'none'
+if accel_target == 'omp_gpu' and fc_id in ['llvm-flang', 'flang']
+    # LLVM flang (AMD and other GPUs): -Dgpu_arch is an offload target such as gfx1103 or gfx942;
+    # system-specific device-library paths go in -Dfortran_args / -Dfortran_link_args
+    # (doc/GPU_PLAN.md, "AMD GPUs with LLVM flang")
+    accel_args = ['-fopenmp', '--offload-arch=' + get_option('gpu_arch')]
+    accel_defs = ['-DOMP_TARGET']
+elif accel_target != 'none'
     if fc_id != 'nvidia_hpc'
         warning('Hardware acceleration requested but compiler does not support OpenACC. Ignoring accel option.')
     else
@@ -47,8 +53,10 @@ if accel_target != 'none'
             accel_args = ['-acc=multicore']
             accel_defs = ['-DACC_MULTICORE']
         elif accel_target == 'omp_gpu'
-            # OpenMP target offload of the kernels with an OMP_TARGET version; OpenACC is off,
-            # so the rest runs on the host (run with OMP_TARGET_OFFLOAD=MANDATORY to catch fallback)
+            # OpenMP target offload of the SSP template product and the whole batched CSP
+            # (compute_csp_batch, batch photometry and indices); OpenACC is off, so the rest
+            # (single CSP calls, the other SSP stages) runs on the host. Run with
+            # OMP_TARGET_OFFLOAD=MANDATORY to catch a silent host fallback.
             accel_args = ['-mp=gpu', '-gpu=' + get_option('gpu_arch')]
             accel_defs = ['-DOMP_TARGET']
         elif accel_target == 'gpu'
@@ -403,6 +411,15 @@ test('regression_bpass',
 executable('test_c_driver', 'tests/test_c_driver.c', 
     dependencies : fsps_dep,
     include_directories : include_directories('include')
+)
+test_c_batch_exe = executable('test_c_batch', 'tests/test_c_batch.c',
+    dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
+    include_directories : include_directories('include')
+)
+test('c_batch', test_c_batch_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
 )
 
 # ===================================

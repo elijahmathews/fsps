@@ -33,6 +33,9 @@ contains
     !> @return    The magnitude, or NaN if undefined.
     elemental function mag_from_flux(flux) result(mag)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: flux
         real(WP) :: mag
 
@@ -59,6 +62,9 @@ contains
     !>                Returns NaN for x < 0.
     elemental function expi(x) result(res)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: x
         real(WP) :: res
 
@@ -137,11 +143,14 @@ contains
     !> @return    res    The value of P(a, x). Returns 0.0 if arg < 0.
     elemental function gammainc(power, arg) result(res)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         integer, intent(in) :: power
         real(WP), intent(in) :: arg
         real(WP) :: res
         
-        real(WP) :: sum_term, term, prefactor, real_power
+        real(WP) :: sum_term, term, prefactor, real_power, log_fact
         integer :: k
 
         if (arg < 0.0_WP) then
@@ -179,7 +188,12 @@ contains
                     if (abs(term) <= 10.0_wp * epsilon(1.0_wp) * abs(sum_term)) exit
                 end do
 
-                prefactor = exp(real_power * log(arg) - arg - log_gamma(real_power + 1.0_wp))
+                ! log(power!) as a sum (power is an integer; avoids log_gamma, which has no GPU libm on AMD)
+                log_fact = 0.0_wp
+                do k = 2, power
+                    log_fact = log_fact + log(real(k, WP))
+                end do
+                prefactor = exp(real_power * log(arg) - arg - log_fact)
                 res = prefactor * sum_term
             else
                 sum_term = 1.0_WP
@@ -207,6 +221,9 @@ contains
     !> Handles small x via Taylor series to avoid precision loss.
     elemental function fsps_expm1(x) result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP), intent(in) :: x
         real(WP) :: val
         
@@ -223,6 +240,9 @@ contains
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP) :: val
         val = ieee_value(0.0_wp, ieee_quiet_nan)
     end function get_quiet_nan
@@ -230,6 +250,9 @@ contains
     !> @brief Helper to generate Negative Infinity
     pure function get_neg_infinity() result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
         real(WP) :: val
         val = ieee_value(0.0_wp, ieee_negative_inf)
     end function get_neg_infinity
