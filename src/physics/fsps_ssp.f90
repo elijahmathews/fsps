@@ -224,14 +224,14 @@ contains
         ! --------------------------------------------------------------------
         
         n_times = ctx%state%nt
-#ifndef _OPENACC
         if (.not. ssp_per_star) then
             allocate(w_main_all(size(ctx%state%speclib, 3) * size(ctx%state%speclib, 4), n_times))
             w_main_all = 0.0_wp
         end if
-#endif
 
-        !$acc data present(ctx, buf) copy(spec_grid)
+        ! The per-star kernel builds each age's spectrum on the device; the template path
+        ! aggregates weights on the host and adds the main library for all ages at the end
+        !$acc data present(ctx, buf) copy(spec_grid) if(ssp_per_star)
         do i_time = 1, n_times
             
             ! Optimization: Skip ages not requested by the user
@@ -278,6 +278,11 @@ contains
 
         end do
         !$acc end data
+        ! The per-star kernel left the spectra on the device; if the caller mapped spec_grid
+        ! (copy above was then a no-op), bring them back for the host post-processing below
+        if (ssp_per_star) then
+            !$acc update self(spec_grid) if_present
+        end if
 
         if (allocated(w_main_all)) then
             call add_main_library_templates(ctx, pset, w_main_all, spec_grid)
@@ -329,6 +334,9 @@ contains
         if (ctx%smooth_lsf_val == 1) then
              call apply_lsf_smoothing_grid(ctx, spec_grid)
         end if
+
+        ! Outputs are final on the host; refresh device copies the caller may have mapped
+        !$acc update device(spec_grid, mass_grid, lbol_grid) if_present
 
     end subroutine generate_ssp_grid
 
@@ -670,7 +678,6 @@ contains
         end if
 
         allocate(active_idx(nstars), active_w(nstars))
-        !$acc data create(active_idx, active_w) pcopy(spec_out)
 
         ! Build compact list of active stars once.
         n_active = 0
@@ -687,14 +694,15 @@ contains
             active_w(n_active) = real(current_weight, KP)
         end do
 
-#ifndef _OPENACC
-        ! Template-sum form; the per-star loop below is the OpenACC kernel and the reference
+        ! Template-sum form (on the host; the main library is added on the device in OpenACC
+        ! builds, see add_main_library_templates); the per-star loop below is the reference
         if (n_active > 0 .and. .not. ssp_per_star) then
             call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out, w_main_out)
             deallocate(active_idx, active_w)
             return
         end if
-#endif
+
+        !$acc data create(active_idx, active_w) pcopy(spec_out)
         if (n_active == 0) then
             spec_out = 0.0_wp
         else
@@ -830,6 +838,8 @@ contains
         integer  :: nslot, slot, d, rich, it, itau, i0, cdi(4), cdj(4)
         real(WP) :: cd(4)
         logical  :: active, smooth
+        !> Exact power of two keeping the O/C-rich AGB sums (before lambda^2) clear of FP32 subnormals
+        real(WP), parameter :: AGB_SCALE = 2.0_wp**64
 
         nspec = size(spec_out)
         nz = pset%zmet
@@ -936,19 +946,23 @@ contains
         do a = 1, size(w_car)
             if (w_car(a) /= 0.0_wp) call add_column(acc, comp, real(w_car(a), KP), ctx%state%agb_spec_car(1:nspec, a))
         end do
-        ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library
+        ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library.
+        ! Before lambda^2 (up to 7e14 A^2 in the far IR) the weighted sum is ~1e-37 there, at the
+        ! bottom of the FP32 range, where subnormal handling (kept by gfortran, flushed by
+        ! nvfortran and GPUs) changed the result by 1%: the sum carries an exact factor AGB_SCALE
         if (any(w_agbo /= 0.0_wp) .or. any(w_agbc /= 0.0_wp)) then
             allocate(lam_sum(nspec), lam_comp(nspec))
             lam_sum = 0.0_KP; lam_comp = 0.0_KP
             do a = 1, size(w_agbo)
-                if (w_agbo(a) /= 0.0_wp) &
-                    call add_column(lam_sum, lam_comp, real(w_agbo(a), KP), ctx%state%agb_spec_o(1:nspec, a))
+                if (w_agbo(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbo(a) * AGB_SCALE, KP), &
+                                                         ctx%state%agb_spec_o(1:nspec, a))
             end do
             do a = 1, size(w_agbc)
-                if (w_agbc(a) /= 0.0_wp) &
-                    call add_column(lam_sum, lam_comp, real(w_agbc(a), KP), ctx%state%agb_spec_c(1:nspec, a))
+                if (w_agbc(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbc(a) * AGB_SCALE, KP), &
+                                                         ctx%state%agb_spec_c(1:nspec, a))
             end do
-            call add_column(acc, comp, 1.0_KP, real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
+            call add_column(acc, comp, real(1.0_wp / AGB_SCALE, KP), &
+                            real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
         end if
 
         ! 3. Dust-shell AGB stars: per dust corner, the template sum (smoothed beyond 3 um, as in
@@ -975,21 +989,23 @@ contains
                                     ctx%state%agb_spec_car_smooth(:, a))
                 end do
                 ! O/C-rich: lambda^2 / c below 3 um; the smoothed templates already include it
+                ! (low carries the factor AGB_SCALE, as lam_sum above)
                 do a = 1, size(dw_o, 1)
                     if (dw_o(a, slot) == 0.0_wp) cycle
-                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_o(a, slot), KP), &
+                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_o(a, slot) * AGB_SCALE, KP), &
                                     ctx%state%agb_spec_o(1:i0-1, a))
                     call add_column(tmp(i0:), tmp_comp(i0:), real(dw_o(a, slot) * C_LIGHT, KP), &
                                     ctx%state%agb_spec_o_smooth(:, a))
                 end do
                 do a = 1, size(dw_c, 1)
                     if (dw_c(a, slot) == 0.0_wp) cycle
-                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_c(a, slot), KP), &
+                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_c(a, slot) * AGB_SCALE, KP), &
                                     ctx%state%agb_spec_c(1:i0-1, a))
                     call add_column(tmp(i0:), tmp_comp(i0:), real(dw_c(a, slot) * C_LIGHT, KP), &
                                     ctx%state%agb_spec_c_smooth(:, a))
                 end do
-                tmp(1:i0-1) = tmp(1:i0-1) + real(ctx%state%spec_lambda(1:i0-1), KP)**2 * low(1:i0-1)
+                tmp(1:i0-1) = tmp(1:i0-1) + real(ctx%state%spec_lambda(1:i0-1), KP)**2 * low(1:i0-1) * &
+                              real(1.0_wp / AGB_SCALE, KP)
                 call add_column(acc, comp, 1.0_KP, tmp * ctx%state%flux_dagb(1:nspec, dkey(1, slot) + 1, &
                                                                             dkey(2, slot), dkey(3, slot)))
             end do
@@ -1099,6 +1115,12 @@ contains
         logical, allocatable :: has_stars(:)
         integer :: nspec, nt_lib, n_used, t, a, b, i_time, out_idx, p0, p1, i, k
         real(KP) :: wk, term, tsum
+#ifdef _OPENACC
+        real(KP), allocatable :: w_used(:,:), t_sum(:,:)
+        integer, allocatable :: a_used(:), b_used(:)
+        real(KP) :: acc1, comp1
+        integer :: zmet, n_ages
+#endif
 
         nspec = size(spec_grid, 1)
         nt_lib = size(ctx%state%speclib, 3)
@@ -1111,6 +1133,51 @@ contains
             has_stars(i_time) = pset%ssp_gen_age(i_time) /= 0 .and. &
                                 (any(w(:, i_time) /= 0.0_wp) .or. any(spec_grid(:, out_idx) /= 0.0_wp))
         end do
+#ifdef _OPENACC
+        ! Device: one thread per (pixel, age) sums the used templates in the same order as the
+        ! host loop below (compensated at FP32), reading the resident library. The sums come
+        ! back in t_sum and are added on the host (spec_grid may be mapped by the caller).
+        n_ages = size(w, 2)
+        zmet = pset%zmet
+        allocate(w_used(n_used, n_ages), a_used(n_used), b_used(n_used), t_sum(nspec, n_ages))
+        do k = 1, n_used
+            a_used(k) = mod(used(k) - 1, nt_lib) + 1
+            b_used(k) = (used(k) - 1) / nt_lib + 1
+            w_used(k, :) = real(w(used(k), :), KP)
+        end do
+        !$acc parallel loop gang vector collapse(2) present(ctx) private(acc1, comp1, wk, term, tsum, k) &
+        !$acc copyin(w_used, a_used, b_used, has_stars) copyout(t_sum)
+        do i_time = 1, n_ages
+            do i = 1, nspec
+                if (has_stars(i_time)) then
+                    acc1 = 0.0_KP
+                    comp1 = 0.0_KP
+                    !$acc loop seq
+                    do k = 1, n_used
+                        wk = w_used(k, i_time)
+                        if (wk == 0.0_KP) cycle
+                        if (KP == WP) then
+                            acc1 = acc1 + wk * ctx%state%speclib(i, zmet, a_used(k), b_used(k))
+                        else
+                            term = wk * ctx%state%speclib(i, zmet, a_used(k), b_used(k)) - comp1
+                            tsum = acc1 + term
+                            comp1 = (tsum - acc1) - term
+                            acc1 = tsum
+                        end if
+                    end do
+                    t_sum(i, i_time) = acc1
+                else
+                    t_sum(i, i_time) = 0.0_KP
+                end if
+            end do
+        end do
+        do i_time = 1, n_ages
+            if (.not. has_stars(i_time)) cycle
+            out_idx = 1 + (i_time - 1) * TIME_RES_INCR
+            spec_grid(:, out_idx) = max(spec_grid(:, out_idx) + real(t_sum(:, i_time), WP), SAFE_FLOOR)
+        end do
+        return
+#endif
         do p0 = 1, nspec, PIX_BLOCK
             p1 = min(p0 + PIX_BLOCK - 1, nspec)
             acc = 0.0_KP; comp = 0.0_KP
