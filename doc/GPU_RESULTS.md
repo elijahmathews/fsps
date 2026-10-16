@@ -40,9 +40,13 @@ status at the top; dated entries below.
   host. P100 `compute_csp_scenario`: single call 1.93 -> 0.66 ms (FP64), 5.8 -> 0.66 ms (FP32);
   all-ages call (107 outputs) 94 -> 6.0 ms (FP64), 500 -> 5.0 ms (FP32). All builds 32/32.
 
+- Nebular emission in the CSP call (branch `gpu/p100-device-mags`): no longer re-sends the
+  SSP grid per young age; all young ages in a few kernels. P100 CSP call with nebular
+  emission 33 -> 2.8 ms (FP64), 22 -> 2.4 ms (FP32). All GPU builds 32/32; case matrix PASS.
+
 **In progress**
-- Nebular emission in the CSP call (33 ms per call on the GPU, mostly host / launches), then
-  continuation item 1 (remaining per-age SSP work on the device).
+- Continuation item 1: remaining per-age SSP work (small libraries, dust-shell AGB corners)
+  on the device (branch `gpu/p100-ssp-small-libs`).
 
 **Open problems**
 - Branches are stacked (each later one contains the earlier ones' commits), because the
@@ -340,3 +344,24 @@ Timing harness: `compute_csp_scenario` with tage = 0 (107 outputs, tau model, du
   attenuation and emission ~0.1 ms, age sum 50 us, post-processing 35 us, ...), the rest
   launches, small transfers and host packing. With nebular emission: 22-33 ms per call, which
   is the next item (47 kernel launches per call and host work).
+
+### 2026-10-16: nebular emission in the CSP call
+
+`benchmark_phases` "CSP call, nebular" (gas_logu varies per call): 33 ms (FP64) / 22 ms (FP32)
+on the GPU, against 16 ms on the laptop CPU. Two causes:
+
+1. `process_ionizing_radiation` ran `!$acc update device(spec_in)` for every young age, and
+   `spec_in` is the whole SSP grid: ~50 x 5 MB host-to-device per call (`apply_nebular_emission`
+   did it once more on entry). Callers either map it (the resident basis) or rely on `pcopyin`,
+   so the updates were redundant. Removed: 33 -> 7.5 ms.
+2. Per young age, ~6 kernel launches and a synchronous copy-back of Q. `nebular_all_ages` (OpenACC
+   only; the CPU loop is unchanged) does EUV escape, Q per age (gang reduction), continuum, line
+   luminosities and line profiles each in one kernel over (pixel or line, age), with Q kept on
+   the device: 7.5 -> 2.8 ms (FP64), 2.4 ms (FP32).
+
+Case matrix after this: FP64 GPU vs nvfortran CPU, csp_nebular 7.9e-14 per pixel, lines 2e-16;
+FP32 GPU vs FP64 CPU, csp_nebular 3.1e-7 per pixel, 3.5e-7 mag, lines 2.3e-7 (all cases PASS;
+worst magnitude 4.6e-7, csp_ssp_offgrid, from the single-spectrum band reduction).
+
+Current `benchmark_phases 5 200` on the P100 (s): SSP grid 0.38 / 0.33, CSP call 0.00066 /
+0.00066, SSP grid with nebular 0.40 / 0.33, CSP with nebular 0.0028 / 0.0024 (FP64 / FP32).
