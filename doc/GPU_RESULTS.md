@@ -183,7 +183,7 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   for the age sums under this project's tolerances (FP32 ~1e-6, 1e-5 mag); 3e-4 mag is below
   typical photometric errors, but it would have to be an explicit, documented choice.
   FP64 tensor cores (DMMA) are IEEE FP64 FMAs: identical results to pedantic.
-  With  the FP32 cuBLAS build fails  (66/146 pass); FP64
+  With `FSPS_CUBLAS_MATH=tf32` the FP32 cuBLAS build fails `test_csp_batch` (66/146 pass); FP64
   is unaffected; default and pedantic pass 146/146.
 
 **In progress / queue**
