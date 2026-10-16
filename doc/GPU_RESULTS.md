@@ -20,6 +20,13 @@ entries below. The A100 session (2026-10-16) is first; the P100 session's status
    the list if it should differ.
 3. Order of the late requests: the fitting-pipeline features (weight matrix, per-model zred,
    C-API arrays) were done before the TF32 / FP64 tensor-core experiments (original item 3).
+4. TF32: not enabled anywhere by default; `FSPS_CUBLAS_MATH=tf32` exists for experiments only
+   (net 3e-4 mag over the case matrix, 3-10% faster). Enabling it in production would be your
+   call.
+5. The batch (OpenACC GPU and OpenMP target builds) requires the context on the device
+   (`fsps_context_move_to_device`, done automatically by the C entry point). Should
+   `compute_csp_batch` move the context itself when it is not? (Not done: it changes the
+   lifetime of device data for Fortran callers.)
 
 ## Summary: P100 and A100
 
@@ -330,8 +337,11 @@ full).
     | 1000 | 5.2 / 4.1 | 9.4 / 8.5 | 6.4 / 4.6 | 11.2 / 9.3 |
     | 10000 | 3.6 / 2.9 | 7.8 / 7.0 | 4.7 / 4.2 | 9.5 / 8.9 |
 
-    At large N the OpenMP build is within 10-25% of OpenACC; at small N it pays ~0.3-1 ms more
-    per call (runtime overhead of the target constructs and maps). The single CSP call
+    At large N the OpenMP build is within 10-25% of OpenACC; at small N the difference is in
+    the low-parallelism kernels (Nsight Systems, one model, full physics: kernels 0.54 vs 0.33 ms
+    of ~1.6 ms per call; e.g. age sums 96 vs 41 us, band fluxes 56 vs 13 us), where nvfortran's
+    default OpenMP team and thread sizes differ from the OpenACC mapping. Tuning note:
+    `num_teams` / `thread_limit` per kernel is a per-GPU choice and was not set for the A100. The single CSP call
     (`compute_csp_scenario`) is not ported and runs on the host in the OpenMP build (7 ms FP32).
 
 - Per-call overhead, second attempt (not committed): the OpenACC batch kernels on one async
