@@ -50,7 +50,12 @@ pass under OpenACC multicore, that is a device data-residency bug (missing `upda
 
 Make `accumulate_by_templates` (or a batched variant over all ages) run on the device:
 
-- Keep the weight aggregation on the CPU (FP64) at first: it produces W(templates x ages).
+- Keep the weight aggregation on the CPU (FP64) at first: it already produces the main-library
+  W(templates x ages) for the whole grid (`w_main_all` in `generate_ssp_grid`), and
+  `add_main_library_templates` is the single CPU routine that does spectra += templates . W.
+  Replace that routine's body with the device GEMM. The remaining per-age work (small
+  libraries, dust-shell corners, ~20% of SSP time) can follow the same pattern: one product
+  per dust corner over all ages, then times that corner's transfer function.
 - Device: templates resident (main library slice `speclib(:, zmet, :, :)` is FP32 already,
   ~31 MB for MILES), one GEMM per SSP grid. Prototype with cuBLAS SGEMM (through `iso_c_binding`
   or nvfortran's `cublas` module) to find the ceiling, then an OpenMP target (`!$omp target teams
