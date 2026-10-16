@@ -1,11 +1,13 @@
 program test_csp_batch
     !> The batched CSP (compute_csp_batch) against compute_csp_scenario, model by model: spectra,
-    !> magnitudes, mass, L_bol, dust mass and SFR, for SFH types 0/1/4/5, birth-cloud and diffuse
-    !> dust (dust types 0, 1, 2, 4), dust emission (Draine & Li parameters varied per model), and
-    !> redshifts 0, 0.5 (with IGM absorption) and 1.2. Requires the FSPS data tree, like the
-    !> regression tests.
+    !> magnitudes, spectral indices, mass, L_bol, dust mass and SFR, for SFH types 0/1/4/5,
+    !> birth-cloud and diffuse dust (dust types 0, 1, 2, 4), dust emission (Draine & Li parameters
+    !> varied per model), nebular emission (continuum and lines; gas_logu, gas_logz and the line
+    !> luminosities compared too), AGN dust emission, and redshifts 0, 0.5 (with IGM absorption)
+    !> and 1.2. Requires the FSPS data tree, like the regression tests.
 
     use fsps_precision, only: WP, KP
+    use fsps_constants, only: NEMLINE
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
@@ -27,6 +29,8 @@ program test_csp_batch
     ! plain per-core sums (~4e-6), the GPU as trees (~3e-7)
     real(WP), parameter :: SPEC_RTOL = merge(1.0e-10_wp, 100.0_wp * real(epsilon(1.0_KP), WP), KP == WP)
     real(WP), parameter :: MAG_TOL = merge(1.0e-9_wp, 1.0e-5_wp, KP == WP)
+    ! Spectral indices (absolute, as tools/compare_builds)
+    real(WP), parameter :: INDX_TOL = merge(1.0e-8_wp, 1.0e-4_wp, KP == WP)
     type(fsps_context_t), allocatable :: ctx
 
     call print_major_header("Batched CSP vs compute_csp_scenario")
@@ -39,12 +43,20 @@ program test_csp_batch
     call set_int('zmet', 10)
     call set_int('imf_type', 1)
     call set_int('add_dust_emission', 1)
+    call set_int('compute_indices', 1)
     call build_basis()
 
-    call check_batch(2, 0.0_wp, 0, "Calzetti, z = 0")
-    call check_batch(0, 0.5_wp, 1, "power law, z = 0.5, IGM")
-    call check_batch(1, 0.0_wp, 0, "Cardelli et al., z = 0")
-    call check_batch(4, 1.2_wp, 0, "Kriek & Conroy, z = 1.2")
+    call check_batch(2, 0.0_wp, 0, 0, 0, "Calzetti, z = 0")
+    call check_batch(0, 0.5_wp, 1, 0, 0, "power law, z = 0.5, IGM")
+    call check_batch(1, 0.0_wp, 0, 0, 0, "Cardelli et al., z = 0")
+    call check_batch(4, 1.2_wp, 0, 0, 0, "Kriek & Conroy, z = 1.2")
+    call check_batch(2, 0.0_wp, 0, 1, 0, "Calzetti, z = 0, nebular")
+    call check_batch(0, 0.5_wp, 1, 1, 1, "power law, z = 0.5, IGM, nebular, AGN")
+    call check_batch(4, 1.2_wp, 0, 0, 1, "Kriek & Conroy, z = 1.2, AGN")
+    ! Lines not in the spectrum: their absorbed luminosity enters the dust energy balance
+    call set_int('nebemlineinspec', 0)
+    call check_batch(1, 0.0_wp, 0, 1, 0, "Cardelli et al., z = 0, nebular, lines not in the spectrum")
+    call set_int('nebemlineinspec', 1)
 
     call fsps_destroy(ctx)
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
@@ -112,11 +124,15 @@ contains
         call set_float('duste_umin', umin(m))
         call set_float('duste_qpah', qpah(m))
         call set_float('duste_gamma', gam(m))
+        call set_float('gas_logu', -3.5_wp + 0.25_wp * mod(m, 9))
+        call set_float('gas_logz', -1.0_wp + 0.2_wp * mod(m, 7))
+        call set_float('fagn', merge(0.0_wp, 0.05_wp * mod(m, 5), mod(m, 6) == 0))
+        call set_float('agn_tau', 5.0_wp + 15.0_wp * mod(m, 8))
         call set_float('zred', zred)
     end subroutine set_model
 
-    subroutine check_batch(dust_type, zred, igm, label)
-        integer, intent(in) :: dust_type, igm
+    subroutine check_batch(dust_type, zred, igm, neb, agn, label)
+        integer, intent(in) :: dust_type, igm, neb, agn
         real(WP), intent(in) :: zred
         character(len=*), intent(in) :: label
         type(PARAMS) :: psets(N_MOD)
@@ -125,15 +141,20 @@ contains
         real(WP) :: mass(N_MOD), lbol(N_MOD), mdust(N_MOD), sfr(N_MOD)
         real(WP) :: ref_mass(N_MOD), ref_lbol(N_MOD), ref_mdust(N_MOD), ref_sfr(N_MOD)
         real(WP), allocatable :: spec2(:, :), mags2(:, :)
-        real(WP) :: d_spec, d_mag, d_scal
+        real(WP), allocatable :: eml(:, :), ref_eml(:, :), indx(:, :), ref_indx(:, :)
+        real(WP) :: d_spec, d_mag, d_scal, d_line, d_indx
         integer :: m, status, nspec, nbands
 
         call print_group("Batched CSP: " // label)
         nspec = ctx%state%nspec
         nbands = ctx%state%nbands
         allocate(spec(nspec, N_MOD), mags(nbands, N_MOD), ref_spec(nspec, N_MOD), ref_mags(nbands, N_MOD))
+        allocate(eml(NEMLINE, N_MOD), ref_eml(NEMLINE, N_MOD), indx(ctx%state%nindx, N_MOD), &
+                 ref_indx(ctx%state%nindx, N_MOD))
         call set_int('dust_type', dust_type)
         call set_int('add_igm_absorption', igm)
+        call set_int('add_neb_emission', neb)
+        call set_int('add_agn_dust', agn)
 
         do m = 1, N_MOD
             call set_model(m, zred)
@@ -146,13 +167,16 @@ contains
             end if
             ref_spec(:, m) = results(1)%spec(1:nspec)
             ref_mags(:, m) = results(1)%mags(1:nbands)
+            ref_eml(:, m) = results(1)%emlines(1:NEMLINE)
+            ref_indx(:, m) = results(1)%indx(1:ctx%state%nindx)
             ref_mass(m) = results(1)%mass_csp
             ref_lbol(m) = results(1)%lbol_csp
             ref_mdust(m) = results(1)%mdust
             ref_sfr(m) = results(1)%sfr
         end do
 
-        call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, mdust=mdust, sfr=sfr)
+        call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, mdust=mdust, sfr=sfr, &
+                               emlines=eml, indx=indx)
         call assert_true(status == 0, "status 0", total_tests, total_failures)
         if (status /= 0) return
 
@@ -161,6 +185,15 @@ contains
                      maxval(abs(sfr - ref_sfr) / max(abs(ref_sfr), tiny(1.0_wp))))
         write(*, '(A,4ES10.2)') "# max difference (spectrum, mag, mass/lbol/sfr, mdust): ", d_spec, d_mag, d_scal, &
             maxval(abs(mdust / ref_mdust - 1.0_wp))
+        ! Lines above 1e-3 of the strongest (as tools/compare_builds), indices in absolute terms
+        d_line = 0.0_wp
+        if (maxval(ref_eml) > 0.0_wp) d_line = maxval(abs(eml / ref_eml - 1.0_wp), &
+                                                      mask=ref_eml > 1.0e-3_wp * maxval(ref_eml))
+        if (neb == 0 .and. any(eml /= 0.0_wp)) d_line = huge(1.0_wp)
+        d_indx = maxval(abs(indx - ref_indx))
+        write(*, '(A,2ES10.2)') "# max difference (lines, indices): ", d_line, d_indx
+        call assert_true(d_line <= SPEC_RTOL, "emission lines", total_tests, total_failures)
+        call assert_true(d_indx <= INDX_TOL, "spectral indices", total_tests, total_failures)
         call assert_true(d_spec <= SPEC_RTOL, "spectra", total_tests, total_failures)
         call assert_true(d_mag <= MAG_TOL, "magnitudes", total_tests, total_failures)
         call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol, SFR", total_tests, total_failures)

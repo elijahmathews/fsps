@@ -2,7 +2,10 @@ program benchmark_csp_batch
     !> Per-model cost of the batched CSP (compute_csp_batch) against one compute_csp_scenario
     !> call per model, on the benchmark_phases setup (MIST + MILES + DL07, tau model with dust and
     !> dust emission). Tau, age and the dust parameters vary across the batch.
-    !> Usage: benchmark_csp_batch [n_max [n_single]]. Prints one line per metric: name, value.
+    !> Usage: benchmark_csp_batch [n_max [n_single [config]]]. config = "full": the real-world
+    !> fitting configuration (dust1 = 0.5, dust2 = 0.3, DL07 dust emission, nebular emission,
+    !> IGM at zred = 0.5, AGN with fagn = 0.1, spectral indices; tau, age, U_min and gas_logu vary).
+    !> Prints one line per metric: name, value.
 
     use fsps_precision, only: WP
     use fsps_types, only: PARAMS, COMPSPOUT
@@ -21,7 +24,9 @@ program benchmark_csp_batch
     type(PARAMS), allocatable :: psets(:)
     type(COMPSPOUT), allocatable :: results(:)
     real(WP), allocatable :: spec_ssp(:, :), mass_ssp(:), lbol_ssp(:), mags(:, :), spec(:, :)
-    character(len=32) :: arg
+    character(len=32) :: arg, config = 'basic'
+    logical :: full
+    real(WP), allocatable :: indx(:, :)
     integer(8) :: t0, t1, rate
     integer :: n_max = 10000, n_single = 200, status, nspec, ntfull, i, n, rep, n_rep, k
     integer, parameter :: sizes(4) = [1, 100, 1000, 10000]
@@ -31,6 +36,9 @@ program benchmark_csp_batch
     if (len_trim(arg) > 0) read(arg, *) n_max
     call get_command_argument(2, arg)
     if (len_trim(arg) > 0) read(arg, *) n_single
+    call get_command_argument(3, arg)
+    if (len_trim(arg) > 0) config = arg
+    full = trim(config) == 'full'
     call system_clock(count_rate=rate)
 
     allocate(ctx)
@@ -44,7 +52,15 @@ program benchmark_csp_batch
     call set_float('tau', 1.0_wp)
     call set_float('tage', 10.0_wp)
     call set_float('dust2', 0.3_wp)
-    call set_int('compute_indices', 0)
+    call set_int('compute_indices', merge(1, 0, full))
+    if (full) then
+        call set_float('dust1', 0.5_wp)
+        call set_int('add_neb_emission', 1)
+        call set_int('add_igm_absorption', 1)
+        call set_float('zred', 0.5_wp)
+        call set_int('add_agn_dust', 1)
+        call set_float('fagn', 0.1_wp)
+    end if
     call fsps_context_prepare_pset(ctx)
     call fsps_context_get_pset(ctx, pset)
 
@@ -52,6 +68,7 @@ program benchmark_csp_batch
     ntfull = ctx%state%ntfull
     allocate(spec_ssp(nspec, ntfull), mass_ssp(ntfull), lbol_ssp(ntfull))
     call fsps_context_set_pset(ctx, pset)
+    write(*, '(A,A)') 'config ', trim(config)
     call generate_ssp_grid(ctx, pset, mass_ssp, lbol_ssp, spec_ssp)
     call fsps_context_update_ssp_basis(ctx, reshape(spec_ssp, [nspec, ntfull, 1]), &
                                        reshape(mass_ssp, [ntfull, 1]), reshape(lbol_ssp, [ntfull, 1]), 1)
@@ -76,15 +93,16 @@ program benchmark_csp_batch
         call vary(psets(i), i)
     end do
     allocate(mags(ctx%state%nbands, n_max))
+    if (full) allocate(indx(ctx%state%nindx, n_max))
     do k = 1, size(sizes)
         n = sizes(k)
         if (n > n_max) exit
         n_rep = max(3, min(200, 20000 / n))
-        call compute_csp_batch(ctx, psets(1:n), mags, status)   ! warm-up
+        call batch(n, .false.)   ! warm-up
         if (status /= 0) stop 2
         call system_clock(t0)
         do rep = 1, n_rep
-            call compute_csp_batch(ctx, psets(1:n), mags, status)
+            call batch(n, .false.)
         end do
         call system_clock(t1)
         dt = real(t1 - t0, WP) / rate / n_rep
@@ -94,7 +112,7 @@ program benchmark_csp_batch
         allocate(spec(nspec, n))
         call system_clock(t0)
         do rep = 1, n_rep
-            call compute_csp_batch(ctx, psets(1:n), mags, status, spec=spec)
+            call batch(n, .true.)
         end do
         call system_clock(t1)
         dt = real(t1 - t0, WP) / rate / n_rep
@@ -108,15 +126,35 @@ program benchmark_csp_batch
 
 contains
 
-    !> Model i: tau, age and dust vary over a fitting-like range.
+    !> The batch of the first n models (magnitudes; spectra too if with_spec; indices in "full").
+    subroutine batch(n, with_spec)
+        integer, intent(in) :: n
+        logical, intent(in) :: with_spec
+        if (full .and. with_spec) then
+            call compute_csp_batch(ctx, psets(1:n), mags, status, spec=spec, indx=indx)
+        else if (full) then
+            call compute_csp_batch(ctx, psets(1:n), mags, status, indx=indx)
+        else if (with_spec) then
+            call compute_csp_batch(ctx, psets(1:n), mags, status, spec=spec)
+        else
+            call compute_csp_batch(ctx, psets(1:n), mags, status)
+        end if
+    end subroutine batch
+
+    !> Model i: tau, age and dust vary over a fitting-like range ("full": the dust is fixed and
+    !> gas_logu varies instead).
     subroutine vary(p, i)
         type(PARAMS), intent(inout) :: p
         integer, intent(in) :: i
         p%tau = 0.3_wp + 0.05_wp * mod(i, 97)
         p%tage = 1.0_wp + 0.1_wp * mod(i, 113)
-        p%dust2 = 0.05_wp + 0.01_wp * mod(i, 89)
-        p%dust1 = 0.02_wp * mod(i, 53)
         p%duste_umin = 1.0_wp + 0.2_wp * mod(i, 71)
+        if (full) then
+            p%gas_logu = -3.5_wp + 0.05_wp * mod(i, 41)
+        else
+            p%dust2 = 0.05_wp + 0.01_wp * mod(i, 89)
+            p%dust1 = 0.02_wp * mod(i, 53)
+        end if
     end subroutine vary
 
     subroutine set_int(key, value)

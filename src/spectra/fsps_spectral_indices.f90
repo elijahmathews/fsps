@@ -206,26 +206,29 @@ contains
         integer, intent(in) :: n_col
         real(WP), dimension(:,:), intent(out) :: indices   ! (nindx, n_col)
 
-        real(WP), allocatable :: specw(:,:)
+        real(WP), allocatable :: specw(:,:), ind(:,:)
         integer :: j, m, i, n_idx, nspec
 
         n_idx = ctx%state%nindx
         nspec = size(lambda)
-        allocate(specw(nspec, n_col))
-        !$acc data present(spec) pcopyin(lambda) create(specw) copyout(indices(1:n_idx, 1:n_col))
+        ! Results in a local array: indices may have more columns than n_col, and mapping a
+        ! section of it while the kernel refers to the whole dummy is "partially present"
+        allocate(specw(nspec, n_col), ind(n_idx, n_col))
+        !$acc data present(spec) pcopyin(lambda) create(specw) copyout(ind)
         !$acc parallel loop collapse(2) present(spec, specw)
         do m = 1, n_col
             do i = 1, nspec
                 specw(i, m) = real(spec(i, m), WP)
             end do
         end do
-        !$acc parallel loop gang vector collapse(2) present(ctx, lambda, specw, indices)
+        !$acc parallel loop gang vector collapse(2) present(ctx, lambda, specw, ind)
         do m = 1, n_col
             do j = 1, n_idx
-                indices(j, m) = spectral_index_value(ctx, lambda, specw(:, m), j)
+                ind(j, m) = spectral_index_value(ctx, lambda, specw(:, m), j)
             end do
         end do
         !$acc end data
+        indices(1:n_idx, 1:n_col) = ind
     end subroutine compute_spectral_indices_columns
 
     ! ------------------------------------------------------------------------

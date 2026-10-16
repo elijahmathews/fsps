@@ -7,34 +7,44 @@ module fsps_csp_batch
     !> model the work is the same as `compute_csp_scenario` with `tage > 0`; here each stage
     !> runs once for the whole batch:
     !>
-    !> 1. SFH weights per model on the host (FP64), split into young and old ages by each
+    !> 1. SFH weights per model on the device (FP64), split into young and old ages by each
     !>    model's `dust_tesc`, cast once to kernel precision: W_young, W_old (ages x N).
-    !> 2. Age sums, attenuation and the absorbed luminosity density in one kernel over
-    !>    (pixel, model): young = basis . W_young, old = basis . W_old (matrix products with
-    !>    K = number of ages), then the birth-cloud and diffuse attenuation of `fsps_dust`.
-    !> 3. Dust emission (energy balance): per-model reductions over pixels, then the
+    !> 2. Age sums: young = basis . W_young, old = basis . W_old (matrix products with K = number
+    !>    of ages).
+    !> 3. Nebular emission (add_neb_emission = 1), as apply_nebular_emission does to each young SSP
+    !>    before the age sum, but summed over ages per model: the EUV rows of the age sums are
+    !>    redone with the escaping fraction (frac_obrun) for the nebular ages; the nebular
+    !>    continuum (Q(t) times the CLOUDY grid interpolated in gas_logz, gas_logu and age, in
+    !>    FP64 log space) is summed with the SFH weights per (pixel, model); line luminosities per
+    !>    (line, model), then their profiles added over each pixel's overlapping lines.
+    !> 4. Attenuation, the birth-cloud and diffuse dust of `fsps_dust`, and the absorbed light.
+    !> 5. Dust emission (energy balance): per-model reductions over pixels, then the
     !>    Draine & Li template, interpolated per model from the resident grid, is added.
-    !> 4. Magnitudes: per (band, model) filter integrals over each band's support, compensated
-    !>    at FP32 kernel precision.
+    !> 6. IGM transmission (shared), then AGN dust emission (fagn, agn_tau per model), attenuated
+    !>    by the model's diffuse dust, as apply_agn_dust_emission.
+    !> 7. Magnitudes: per (band, model) filter integrals over each band's support, compensated
+    !>    at FP32 kernel precision; optionally spectral indices.
     !>
     !> The two matrix products (age sums, band fluxes) use cuBLAS when built with -Dcublas=true
     !> (NVIDIA only; a ceiling for the portable OpenACC loops, which are the default).
     !>
-    !> Not supported (status 2): nebular emission, AGN, velocity smoothing, redshifted colors,
-    !> light-weighted ages, and models with tage <= 0 (all-ages output). Models must share
-    !> zred and igm_factor. Spectral indices are not computed.
+    !> Not supported (status 2): velocity smoothing, redshifted colors, light-weighted ages, and
+    !> models with tage <= 0 (all-ages output). Models must share zred and igm_factor.
     !>
-    !> Mass, L_bol and SFR follow `compute_csp_scenario` in FP64; spectra, magnitudes and dust
-    !> masses agree with it to FP32 rounding with FP32 kernels (summation order differs).
+    !> Mass, L_bol and SFR follow `compute_csp_scenario` in FP64; spectra, magnitudes, indices,
+    !> line luminosities and dust masses agree with it to the rounding of the kernel precision
+    !> (summation order differs).
 
-    use fsps_precision, only: WP, KP
-    use fsps_constants, only: SAFE_FLOOR, PI
+    use fsps_precision, only: WP, KP, kahan_add
+    use fsps_constants, only: SAFE_FLOOR, PI, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
     use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
+    use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
+    use fsps_spectral_indices, only: compute_spectral_indices_columns
     use fsps_batch_photometry, only: compute_magnitudes_columns, prepare_batch_grid
 #ifdef FSPS_CUBLAS
     use fsps_batch_photometry, only: blas, blas_init
@@ -49,6 +59,23 @@ module fsps_csp_batch
 
     real(WP), parameter :: V_BAND_ANGSTROMS = 5500.0_wp   ! as in fsps_dust
 
+    !> Nebular emission data of a batch (nebular_setup)
+    type :: nebular_setup_t
+        integer :: nt_neb = 0         !< ages with nebular emission (1..nt_neb)
+        integer :: whlylim = 0        !< pixels below the Lyman limit
+        logical :: cont = .false., lines_in_spec = .false., xrb = .false.
+        integer,  allocatable :: ia(:)          !< per age: CLOUDY age interval and weight
+        real(WP), allocatable :: wa(:)
+        real(WP), allocatable :: q0(:)          !< per age: ionizing photons of the basis (frac_obrun = 0)
+        integer,  allocatable :: iz(:), iu(:)   !< per model: gas_logz and gas_logu intervals and weights
+        real(WP), allocatable :: wz(:), wu(:)
+        real(WP), allocatable :: fesc(:)        !< per model: escaping EUV fraction (clamped frac_obrun)
+        real(WP), allocatable :: fabs(:)        !< per model: 1 - frac_obrun (absorbed fraction in Q)
+        real(KP), allocatable :: lum(:,:)       !< line luminosities (lines, 2N): young, then old
+        integer,  allocatable :: lptr(:), lid(:) !< per pixel (CSR): lines whose profile reaches it
+        integer,  allocatable :: llo(:)         !< per line: pixel interval of its wavelength
+    end type nebular_setup_t
+
 contains
 
     !> @brief Evaluates a batch of single-age CSPs.
@@ -61,17 +88,21 @@ contains
     !> @param[out]   status  0 on success; 1 no setup or basis; 2 unsupported option; 3 bad shape.
     !> @param[out]   spec    Optional spectra (nspec, N), L_sun/Hz per solar mass formed.
     !> @param[out]   mass, lbol, mdust, sfr  Optional per-model scalars as in compspout.
-    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr)
+    !> @param[out]   emlines Optional emission-line luminosities (NEMLINE, N), as compspout%emlines
+    !>                       (zero without nebular emission).
+    !> @param[out]   indx    Optional spectral indices (nindx, N), as compspout%indx.
+    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: psets(:)
         real(WP), intent(out)               :: mags(:,:)
         integer, intent(out)                :: status
         real(WP), intent(out), optional     :: spec(:,:)
         real(WP), intent(out), optional     :: mass(:), lbol(:), mdust(:), sfr(:)
+        real(WP), intent(out), optional     :: emlines(:,:), indx(:,:)
 
         integer :: n_mod, nt, nspec, nbands, m, k
         real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis
+        logical  :: igm, any_emis, neb, agn
 
         ! Per-model parameters and results on the host
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
@@ -80,7 +111,14 @@ contains
         integer,  allocatable :: iq(:), iu(:)
         real(WP), allocatable :: wq(:), wu(:), gam(:)
         logical,  allocatable :: emis(:)
-        real(WP), allocatable :: s_abs(:), s_norm(:), s_esc(:)
+        real(WP), allocatable :: s_abs(:), s_norm(:), s_esc(:), s_line(:)
+
+        ! Nebular emission and AGN (per age, per model, per pixel line lists)
+        type(nebular_setup_t) :: nb
+        integer,  allocatable :: ita(:)
+        real(WP), allocatable :: wta(:)
+        logical,  allocatable :: agn_on(:)
+        real(KP), allocatable :: eml(:,:)
 
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:)
@@ -107,27 +145,37 @@ contains
                 status = 3; return
             end if
         end if
-        if (ctx%add_neb_emission_val /= 0 .or. ctx%redshift_colors_val /= 0 .or. &
-            ctx%compute_light_ages_val /= 0) then
+        if (present(emlines)) then
+            if (size(emlines, 1) < NEMLINE .or. size(emlines, 2) < n_mod) then
+                status = 3; return
+            end if
+        end if
+        if (present(indx)) then
+            if (size(indx, 1) < ctx%state%nindx .or. size(indx, 2) < n_mod) then
+                status = 3; return
+            end if
+        end if
+        if (ctx%redshift_colors_val /= 0 .or. ctx%compute_light_ages_val /= 0) then
             status = 2; return
         end if
         zred = psets(1)%zred
         do m = 1, n_mod
             if (psets(m)%tage <= 0.0_wp .or. psets(m)%sigma_smooth > 0.0_wp .or. &
                 psets(m)%zred /= zred .or. psets(m)%igm_factor /= psets(1)%igm_factor .or. &
-                psets(m)%uvb < 0.0_wp .or. psets(m)%wgp1 < 1 .or. psets(m)%wgp2 < 1 .or. &
-                (ctx%add_agn_dust_val == 1 .and. psets(m)%fagn > SAFE_FLOOR)) then
+                psets(m)%uvb < 0.0_wp .or. psets(m)%wgp1 < 1 .or. psets(m)%wgp2 < 1) then
                 status = 2; return
             end if
         end do
 
         ! ------------------------------------------------------------------
-        ! 1. Host: per-model indices (birth-cloud age, dust emission grid) and SFR
+        ! 1. Host: per-model indices (birth-cloud age, dust emission grid, nebular grid, AGN
+        !    template) and SFR
         ! ------------------------------------------------------------------
         allocate(w2(nt, 2 * n_mod), lum_linear(nt), it_tesc(n_mod), msum(n_mod), lsum(n_mod))
         allocate(weights(nt, 1, n_mod), tmp1(size(ctx%state%sfh_w_tmp1, 1), n_mod), &
                  tmp2(size(ctx%state%sfh_w_tmp2, 1), n_mod))
         allocate(iq(n_mod), iu(n_mod), wq(n_mod), wu(n_mod), gam(n_mod), emis(n_mod))
+        allocate(ita(n_mod), wta(n_mod), agn_on(n_mod))
         lum_linear = 10.0_wp**ctx%state%ssp_basis_lbol(1:nt, 1)
         do m = 1, n_mod
             if (psets(m)%dust_tesc > SAFE_FLOOR) then
@@ -145,21 +193,32 @@ contains
             emis(m) = ctx%add_dust_emission_val == 1 .and. &
                       (psets(m)%dust1 > SAFE_FLOOR .or. psets(m)%dust2 > SAFE_FLOOR)
             call dl07_indices(ctx, psets(m), iq(m), wq(m), iu(m), wu(m), gam(m))
+            call agn_indices(ctx, psets(m), agn_on(m), ita(m), wta(m))
         end do
         any_emis = any(emis)
+        agn = any(agn_on)
+        neb = ctx%add_neb_emission_val == 1
+        call nebular_setup(ctx, psets, neb, nb)
+        if (neb) then
+            allocate(eml(NEMLINE, n_mod))
+        else
+            allocate(eml(1, 1))
+        end if
 
         ! Grid-only data for this redshift (cached in ctx%state%batch, on the device too)
         call prepare_batch_grid(ctx, zred, psets(1)%igm_factor)
         igm = ctx%state%batch%igm
 
         ! ------------------------------------------------------------------
-        ! 2-3. Device: age sums, attenuation, dust emission
+        ! 2-6. Device: age sums, nebular emission, attenuation, dust emission, IGM, AGN
         ! ------------------------------------------------------------------
         allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(nspec, n_mod))
-        allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod))
+        allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
-        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear) &
-        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed) copyout(s_abs, s_norm, s_esc, msum, lsum)
+        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
+        !$acc      copyin(nb, nb%ia, nb%wa, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr, nb%lid, nb%llo) &
+        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
+        !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
@@ -187,22 +246,35 @@ contains
         end do
 
         call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
+        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, &
+                                        nb, yo, eml)
+        if (neb) call attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
         if (any_emis) then
             call dust_emission_reductions(n_mod, nspec, emis, ctx%state%batch%wt, yo, absorbed, s_abs, s_norm, s_esc)
+            ! Lines not in the spectrum: their absorbed part (intrinsic - attenuated) is added, as
+            ! in apply_dust_attenuation_and_emission
+            if (neb .and. ctx%nebemlineinspec_val == 0) then
+                !$acc parallel loop present(s_abs, s_line)
+                do m = 1, n_mod
+                    s_abs(m) = s_abs(m) + s_line(m)
+                end do
+            end if
             call add_dust_emission(n_mod, nspec, emis, yo, s_abs, s_esc, total)
         end if
 
         if (igm) call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
+        if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, total)
 
         ! ------------------------------------------------------------------
-        ! 4. Magnitudes
+        ! 7. Magnitudes and indices
         ! ------------------------------------------------------------------
         if (allocated(psets(1)%mag_compute)) then
             call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags, psets(1)%mag_compute)
         else
             call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags)
         end if
+        if (present(indx)) call compute_spectral_indices_columns(ctx, ctx%state%spec_lambda, total, n_mod, indx)
 
         if (present(spec)) then
             !$acc update self(total)
@@ -212,6 +284,15 @@ contains
         end if
         !$acc end data
 
+        if (present(emlines)) then
+            do m = 1, n_mod
+                if (neb) then
+                    emlines(1:NEMLINE, m) = real(eml(:, m), WP)
+                else
+                    emlines(1:NEMLINE, m) = 0.0_wp
+                end if
+            end do
+        end if
         do m = 1, n_mod
             if (present(mass)) mass(m) = msum(m)
             if (present(lbol)) then
@@ -230,6 +311,127 @@ contains
             end if
         end do
     end subroutine compute_csp_batch
+
+    !> Host-side nebular data of a batch: young ages and their grid interval, per-model grid
+    !> indices and escape fractions, and per-pixel lists of the lines whose profile reaches it.
+    subroutine nebular_setup(ctx, psets, neb, nb)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: psets(:)
+        logical, intent(in)                 :: neb
+        type(nebular_setup_t), intent(out)  :: nb
+
+        real(WP), parameter :: LINE_PROFILE_CUT = 1.0e-14_wp   ! as add_lines_to_spectrum (CPU)
+        integer  :: n_mod, nspec, t, m, i, j, jc, n, p
+        integer, allocatable :: j_lo(:), j_hi(:), cnt(:)
+        real(WP) :: cut
+
+        n_mod = size(psets)
+        nspec = ctx%state%nspec
+        nb%nt_neb = 0
+        if (neb) nb%nt_neb = max(0, min(find_interval(ctx%state%time_full, ctx%state%nebem_age(NEBNAGE)), &
+                                        ctx%state%ntfull))
+        nb%cont = neb .and. ctx%add_neb_continuum_val == 1
+        nb%lines_in_spec = neb .and. ctx%nebemlineinspec_val == 1
+        nb%xrb = (ctx%state%isoc_type == 'bpss') .and. (ctx%add_xrb_emission_val == 1)
+        nb%whlylim = ctx%state%whlylim
+        n = max(1, nb%nt_neb)
+        allocate(nb%ia(n), nb%wa(n), nb%q0(n))
+        allocate(nb%iz(n_mod), nb%wz(n_mod), nb%iu(n_mod), nb%wu(n_mod), nb%fesc(n_mod), nb%fabs(n_mod))
+        nb%ia = 1; nb%wa = 0.0_wp
+        do t = 1, nb%nt_neb
+            call get_grid_indices_weights(ctx%state%nebem_age, ctx%state%time_full(t), NEBNAGE, nb%ia(t), nb%wa(t))
+        end do
+        do m = 1, n_mod
+            nb%iz(m) = 1; nb%wz(m) = 0.0_wp; nb%iu(m) = 1; nb%wu(m) = 0.0_wp
+            if (neb) then
+                call get_grid_indices_weights(ctx%state%nebem_logz, psets(m)%gas_logz, NEBNZ, nb%iz(m), nb%wz(m))
+                call get_grid_indices_weights(ctx%state%nebem_logu, psets(m)%gas_logu, NEBNIP, nb%iu(m), nb%wu(m))
+            end if
+            nb%fesc(m) = max(0.0_wp, min(psets(m)%frac_obrun, 1.0_wp))
+            nb%fabs(m) = 1.0_wp - psets(m)%frac_obrun
+        end do
+        if (neb) then
+            allocate(nb%lum(NEMLINE, 2 * n_mod))
+        else
+            allocate(nb%lum(1, 1))
+        end if
+        ! Pixel interval of each line wavelength (the search of apply_dust_attenuation_and_emission)
+        allocate(nb%llo(NEMLINE))
+        do i = 1, NEMLINE
+            jc = 1
+            j = nspec + 1
+            do while (j - jc > 1)
+                p = (jc + j) / 2
+                if (ctx%state%nebem_line_pos(i) >= ctx%state%spec_lambda(p)) then
+                    jc = p
+                else
+                    j = p
+                end if
+            end do
+            nb%llo(i) = max(1, min(jc, nspec - 1))
+        end do
+
+        ! Line windows (as the CPU add_lines_to_spectrum: from the pixel nearest the line centre
+        ! until the profile falls below LINE_PROFILE_CUT of its peak), then per pixel the lines
+        ! whose window contains it, in line order (CSR)
+        allocate(nb%lptr(nspec + 1))
+        nb%lptr = 1
+        if (.not. nb%lines_in_spec) then
+            allocate(nb%lid(1)); nb%lid = 1
+            return
+        end if
+        call prepare_line_gaussians(ctx, psets(1))
+        allocate(j_lo(NEMLINE), j_hi(NEMLINE), cnt(nspec))
+        cnt = 0
+        do i = 1, NEMLINE
+            j_lo(i) = 1; j_hi(i) = 0
+            jc = max(1, min(find_interval(ctx%state%spec_lambda(1:nspec), ctx%state%nebem_line_pos(i)), nspec))
+            j = min(jc + 1, nspec)
+            cut = LINE_PROFILE_CUT * max(real(ctx%state%gaussnebarr(jc, i), WP), real(ctx%state%gaussnebarr(j, i), WP))
+            if (cut <= 0.0_wp) cycle
+            j_hi(i) = j
+            j_lo(i) = jc
+            do while (j_lo(i) > 1)
+                if (ctx%state%gaussnebarr(j_lo(i) - 1, i) <= cut) exit
+                j_lo(i) = j_lo(i) - 1
+            end do
+            do while (j_hi(i) < nspec)
+                if (ctx%state%gaussnebarr(j_hi(i) + 1, i) <= cut) exit
+                j_hi(i) = j_hi(i) + 1
+            end do
+            cnt(j_lo(i):j_hi(i)) = cnt(j_lo(i):j_hi(i)) + 1
+        end do
+        do j = 1, nspec
+            nb%lptr(j + 1) = nb%lptr(j) + cnt(j)
+        end do
+        allocate(nb%lid(max(1, nb%lptr(nspec + 1) - 1)))
+        cnt = 0
+        do i = 1, NEMLINE
+            do j = j_lo(i), j_hi(i)
+                p = nb%lptr(j) + cnt(j)
+                nb%lid(p) = i
+                cnt(j) = cnt(j) + 1
+            end do
+        end do
+    end subroutine nebular_setup
+
+    !> AGN template interval for pset (apply_agn_dust_emission); on = AGN emission is added.
+    subroutine agn_indices(ctx, pset, on, ita, wta)
+        type(fsps_context_t), intent(in) :: ctx
+        type(params), intent(in)         :: pset
+        logical, intent(out)             :: on
+        integer, intent(out)             :: ita
+        real(WP), intent(out)            :: wta
+        integer :: n
+
+        on = ctx%add_agn_dust_val == 1 .and. pset%fagn > SAFE_FLOOR .and. pset%fagn > tiny(0.0_wp)
+        ita = 1; wta = 0.0_wp
+        if (.not. on) return
+        n = size(ctx%state%agndust_tau)
+        ita = max(1, min(find_interval(ctx%state%agndust_tau, pset%agn_tau), n - 1))
+        wta = (pset%agn_tau - ctx%state%agndust_tau(ita)) / (ctx%state%agndust_tau(ita + 1) - ctx%state%agndust_tau(ita))
+        wta = max(0.0_wp, min(wta, 1.0_wp))
+    end subroutine agn_indices
 
     !> Interpolation indices of the Draine & Li grid (interpolate_draine_li_dust_model).
     subroutine dl07_indices(ctx, pset, iq, wq, iu, wu, gam)
@@ -287,6 +489,302 @@ contains
     end subroutine diffuse_transmission
 
     !> Age sums (young and old) and attenuation; absorbed light density for dust emission.
+
+    !> Nebular emission of every model, added to its young and old age sums (yo), as
+    !> apply_nebular_emission modifies each SSP of age t <= nt_neb before the age sum of
+    !> compute_csp_scenario: (1) the EUV escapes with fraction fesc, (2) the continuum
+    !> 10**log(t; Z, U) * Q(t), (3) the lines, whose luminosities (also returned in eml) are summed
+    !> over ages first and then spread over their profiles.
+    subroutine add_nebular_batch(ctx, n_mod, nspec, nt, basis, w2, it_tesc, nb, yo, eml)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)              :: n_mod, nspec, nt, it_tesc(:)
+        real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
+        type(nebular_setup_t), intent(inout) :: nb
+        real(KP), intent(inout)          :: yo(:,:)
+        real(KP), intent(out)            :: eml(:,:)
+
+        integer  :: m, i, j, k, t, nt_neb, whlylim, a, a_prev, p
+        real(KP) :: s, c, wt, bk, y, o, wk, v
+        real(WP) :: q, lg, ra, rb
+        logical  :: xrb
+
+        nt_neb = nb%nt_neb
+        whlylim = nb%whlylim
+        xrb = nb%xrb
+        if (nt_neb < 1) then
+            !$acc parallel loop collapse(2) present(eml)
+            do m = 1, n_mod
+                do i = 1, NEMLINE
+                    eml(i, m) = 0.0_KP
+                end do
+            end do
+            return
+        end if
+
+        ! 1. Ionizing photons of each young basis spectrum (the photon-number integral of
+        !    process_ionizing_radiation, without the absorbed fraction)
+        !$acc parallel loop gang present(ctx, basis, nb, nb%q0) private(s, c)
+        do t = 1, nt_neb
+            s = 0.0_KP
+            c = 0.0_KP
+            if (whlylim >= 2) then
+                !$acc loop vector reduction(+:s) private(wt, v)
+                do i = 1, whlylim - 1
+                    wt = real(0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)), KP)
+                    v = wt * (basis(i, t) / real(ctx%state%spec_nu(i), KP) + &
+                              basis(i+1, t) / real(ctx%state%spec_nu(i+1), KP))
+#ifdef _OPENACC
+                    s = s + v
+#else
+                    if (KP == WP) then
+                        s = s + v
+                    else
+                        call kahan_add(s, c, v)
+                    end if
+#endif
+                end do
+                nb%q0(t) = real(s, WP) / H_PLANCK * L_SOL
+            else
+                nb%q0(t) = 0.0_wp
+            end if
+        end do
+
+        ! 2. EUV rows: the age sums again, the nebular ages' spectra times the escaping fraction
+        if (whlylim > 0) then
+            !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb, nb%fesc, yo) private(y, o, bk, k)
+            do m = 1, n_mod
+                do i = 1, whlylim
+                    y = 0.0_KP
+                    o = 0.0_KP
+                    !$acc loop seq
+                    do k = 1, nt
+                        bk = basis(i, k)
+                        if (k <= nt_neb) bk = bk * real(nb%fesc(m), KP)
+                        if (k <= it_tesc(m)) then
+                            y = y + w2(k, m) * bk
+                        else
+                            o = o + w2(k, n_mod + m) * bk
+                        end if
+                    end do
+                    yo(i, m) = y
+                    yo(i, n_mod + m) = o
+                end do
+            end do
+        end if
+
+        ! 3. Continuum: per (pixel, model), the SFH-weighted sum over the nebular ages of
+        !    10**(log grid interpolated in Z, U and age, FP64) * Q
+        if (nb%cont) then
+            !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, &
+            !$acc nb%wz, nb%iu, nb%wu, nb%fabs, yo) private(y, o, wk, q, lg, ra, rb, a, a_prev, t)
+            do m = 1, n_mod
+                do j = 1, nspec
+                    y = 0.0_KP
+                    o = 0.0_KP
+                    a_prev = -1
+                    ra = 0.0_wp
+                    rb = 0.0_wp
+                    !$acc loop seq
+                    do t = 1, nt_neb
+                        if (t <= it_tesc(m)) then
+                            wk = w2(t, m)
+                        else
+                            wk = w2(t, n_mod + m)
+                        end if
+                        if (wk == 0.0_KP) cycle
+                        q = abs(nb%q0(t) * nb%fabs(m))
+                        if (q <= SAFE_FLOOR) cycle
+                        a = nb%ia(t)
+                        if (a /= a_prev) then
+                            if (xrb) then
+                                ra = zu_point(ctx%state%xnebem_cont, j, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                                rb = zu_point(ctx%state%xnebem_cont, j, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                            else
+                                ra = zu_point(ctx%state%nebem_cont, j, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                                rb = zu_point(ctx%state%nebem_cont, j, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                            end if
+                            a_prev = a
+                        end if
+                        lg = (1.0_wp - nb%wa(t)) * ra + nb%wa(t) * rb
+                        if (t <= it_tesc(m)) then
+                            y = y + wk * real((10.0_wp**lg) * q, KP)
+                        else
+                            o = o + wk * real((10.0_wp**lg) * q, KP)
+                        end if
+                    end do
+                    yo(j, m) = yo(j, m) + y
+                    yo(j, n_mod + m) = yo(j, n_mod + m) + o
+                end do
+            end do
+        end if
+
+        ! 4. Line luminosities per (line, model), young and old: sum over ages of the weight times
+        !    10**(log grid interpolated) * Q
+        !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, nb%wz, &
+        !$acc nb%iu, nb%wu, nb%fabs, nb%lum, eml) private(y, o, wk, q, lg, ra, rb, a, t)
+        do m = 1, n_mod
+            do i = 1, NEMLINE
+                y = 0.0_KP
+                o = 0.0_KP
+                !$acc loop seq
+                do t = 1, nt_neb
+                    if (t <= it_tesc(m)) then
+                        wk = w2(t, m)
+                    else
+                        wk = w2(t, n_mod + m)
+                    end if
+                    if (wk == 0.0_KP) cycle
+                    q = abs(nb%q0(t) * nb%fabs(m))
+                    if (q <= SAFE_FLOOR) cycle
+                    a = nb%ia(t)
+                    if (xrb) then
+                        ra = zu_point(ctx%state%xnebem_line, i, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                        rb = zu_point(ctx%state%xnebem_line, i, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                    else
+                        ra = zu_point(ctx%state%nebem_line, i, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                        rb = zu_point(ctx%state%nebem_line, i, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                    end if
+                    lg = (1.0_wp - nb%wa(t)) * ra + nb%wa(t) * rb
+                    if (t <= it_tesc(m)) then
+                        y = y + wk * real((10.0_wp**lg) * q, KP)
+                    else
+                        o = o + wk * real((10.0_wp**lg) * q, KP)
+                    end if
+                end do
+                nb%lum(i, m) = y
+                nb%lum(i, n_mod + m) = o
+                eml(i, m) = y + o
+            end do
+        end do
+
+        ! 5. Line profiles: per pixel, the lines whose profile reaches it
+        if (nb%lines_in_spec) then
+            !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%lptr, nb%lid, nb%lum, yo) private(s, p, i)
+            do m = 1, 2 * n_mod
+                do j = 1, nspec
+                    s = 0.0_KP
+                    !$acc loop seq
+                    do p = nb%lptr(j), nb%lptr(j + 1) - 1
+                        i = nb%lid(p)
+                        s = s + ctx%state%gaussnebarr(j, i) * nb%lum(i, m)
+                    end do
+                    yo(j, m) = yo(j, m) + s
+                end do
+            end do
+        end if
+    end subroutine add_nebular_batch
+
+    !> Line luminosities after dust (apply_dust_attenuation_and_emission): young lines through
+    !> the birth cloud, all through the diffuse dust at the line wavelength (the transmission
+    !> interpolated between pixels, at KP as there). eml = attenuated luminosities; s_line =
+    !> intrinsic - attenuated, per model.
+    subroutine attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
+        type(fsps_context_t), intent(in)  :: ctx
+        type(params), intent(in)          :: psets(:)
+        integer, intent(in)               :: n_mod
+        type(nebular_setup_t), intent(in) :: nb
+        real(KP), intent(out)             :: eml(:,:)
+        real(WP), intent(out)             :: s_line(:)
+
+        integer  :: m, i, lo
+        real(WP) :: si, sa, t_lo, t_hi, curve, tau_d, trans, td, birth, ay, ao, fob, fnd, pos
+        real(KP) :: ly, lo_
+
+        !$acc parallel loop gang present(ctx, psets, nb, nb%lum, nb%llo, eml, s_line) private(si, sa, fob, fnd)
+        do m = 1, n_mod
+            si = 0.0_wp
+            sa = 0.0_wp
+            fob = psets(m)%frac_obrun
+            fnd = psets(m)%frac_nodust
+            !$acc loop vector reduction(+:si, sa) private(lo, t_lo, t_hi, curve, tau_d, trans, td, birth, ay, ao, &
+            !$acc ly, lo_, pos)
+            do i = 1, NEMLINE
+                pos = ctx%state%nebem_line_pos(i)
+                if (1.0_wp - fnd <= SAFE_FLOOR) then
+                    td = 1.0_wp
+                else
+                    lo = nb%llo(i)
+                    call diffuse_transmission(ctx, psets(m), lo, curve, tau_d, trans)
+                    t_lo = real(real(trans, KP), WP)
+                    call diffuse_transmission(ctx, psets(m), lo + 1, curve, tau_d, trans)
+                    t_hi = real(real(trans, KP), WP)
+                    td = t_lo + (t_hi - t_lo) / (ctx%state%spec_lambda(lo + 1) - ctx%state%spec_lambda(lo)) * &
+                         (pos - ctx%state%spec_lambda(lo))
+                end if
+                if (td /= td) td = 1.0_wp
+                if (psets(m)%dust1 <= SAFE_FLOOR .or. 1.0_wp - fob <= SAFE_FLOOR) then
+                    birth = 1.0_wp
+                else
+                    birth = exp(-psets(m)%dust1 * (pos / V_BAND_ANGSTROMS)**psets(m)%dust1_index)
+                end if
+                ly = nb%lum(i, m)
+                lo_ = nb%lum(i, n_mod + m)
+                ay = ly * (birth * (1.0_wp - fob) + fob)
+                ao = lo_
+                if (1.0_wp - fnd > SAFE_FLOOR) then
+                    ay = ay * (td * (1.0_wp - fnd) + fnd)
+                    ao = ao * (td * (1.0_wp - fnd) + fnd)
+                end if
+                si = si + (ly + lo_)
+                sa = sa + (ay + ao)
+                eml(i, m) = real(ay, KP) + real(ao, KP)
+            end do
+            s_line(m) = si - sa
+        end do
+    end subroutine attenuate_lines
+
+    !> CLOUDY grid value at (i, age a) bilinear in (Z, U), as interpolate_zu_slice_point.
+    pure function zu_point(grid, i, a, iz, iu, wz, wu) result(val)
+        !$acc routine seq
+        real(WP), intent(in) :: grid(:,:,:,:)
+        integer, intent(in)  :: i, a, iz, iu
+        real(WP), intent(in) :: wz, wu
+        real(WP) :: val
+
+        val = (1.0_wp - wz) * (1.0_wp - wu) * grid(i, iz,     a, iu    ) + &
+              (1.0_wp - wz) * (         wu) * grid(i, iz,     a, iu + 1) + &
+              (         wz) * (1.0_wp - wu) * grid(i, iz + 1, a, iu    ) + &
+              (         wz) * (         wu) * grid(i, iz + 1, a, iu + 1)
+    end function zu_point
+
+    !> AGN dust emission (apply_agn_dust_emission): fagn L_bol times the agn_tau template,
+    !> attenuated by the model's diffuse dust; after the IGM transmission, as there.
+    subroutine add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, total)
+        type(fsps_context_t), intent(in) :: ctx
+        type(params), intent(in)         :: psets(:)
+        integer, intent(in)              :: n_mod, nspec, ita(:)
+        logical, intent(in)              :: agn_on(:)
+        real(WP), intent(in)             :: wta(:), lsum(:)
+        real(KP), intent(inout)          :: total(:,:)
+
+        integer  :: m, i
+        real(WP) :: lagn, tmpl, curve, lb
+
+        !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, total) &
+        !$acc private(lagn, tmpl, curve, lb)
+        do m = 1, n_mod
+            do i = 1, nspec
+                if (agn_on(m)) then
+                    ! L_bol through its logarithm, as compute_csp_scenario stores it
+                    if (lsum(m) > SAFE_FLOOR) then
+                        lb = log10(lsum(m))
+                    else
+                        lb = 0.0_wp
+                    end if
+                    lagn = (10.0_wp**lb) * psets(m)%fagn
+                    tmpl = (1.0_wp - wta(m)) * ctx%state%agndust_spec(i, ita(m)) + &
+                           wta(m) * ctx%state%agndust_spec(i, ita(m) + 1)
+                    curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, psets(m), ctx)
+                    if (ctx%dust_type_val == 3) then
+                        tmpl = tmpl * exp(-curve)
+                    else
+                        tmpl = tmpl * exp(-psets(m)%dust2 * curve)
+                    end if
+                    total(i, m) = total(i, m) + lagn * tmpl
+                end if
+            end do
+        end do
+    end subroutine add_agn_batch
 
     !> Common IGM transmission.
     subroutine apply_igm(n_mod, nspec, igm_t, total)

@@ -7,7 +7,13 @@ entries below. The A100 session (2026-10-16) is first; the P100 session's status
 
 (Decisions that are yours; the agent took the conservative option in each case and kept working.)
 
-1. *(none yet)*
+1. The legacy C API's metallicity paths (`fsps_compute_zdep` cases 1 and 2, `fsps_interp_ssp`
+   in `src/bindings/c/fsps_c_api.f90`, only built with `FSPS_ENABLE_LEGACY`) call
+   `compute_interpolated_ssp(ctx, zpos, spec, lbol, mass [, zpow= | tpos=])`, which does not
+   match its signature `(ctx, z_pos, mass_out, lbol_out, spec_out, t_pos, z_param)`: argument
+   order and keyword names. That code cannot compile with the flag on. Left unchanged; the
+   batched per-model metallicity follows the routine's simple Z interpolation (linear in the
+   spectra, mass and log L_bol between the two bracketing metallicities).
 
 ## Status (A100 session, 2026-10-16)
 
@@ -51,14 +57,35 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   and the batch kernels are offloaded; the OpenACC FP64 builds run the per-star SSP kernel and
   device dust and nebular kernels.)
 
+- Nebular emission, AGN dust emission, spectral indices and emission-line luminosities in
+  `compute_csp_batch` (branch `gpu/a100-batch-nebular`, stacked on `gpu/a100-cublas-threshold`):
+  per model, as `compute_csp_scenario` does to each young SSP (EUV escape, continuum and lines
+  from the CLOUDY grid in gas_logz / gas_logu, FP64 log space), summed over ages; line
+  luminosities attenuated as in `fsps_dust` (birth cloud, diffuse dust at the line wavelength),
+  their absorbed part added to the energy balance when lines are not in the spectrum; AGN
+  after the IGM. `test_csp_batch` 80/80 in all ten builds (new groups: nebular; IGM + nebular
+  + AGN; AGN; lines not in the spectrum). Worst differences against `compute_csp_scenario`,
+  FP32 GPU: spectra 5.4e-7, magnitudes 5.3e-7, indices 4.3e-6, lines 0 (identical); FP64 GPU:
+  spectra 8.6e-11, magnitudes 4.1e-12, indices 6.8e-11, lines 3.3e-11. Suites 32/32 everywhere.
+  Also fixed: `compute_spectral_indices_columns` crashed ("partially present") when the output
+  array had more columns than spectra.
+- First full real-world benchmark (`benchmark_csp_batch 10000 200 full`: dust1 0.5, dust2 0.3,
+  DL07, nebular, IGM at z = 0.5, fagn 0.1, indices; us per model, magnitudes + indices):
+
+  | N | OpenACC FP32 | cuBLAS FP32 | OpenACC FP64 | cuBLAS FP64 |
+  |---|---|---|---|---|
+  | one `compute_csp_scenario` call | 2230 | 2221 | 2123 | 2339 |
+  | 1 | 1423 | 1332 | 1387 | 1327 |
+  | 100 | 33.6 | 30.9 | 35.2 | 30.7 |
+  | 10000 | 14.4 | 13.0 | 16.2 | 14.0 |
+  | 10000, spectra copied back | 31.0 | 29.6 | 42.7 | 40.0 |
+
 **In progress / queue** (user-added items first, in order)
-- Nebular emission (continuum, lines) and AGN dust emission in `compute_csp_batch`, plus
-  indices and line luminosities as outputs (branch `gpu/a100-batch-nebular`, written, being
-  validated; line attenuation still missing).
-- Then: velocity smoothing in the batch and a device kernel for the single call; per-model
-  metallicity (log Z interpolation between resident bases); the full real-world benchmark
-  (dust1 0.5, dust2 0.3, DL07, nebular, IGM at z = 0.5, fagn 0.1, indices, sigma_smooth 150);
-  then the FP32 speed work, TF32 / FP64 tensor-core experiments and the write-up.
+- Velocity smoothing in the batch and on the device in the single call (written, next to
+  validate: branch `gpu/a100-batch-smoothing`).
+- Then: per-model metallicity (log Z interpolation between resident bases); the full benchmark
+  with sigma_smooth = 150; profile and speed up the FP32 path; TF32 / FP64 tensor-core
+  experiments; the write-up.
 
 **Open problems**
 - Nsight Compute: `RmProfilingAdminOnly: 1` on this node (GPU performance counters for admins

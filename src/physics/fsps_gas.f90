@@ -32,6 +32,7 @@ module fsps_gas
     public :: process_ionizing_radiation
     public :: interpolate_zu_slice_point
     public :: get_grid_indices_weights
+    public :: prepare_line_gaussians
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS
@@ -100,17 +101,7 @@ contains
         ! Logic flag for XRB (BPSS models)
         use_xrb_grid = (ctx%state%isoc_type == 'bpss') .and. (ctx%add_xrb_emission_val == 1)
 
-        ! Per-call line kernels depend only on sigma_smooth and smooth_velocity: rebuild them (about
-        ! 1e6 exponentials) only when those change
-        if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
-            if (pset%sigma_smooth /= ctx%state%gauss_built_sigma .or. &
-                ctx%smooth_velocity_val /= ctx%state%gauss_built_velocity) then
-                call compute_line_gaussians(ctx, pset)
-                !$acc update device(ctx%state%gaussnebarr(:,:))
-                ctx%state%gauss_built_sigma = pset%sigma_smooth
-                ctx%state%gauss_built_velocity = ctx%smooth_velocity_val
-            end if
-        end if
+        call prepare_line_gaussians(ctx, pset)
 
         ! 1. Pre-calculate Interpolation Weights for Z and U
         ! --------------------------------------------------
@@ -225,6 +216,24 @@ contains
         !$acc end data
 
     end subroutine apply_nebular_emission
+
+    !> @brief Line profiles for pset (gaussnebarr, also on the device): per-call kernels depend
+    !> only on sigma_smooth and smooth_velocity, so they are rebuilt (about 1e6 exponentials) only
+    !> when those change.
+    subroutine prepare_line_gaussians(ctx, pset)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+
+        if (ctx%setup_nebular_gaussians_val == 0 .and. ctx%nebemlineinspec_val == 1) then
+            if (pset%sigma_smooth /= ctx%state%gauss_built_sigma .or. &
+                ctx%smooth_velocity_val /= ctx%state%gauss_built_velocity) then
+                call compute_line_gaussians(ctx, pset)
+                !$acc update device(ctx%state%gaussnebarr(:,:))
+                ctx%state%gauss_built_sigma = pset%sigma_smooth
+                ctx%state%gauss_built_velocity = ctx%smooth_velocity_val
+            end if
+        end if
+    end subroutine prepare_line_gaussians
 
 #ifdef _OPENACC
     !> @brief The time loop of apply_nebular_emission for all young ages at once (device).
