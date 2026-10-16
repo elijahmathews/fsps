@@ -135,7 +135,7 @@ contains
         real(KP), allocatable :: eml(:,:)
 
         ! Work arrays (pixels x models) at kernel precision
-        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:)
+        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
 
         call fsps_context_sync_device_settings(ctx)
         status = 0
@@ -252,13 +252,19 @@ contains
         ! 2-7. Device: age sums, nebular emission, attenuation, dust emission, IGM, AGN, smoothing
         ! ------------------------------------------------------------------
         allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(nspec, n_mod))
+        ! Diffuse-dust transmission kept from the attenuation for the AGN emission
+        if (agn) then
+            allocate(tdiff(nspec, n_mod))
+        else
+            allocate(tdiff(1, 1))
+        end if
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$acc      copyin(zlo, zhi, dz) &
         !$acc      copyin(nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
-        !$acc      create(nb%cy, nb%co) &
+        !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
@@ -302,7 +308,7 @@ contains
         if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
-        call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
+        call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         if (any_emis) then
             call dust_emission_reductions(n_mod, nspec, emis, ctx%state%batch%wt, yo, absorbed, s_abs, s_norm, s_esc)
             ! Lines not in the spectrum: their absorbed part (intrinsic - attenuated) is added, as
@@ -317,7 +323,7 @@ contains
         end if
 
         if (igm) call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
-        if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, total)
+        if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         if (smooth) call smooth_columns(ctx, total, n_mod)
 
         ! ------------------------------------------------------------------
@@ -655,7 +661,10 @@ contains
         !    and on the uniform log-age grid wa advances by a constant step, so 10**lg is a
         !    geometric progression: per interval two FP64 exponentials (the first age's value and
         !    the ratio), per age one multiply and one add, all in FP64 (each interval's sum is cast
-        !    once). The FP64 exponentials are the cost of this kernel.
+        !    once). The FP64 exponentials are the cost of this kernel. Hardware note: measured on
+        !    the A100 (FP64 at half the FP32 rate); on GPUs with slow FP64 (1/32-1/64 of FP32, most
+        !    consumer cards) these exponentials weigh much more, and the next step there would be
+        !    the progression's ratio in FP32 with the argument reduced in FP64.
         if (nb%cont) then
             !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co, zlo, zhi, dz)
             do m = 1, n_mod
@@ -692,8 +701,9 @@ contains
                     dl = 0.0_wp; f = 0.0_wp; r = 1.0_wp
                     iz = nb%iz(m)
                     iu = nb%iu(m)
-                    ! As interpolate_zu_slice_point (written out: a call with the 4-d grid per
-                    ! interval and thread cost more than the arithmetic)
+                    ! As interpolate_zu_slice_point, written out: with nvfortran 25.1 (A100) a call
+                    ! with the 4-d assumed-shape grid per interval and thread cost more than the
+                    ! arithmetic (descriptor set-up in local memory); 53 -> 41 ms at N = 10000
                     c00 = (1.0_wp - nb%wz(m)) * (1.0_wp - nb%wu(m))
                     c01 = (1.0_wp - nb%wz(m)) * (         nb%wu(m))
                     c10 = (         nb%wz(m)) * (1.0_wp - nb%wu(m))
@@ -883,19 +893,20 @@ contains
 
     !> AGN dust emission (apply_agn_dust_emission): fagn L_bol times the agn_tau template,
     !> attenuated by the model's diffuse dust; after the IGM transmission, as there.
-    subroutine add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, total)
+    subroutine add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, ita(:)
         logical, intent(in)              :: agn_on(:)
         real(WP), intent(in)             :: wta(:), lsum(:)
+        real(KP), intent(in)             :: tdiff(:,:)   ! the diffuse transmission (attenuate_batch)
         real(KP), intent(inout)          :: total(:,:)
 
         integer  :: m, i
-        real(WP) :: lagn, tmpl, curve, lb
+        real(WP) :: lagn, tmpl, lb
 
-        !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, total) &
-        !$acc private(lagn, tmpl, curve, lb)
+        !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, tdiff, total) &
+        !$acc private(lagn, tmpl, lb)
         do m = 1, n_mod
             do i = 1, nspec
                 if (agn_on(m)) then
@@ -908,12 +919,9 @@ contains
                     lagn = (10.0_wp**lb) * psets(m)%fagn
                     tmpl = (1.0_wp - wta(m)) * ctx%state%agndust_spec(i, ita(m)) + &
                            wta(m) * ctx%state%agndust_spec(i, ita(m) + 1)
-                    curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, psets(m), ctx)
-                    if (ctx%dust_type_val == 3) then
-                        tmpl = tmpl * exp(-curve)
-                    else
-                        tmpl = tmpl * exp(-psets(m)%dust2 * curve)
-                    end if
+                    ! exp(-dust2 curve) (exp(-curve) for dust_type 3): the transmission of attenuate_batch,
+                    ! kept at KP as fsps_dust keeps it
+                    tmpl = tmpl * real(tdiff(i, m), WP)
                     total(i, m) = total(i, m) + lagn * tmpl
                 end if
             end do
@@ -1038,52 +1046,68 @@ contains
             end do
         end do
 #else
-        ! Each age is young or old for a given model, so one pass with one product per age; each
-        ! thread does 4 models of one pixel, reusing every basis value it loads. Same sums, in the
-        ! same order, as the two separate products.
-        integer, parameter :: MT = 4
-        integer  :: mq, i, k, m1, m2, m3, m4
-        real(KP) :: bk, y1, y2, y3, y4, o1, o2, o3, o4
+        ! Register tile: each thread does PT pixels (strided by npt, so each load is coalesced
+        ! across the threads) x MT models, PT + 2 MT loads per PT * MT multiply-adds.
+        ! Hardware note: MT = 8, PT = 4 were measured on the A100 (nvfortran 25.1, FP32: 64
+        ! accumulators per thread, no spills); retune on other GPUs, where registers per thread
+        ! and the load / FMA balance differ. Each age is
+        ! young or old for a given model: one running sum per (pixel, model), stored as the young
+        ! sum at the model's last young age (it_tesc) and restarted for the old ages. Same sums,
+        ! in the same order, as two separate products.
+        integer, parameter :: MT = 8, PT = 4
+        integer  :: mq, ip, npt, i, k, l, p, mm(MT), it(MT), ii(PT)
+        real(KP) :: bk(PT), wk(MT), acc(PT, MT), yy(PT, MT)
 
+        npt = (nspec + PT - 1) / PT
         !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, yo) &
-        !$acc private(k, bk, m1, m2, m3, m4, y1, y2, y3, y4, o1, o2, o3, o4)
+        !$acc private(mm, it, ii, bk, wk, acc, yy, k, l, p, i)
         do mq = 1, (n_mod + MT - 1) / MT
-            do i = 1, nspec
-                ! Models of this thread (clamped at the end; duplicates are written twice, same value)
-                m1 = min((mq - 1) * MT + 1, n_mod)
-                m2 = min((mq - 1) * MT + 2, n_mod)
-                m3 = min((mq - 1) * MT + 3, n_mod)
-                m4 = min((mq - 1) * MT + 4, n_mod)
-                y1 = 0.0_KP; y2 = 0.0_KP; y3 = 0.0_KP; y4 = 0.0_KP
-                o1 = 0.0_KP; o2 = 0.0_KP; o3 = 0.0_KP; o4 = 0.0_KP
+            do ip = 1, npt
+                !$acc loop seq
+                do l = 1, MT
+                    ! Models of this thread (clamped at the end; duplicates are written twice, same value)
+                    mm(l) = min((mq - 1) * MT + l, n_mod)
+                    it(l) = it_tesc(mm(l))
+                end do
+                !$acc loop seq
+                do p = 1, PT
+                    ii(p) = min(ip + (p - 1) * npt, nspec)
+                end do
+                acc = 0.0_KP
+                yy = 0.0_KP
                 !$acc loop seq
                 do k = 1, nt
-                    bk = basis(i, k)
-                    if (k <= it_tesc(m1)) then
-                        y1 = y1 + w2(k, m1) * bk
-                    else
-                        o1 = o1 + w2(k, n_mod + m1) * bk
-                    end if
-                    if (k <= it_tesc(m2)) then
-                        y2 = y2 + w2(k, m2) * bk
-                    else
-                        o2 = o2 + w2(k, n_mod + m2) * bk
-                    end if
-                    if (k <= it_tesc(m3)) then
-                        y3 = y3 + w2(k, m3) * bk
-                    else
-                        o3 = o3 + w2(k, n_mod + m3) * bk
-                    end if
-                    if (k <= it_tesc(m4)) then
-                        y4 = y4 + w2(k, m4) * bk
-                    else
-                        o4 = o4 + w2(k, n_mod + m4) * bk
-                    end if
+                    !$acc loop seq
+                    do p = 1, PT
+                        bk(p) = basis(ii(p), k)
+                    end do
+                    !$acc loop seq
+                    do l = 1, MT
+                        wk(l) = w2(k, mm(l)) + w2(k, n_mod + mm(l))   ! one of the two is zero
+                    end do
+                    !$acc loop seq
+                    do l = 1, MT
+                        !$acc loop seq
+                        do p = 1, PT
+                            acc(p, l) = acc(p, l) + wk(l) * bk(p)
+                        end do
+                        if (k == it(l)) then
+                            !$acc loop seq
+                            do p = 1, PT
+                                yy(p, l) = acc(p, l)
+                                acc(p, l) = 0.0_KP
+                            end do
+                        end if
+                    end do
                 end do
-                yo(i, m1) = y1; yo(i, n_mod + m1) = o1
-                yo(i, m2) = y2; yo(i, n_mod + m2) = o2
-                yo(i, m3) = y3; yo(i, n_mod + m3) = o3
-                yo(i, m4) = y4; yo(i, n_mod + m4) = o4
+                !$acc loop seq
+                do l = 1, MT
+                    !$acc loop seq
+                    do p = 1, PT
+                        yo(ii(p), mm(l)) = yy(p, l)
+                        yo(ii(p), n_mod + mm(l)) = acc(p, l)
+                    end do
+                end do
             end do
         end do
 #endif
@@ -1092,14 +1116,15 @@ contains
     !> Attenuation and absorbed light per (pixel, model). For models with dust emission the age
     !> sums are then replaced by what the emission stages need: yo(:, m) = diffuse transmission
     !> (stored at KP, as fsps_dust stores it), yo(:, N + m) = Draine & Li template.
-    subroutine attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
+    subroutine attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
         real(WP), intent(in)             :: wq(:), wu(:), gam(:)
-        logical, intent(in)              :: emis(:)
+        logical, intent(in)              :: emis(:), agn_on(:)
         real(KP), intent(inout)          :: yo(:,:)   ! in: young (1:N), old (N+1:2N)
         real(KP), intent(out)            :: total(:,:), absorbed(:,:)
+        real(KP), intent(inout)          :: tdiff(:,:)   ! diffuse transmission of AGN models
 
         integer  :: m, i
         real(KP) :: young, old
@@ -1107,6 +1132,7 @@ contains
         real(WP) :: one_m_tb, one_m_to, one_m_td, a_young, spec_sum
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, iq, iu, wq, wu, gam, yo, emis, total, absorbed) &
+        !$acc present(agn_on, tdiff) &
         !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
         !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
         do m = 1, n_mod
@@ -1117,6 +1143,7 @@ contains
                 frac_obrun = psets(m)%frac_obrun
                 frac_nodust = psets(m)%frac_nodust
                 call diffuse_transmission(ctx, psets(m), i, curve, tau_d, trans_d)
+                if (agn_on(m)) tdiff(i, m) = real(trans_d, KP)
                 if (psets(m)%dust1 <= SAFE_FLOOR .or. 1.0_wp - frac_obrun <= SAFE_FLOOR) then
                     tau_b = 0.0_wp
                     trans_birth = 1.0_wp

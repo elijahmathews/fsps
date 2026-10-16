@@ -14,6 +14,12 @@ entries below. The A100 session (2026-10-16) is first; the P100 session's status
    order and keyword names. That code cannot compile with the flag on. Left unchanged; the
    batched per-model metallicity follows the routine's simple Z interpolation (linear in the
    spectra, mass and log L_bol between the two bracketing metallicities).
+2. The request for the fitting-pipeline batch API mentions "the parameter list in this message",
+   but no list arrived. The C-API batch entry point exposes the per-model parameters the batch
+   already varies (SFH, dust, dust emission, nebular, AGN, metallicity, redshift); please send
+   the list if it should differ.
+3. Order of the late requests: the fitting-pipeline features (weight matrix, per-model zred,
+   C-API arrays) were done before the TF32 / FP64 tensor-core experiments (original item 3).
 
 ## Status (A100 session, 2026-10-16)
 
@@ -117,12 +123,19 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   OpenACC, A100): 8.9 us per model (8.6 with per-model metallicity); N = 100: 29 us; N = 1:
   1.7 ms; one `compute_csp_scenario` call 2.4 ms.
 
+- FP32 kernels (branch `gpu/a100-fp32-kernels`, stacked), full configuration with smoothing,
+  FP32 OpenACC, N = 10000: magnitudes assembled on the device (`magnitudes_from_fluxes`; the
+  host loop was ~20 ms per call); age sums register-tiled (4 pixels x 8 models per thread, one
+  running sum per (pixel, model) restarted at it_tesc: same order, identical results), 10 -> 4 ms;
+  the AGN kernel reuses the diffuse transmission of the attenuation pass, 4.7 -> 0.6 ms.
+  8.9 -> 7.1 us per model; GPU kernels 57 ms per call of ~71. Tests 96/96, suites 32/32.
+
 **In progress / queue** (user-added items first, in order)
-- FP32 path: magnitudes assembled on the device (the host loop was ~20 ms per call at
-  N = 10000), register-tiled age sums, then attenuation / band fluxes / AGN; per-call host
-  overhead (1.7 ms at N = 1); spectra copy-back (pageable D2H at ~2.4 GB/s).
+- Batch for real fitting pipelines: precomputed SSP-weight matrix (ages x N) instead of SFH
+  parameters; per-model zred (resampling to the fixed observed-frame grid, per-model IGM, shared
+  filters); a C-API entry point taking one array per parameter.
 - Then TF32 / FP64 tensor-core experiments (cuBLAS math mode switch, `--batch` mode for the case
-  matrix to measure the net error) and the write-up.
+  matrix to measure the net error), final benchmarks of every build, the write-up.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with

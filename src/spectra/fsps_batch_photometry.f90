@@ -56,7 +56,7 @@ contains
 
         integer  :: nspec, nbands, b, m
         integer, allocatable  :: do_band(:)
-        real(WP), allocatable :: fband(:,:)
+        real(WP), allocatable :: fband(:,:), mags_l(:,:)
         real(KP), allocatable :: fobs(:,:)
         real(WP) :: flux
         logical  :: done
@@ -69,7 +69,7 @@ contains
         nbands = ctx%state%nbands
         call prepare_batch_grid(ctx, zred, igm_factor)
 
-        allocate(do_band(nbands), fband(nbands, n_col))
+        allocate(do_band(nbands), fband(nbands, n_col), mags_l(nbands, n_col))
         do_band = 1
         if (present(mag_compute)) then
             b = min(nbands, size(mag_compute))
@@ -85,18 +85,20 @@ contains
         if (n_col >= GEMM_MIN_COLS) then
             npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
             allocate(fobs(npad, n_col))
-            !$acc data present(spec) create(fobs) copyout(fband)
+            !$acc data present(spec) copyin(do_band) create(fobs, fband) copyout(mags_l)
             call observed_frame(n_col, nspec, npad, g%i_lo, g%t_obs, g%wl, spec, fobs)
             call band_fluxes_gemm(n_col, npad, nbands, g%cmat, fobs, fband)
+            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
             !$acc end data
             done = .true.
         end if
 #endif
         if (.not. done) then
             allocate(fobs(n_col, nspec))
-            !$acc data present(spec) copyin(do_band) create(fobs) copyout(fband)
+            !$acc data present(spec) copyin(do_band) create(fobs, fband) copyout(mags_l)
             call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
             call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
+            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
             !$acc end data
         end if
         end associate
@@ -105,25 +107,48 @@ contains
         ! not moved there by fsps_context_move_to_device would leave them behind, so drop them now
         if (.not. ctx%on_device) call batch_grid_release(ctx%state%batch)
 
-        do m = 1, n_col
-            mags(:, m) = ieee_value(1.0_wp, ieee_quiet_nan)
-            do b = 1, nbands
-                if (do_band(b) == 0) cycle
-                flux = fband(b, m)
-                mags(b, m) = mag_from_flux(flux) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + &
-                             ctx%state%batch%dist_term
-            end do
-            if (ctx%compute_vega_mags_val == 1) then
-                do b = 2, nbands
-                    if (mags(IDX_V_BAND, m) == mags(IDX_V_BAND, m)) then
-                        mags(b, m) = mags(b, m) - ctx%state%magvega(b) + ctx%state%magvega(IDX_V_BAND)
-                    else
-                        mags(b, m) = ieee_value(1.0_wp, ieee_quiet_nan)
-                    end if
-                end do
-            end if
-        end do
+        mags(1:nbands, 1:n_col) = mags_l
     end subroutine compute_magnitudes_columns
+
+    !> Magnitudes from band fluxes (fband, present), as compute_magnitudes: AB, the distance term,
+    !> NaN for bands not requested, and Vega magnitudes (relative to the V band) if requested.
+    !> On the device (one thread per band and spectrum; the host loop was ~2 us per spectrum).
+    subroutine magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)              :: n_col, nbands, do_band(:)
+        real(WP), intent(in)             :: fband(:,:)
+        real(WP), intent(out)            :: mags_l(:,:)
+
+        integer  :: m, b
+        real(WP) :: qnan, dist, v, vv, vega(nbands)
+        logical  :: vega_on
+
+        qnan = ieee_value(1.0_wp, ieee_quiet_nan)
+        ! A host scalar: the device copy of ctx%state%batch is not refreshed by prepare_batch_grid
+        dist = ctx%state%batch%dist_term
+        vega_on = ctx%compute_vega_mags_val == 1
+        vega = 0.0_wp
+        if (vega_on) vega = ctx%state%magvega(1:nbands)
+
+        !$acc parallel loop gang vector collapse(2) present(fband, do_band, mags_l) copyin(vega) private(v, vv)
+        do m = 1, n_col
+            do b = 1, nbands
+                v = qnan
+                if (do_band(b) /= 0) v = mag_from_flux(fband(b, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist
+                if (vega_on .and. b >= 2) then
+                    vv = qnan
+                    if (do_band(IDX_V_BAND) /= 0) &
+                        vv = mag_from_flux(fband(IDX_V_BAND, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist
+                    if (vv == vv) then
+                        v = v - vega(b) + vega(IDX_V_BAND)
+                    else
+                        v = qnan
+                    end if
+                end if
+                mags_l(b, m) = v
+            end do
+        end do
+    end subroutine magnitudes_from_fluxes
 
     !> Grid-only data for redshift zred (observed-frame map, distance term, band weights and
     !> supports, trapezoid weights, IGM transmission), cached in ctx%state%batch and on the device
