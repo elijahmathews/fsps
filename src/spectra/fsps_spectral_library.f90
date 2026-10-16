@@ -45,7 +45,8 @@ module fsps_spectral_library
     implicit none
     private
 
-    public :: get_stellar_spectrum
+    public :: get_stellar_spectrum, get_stellar_terms
+    public :: SRC_MAIN_LIB, SRC_WMBASIC, SRC_AGB_O, SRC_AGB_C, SRC_PAGB, SRC_WRN, SRC_WRC, SRC_AGB_CAR
 
     ! ------------------------------------------------------------------------
     ! CONSTANTS
@@ -56,6 +57,10 @@ module fsps_spectral_library
     integer, parameter :: SRC_AGB_C    = 3
     integer, parameter :: SRC_WR       = 4
     integer, parameter :: SRC_PAGB     = 5
+    ! Template libraries of get_stellar_terms (WR and C stars split by template set)
+    integer, parameter :: SRC_WRN      = 6
+    integer, parameter :: SRC_WRC      = 7
+    integer, parameter :: SRC_AGB_CAR  = 8
 
     ! Library cuts
     real(WP), parameter :: LOGT_CUT_PAGB = 4.699_wp
@@ -924,5 +929,192 @@ contains
         end if
 
     end subroutine get_main_lib_spectrum
+
+    !> @brief A star's spectrum as a linear combination of library templates.
+    !>
+    !> @details
+    !> Same physics as get_stellar_spectrum, which it must mirror: the spectrum is
+    !> sum(coef(n) * template(i1(n), i2(n))) of library `src`, where the template is
+    !> speclib(:, zmet, i1, i2) (main), wmb_spec(:, zmet, i1, i2) (WMBasic), pagb_spec(:, i1, i2),
+    !> wrn_spec / wrc_spec(:, i1, zmet), agb_spec_car(:, i1), and lambda^2 * agb_spec_o / agb_spec_c(:, i1)
+    !> for the O- and C-rich AGB templates (the lambda^2 factor is applied by the caller).
+    !> Stars whose spectrum is not such a sum (`linear` = .false.: AGB stars with a circumstellar
+    !> dust shell, zero luminosity, or no valid main-library corner) must use get_stellar_spectrum.
+    subroutine get_stellar_terms(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, &
+                                 src, i1, i2, coef, nterm, linear, allow_dust, dusty)
+        type(fsps_context_t), intent(in) :: ctx
+        type(params),         intent(in) :: pset
+        real(WP),             intent(in) :: mact, logt, lbol, logg, phase, ffco, lmdot
+        integer,              intent(out) :: src, nterm
+        integer,              intent(out) :: i1(4), i2(4)
+        real(WP),             intent(out) :: coef(4)
+        logical,              intent(out) :: linear
+        !> With allow_dust, AGB stars with a dust shell also return their template terms and set
+        !> `dusty`; the caller applies the shell (get_agb_dust_terms) and the smoothed IR templates
+        logical, intent(in),  optional :: allow_dust
+        logical, intent(out), optional :: dusty
+
+        integer  :: i_phase, library_source, jlo, klo, nz, nt, ng, k_z, n_grid
+        real(WP) :: logg_calc, gravity_cgs, r2_cm, scale_factor, logt_cut_wmb, t, u
+        real(WP) :: mdot_cgs, r_phot, r_wr, twr
+        logical  :: v1, v2, v3, v4
+
+        src = SRC_MAIN_LIB; nterm = 0; i1 = 1; i2 = 1; coef = 0.0_wp; linear = .false.
+        i_phase = int(phase)
+        if (present(dusty)) dusty = .false.
+        if ((i_phase == 4 .or. i_phase == 5) .and. ctx%add_agb_dust_model_val == 1 .and. &
+            pset%agb_dust > SAFE_FLOOR) then
+            if (.not. present(allow_dust)) return
+            if (.not. allow_dust) return
+            if (present(dusty)) dusty = .true.
+        end if
+        if (lbol <= tiny(0.0_wp)) return
+
+        library_source = SRC_MAIN_LIB
+        if (i_phase == 6 .and. logt >= LOGT_CUT_PAGB) then
+            library_source = SRC_PAGB
+        else if (i_phase == 9 .and. ctx%use_wr_spectra_val == 1) then
+            library_source = SRC_WR
+        else if (i_phase == 5 .and. logt < LOGT_CUT_AGB_COOL) then
+            if (ffco <= 1.0_wp) then
+                library_source = SRC_AGB_O
+            else
+                library_source = SRC_AGB_C
+            end if
+        else
+            logt_cut_wmb = max(ctx%state%wmb_logt(1), ctx%logt_wmb_hot_val)
+            if (i_phase == 0 .and. logt > logt_cut_wmb) library_source = SRC_WMBASIC
+        end if
+
+        select case (library_source)
+        case (SRC_MAIN_LIB, SRC_WMBASIC, SRC_WR)
+            logg_calc = log10(GRAVITY_L_M_T_COEFF * mact / lbol) + (4.0_wp * logt)
+            gravity_cgs = 10.0_wp**logg_calc
+            if (gravity_cgs > tiny(0.0_wp)) then
+                r2_cm = (mact * M_SOL * G_NEWTON) / gravity_cgs
+            else
+                r2_cm = 0.0_wp
+            end if
+        case default
+            r2_cm = 0.0_wp
+            logg_calc = logg
+        end select
+        if (library_source == SRC_MAIN_LIB) then
+            scale_factor = (16.0_wp * PI * PI * r2_cm) / L_SOL
+        else
+            scale_factor = lbol
+        end if
+
+        nz = pset%zmet
+        linear = .true.
+        select case (library_source)
+        case (SRC_PAGB)
+            src = SRC_PAGB
+            if (ctx%state%zlegend(pset%zmet) / ctx%state%zsol > 0.5_wp) then
+                k_z = 2
+            else
+                k_z = 1
+            end if
+            jlo = max(1, min(find_interval(ctx%state%pagb_logt, logt), NDIM_PAGB - 1))
+            t = max(0.0_wp, min((logt - ctx%state%pagb_logt(jlo)) / &
+                                (ctx%state%pagb_logt(jlo+1) - ctx%state%pagb_logt(jlo)), 1.0_wp))
+            nterm = 2; i1(1:2) = [jlo, jlo + 1]; i2(1:2) = k_z
+            coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+        case (SRC_WR)
+            if (ctx%state%isoc_type == 'mist') then
+                mdot_cgs = (10.0_wp**lmdot) * M_SOL / YEAR_TO_SECOND
+                r_phot = sqrt(r2_cm)
+                r_wr   = r_phot + (3.0_wp * KAPPA_ES * abs(mdot_cgs)) / (8.0_wp * PI * V_INF_WR)
+                twr = (10.0_wp**logt) * sqrt(r_phot / r_wr)
+                twr = log10((1.0_wp - MIX_FAC) * (10.0_wp**logt) + MIX_FAC * twr)
+            else
+                twr = logt
+            end if
+            if (ffco < 10.0_wp) then
+                src = SRC_WRN
+                jlo = max(1, min(find_interval(ctx%state%wrn_logt, twr), NDIM_WR - 1))
+                t = max(0.0_wp, min((twr - ctx%state%wrn_logt(jlo)) / &
+                                    (ctx%state%wrn_logt(jlo+1) - ctx%state%wrn_logt(jlo)), 1.0_wp))
+            else
+                src = SRC_WRC
+                jlo = max(1, min(find_interval(ctx%state%wrc_logt, twr), NDIM_WR - 1))
+                t = max(0.0_wp, min((twr - ctx%state%wrc_logt(jlo)) / &
+                                    (ctx%state%wrc_logt(jlo+1) - ctx%state%wrc_logt(jlo)), 1.0_wp))
+            end if
+            nterm = 2; i1(1:2) = [jlo, jlo + 1]; i2(1:2) = nz
+            coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+        case (SRC_AGB_O)
+            src = SRC_AGB_O
+            jlo = max(1, min(find_interval_row_2d(ctx%state%agb_logt_o, nz, N_AGB_O, logt), N_AGB_O - 1))
+            t = max(0.0_wp, min((logt - ctx%state%agb_logt_o(nz, jlo)) / &
+                                (ctx%state%agb_logt_o(nz, jlo+1) - ctx%state%agb_logt_o(nz, jlo)), 1.0_wp))
+            nterm = 2; i1(1:2) = [jlo, jlo + 1]
+            coef(1:2) = [(scale_factor / C_LIGHT) * (1.0_wp - t), (scale_factor / C_LIGHT) * t]
+        case (SRC_AGB_C)
+            if (CSTAR_ARINGER == 1) then
+                src = SRC_AGB_CAR
+                n_grid = N_AGB_CAR
+                jlo = max(1, min(find_interval(ctx%state%agb_logt_car, logt), n_grid - 1))
+                t = max(0.0_wp, min((logt - ctx%state%agb_logt_car(jlo)) / &
+                                    (ctx%state%agb_logt_car(jlo+1) - ctx%state%agb_logt_car(jlo)), 1.0_wp))
+                coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+            else
+                src = SRC_AGB_C
+                n_grid = N_AGB_C
+                jlo = max(1, min(find_interval(ctx%state%agb_logt_c, logt), n_grid - 1))
+                t = max(0.0_wp, min((logt - ctx%state%agb_logt_c(jlo)) / &
+                                    (ctx%state%agb_logt_c(jlo+1) - ctx%state%agb_logt_c(jlo)), 1.0_wp))
+                coef(1:2) = [(scale_factor / C_LIGHT) * (1.0_wp - t), (scale_factor / C_LIGHT) * t]
+            end if
+            nterm = 2; i1(1:2) = [jlo, jlo + 1]
+        case (SRC_WMBASIC)
+            src = SRC_WMBASIC
+            nt = size(ctx%state%wmb_logt); ng = size(ctx%state%wmb_logg)
+            jlo = max(1, min(find_interval(ctx%state%wmb_logt, logt), nt - 1))
+            klo = max(1, min(find_interval(ctx%state%wmb_logg, logg_calc), ng - 1))
+            t = max(0.0_wp, min((logt - ctx%state%wmb_logt(jlo)) / &
+                                (ctx%state%wmb_logt(jlo+1) - ctx%state%wmb_logt(jlo)), 1.0_wp))
+            u = max(0.0_wp, min((logg_calc - ctx%state%wmb_logg(klo)) / &
+                                (ctx%state%wmb_logg(klo+1) - ctx%state%wmb_logg(klo)), 1.0_wp))
+            nterm = 4
+            i1 = [jlo, jlo + 1, jlo + 1, jlo]; i2 = [klo, klo, klo + 1, klo + 1]
+            coef = [scale_factor * (1.0_wp - t) * (1.0_wp - u), scale_factor * t * (1.0_wp - u), &
+                    scale_factor * t * u, scale_factor * (1.0_wp - t) * u]
+        case default
+            src = SRC_MAIN_LIB
+            nt = size(ctx%state%speclib_logt); ng = size(ctx%state%speclib_logg)
+            jlo = max(1, min(find_interval(ctx%state%speclib_logt, logt), nt - 1))
+            klo = max(1, min(find_interval(ctx%state%speclib_logg, logg_calc), ng - 1))
+            t = max(0.0_wp, min((logt - ctx%state%speclib_logt(jlo)) / &
+                                (ctx%state%speclib_logt(jlo+1) - ctx%state%speclib_logt(jlo)), 1.0_wp))
+            u = max(0.0_wp, min((logg_calc - ctx%state%speclib_logg(klo)) / &
+                                (ctx%state%speclib_logg(klo+1) - ctx%state%speclib_logg(klo)), 1.0_wp))
+            ! Corner validity and the legacy snapping order, as in get_main_lib_spectrum
+            v1 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo,   klo)   > SAFE_FLOOR)
+            v2 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo+1, klo)   > SAFE_FLOOR)
+            v3 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo+1, klo+1) > SAFE_FLOOR)
+            v4 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo,   klo+1) > SAFE_FLOOR)
+            i1 = [jlo, jlo + 1, jlo + 1, jlo]; i2 = [klo, klo, klo + 1, klo + 1]
+            if (v1 .and. v2 .and. v3 .and. v4) then
+                nterm = 4
+                coef = [scale_factor * (1.0_wp - t) * (1.0_wp - u), scale_factor * t * (1.0_wp - u), &
+                        scale_factor * t * u, scale_factor * (1.0_wp - t) * u]
+            else if (.not. (v1 .or. v2 .or. v3 .or. v4)) then
+                linear = .false.   ! floor spectrum
+            else
+                nterm = 1
+                if (v3) then
+                    i1(1) = jlo + 1; i2(1) = klo + 1
+                else if (v4) then
+                    i1(1) = jlo; i2(1) = klo + 1
+                else if (v2) then
+                    i1(1) = jlo + 1; i2(1) = klo
+                else
+                    i1(1) = jlo; i2(1) = klo
+                end if
+                coef(1) = scale_factor
+            end if
+        end select
+    end subroutine get_stellar_terms
 
 end module fsps_spectral_library
