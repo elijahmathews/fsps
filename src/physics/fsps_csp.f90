@@ -397,10 +397,17 @@ contains
 
         ! 2. Compute SFH Weights (Gang Parallel over Time)
 #if defined(_OPENACC) && !defined(ACC_MULTICORE)
-        !$acc parallel loop gang present(ctx) async(1)
-        do i_out = 1, n_outputs
-            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
-        end do
+        if (n_outputs == 1) then
+            ! One output: a single device thread would run the whole SFH integral (~0.7 ms on a
+            ! P100); the host does it in ~20 us
+            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(1), nzin, 1, ctx%state%csp_weights)
+            !$acc update device(ctx%state%csp_weights(:, :, 1))
+        else
+            !$acc parallel loop gang present(ctx) async(1)
+            do i_out = 1, n_outputs
+                call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
+            end do
+        end if
 #else
         do i_out = 1, n_outputs
             call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)

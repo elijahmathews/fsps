@@ -338,10 +338,31 @@ contains
 
         !> Models per gang: the threads of a gang share one band, hence one trip count (no
         !> divergence)
-        integer, parameter :: MBLK = 128
+        integer, parameter :: MBLK = 128, SMALL_N = 16
         integer  :: m, j, b, mb, ml
         real(KP) :: s, c, term, tsum
 
+#ifdef _OPENACC
+        if (n_mod < SMALL_N) then
+            ! Few spectra: a gang per (band, spectrum), the pixels reduced across its threads
+            ! (a tree reduction, pairwise like the dust integrals in fsps_dust). Measured on the
+            ! P100: 1 spectrum 0.65 -> 0.03 ms; slower than the kernel below from ~100 spectra
+            !$acc parallel loop gang collapse(2) present(bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband) private(s)
+            do b = 1, nbands
+                do m = 1, n_mod
+                    s = 0.0_KP
+                    if (do_band(b) /= 0) then
+                        !$acc loop vector reduction(+:s)
+                        do j = j_lo(b), j_hi(b)
+                            s = s + wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1))
+                        end do
+                    end if
+                    fband(b, m) = real(s, WP)
+                end do
+            end do
+            return
+        end if
+#endif
         !$acc parallel loop gang collapse(2) vector_length(MBLK) present(bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
         do b = 1, nbands
             do mb = 1, (n_mod + MBLK - 1) / MBLK
