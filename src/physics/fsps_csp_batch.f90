@@ -217,7 +217,7 @@ contains
             end do
         end do
 
-        call age_sums(nspec, nt, 2 * n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, yo)
+        call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
         call attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
         if (any_emis) then
             call dust_emission_reductions(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, wt, &
@@ -409,8 +409,8 @@ contains
     !> Age sums (young and old) and attenuation; absorbed light density for dust emission.
     !> Age sums of all models: yo = basis . w2 (pixels x ages . ages x 2N), plain sums over the ages
     !> at kernel precision as in compute_csp_scenario.
-    subroutine age_sums(nspec, nt, n2, basis, w2, yo)
-        integer, intent(in)              :: nspec, nt, n2
+    subroutine age_sums(nspec, nt, n_mod, basis, w2, it_tesc, yo)
+        integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:)
         real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
         real(KP), intent(out)            :: yo(:,:)
 #ifdef FSPS_CUBLAS
@@ -419,27 +419,61 @@ contains
         call blas_init()
         !$acc host_data use_device(basis, w2, yo)
 #ifdef KERNEL_SINGLE_PRECISION
-        istat = cublasSgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, n2, nt, 1.0_KP, basis, nspec, &
+        istat = cublasSgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, 2 * n_mod, nt, 1.0_KP, basis, nspec, &
                                w2, nt, 0.0_KP, yo, nspec)
 #else
-        istat = cublasDgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, n2, nt, 1.0_KP, basis, nspec, &
+        istat = cublasDgemm_v2(blas, CUBLAS_OP_N, CUBLAS_OP_N, nspec, 2 * n_mod, nt, 1.0_KP, basis, nspec, &
                                w2, nt, 0.0_KP, yo, nspec)
 #endif
         !$acc end host_data
         if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
 #else
-        integer  :: m, i, k
-        real(KP) :: acc
+        ! Each age is young or old for a given model, so one pass with one product per age; each
+        ! thread does 4 models of one pixel, reusing every basis value it loads. Same sums, in the
+        ! same order, as the two separate products.
+        integer, parameter :: MT = 4
+        integer  :: mq, i, k, m1, m2, m3, m4
+        real(KP) :: bk, y1, y2, y3, y4, o1, o2, o3, o4
 
-        !$acc parallel loop gang vector collapse(2) present(basis, w2, yo) private(acc, k)
-        do m = 1, n2
+        !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, yo) &
+        !$acc private(k, bk, m1, m2, m3, m4, y1, y2, y3, y4, o1, o2, o3, o4)
+        do mq = 1, (n_mod + MT - 1) / MT
             do i = 1, nspec
-                acc = 0.0_KP
+                ! Models of this thread (clamped at the end; duplicates are written twice, same value)
+                m1 = min((mq - 1) * MT + 1, n_mod)
+                m2 = min((mq - 1) * MT + 2, n_mod)
+                m3 = min((mq - 1) * MT + 3, n_mod)
+                m4 = min((mq - 1) * MT + 4, n_mod)
+                y1 = 0.0_KP; y2 = 0.0_KP; y3 = 0.0_KP; y4 = 0.0_KP
+                o1 = 0.0_KP; o2 = 0.0_KP; o3 = 0.0_KP; o4 = 0.0_KP
                 !$acc loop seq
                 do k = 1, nt
-                    acc = acc + w2(k, m) * basis(i, k)
+                    bk = basis(i, k)
+                    if (k <= it_tesc(m1)) then
+                        y1 = y1 + w2(k, m1) * bk
+                    else
+                        o1 = o1 + w2(k, n_mod + m1) * bk
+                    end if
+                    if (k <= it_tesc(m2)) then
+                        y2 = y2 + w2(k, m2) * bk
+                    else
+                        o2 = o2 + w2(k, n_mod + m2) * bk
+                    end if
+                    if (k <= it_tesc(m3)) then
+                        y3 = y3 + w2(k, m3) * bk
+                    else
+                        o3 = o3 + w2(k, n_mod + m3) * bk
+                    end if
+                    if (k <= it_tesc(m4)) then
+                        y4 = y4 + w2(k, m4) * bk
+                    else
+                        o4 = o4 + w2(k, n_mod + m4) * bk
+                    end if
                 end do
-                yo(i, m) = acc
+                yo(i, m1) = y1; yo(i, n_mod + m1) = o1
+                yo(i, m2) = y2; yo(i, n_mod + m2) = o2
+                yo(i, m3) = y3; yo(i, n_mod + m3) = o3
+                yo(i, m4) = y4; yo(i, n_mod + m4) = o4
             end do
         end do
 #endif
