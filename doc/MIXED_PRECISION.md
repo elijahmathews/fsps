@@ -126,6 +126,10 @@ default stays FP64 there.
 - **Finite differences.** FP32 output carries ~1e-7 relative noise. Fitters that estimate
   gradients by finite differences with small steps (e.g. scipy's default ~1.5e-8) need FP64
   output or larger steps. The FP64 build remains the default.
+- **Run-to-run reproducibility.** Parallel (OpenACC, and GPU) reductions sum in an order that
+  depends on scheduling, so repeated calls differ by a few ulps of the kernel precision: ~1e-16
+  with FP64 kernels, ~1e-7 with FP32. Bitwise-reproducible FP32 output would need fixed-order
+  (e.g. blocked, then sequential) reductions.
 - **Coverage.** The evidence is the 36 matrix cases and 23 stress cases above; new physics
   must be checked the same way before it runs in an FP32 kernel.
 - **Tests.** In FP32 builds, unit-test tolerances that assumed FP64 use `KP_RTOL`
