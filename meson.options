@@ -2,7 +2,7 @@ option('enable_openmp', type: 'boolean', value: false,
   description: 'Enable OpenMP multi-threading for CPU execution')
 
 option('accel', type: 'combo', choices: ['none', 'multicore', 'gpu', 'omp_gpu'], value: 'none', 
-  description: 'Hardware acceleration target (requires nvfortran): OpenACC multicore or GPU, or (omp_gpu) OpenMP target offload of the template product and the batched CSP kernels only')
+  description: 'Hardware acceleration target (requires nvfortran): OpenACC multicore or GPU, or (omp_gpu) OpenMP target offload of the template product and the whole batched CSP')
 
 option('cpu_baseline', type: 'combo', choices: ['generic', 'native', 'x86-64-v3'], value: 'generic',
   description: 'CPU instruction set optimization level')

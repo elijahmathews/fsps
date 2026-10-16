@@ -37,6 +37,7 @@ contains
     !> reassociate floating point (no -ffast-math); GPU reductions use pairwise trees instead.
     pure subroutine kahan_add(acc, comp, x)
         !$acc routine seq
+        !$omp declare target
         real(KP), intent(inout) :: acc, comp
         real(KP), intent(in) :: x
         real(KP) :: term, tsum

@@ -527,6 +527,7 @@ contains
     !> @return attenuation_val
     pure function compute_attenuation_curve_point(wavelength, idx, dust_type_id, settings, ctx) result(attenuation_val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         integer, intent(in)                :: idx, dust_type_id
         type(params), intent(in)           :: settings
@@ -564,6 +565,7 @@ contains
     subroutine get_agb_dust_terms(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot, &
                                   c_rich_flag, idx_teff, idx_tau, c, active)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in)  :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
         integer,  intent(out) :: c_rich_flag, idx_teff, idx_tau
@@ -625,6 +627,7 @@ contains
     subroutine apply_agb_dust_screen(ctx, weight, spectrum, mass_act, log_t, log_l, &
                                      log_g, c_o_ratio, log_mdot)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
         real(KP), dimension(:), intent(inout) :: spectrum
@@ -674,6 +677,7 @@ contains
     function agb_circumstellar_tau(ctx, weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot) &
             result(tau_1um)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: weight, mass_act, log_t, log_l, log_g, c_o_ratio, log_mdot
         real(WP) :: tau_1um
@@ -865,6 +869,7 @@ contains
     !> Includes the "hack" for smooth transitions used in the original FSPS.
     elemental function get_ccm89_curve_point(wavelength, r_v, uv_bump_strength) result(curve)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: r_v, uv_bump_strength
         real(WP) :: curve
@@ -1006,6 +1011,7 @@ contains
     !> (1.17 poly + 1.78)/0.44, i.e. R_V = 4.0455, which raises A/A_V by 3.4e-4/4.05 everywhere.
     elemental function get_calzetti_curve_point(wavelength) result(curve)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k
@@ -1035,6 +1041,7 @@ contains
     !> Implementation of Kriek & Conroy (2013): Calzetti + UV Bump + Tilt.
     elemental function get_kriek_conroy_curve_point(wavelength, tilt_index) result(curve)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP), intent(in) :: tilt_index
         real(WP) :: curve
@@ -1065,6 +1072,7 @@ contains
 !> Implementation of Reddy et al. (2015) MOSDEF curve.
     elemental function get_reddy_curve_point(wavelength) result(curve)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: curve
         real(WP) :: wavenumber, extinction_k, wavenumber_clamped
@@ -1099,6 +1107,7 @@ contains
     !> Used frequently for dust curve parameterizations (CCM89, Calzetti, etc.).
     elemental function get_wavenumber_point(wavelength) result(wavenumber)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength
         real(WP) :: wavenumber
         
@@ -1110,6 +1119,7 @@ contains
     !> See Villaume et al. (2015).
     pure function compute_circumstellar_optical_depth(ctx, c_rich_flag, m_act, log_l, log_g, log_mdot_iso) result(tau)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: c_rich_flag
         real(WP), intent(in) :: m_act, log_l, log_g, log_mdot_iso
@@ -1192,6 +1202,7 @@ contains
     !> 1 - exp(-x) given t = exp(-x), without cancellation for small x (Fortran has no expm1).
     elemental function one_minus_trans(x, t) result(y)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: x, t
         real(WP) :: y
         if (abs(x) < 1.0e-3_wp) then

@@ -618,7 +618,7 @@ contains
         real(WP), allocatable :: spec(:, :, :), mass(:, :), lbol(:, :)
         integer :: nz, z, zmet
 
-#ifdef _OPENACC
+#if defined(_OPENACC) || defined(OMP_TARGET)
         if (.not. ctx%on_device) call fsps_context_move_to_device(ctx)
 #endif
         nz = merge(ctx%state%nz, 1, zmode)

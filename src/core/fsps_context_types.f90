@@ -302,6 +302,17 @@ contains
         !$acc   ctx%smooth_velocity_val, ctx%smooth_lsf_val, ctx%smoothspec_fast_val, &
         !$acc   ctx%redshift_colors_val, ctx%compute_light_ages_val, ctx%use_isoc_mdot_val, &
         !$acc   ctx%setup_nebular_gaussians_val)
+        !$omp target update to(ctx%fast_mode, ctx%om0_val, ctx%ol0_val, ctx%H0_val, ctx%tiny_logt_val, &
+        !$omp   ctx%imf_upper_limit_val, ctx%imf_lower_limit_val, ctx%logt_wmb_hot_val, &
+        !$omp   ctx%nebular_smooth_init_val, ctx%imf_type_val, ctx%tpagb_norm_type_val, ctx%pzcon_val, &
+        !$omp   ctx%interpolation_type_val, ctx%add_agb_dust_model_val, ctx%dust_type_val, &
+        !$omp   ctx%add_dust_emission_val, ctx%compute_vega_mags_val, ctx%vactoair_flag_val, &
+        !$omp   ctx%add_agn_dust_val, ctx%use_wr_spectra_val, ctx%add_neb_emission_val, &
+        !$omp   ctx%add_neb_continuum_val, ctx%cloudy_dust_val, ctx%add_igm_absorption_val, &
+        !$omp   ctx%nebemlineinspec_val, ctx%add_xrb_emission_val, ctx%add_stellar_remnants_val, &
+        !$omp   ctx%smooth_velocity_val, ctx%smooth_lsf_val, ctx%smoothspec_fast_val, &
+        !$omp   ctx%redshift_colors_val, ctx%compute_light_ages_val, ctx%use_isoc_mdot_val, &
+        !$omp   ctx%setup_nebular_gaussians_val)
         ctx%settings_dirty = .false.
     end subroutine fsps_context_sync_device_settings
 
@@ -311,8 +322,10 @@ contains
 
         if (g%ready) then
             !$acc exit data delete(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+            !$omp target exit data map(delete: g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
             if (allocated(g%cmat)) then
                 !$acc exit data delete(g%cmat)
+                !$omp target exit data map(delete: g%cmat)
             end if
         end if
         if (allocated(g%i_lo)) deallocate(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
@@ -320,6 +333,7 @@ contains
         g%ready = .false.
         if (g%sm_ready) then
             !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            !$omp target exit data map(delete: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
         end if
         if (allocated(g%sm_lo)) deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
         g%sm_ready = .false.

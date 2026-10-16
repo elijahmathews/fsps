@@ -338,10 +338,14 @@ contains
     !> short-wavelength cap and the optical_depth_factor).
     pure function igm_tau(wavelength, one_plus_z) result(tau_val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: wavelength, one_plus_z
         real(WP) :: tau_val
         real(WP) :: observed_wavelength, lambda_ratio
         integer  :: i
+        ! Local copies: OpenMP device code (nvfortran 25.1) does not take the module's parameter
+        ! arrays in a declare-target routine
+        real(WP), parameter :: LYW(N_LYMAN_LINES) = LY_WAVE, LYC(N_LYMAN_LINES) = LY_COEFF
 
         observed_wavelength = wavelength * one_plus_z
         lambda_ratio        = observed_wavelength / LYMAN_LIMIT
@@ -349,12 +353,12 @@ contains
 
         ! A. Lyman Series Line Blanketing
         do i = 1, N_LYMAN_LINES
-            if (wavelength < LY_WAVE(i)) then
-                tau_val = tau_val + LY_COEFF(i) * (observed_wavelength / LY_WAVE(i))**3.46_wp
+            if (wavelength < LYW(i)) then
+                tau_val = tau_val + LYC(i) * (observed_wavelength / LYW(i))**3.46_wp
 
                 ! Metal blanketing (only for Ly-alpha)
                 if (i == 1) then
-                    tau_val = tau_val + A_METAL * (observed_wavelength / LY_WAVE(i))**1.68_wp
+                    tau_val = tau_val + A_METAL * (observed_wavelength / LYW(i))**1.68_wp
                 end if
             end if
         end do

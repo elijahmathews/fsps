@@ -1,14 +1,17 @@
 module fsps_csp_batch
-    !> @brief Batched CSP evaluation: many parameter sets against one resident SSP basis.
+    !> @brief Batched CSP evaluation: many parameter sets against resident SSP bases.
     !>
     !> @details
-    !> The fitting workload: N models that share the libraries, the SSP basis (one metallicity)
-    !> and the redshift, and differ in their star formation history and dust parameters. Per
-    !> model the work is the same as `compute_csp_scenario` with `tage > 0`; here each stage
-    !> runs once for the whole batch:
+    !> The fitting workload: N models that share the libraries and the resident SSP bases (one
+    !> metallicity, or all of them for per-model logzsol), and differ in everything else that
+    !> acts in the CSP: star formation history (parameters or a weight matrix), metallicity,
+    !> redshift and IGM, dust, dust emission, nebular and AGN parameters. Per model the work is
+    !> the same as `compute_csp_scenario` with `tage > 0`; here each stage runs once for the
+    !> whole batch:
     !>
-    !> 1. SFH weights per model on the device (FP64), split into young and old ages by each
-    !>    model's `dust_tesc`, cast once to kernel precision: W_young, W_old (ages x N).
+    !> 1. SFH weights per model in FP64 (on the device, one thread per model; on the host below
+    !>    16 models), split into young and old ages by each model's `dust_tesc`, cast once to
+    !>    kernel precision: W_young, W_old (ages x N).
     !> 2. Age sums: young = basis . W_young, old = basis . W_old (matrix products with K = number
     !>    of ages). With the SSP bases of all metallicities resident (fsps_context_update_ssp_basis
     !>    with nz bases), each model's basis is interpolated in log Z at its logzsol between the
@@ -24,15 +27,19 @@ module fsps_csp_batch
     !> 4. Attenuation, the birth-cloud and diffuse dust of `fsps_dust`, and the absorbed light.
     !> 5. Dust emission (energy balance): per-model reductions over pixels, then the
     !>    Draine & Li template, interpolated per model from the resident grid, is added.
-    !> 6. IGM transmission (shared), then AGN dust emission (fagn, agn_tau per model), attenuated
-    !>    by the model's diffuse dust, as apply_agn_dust_emission.
+    !> 6. IGM transmission (per model when the redshifts or igm_factor differ), then AGN dust
+    !>    emission (fagn, agn_tau per model), attenuated by the model's diffuse dust, as
+    !>    apply_agn_dust_emission.
     !> 7. Velocity smoothing (sigma_smooth, shared by the batch; smooth_velocity = 1 with the
     !>    default smoothspec_fast = 1), the sparse operator of apply_smoothing applied on the device.
     !> 8. Magnitudes: per (band, model) filter integrals over each band's support, compensated
-    !>    at FP32 kernel precision; optionally spectral indices.
+    !>    at FP32 kernel precision (each model resampled to the observed frame at its redshift);
+    !>    optionally spectral indices.
     !>
-    !> The two matrix products (age sums, band fluxes) use cuBLAS when built with -Dcublas=true
-    !> (NVIDIA only; a ceiling for the portable OpenACC loops, which are the default).
+    !> Every stage runs on the device with OpenACC (-Daccel=gpu) or OpenMP target offload
+    !> (-Daccel=omp_gpu), both directive sets on the same loops; the context must be on the
+    !> device (fsps_context_move_to_device). The two matrix products (age sums, band fluxes) use
+    !> cuBLAS when built with -Dcublas=true (NVIDIA only; a ceiling for the portable loops).
     !>
     !> Redshift and igm_factor may differ per model: each model's IGM transmission is computed on
     !> the device and its spectrum resampled to the (fixed) observed-frame grid for the shared
@@ -212,7 +219,7 @@ contains
         allocate(zcol(n_mod))
         zcol = psets(1:n_mod)%zred
         host_w = .false.
-#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+#if (defined(_OPENACC) && !defined(ACC_MULTICORE)) || defined(OMP_TARGET)
         host_w = (.not. given_w) .and. n_mod < HOST_SFH_MAX
 #endif
         if (given_w) then
@@ -322,11 +329,18 @@ contains
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+        !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
+        !$omp map(to: zlo, zhi, dz, wext, zcol, nb) &
+        !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
+        !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
+        !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
+        !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
         !$acc zlo, zhi, dz, wext) private(k, w)
+        !$omp target teams distribute parallel do private(k, w)
         do m = 1, n_mod
             if (given_w .or. host_w) then
                 !$acc loop seq
@@ -378,6 +392,7 @@ contains
             ! in apply_dust_attenuation_and_emission
             if (neb .and. ctx%nebemlineinspec_val == 0) then
                 !$acc parallel loop present(s_abs, s_line)
+                !$omp target teams distribute parallel do
                 do m = 1, n_mod
                     s_abs(m) = s_abs(m) + s_line(m)
                 end do
@@ -410,10 +425,13 @@ contains
 
         if (present(spec)) then
             !$acc update self(total)
+            !$omp target update from(total)
             do m = 1, n_mod
                 spec(1:nspec, m) = real(total(:, m), WP)
             end do
         end if
+        !$omp end target data
+        !$omp end target data
         !$acc end data
 
         if (present(emlines)) then
@@ -598,6 +616,7 @@ contains
     !> Draine & Li emission template at one pixel (as interpolate_draine_li_dust_model).
     function dl07_shape(ctx, i, iq, wq, iu, wu, gam) result(shape)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: i, iq, iu
         real(WP), intent(in)             :: wq, wu, gam
@@ -618,6 +637,7 @@ contains
     !> Diffuse-dust transmission of model pset at pixel i (and its optical depth).
     subroutine diffuse_transmission(ctx, pset, i, curve, tau_d, trans)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: pset
         integer, intent(in)              :: i
@@ -659,6 +679,7 @@ contains
         xrb = nb%xrb
         if (nt_neb < 1) then
             !$acc parallel loop collapse(2) present(eml)
+            !$omp target teams distribute parallel do collapse(2)
             do m = 1, n_mod
                 do i = 1, NEMLINE
                     eml(i, m) = 0.0_KP
@@ -671,17 +692,19 @@ contains
         !    process_ionizing_radiation, without the absorbed fraction)
         !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
         !$acc parallel loop gang collapse(2) present(ctx, basis, nb, nb%q0) private(s, c)
+        !$omp target teams distribute collapse(2) private(s, c)
         do iz = 1, nzb
         do t = 1, nt_neb
             s = 0.0_KP
             c = 0.0_KP
             if (whlylim >= 2) then
                 !$acc loop vector reduction(+:s) private(wt, v)
+                !$omp parallel do reduction(+:s) private(wt, v)
                 do i = 1, whlylim - 1
                     wt = real(0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)), KP)
                     v = wt * (basis(i, t, iz) / real(ctx%state%spec_nu(i), KP) + &
                               basis(i+1, t, iz) / real(ctx%state%spec_nu(i+1), KP))
-#ifdef _OPENACC
+#if defined(_OPENACC) || defined(OMP_TARGET)
                     s = s + v
 #else
                     if (KP == WP) then
@@ -702,6 +725,7 @@ contains
         if (whlylim > 0) then
             !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb, nb%fesc, yo, zlo, zhi, dz) &
             !$acc private(y, o, bk, k, dzk)
+            !$omp target teams distribute parallel do collapse(2) private(y, o, bk, k, dzk)
             do m = 1, n_mod
                 do i = 1, whlylim
                     y = 0.0_KP
@@ -739,6 +763,7 @@ contains
         !    the progression's ratio in FP32 with the argument reduced in FP64.
         if (nb%cont) then
             !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co, zlo, zhi, dz)
+            !$omp target teams distribute parallel do collapse(2)
             do m = 1, n_mod
                 do t = 1, nt_neb
                     q = abs(((1.0_wp - dz(m)) * nb%q0(t, zlo(m)) + dz(m) * nb%q0(t, zhi(m))) * nb%fabs(m))
@@ -762,6 +787,8 @@ contains
             !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, &
             !$acc nb%iu, nb%wu, nb%cy, nb%co, yo) &
             !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
+            !$omp target teams distribute parallel do collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
+            !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11)
             do m = 1, n_mod
                 do j = 1, nspec
                     y = 0.0_KP
@@ -838,6 +865,7 @@ contains
         !    10**(log grid interpolated) * Q
         !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, nb%wz, &
         !$acc nb%iu, nb%wu, nb%fabs, nb%lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
+        !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
         do m = 1, n_mod
             do i = 1, NEMLINE
                 y = 0.0_KP
@@ -876,6 +904,7 @@ contains
         ! 5. Line profiles: per pixel, the lines whose profile reaches it
         if (nb%lines_in_spec) then
             !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%lptr, nb%lid, nb%lum, yo) private(s, p, i)
+            !$omp target teams distribute parallel do collapse(2) private(s, p, i)
             do m = 1, 2 * n_mod
                 do j = 1, nspec
                     s = 0.0_KP
@@ -907,6 +936,7 @@ contains
         real(KP) :: ly, lo_
 
         !$acc parallel loop gang present(ctx, psets, nb, nb%lum, nb%llo, eml, s_line) private(si, sa, fob, fnd)
+        !$omp target teams distribute private(si, sa, fob, fnd)
         do m = 1, n_mod
             si = 0.0_wp
             sa = 0.0_wp
@@ -914,6 +944,8 @@ contains
             fnd = psets(m)%frac_nodust
             !$acc loop vector reduction(+:si, sa) private(lo, t_lo, t_hi, curve, tau_d, trans, td, birth, ay, ao, &
             !$acc ly, lo_, pos)
+            !$omp parallel do reduction(+:si, sa) private(lo, t_lo, t_hi, curve, tau_d, trans, td, birth, &
+            !$omp& ay, ao, ly, lo_, pos)
             do i = 1, NEMLINE
                 pos = ctx%state%nebem_line_pos(i)
                 if (1.0_wp - fnd <= SAFE_FLOOR) then
@@ -952,6 +984,7 @@ contains
     !> CLOUDY grid value at (i, age a) bilinear in (Z, U), as interpolate_zu_slice_point.
     pure function zu_point(grid, i, a, iz, iu, wz, wu) result(val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: grid(:,:,:,:)
         integer, intent(in)  :: i, a, iz, iu
         real(WP), intent(in) :: wz, wu
@@ -979,6 +1012,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, tdiff, total) &
         !$acc private(lagn, tmpl, lb)
+        !$omp target teams distribute parallel do collapse(2) private(lagn, tmpl, lb)
         do m = 1, n_mod
             do i = 1, nspec
                 if (agn_on(m)) then
@@ -1029,6 +1063,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, zlo, zhi, dz, yo) &
         !$acc private(k, l, bk, mm, y, o, d)
+        !$omp target teams distribute parallel do collapse(2) private(k, l, bk, mm, y, o, d)
         do mq = 1, (n_mod + MT - 1) / MT
             do i = 1, nspec
                 !$acc loop seq
@@ -1071,6 +1106,7 @@ contains
         real(WP) :: tmax
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, tau)
+        !$omp target teams distribute parallel do collapse(2)
         do m = 1, n_mod
             do j = 1, nspec
                 if (psets(m)%zred > SAFE_FLOOR) tau(j, m) = real(igm_tau(ctx%state%spec_lambda(j), 1.0_wp + psets(m)%zred), KP)
@@ -1078,6 +1114,7 @@ contains
         end do
         ! The short-wavelength cap, one thread per model
         !$acc parallel loop gang vector present(psets, tau) private(tmax, jmax, j)
+        !$omp target teams distribute parallel do private(tmax, jmax, j)
         do m = 1, n_mod
             if (psets(m)%zred > SAFE_FLOOR) then
                 tmax = 0.0_wp
@@ -1098,6 +1135,7 @@ contains
             end if
         end do
         !$acc parallel loop gang vector collapse(2) present(psets, tau, total)
+        !$omp target teams distribute parallel do collapse(2)
         do m = 1, n_mod
             do j = 1, nspec
                 if (psets(m)%zred > SAFE_FLOOR) &
@@ -1114,6 +1152,7 @@ contains
         integer :: m, i
 
         !$acc parallel loop collapse(2) present(total, igm_t)
+        !$omp target teams distribute parallel do collapse(2)
         do m = 1, n_mod
             do i = 1, nspec
                 total(i, m) = total(i, m) * igm_t(i)
@@ -1141,38 +1180,15 @@ contains
 #endif
         !$acc end host_data
         if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
-#elif defined(OMP_TARGET)
-        ! OpenMP target offload (-Daccel=omp_gpu): one thread per (pixel, model), one pass over
-        ! the ages (young or old per model), the arrays mapped for the call
-        integer  :: m, i, k
-        real(KP) :: y, o
-
-        !$omp target teams distribute parallel do collapse(2) private(y, o, k) &
-        !$omp map(to: basis, w2, it_tesc) map(from: yo)
-        do m = 1, n_mod
-            do i = 1, nspec
-                y = 0.0_KP
-                o = 0.0_KP
-                do k = 1, nt
-                    if (k <= it_tesc(m)) then
-                        y = y + w2(k, m) * basis(i, k)
-                    else
-                        o = o + w2(k, n_mod + m) * basis(i, k)
-                    end if
-                end do
-                yo(i, m) = y
-                yo(i, n_mod + m) = o
-            end do
-        end do
 #else
         ! Register tile: each thread does PT pixels (strided by npt, so each load is coalesced
         ! across the threads) x MT models, PT + 2 MT loads per PT * MT multiply-adds.
         ! Hardware note: MT = 8, PT = 4 were measured on the A100 (nvfortran 25.1, FP32: 64
         ! accumulators per thread, no spills); retune on other GPUs, where registers per thread
-        ! and the load / FMA balance differ. Each age is
-        ! young or old for a given model: one running sum per (pixel, model), stored as the young
-        ! sum at the model's last young age (it_tesc) and restarted for the old ages. Same sums,
-        ! in the same order, as two separate products.
+        ! and the load / FMA balance differ. Each age is young or old for a given model: one
+        ! running sum per (pixel, model), stored as the young sum at the model's last young age
+        ! (it_tesc) and restarted for the old ages. Same sums, in the same order, as two separate
+        ! products. OpenACC and OpenMP target (-Daccel=omp_gpu) run the same loop.
         integer, parameter :: MT = 8, PT = 4
         integer  :: mq, ip, npt, i, k, l, p, mm(MT), it(MT), ii(PT)
         real(KP) :: bk(PT), wk(MT), acc(PT, MT), yy(PT, MT)
@@ -1180,6 +1196,7 @@ contains
         npt = (nspec + PT - 1) / PT
         !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, yo) &
         !$acc private(mm, it, ii, bk, wk, acc, yy, k, l, p, i)
+        !$omp target teams distribute parallel do collapse(2) private(mm, it, ii, bk, wk, acc, yy, k, l, p, i)
         do mq = 1, (n_mod + MT - 1) / MT
             do ip = 1, npt
                 !$acc loop seq
@@ -1254,6 +1271,9 @@ contains
         !$acc present(agn_on, tdiff) &
         !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
         !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
+        !$omp target teams distribute parallel do collapse(2) private(young, old, curve, tau_b, tau_o, &
+        !$omp& tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust, one_m_tb, one_m_to, &
+        !$omp& one_m_td, a_young, spec_sum)
         do m = 1, n_mod
             do i = 1, nspec
                 young = yo(i, m)
@@ -1316,13 +1336,15 @@ contains
         real(KP) :: sa, sn, se, ca, cn, ce
 
         !$acc parallel loop gang present(emis, wt, yo, absorbed, s_abs, s_norm, s_esc) private(sa, sn, se, ca, cn, ce)
+        !$omp target teams distribute private(sa, sn, se, ca, cn, ce)
         do m = 1, n_mod
             sa = 0.0_KP; sn = 0.0_KP; se = 0.0_KP
             ca = 0.0_KP; cn = 0.0_KP; ce = 0.0_KP
             if (emis(m)) then
                 !$acc loop vector reduction(+:sa, sn, se)
+                !$omp parallel do reduction(+:sa, sn, se)
                 do i = 1, nspec - 1
-#ifdef _OPENACC
+#if defined(_OPENACC) || defined(OMP_TARGET)
                     sa = sa + wt(i) * (absorbed(i, m) + absorbed(i + 1, m))
                     sn = sn + wt(i) * (yo(i, n_mod + m) + yo(i + 1, n_mod + m))
                     se = se + wt(i) * (yo(i, n_mod + m) * yo(i, m) + yo(i + 1, n_mod + m) * yo(i + 1, m))
@@ -1350,6 +1372,7 @@ contains
         integer  :: m, i
 
         !$acc parallel loop gang vector collapse(2) present(emis, yo, s_abs, s_esc, total)
+        !$omp target teams distribute parallel do collapse(2)
         do m = 1, n_mod
             do i = 1, nspec
                 if (emis(m) .and. s_esc(m) > SAFE_FLOOR) then

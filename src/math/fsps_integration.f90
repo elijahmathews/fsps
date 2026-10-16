@@ -67,6 +67,7 @@ contains
     !> @return    area  The integrated area. Returns NaN on error.
     pure function integrate_trapezoid_array(x, y) result(area)
         !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in), contiguous :: x, y
         real(WP) :: area
 
@@ -102,6 +103,7 @@ contains
     !> @return    res   The integral value. Returns NaN on non-convergence.
     pure function integrate_romberg_simple(func, a, b) result(res)
         !$acc routine seq
+        !$omp declare target
         procedure(func_interface) :: func
         real(WP), intent(in) :: a, b
         real(WP) :: res
@@ -155,6 +157,7 @@ contains
     !> See `integrate_romberg_simple` for algorithm details.
     pure function integrate_romberg_context(ctx, func, a, b) result(res)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
         real(WP), intent(in) :: a, b
@@ -206,6 +209,7 @@ contains
     !> (Simple Function Version)
     pure subroutine refine_trapezoid_simple(func, a, b, s, n)
         !$acc routine seq
+        !$omp declare target
         procedure(func_interface) :: func
         real(WP), intent(in) :: a, b
         real(WP), intent(inout) :: s
@@ -235,6 +239,7 @@ contains
     !> (Context Function Version)
     pure subroutine refine_trapezoid_context(ctx, func, a, b, s, n)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         procedure(func_ctx_interface) :: func
         real(WP), intent(in) :: a, b
@@ -265,6 +270,7 @@ contains
     !> Given arrays xa and ya, returns value y at point x, and error estimate dy.
     pure subroutine polynomial_extrapolation(xa, ya, x, y, dy)
         !$acc routine seq
+        !$omp declare target
         real(WP), dimension(:), intent(in) :: xa, ya
         real(WP), intent(in) :: x
         real(WP), intent(out) :: y, dy
@@ -318,6 +324,7 @@ contains
     !> @brief Helper to generate a Quiet NaN
     pure function get_quiet_nan() result(res)
         !$acc routine seq
+        !$omp declare target
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
         real(WP) :: res
         res = ieee_value(0.0_wp, ieee_quiet_nan)

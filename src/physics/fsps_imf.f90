@@ -131,6 +131,7 @@ contains
     !> Falls back to zero for unsupported types (caller guards usage).
     pure function integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted) result(int_val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m1, m2
         logical, intent(in)  :: mass_weighted
@@ -243,6 +244,7 @@ contains
     !>   mass:   the same about b = a + k sigma^2, times exp(k a + k^2 sigma^2 / 2)
     pure function integrate_lognormal(m1, m2, log_mc, sigma2, mass_weighted) result(val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: m1, m2, log_mc, sigma2
         logical,  intent(in) :: mass_weighted
         real(WP) :: val
@@ -263,6 +265,7 @@ contains
     !> @brief Integral of coeff * m^(-alpha) or coeff * m^(1-alpha) over [lo, hi].
     pure function integrate_powerlaw(lo, hi, alpha, mass_weighted, coeff) result(val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: lo, hi, alpha, coeff
         logical, intent(in)  :: mass_weighted
         real(WP) :: val
@@ -316,6 +319,7 @@ contains
     !> @return    imf_val        The calculated IMF values.
     pure function get_imf_value(ctx, mass, mass_weighted) result(imf_val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: mass
         logical, intent(in) :: mass_weighted
@@ -426,6 +430,7 @@ contains
 
     pure subroutine imf_salpeter(ctx, m, val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val
@@ -436,6 +441,7 @@ contains
 
     pure subroutine imf_chabrier(m, val)
         !$acc routine seq
+        !$omp declare target
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val
         real(WP) :: log_m, log_mc, term
@@ -456,6 +462,7 @@ contains
 
     pure subroutine imf_kroupa(ctx, m, val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val
@@ -476,6 +483,7 @@ contains
 
     pure subroutine imf_vandokkum(ctx, m, val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val
@@ -500,6 +508,7 @@ contains
 
     pure subroutine imf_dave(ctx, m, val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val
@@ -520,6 +529,7 @@ contains
 
     pure subroutine imf_user_defined(ctx, m, val)
         !$acc routine seq
+        !$omp declare target
         type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: m
         real(WP), intent(out) :: val

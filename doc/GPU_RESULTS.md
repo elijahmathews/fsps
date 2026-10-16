@@ -280,10 +280,34 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   in the dev builds only (batch test 146/146 FP64 and FP32); next there: async kernel queue
   (~20 synchronous launches per call), fewer small transfers.
 
+- OpenMP target offload of the whole batch (branch `gpu/a100-omp-batch`, stacked; "Next" item 1
+  of `doc/GPU_PLAN.md`):
+  - Device residency: an OpenMP twin of every OpenACC enter / exit / update directive of the
+    context (`fsps_context_move_to_device`, `remove_from_device`, `update_ssp_basis`, the
+    settings sync, the batch caches), `!$omp declare target` beside each `!$acc routine seq`
+    (63 device routines), and `target data` regions beside the OpenACC data regions. nvfortran
+    attaches the pointer components of `ctx%state` correctly (checked in a small program first).
+  - Kernels: the OpenMP directive on the same loop as the OpenACC one (36 kernels in
+    `fsps_csp_batch.f90`, `fsps_batch_photometry.f90` and the indices); the two separate OpenMP
+    copies of the age sums and band fluxes are gone. Gang + inner vector-reduction loops map to
+    `target teams distribute` + inner `parallel do reduction`.
+  - Fixed on the way: (1) the band-flux kernel as `teams distribute` over (band, block) with an
+    inner `parallel do` ran 8x slower than OpenACC (56 vs 6.7 ms); one combined
+    `target teams distribute parallel do collapse(3)` matches OpenACC. (2) nvfortran 25.1 bug:
+    in OpenMP device code, passing an assumed-shape dummy of the enclosing host routine to a
+    device function gives an illegal address (reproduced in a small program; local arrays and
+    their sections work): the index kernel takes a local copy of the wavelengths. (3) The
+    OpenMP mirrors in `update_ssp_basis` and `prepare_line_gaussians` mapped arrays of contexts
+    never moved to the device, which `remove_from_device` never unmapped: stale present-table
+    entries made `unit_csp` fail intermittently; they are now `if(ctx%on_device)`, and
+    `move_to_device` maps an existing basis. (4) `igm_tau` takes local copies of the Lyman
+    parameter arrays (OpenMP device code rejects the module's).
+  - Speed, N = 10000, FP32, us per model (OpenMP / OpenACC): basic 3.6 / 2.9, full physics with
+    smoothing 7.6 / 7.2 (the host fallback this replaces: 833 and 3788).
+
 **In progress / queue**
-- "Next" item 1 of `doc/GPU_PLAN.md`: OpenMP target offload of the whole batch
-  (`compute_csp_batch`, `fsps_batch_photometry`) with device residency, directives on the
-  OpenACC loops (branch `gpu/a100-omp-batch`).
+- Validation of the OpenMP branch in all builds (suites, batch tests, case matrix, and the case
+  matrix through the OpenMP batch with `--batch`).
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
