@@ -325,12 +325,12 @@ contains
 
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$acc      copyin(zlo, zhi, dz, wext, zcol) &
-        !$acc      copyin(nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
+        !$acc      copyin(nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
         !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
-        !$omp map(to: zlo, zhi, dz, wext, zcol, nb) &
+        !$omp map(to: zlo, zhi, dz, wext, zcol) &
         !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
         !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
         !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
@@ -384,7 +384,7 @@ contains
         end if
         if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
-        if (neb) call attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
+        if (neb) call attenuate_lines(ctx, psets, n_mod, nb%lum, nb%llo, eml, s_line)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         if (any_emis) then
             call dust_emission_reductions(n_mod, nspec, emis, ctx%state%batch%wt, yo, absorbed, s_abs, s_norm, s_esc)
@@ -668,15 +668,43 @@ contains
         real(KP), intent(inout)          :: yo(:,:)
         real(KP), intent(out)            :: eml(:,:)
 
+        ! The kernels take the components as plain arrays: device code never refers to the
+        ! derived type itself, which is mapped only through its components (mapping it whole and
+        ! by component, or implicitly through a dummy, conflicts in LLVM's offload runtime)
+        call nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
+                             nb%nt_neb, nb%whlylim, nb%cont, nb%lines_in_spec, nb%xrb, nb%ia, nb%wa, nb%dwa, &
+                             nb%newr, nb%q0, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%cy, nb%co, nb%lum, &
+                             nb%lptr, nb%lid, yo, eml)
+    end subroutine add_nebular_batch
+
+    !> The kernels of add_nebular_batch, on the components of its nebular_setup_t.
+    subroutine nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
+                               nb_nt_neb, nb_whlylim, nb_cont, nb_lines_in_spec, nb_xrb, nb_ia, nb_wa, nb_dwa, &
+                               nb_newr, nb_q0, nb_iz, nb_wz, nb_iu, nb_wu, nb_fesc, nb_fabs, nb_cy, nb_co, nb_lum, &
+                               nb_lptr, nb_lid, yo, eml)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
+        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        real(WP), intent(in)             :: dz(:)
+        integer, intent(in)              :: nb_nt_neb, nb_whlylim
+        logical, intent(in)              :: nb_cont, nb_lines_in_spec, nb_xrb
+        integer, intent(in), contiguous  :: nb_ia(:), nb_iz(:), nb_iu(:), nb_lptr(:), nb_lid(:)
+        real(WP), intent(in), contiguous :: nb_wa(:), nb_dwa(:), nb_wz(:), nb_wu(:), nb_fesc(:), nb_fabs(:)
+        logical, intent(in), contiguous  :: nb_newr(:)
+        real(WP), intent(inout), contiguous :: nb_q0(:,:), nb_cy(:,:), nb_co(:,:)
+        real(KP), intent(inout), contiguous :: nb_lum(:,:)
+        real(KP), intent(inout)          :: yo(:,:)
+        real(KP), intent(out)            :: eml(:,:)
+
         integer  :: m, i, j, k, t, nt_neb, whlylim, a, a_prev, p, iz, iu
         real(KP) :: s, c, wt, bk, y, o, wk, v, dzk
         real(WP) :: q, lg, ra, rb, dl, f, r, sy, so, c00, c01, c10, c11
         real(WP), parameter :: LN10 = log(10.0_wp)
         logical  :: xrb
 
-        nt_neb = nb%nt_neb
-        whlylim = nb%whlylim
-        xrb = nb%xrb
+        nt_neb = nb_nt_neb
+        whlylim = nb_whlylim
+        xrb = nb_xrb
         if (nt_neb < 1) then
             !$acc parallel loop collapse(2) present(eml)
             !$omp target teams distribute parallel do collapse(2)
@@ -691,7 +719,7 @@ contains
         ! 1. Ionizing photons of each young basis spectrum (the photon-number integral of
         !    process_ionizing_radiation, without the absorbed fraction)
         !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
-        !$acc parallel loop gang collapse(2) present(ctx, basis, nb, nb%q0) private(s, c)
+        !$acc parallel loop gang collapse(2) present(ctx, basis, nb_q0) private(s, c)
         !$omp target teams distribute collapse(2) private(s, c)
         do iz = 1, nzb
         do t = 1, nt_neb
@@ -714,16 +742,16 @@ contains
                     end if
 #endif
                 end do
-                nb%q0(t, iz) = real(s, WP) / H_PLANCK * L_SOL
+                nb_q0(t, iz) = real(s, WP) / H_PLANCK * L_SOL
             else
-                nb%q0(t, iz) = 0.0_wp
+                nb_q0(t, iz) = 0.0_wp
             end if
         end do
         end do
 
         ! 2. EUV rows: the age sums again, the nebular ages' spectra times the escaping fraction
         if (whlylim > 0) then
-            !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb, nb%fesc, yo, zlo, zhi, dz) &
+            !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb_fesc, yo, zlo, zhi, dz) &
             !$acc private(y, o, bk, k, dzk)
             !$omp target teams distribute parallel do collapse(2) private(y, o, bk, k, dzk)
             do m = 1, n_mod
@@ -738,7 +766,7 @@ contains
                         else
                             bk = basis(i, k, 1)
                         end if
-                        if (k <= nt_neb) bk = bk * real(nb%fesc(m), KP)
+                        if (k <= nt_neb) bk = bk * real(nb_fesc(m), KP)
                         if (k <= it_tesc(m)) then
                             y = y + w2(k, m) * bk
                         else
@@ -761,31 +789,31 @@ contains
         !    the A100 (FP64 at half the FP32 rate); on GPUs with slow FP64 (1/32-1/64 of FP32, most
         !    consumer cards) these exponentials weigh much more, and the next step there would be
         !    the progression's ratio in FP32 with the argument reduced in FP64.
-        if (nb%cont) then
-            !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co, zlo, zhi, dz)
+        if (nb_cont) then
+            !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb_q0, nb_fabs, nb_cy, nb_co, zlo, zhi, dz)
             !$omp target teams distribute parallel do collapse(2)
             do m = 1, n_mod
                 do t = 1, nt_neb
-                    q = abs(((1.0_wp - dz(m)) * nb%q0(t, zlo(m)) + dz(m) * nb%q0(t, zhi(m))) * nb%fabs(m))
+                    q = abs(((1.0_wp - dz(m)) * nb_q0(t, zlo(m)) + dz(m) * nb_q0(t, zhi(m))) * nb_fabs(m))
                     if (t <= it_tesc(m)) then
                         wk = w2(t, m)
                     else
                         wk = w2(t, n_mod + m)
                     end if
-                    nb%cy(t, m) = 0.0_wp
-                    nb%co(t, m) = 0.0_wp
+                    nb_cy(t, m) = 0.0_wp
+                    nb_co(t, m) = 0.0_wp
                     if (wk /= 0.0_KP .and. q > SAFE_FLOOR) then
                         if (t <= it_tesc(m)) then
-                            nb%cy(t, m) = real(wk, WP) * q
+                            nb_cy(t, m) = real(wk, WP) * q
                         else
-                            nb%co(t, m) = real(wk, WP) * q
+                            nb_co(t, m) = real(wk, WP) * q
                         end if
                     end if
                 end do
             end do
 
-            !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, &
-            !$acc nb%iu, nb%wu, nb%cy, nb%co, yo) &
+            !$acc parallel loop gang vector collapse(2) present(ctx, nb_ia, nb_wa, nb_dwa, nb_newr, nb_iz, nb_wz, &
+            !$acc nb_iu, nb_wu, nb_cy, nb_co, yo) &
             !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
             !$omp target teams distribute parallel do collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
             !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11)
@@ -798,18 +826,18 @@ contains
                     a_prev = -1
                     ra = 0.0_wp; rb = 0.0_wp
                     dl = 0.0_wp; f = 0.0_wp; r = 1.0_wp
-                    iz = nb%iz(m)
-                    iu = nb%iu(m)
+                    iz = nb_iz(m)
+                    iu = nb_iu(m)
                     ! As interpolate_zu_slice_point, written out: with nvfortran 25.1 (A100) a call
                     ! with the 4-d assumed-shape grid per interval and thread cost more than the
                     ! arithmetic (descriptor set-up in local memory); 53 -> 41 ms at N = 10000
-                    c00 = (1.0_wp - nb%wz(m)) * (1.0_wp - nb%wu(m))
-                    c01 = (1.0_wp - nb%wz(m)) * (         nb%wu(m))
-                    c10 = (         nb%wz(m)) * (1.0_wp - nb%wu(m))
-                    c11 = (         nb%wz(m)) * (         nb%wu(m))
+                    c00 = (1.0_wp - nb_wz(m)) * (1.0_wp - nb_wu(m))
+                    c01 = (1.0_wp - nb_wz(m)) * (         nb_wu(m))
+                    c10 = (         nb_wz(m)) * (1.0_wp - nb_wu(m))
+                    c11 = (         nb_wz(m)) * (         nb_wu(m))
                     !$acc loop seq
                     do t = 1, nt_neb
-                        a = nb%ia(t)
+                        a = nb_ia(t)
                         if (a /= a_prev) then
                             ! Close the previous interval
                             y = y + real(sy, KP)
@@ -845,13 +873,13 @@ contains
                             end if
                             a_prev = a
                             dl = (rb - ra) * LN10
-                            f = exp(ra * LN10 + nb%wa(t) * dl)
+                            f = exp(ra * LN10 + nb_wa(t) * dl)
                         else
-                            if (nb%newr(t)) r = exp(nb%dwa(t) * dl)
+                            if (nb_newr(t)) r = exp(nb_dwa(t) * dl)
                             f = f * r
                         end if
-                        sy = sy + nb%cy(t, m) * f
-                        so = so + nb%co(t, m) * f
+                        sy = sy + nb_cy(t, m) * f
+                        so = so + nb_co(t, m) * f
                     end do
                     y = y + real(sy, KP)
                     o = o + real(so, KP)
@@ -863,8 +891,8 @@ contains
 
         ! 4. Line luminosities per (line, model), young and old: sum over ages of the weight times
         !    10**(log grid interpolated) * Q
-        !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, nb%wz, &
-        !$acc nb%iu, nb%wu, nb%fabs, nb%lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
+        !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb_ia, nb_wa, nb_q0, nb_iz, nb_wz, &
+        !$acc nb_iu, nb_wu, nb_fabs, nb_lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
         !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
         do m = 1, n_mod
             do i = 1, NEMLINE
@@ -878,56 +906,57 @@ contains
                         wk = w2(t, n_mod + m)
                     end if
                     if (wk == 0.0_KP) cycle
-                    q = abs(((1.0_wp - dz(m)) * nb%q0(t, zlo(m)) + dz(m) * nb%q0(t, zhi(m))) * nb%fabs(m))
+                    q = abs(((1.0_wp - dz(m)) * nb_q0(t, zlo(m)) + dz(m) * nb_q0(t, zhi(m))) * nb_fabs(m))
                     if (q <= SAFE_FLOOR) cycle
-                    a = nb%ia(t)
+                    a = nb_ia(t)
                     if (xrb) then
-                        ra = zu_point(ctx%state%xnebem_line, i, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
-                        rb = zu_point(ctx%state%xnebem_line, i, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                        ra = zu_point(ctx%state%xnebem_line, i, a, nb_iz(m), nb_iu(m), nb_wz(m), nb_wu(m))
+                        rb = zu_point(ctx%state%xnebem_line, i, a + 1, nb_iz(m), nb_iu(m), nb_wz(m), nb_wu(m))
                     else
-                        ra = zu_point(ctx%state%nebem_line, i, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
-                        rb = zu_point(ctx%state%nebem_line, i, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                        ra = zu_point(ctx%state%nebem_line, i, a, nb_iz(m), nb_iu(m), nb_wz(m), nb_wu(m))
+                        rb = zu_point(ctx%state%nebem_line, i, a + 1, nb_iz(m), nb_iu(m), nb_wz(m), nb_wu(m))
                     end if
-                    lg = (1.0_wp - nb%wa(t)) * ra + nb%wa(t) * rb
+                    lg = (1.0_wp - nb_wa(t)) * ra + nb_wa(t) * rb
                     if (t <= it_tesc(m)) then
                         y = y + wk * real((10.0_wp**lg) * q, KP)
                     else
                         o = o + wk * real((10.0_wp**lg) * q, KP)
                     end if
                 end do
-                nb%lum(i, m) = y
-                nb%lum(i, n_mod + m) = o
+                nb_lum(i, m) = y
+                nb_lum(i, n_mod + m) = o
                 eml(i, m) = y + o
             end do
         end do
 
         ! 5. Line profiles: per pixel, the lines whose profile reaches it
-        if (nb%lines_in_spec) then
-            !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%lptr, nb%lid, nb%lum, yo) private(s, p, i)
+        if (nb_lines_in_spec) then
+            !$acc parallel loop gang vector collapse(2) present(ctx, nb_lptr, nb_lid, nb_lum, yo) private(s, p, i)
             !$omp target teams distribute parallel do collapse(2) private(s, p, i)
             do m = 1, 2 * n_mod
                 do j = 1, nspec
                     s = 0.0_KP
                     !$acc loop seq
-                    do p = nb%lptr(j), nb%lptr(j + 1) - 1
-                        i = nb%lid(p)
-                        s = s + ctx%state%gaussnebarr(j, i) * nb%lum(i, m)
+                    do p = nb_lptr(j), nb_lptr(j + 1) - 1
+                        i = nb_lid(p)
+                        s = s + ctx%state%gaussnebarr(j, i) * nb_lum(i, m)
                     end do
                     yo(j, m) = yo(j, m) + s
                 end do
             end do
         end if
-    end subroutine add_nebular_batch
+    end subroutine nebular_kernels
 
     !> Line luminosities after dust (apply_dust_attenuation_and_emission): young lines through
     !> the birth cloud, all through the diffuse dust at the line wavelength (the transmission
     !> interpolated between pixels, at KP as there). eml = attenuated luminosities; s_line =
     !> intrinsic - attenuated, per model.
-    subroutine attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
+    subroutine attenuate_lines(ctx, psets, n_mod, nb_lum, nb_llo, eml, s_line)
         type(fsps_context_t), intent(in)  :: ctx
         type(params), intent(in)          :: psets(:)
         integer, intent(in)               :: n_mod
-        type(nebular_setup_t), intent(in) :: nb
+        real(KP), intent(in), contiguous  :: nb_lum(:,:)   ! line luminosities (nebular_setup_t)
+        integer, intent(in), contiguous   :: nb_llo(:)     ! line pixel intervals
         real(KP), intent(out)             :: eml(:,:)
         real(WP), intent(out)             :: s_line(:)
 
@@ -935,7 +964,7 @@ contains
         real(WP) :: si, sa, t_lo, t_hi, curve, tau_d, trans, td, birth, ay, ao, fob, fnd, pos
         real(KP) :: ly, lo_
 
-        !$acc parallel loop gang present(ctx, psets, nb, nb%lum, nb%llo, eml, s_line) private(si, sa, fob, fnd)
+        !$acc parallel loop gang present(ctx, psets, nb_lum, nb_llo, eml, s_line) private(si, sa, fob, fnd)
         !$omp target teams distribute private(si, sa, fob, fnd)
         do m = 1, n_mod
             si = 0.0_wp
@@ -951,7 +980,7 @@ contains
                 if (1.0_wp - fnd <= SAFE_FLOOR) then
                     td = 1.0_wp
                 else
-                    lo = nb%llo(i)
+                    lo = nb_llo(i)
                     call diffuse_transmission(ctx, psets(m), lo, curve, tau_d, trans)
                     t_lo = real(real(trans, KP), WP)
                     call diffuse_transmission(ctx, psets(m), lo + 1, curve, tau_d, trans)
@@ -965,8 +994,8 @@ contains
                 else
                     birth = exp(-psets(m)%dust1 * (pos / V_BAND_ANGSTROMS)**psets(m)%dust1_index)
                 end if
-                ly = nb%lum(i, m)
-                lo_ = nb%lum(i, n_mod + m)
+                ly = nb_lum(i, m)
+                lo_ = nb_lum(i, n_mod + m)
                 ay = ly * (birth * (1.0_wp - fob) + fob)
                 ao = lo_
                 if (1.0_wp - fnd > SAFE_FLOOR) then

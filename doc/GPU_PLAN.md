@@ -143,6 +143,18 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
 - `!$acc routine seq` is required on every routine called inside device code (a missing one
   silently broke the AGB dust screen in CI once).
 - Use `OMP_TARGET_OFFLOAD=MANDATORY` for OpenMP target runs so a silent host fallback fails.
+- Device code must build with toolchains other than nvfortran (LLVM flang + ROCm on AMD, Intel):
+  - no libm calls without a device fallback (AMD's GPU libm has no `lgamma`; `log_gamma` of an
+    integer became a sum of logs);
+  - no array arguments that need a Fortran-runtime copy-in/out (no GPU Fortran runtime on AMD):
+    pass whole arrays or columns to `contiguous` dummies, copy strided rows to local fixed-size
+    arrays first;
+  - consistent maps: a derived-type object is mapped either whole or through its components,
+    never both, and kernels do not refer to a derived type mapped only through components
+    (pass its arrays as dummies; `nebular_kernels`, `smooth_kernel`). LLVM's offload runtime
+    rejects overlapping maps that nvfortran tolerates;
+  - (nvfortran 25.1, OpenMP) do not pass an assumed-shape dummy of the host routine to a device
+    function inside a target region; use a local copy.
 
 ## Recording results
 

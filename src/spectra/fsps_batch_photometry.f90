@@ -333,28 +333,38 @@ contains
         real(KP), intent(inout)             :: spec(:,:)
         integer, intent(in)                 :: n_col
 
+        ! The operator's arrays passed as arrays: device code does not refer to the cache's
+        ! derived type, which is mapped only through its components
+        call smooth_kernel(ctx%state%nspec, n_col, ctx%state%batch%sm_lo, ctx%state%batch%sm_hi, &
+                           ctx%state%batch%sm_off, ctx%state%batch%sm_coef, spec)
+    end subroutine smooth_columns
+
+    subroutine smooth_kernel(nspec, n_col, sm_lo, sm_hi, sm_off, sm_coef, spec)
+        integer, intent(in)                 :: nspec, n_col
+        integer, intent(in), contiguous     :: sm_lo(:), sm_hi(:), sm_off(:)
+        real(WP), intent(in), contiguous    :: sm_coef(:)
+        real(KP), intent(inout)             :: spec(:,:)
+
         real(KP), allocatable :: sm(:,:)
-        integer  :: nspec, m, i, k, lo, off
+        integer  :: m, i, k, lo, off
         real(WP) :: s
 
-        nspec = ctx%state%nspec
         allocate(sm(nspec, n_col))
-        associate(g => ctx%state%batch)
-        !$acc data present(spec, g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef) create(sm)
+        !$acc data present(spec, sm_lo, sm_hi, sm_off, sm_coef) create(sm)
         !$omp target data map(alloc: sm)
         !$acc parallel loop gang vector collapse(2) private(s, lo, off, k)
         !$omp target teams distribute parallel do collapse(2) private(s, lo, off, k)
         do m = 1, n_col
             do i = 1, nspec
-                lo = g%sm_lo(i)
+                lo = sm_lo(i)
                 if (lo == 0) then
                     sm(i, m) = spec(i, m)
                 else
-                    off = g%sm_off(i) - lo
+                    off = sm_off(i) - lo
                     s = 0.0_wp
                     !$acc loop seq
-                    do k = lo, g%sm_hi(i)
-                        s = s + g%sm_coef(off + k) * real(spec(k, m), WP)
+                    do k = lo, sm_hi(i)
+                        s = s + sm_coef(off + k) * real(spec(k, m), WP)
                     end do
                     sm(i, m) = real(s, KP)
                 end if
@@ -369,8 +379,7 @@ contains
         end do
         !$omp end target data
         !$acc end data
-        end associate
-    end subroutine smooth_columns
+    end subroutine smooth_kernel
 
     !> Distance modulus and (1 + z) term of the magnitudes at redshift zred (0 at z = 0:
     !> absolute magnitudes), as prepare_observed_spectrum.

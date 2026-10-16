@@ -112,7 +112,7 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
 `gpu/a100-cublas-threshold` -> `gpu/a100-batch-nebular` -> `gpu/a100-batch-smoothing` ->
 `gpu/a100-batch-neb-fast` -> `gpu/a100-batch-metallicity` -> `gpu/a100-fp32-kernels` ->
 `gpu/a100-batch-pipeline` -> `gpu/a100-tf32` -> `gpu/a100-call-overhead` -> `gpu/a100-omp-batch`
-(tip). Every branch was validated in all ten builds before its commit, except
+-> `gpu/a100-omp-portability` (tip). Every branch was validated in all ten builds before its commit, except
 `gpu/a100-call-overhead` (dev builds only; its successor `gpu/a100-omp-batch` was validated in
 full).
 
@@ -351,8 +351,32 @@ full).
   in the kernels (only the batch data region's clauses), so the cause is still open. Expected
   gain ~0.15 ms per call.
 
+- OpenMP portability fixes from the AMD Radeon 780M test (branch `gpu/a100-omp-portability`,
+  stacked on `gpu/a100-omp-batch`):
+  - Cherry-picked from `test/780m-omp-batch`: f27d2f8 (`-Daccel=omp_gpu` flags for LLVM flang)
+    and ce8f02f (device code without `log_gamma`, without Fortran-runtime copy-in/out in
+    `get_agb_dust_terms`, contiguous index dummies).
+  - The OpenMP mapping conflict LLVM rejected ("explicit extension not allowed", 936 bytes, 16
+    bytes apart): 936 bytes is exactly the batch's `nebular_setup_t` with flang descriptors (13
+    rank-1 and 4 rank-2 allocatable components plus 24 bytes of scalars), which was mapped whole
+    and by component, and referred to through a dummy inside kernels. Now the kernels take its
+    arrays as dummies (`nebular_kernels`, `attenuate_lines`), and it is mapped through its
+    components only, in both programming models. The smoothing kernel likewise takes the
+    operator's arrays instead of reading them through the batch cache (`smooth_kernel`).
+    Kernels now refer only to `ctx` (mapped whole once, components attached at
+    `move_to_device`) and elements of the mapped `psets` array. Not reproducible here (no LLVM
+    offload toolchain on the cluster); to be confirmed on the 780M.
+  - `c_batch` on the OpenMP build here: PASSED in ~20 s. On the 780M its timeout may be the
+    SSP bases of all 12 metallicities it builds (mostly host work in the OpenMP build) rather
+    than a hang; worth timing with a larger test timeout.
+  - Rules for device code from now on: `doc/GPU_PLAN.md`, "Rules learned so far".
+
+  - Validation: suites 33/33 and batch test 146/146 in all ten builds, case matrix PASS; the
+    nvfortran CPU outputs match the pre-cherry-pick ones to `--rtol 1e-14`.
+
 **In progress / queue**
-- Nothing running. Next steps: `doc/GPU_PLAN.md`, "Next: after the A100 session".
+- Nothing running. To confirm on the 780M: the mapping conflict is gone, and `c_batch` with a
+  longer timeout.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
