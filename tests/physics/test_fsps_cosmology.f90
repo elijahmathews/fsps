@@ -1,5 +1,5 @@
 module test_fsps_cosmology_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: C_LIGHT
     use fsps_context_types, only: fsps_context_t
     use fsps_interpolation, only: find_interval
@@ -207,7 +207,7 @@ contains
     ! --------------------------------------------------------------------
     subroutine test_igm_transparent()
         real(WP), dimension(3) :: wavelengths
-        real(WP), dimension(3) :: transmission
+        real(KP), dimension(3) :: transmission
 
         call print_group("IGM: Transparent Universe")
 
@@ -223,7 +223,7 @@ contains
 
     subroutine test_igm_lyman_limit()
         real(WP), dimension(2) :: wavelengths
-        real(WP), dimension(2) :: transmission
+        real(KP), dimension(2) :: transmission
         real(WP) :: tau_blue, tau_red
 
         call print_group("IGM: Lyman Limit Step")
@@ -244,7 +244,8 @@ contains
     subroutine test_igm_madau_cap()
         integer, parameter :: n = 10
         real(WP), dimension(n) :: wavelengths
-        real(WP), dimension(n) :: transmission, tau_raw, tau_out
+        real(KP), dimension(n) :: transmission
+        real(WP), dimension(n) :: tau_raw, tau_out
         real(WP) :: max_tau_out
         integer :: idx_raw_max
 

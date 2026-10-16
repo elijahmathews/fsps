@@ -34,7 +34,7 @@ module fsps_spectral_library
     !> - For Surface Flux grids: Scaled by \f$ 4\pi R^2 \f$.
     !> - For Normalized SEDs: Scaled by \f$ L_{\mathrm{bol}} \f$.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_context_types, only: fsps_context_t
     use fsps_types, only: params
     use fsps_constants, only: SAFE_FLOOR, PI, YEAR_TO_SECOND, C_LIGHT, G_NEWTON, GRAVITY_L_M_T_COEFF, &
@@ -60,6 +60,9 @@ module fsps_spectral_library
     ! Library cuts
     real(WP), parameter :: LOGT_CUT_PAGB = 4.699_wp
     real(WP), parameter :: LOGT_CUT_AGB_COOL = 3.6_wp
+
+    ! Floor for spectra at kernel precision (SAFE_FLOOR in the default build)
+    real(KP), parameter :: KP_FLOOR = tiny(1.0_KP)
 
     ! WR-specific constants
     real(WP), parameter :: V_INF_WR = 3.0e8_wp
@@ -95,7 +98,7 @@ contains
         type(params),         intent(in)    :: pset
         real(WP),             intent(in)    :: mact, logt, lbol, logg
         real(WP),             intent(in)    :: phase, ffco, lmdot
-        real(WP),             intent(out)   :: spec(:)
+        real(KP),             intent(out)   :: spec(:)
 
         ! Local variables
         real(WP) :: r2_cm, logg_calc, scale_factor
@@ -218,7 +221,7 @@ contains
         !    For normal stars, the clamp is deferred to higher-level accumulation
         !    to avoid paying a full-spectrum clamp cost per star.
         if (lbol <= tiny(0.0_wp)) then
-            spec = max(spec, SAFE_FLOOR)
+            spec = max(spec, KP_FLOOR)
         end if
 
     end subroutine get_stellar_spectrum
@@ -393,7 +396,7 @@ contains
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt
         real(WP),             intent(in)  :: scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         ! Local variables
         integer  :: jlo, k_z
@@ -425,8 +428,8 @@ contains
         
         ! 5. Interpolate
         !    pagb_spec is (Lambda, Temp, Metallicity)
-        spec = w1 * ctx%state%pagb_spec(:, jlo,   k_z) + &
-               w2 * ctx%state%pagb_spec(:, jlo+1, k_z)
+        spec = real(w1, KP) * ctx%state%pagb_spec(:, jlo,   k_z) + &
+               real(w2, KP) * ctx%state%pagb_spec(:, jlo+1, k_z)
 
     end subroutine get_pagb_spectrum
 
@@ -457,7 +460,7 @@ contains
         type(fsps_context_t), intent(in)  :: ctx
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, lmdot, r2, ffco, scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         ! Local variables
         integer  :: jlo, nz
@@ -499,8 +502,8 @@ contains
             w1 = (1.0_wp - t) * scale_factor
             w2 = (t)          * scale_factor
 
-            spec = w1 * ctx%state%wrn_spec(:, jlo, nz) + &
-                   w2 * ctx%state%wrn_spec(:, jlo+1, nz)
+            spec = real(w1, KP) * ctx%state%wrn_spec(:, jlo, nz) + &
+                   real(w2, KP) * ctx%state%wrn_spec(:, jlo+1, nz)
         else
             ! --- WC Spectra ---
             jlo = find_interval(ctx%state%wrc_logt, twr)
@@ -513,8 +516,8 @@ contains
             w1 = (1.0_wp - t) * scale_factor
             w2 = (t)          * scale_factor
 
-            spec = w1 * ctx%state%wrc_spec(:, jlo, nz) + &
-                   w2 * ctx%state%wrc_spec(:, jlo+1, nz)
+            spec = real(w1, KP) * ctx%state%wrc_spec(:, jlo, nz) + &
+                   real(w2, KP) * ctx%state%wrc_spec(:, jlo+1, nz)
         end if
 
     end subroutine get_wr_spectrum
@@ -544,7 +547,7 @@ contains
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt
         real(WP),             intent(in)  :: scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         integer  :: jlo, nz
         real(WP) :: t, w1, w2
@@ -565,16 +568,16 @@ contains
         w1 = (1.0_wp - t)
         w2 = t
 
-        spec = (scale_factor / C_LIGHT) * (ctx%state%spec_lambda**2) * &
-               ( w1 * ctx%state%agb_spec_o(:, jlo) + &
-                 w2 * ctx%state%agb_spec_o(:, jlo+1) )
+        spec = real(scale_factor / C_LIGHT, KP) * real(ctx%state%spec_lambda, KP)**2 * &
+               ( real(w1, KP) * ctx%state%agb_spec_o(:, jlo) + &
+                 real(w2, KP) * ctx%state%agb_spec_o(:, jlo+1) )
 
         ! Dusty AGB stars: pre-smoothed templates beyond 3 um (lambda^2/c already included)
         if (present(smooth_ir)) then
             if (smooth_ir .and. associated(ctx%state%agb_spec_o_smooth)) then
                 i0 = size(spec) - size(ctx%state%agb_spec_o_smooth, 1) + 1
-                spec(i0:) = scale_factor * (w1 * ctx%state%agb_spec_o_smooth(:, jlo) + &
-                                            w2 * ctx%state%agb_spec_o_smooth(:, jlo+1))
+                spec(i0:) = real(scale_factor, KP) * (real(w1, KP) * ctx%state%agb_spec_o_smooth(:, jlo) + &
+                                            real(w2, KP) * ctx%state%agb_spec_o_smooth(:, jlo+1))
             end if
         end if
 
@@ -646,7 +649,7 @@ contains
         type(fsps_context_t), intent(in)  :: ctx
         real(WP),             intent(in)  :: logt
         real(WP),             intent(in)  :: scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         ! Local variables
         integer  :: jlo, n_grid
@@ -673,13 +676,13 @@ contains
             w2 = (t)          * scale_factor
 
             ! 4. Interpolate (Units are already F_nu)
-            spec = w1 * ctx%state%agb_spec_car(:, jlo) + &
-                   w2 * ctx%state%agb_spec_car(:, jlo+1)
+            spec = real(w1, KP) * ctx%state%agb_spec_car(:, jlo) + &
+                   real(w2, KP) * ctx%state%agb_spec_car(:, jlo+1)
             if (present(smooth_ir)) then
                 if (smooth_ir .and. associated(ctx%state%agb_spec_car_smooth)) then
                     i0 = size(spec) - size(ctx%state%agb_spec_car_smooth, 1) + 1
-                    spec(i0:) = w1 * ctx%state%agb_spec_car_smooth(:, jlo) + &
-                                w2 * ctx%state%agb_spec_car_smooth(:, jlo+1)
+                    spec(i0:) = real(w1, KP) * ctx%state%agb_spec_car_smooth(:, jlo) + &
+                                real(w2, KP) * ctx%state%agb_spec_car_smooth(:, jlo+1)
                 end if
             end if
 
@@ -702,14 +705,14 @@ contains
 
             ! 4. Interpolate and Convert Units (F_lambda -> F_nu)
             !    F_nu ~ lambda^2 * F_lambda
-            spec = (scale_factor / C_LIGHT) * (ctx%state%spec_lambda**2) * &
-               ( w1 * ctx%state%agb_spec_c(:, jlo) + &
-                 w2 * ctx%state%agb_spec_c(:, jlo+1) )
+            spec = real(scale_factor / C_LIGHT, KP) * real(ctx%state%spec_lambda, KP)**2 * &
+               ( real(w1, KP) * ctx%state%agb_spec_c(:, jlo) + &
+                 real(w2, KP) * ctx%state%agb_spec_c(:, jlo+1) )
             if (present(smooth_ir)) then
                 if (smooth_ir .and. associated(ctx%state%agb_spec_c_smooth)) then
                     i0 = size(spec) - size(ctx%state%agb_spec_c_smooth, 1) + 1
-                    spec(i0:) = scale_factor * (w1 * ctx%state%agb_spec_c_smooth(:, jlo) + &
-                                                w2 * ctx%state%agb_spec_c_smooth(:, jlo+1))
+                    spec(i0:) = real(scale_factor, KP) * (real(w1, KP) * ctx%state%agb_spec_c_smooth(:, jlo) + &
+                                                real(w2, KP) * ctx%state%agb_spec_c_smooth(:, jlo+1))
                 end if
             end if
 
@@ -736,7 +739,7 @@ contains
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, logg
         real(WP),             intent(in)  :: scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         ! Local variables
         integer  :: jlo, klo   ! Grid indices
@@ -778,10 +781,10 @@ contains
 
         ! 6. Vectorized Interpolation
         !    wmb_spec is usually rank 4: (lambda, Z, logT, logg)
-        spec = w1 * ctx%state%wmb_spec(:, nz, jlo,   klo)   + &
-               w2 * ctx%state%wmb_spec(:, nz, jlo+1, klo)   + &
-               w3 * ctx%state%wmb_spec(:, nz, jlo+1, klo+1) + &
-               w4 * ctx%state%wmb_spec(:, nz, jlo,   klo+1)
+        spec = real(w1, KP) * ctx%state%wmb_spec(:, nz, jlo,   klo)   + &
+               real(w2, KP) * ctx%state%wmb_spec(:, nz, jlo+1, klo)   + &
+               real(w3, KP) * ctx%state%wmb_spec(:, nz, jlo+1, klo+1) + &
+               real(w4, KP) * ctx%state%wmb_spec(:, nz, jlo,   klo+1)
 
     end subroutine get_wmbasic_spectrum
 
@@ -809,7 +812,7 @@ contains
         type(params),         intent(in)  :: pset
         real(WP),             intent(in)  :: logt, logg
         real(WP),             intent(in)  :: scale_factor
-        real(WP),             intent(out) :: spec(:)
+        real(KP),             intent(out) :: spec(:)
 
         ! Local variables
         integer  :: jlo, klo   ! Grid indices for logT, logg
@@ -875,14 +878,14 @@ contains
 
             ! Vectorized accumulation
             ! Note: Accessing speclib is contiguous in the first dimension (wavelength).
-            spec = w1 * ctx%state%speclib(:, nz, jlo,   klo)   + &
-                   w2 * ctx%state%speclib(:, nz, jlo+1, klo)   + &
-                   w3 * ctx%state%speclib(:, nz, jlo+1, klo+1) + &
-                   w4 * ctx%state%speclib(:, nz, jlo,   klo+1)
+            spec = real(w1, KP) * ctx%state%speclib(:, nz, jlo,   klo)   + &
+                   real(w2, KP) * ctx%state%speclib(:, nz, jlo+1, klo)   + &
+                   real(w3, KP) * ctx%state%speclib(:, nz, jlo+1, klo+1) + &
+                   real(w4, KP) * ctx%state%speclib(:, nz, jlo,   klo+1)
 
         else if ((.not. v1) .and. (.not. v2) .and. (.not. v3) .and. (.not. v4)) then
             ! --- Failure Case: All corners invalid ---
-            spec = SAFE_FLOOR
+            spec = KP_FLOOR
 
         else
             ! --- Edge Case: Partial Overlap ---
@@ -893,16 +896,16 @@ contains
             ! (it decides the spectrum of e.g. the cool, dusty E-AGB stars at log t ~ 7.8).
             c = 0.0_wp
             if (v3) then
-                spec = ctx%state%speclib(:, nz, jlo+1, klo+1) * scale_factor
+                spec = ctx%state%speclib(:, nz, jlo+1, klo+1) * real(scale_factor, KP)
                 c(3) = scale_factor
             else if (v4) then
-                spec = ctx%state%speclib(:, nz, jlo, klo+1) * scale_factor
+                spec = ctx%state%speclib(:, nz, jlo, klo+1) * real(scale_factor, KP)
                 c(4) = scale_factor
             else if (v2) then
-                spec = ctx%state%speclib(:, nz, jlo+1, klo) * scale_factor
+                spec = ctx%state%speclib(:, nz, jlo+1, klo) * real(scale_factor, KP)
                 c(2) = scale_factor
             else
-                spec = ctx%state%speclib(:, nz, jlo, klo) * scale_factor
+                spec = ctx%state%speclib(:, nz, jlo, klo) * real(scale_factor, KP)
                 c(1) = scale_factor
             end if
 
@@ -913,10 +916,10 @@ contains
         if (present(smooth_ir)) then
             if (smooth_ir .and. any(c /= 0.0_wp)) then
                 i0 = size(spec) - size(ctx%state%speclib_agb_smooth, 1) + 1
-                spec(i0:) = c(1) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo)   + &
-                            c(2) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo)   + &
-                            c(3) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo+1) + &
-                            c(4) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo+1)
+                spec(i0:) = real(c(1), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo)   + &
+                            real(c(2), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo)   + &
+                            real(c(3), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo+1) + &
+                            real(c(4), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo+1)
             end if
         end if
 

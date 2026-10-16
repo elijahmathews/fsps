@@ -14,7 +14,7 @@ module fsps_dust
     !> 4. Model specialized dust environments, including circumstellar shells
     !>    around AGB stars and dusty tori surrounding AGN.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP, kahan_add
     use fsps_constants, only: C_LIGHT, NEMLINE, GRAVITY_L_M_T_COEFF, &
                               M_SOL, G_NEWTON, R_SOL, YEAR_TO_SECOND, &
                               SAFE_FLOOR, PI
@@ -227,13 +227,12 @@ contains
         integer, intent(in)                    :: n_outputs
 
         ! Local Variables
-        real(WP) :: lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total
+        real(WP) :: lum_absorbed_total
         real(WP) :: emission_norm_factor, lum_escaped_profile, normalization_factor
         real(WP) :: sum_neb_intrinsic, sum_neb_attenuated
         real(WP) :: intrinsic_flux, att_young, att_old
 
         integer  :: nspec, nem, i, i_out
-        real(WP) :: y1, y2, y1_att, y2_att
         real(WP) :: curve, trans_birth, trans_old, spec_sum, trans_diffuse_neb, neb_birth
         real(WP) :: frac_obrun, one_minus_obrun, frac_nodust, one_minus_nodust
         real(WP) :: dust1, dust1_index, dust2, dust3
@@ -241,6 +240,12 @@ contains
 
         integer  :: search_lower, search_upper, search_mid
         real(WP) :: search_val, search_slope
+        ! Integrals run at kernel precision (KP): plain reductions on the GPU (whose reduction
+        ! trees are pairwise), compensated sums on the CPU. The absorbed luminosity is integrated
+        ! from positive terms, not taken as intrinsic minus attenuated, which cancels when
+        ! little light is absorbed.
+        real(WP) :: one_m_tb, one_m_to, one_m_td, a_young, tau_b, tau_o, tau_d
+        real(KP) :: wt, s_norm, c_norm, s_esc, c_esc, s_abs, c_abs
 
         nspec = ctx%state%nspec
         nem   = size(ctx%state%csp_emlin_young, 1)
@@ -275,40 +280,60 @@ contains
             call interpolate_draine_li_dust_model(ctx, settings, ctx%state%dust_emission_shape)
             !$acc update device(ctx%state%dust_emission_shape) async(1)
 
-            emission_norm_factor = 0.0_wp
-            lum_escaped_profile  = 0.0_wp
-            !$acc parallel loop reduction(+:emission_norm_factor, lum_escaped_profile) &
-            !$acc present(ctx) private(y1, y2, y1_att, y2_att) async(1)
+            s_norm = 0.0_KP; c_norm = 0.0_KP
+            s_esc  = 0.0_KP; c_esc  = 0.0_KP
+            !$acc parallel loop reduction(+:s_norm, s_esc) present(ctx) private(wt) async(1)
             do i = 1, nspec-1
-                y1 = ctx%state%dust_emission_shape(i)
-                y2 = ctx%state%dust_emission_shape(i+1)
-                emission_norm_factor = emission_norm_factor + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
-                                       ctx%state%dust_frequencies(i)) * (y1 + y2)
-
-                y1_att = y1 * ctx%state%dust_transmission_diffuse(i)
-                y2_att = y2 * ctx%state%dust_transmission_diffuse(i+1)
-                lum_escaped_profile = lum_escaped_profile + 0.5_wp * abs(ctx%state%dust_frequencies(i+1) - &
-                                      ctx%state%dust_frequencies(i)) * (y1_att + y2_att)
+                wt = real(0.5_wp * abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)), KP)
+#ifdef _OPENACC
+                s_norm = s_norm + wt * (ctx%state%dust_emission_shape(i) + ctx%state%dust_emission_shape(i+1))
+                s_esc  = s_esc  + wt * (ctx%state%dust_emission_shape(i) * ctx%state%dust_transmission_diffuse(i) + &
+                                        ctx%state%dust_emission_shape(i+1) * ctx%state%dust_transmission_diffuse(i+1))
+#else
+                if (KP == WP) then   ! compile-time constant: plain sum, no call
+                    s_norm = s_norm + wt * (ctx%state%dust_emission_shape(i) + ctx%state%dust_emission_shape(i+1))
+                else
+                    call kahan_add(s_norm, c_norm, wt * (ctx%state%dust_emission_shape(i) + &
+                                                         ctx%state%dust_emission_shape(i+1)))
+                end if
+                if (KP == WP) then   ! compile-time constant: plain sum, no call
+                    s_esc = s_esc + wt * (ctx%state%dust_emission_shape(i) * ctx%state%dust_transmission_diffuse(i) + &
+                                          ctx%state%dust_emission_shape(i+1) * ctx%state%dust_transmission_diffuse(i+1))
+                else
+                    call kahan_add(s_esc, c_esc, wt * (ctx%state%dust_emission_shape(i) * &
+                                                       ctx%state%dust_transmission_diffuse(i) + &
+                                                       ctx%state%dust_emission_shape(i+1) * &
+                                                       ctx%state%dust_transmission_diffuse(i+1)))
+                end if
+#endif
             end do
             !$acc wait(1)
+            emission_norm_factor = real(s_norm, WP)
+            lum_escaped_profile  = real(s_esc, WP)
         end if
 
         ! 2. Apply Attenuation to Stellar Spectra
-        !$acc parallel loop collapse(2) present(ctx) private(i, curve, trans_birth, trans_old, spec_sum) async(1)
+        !$acc parallel loop collapse(2) present(ctx) &
+        !$acc private(i, curve, trans_birth, trans_old, spec_sum, one_m_tb, one_m_to, one_m_td, a_young, &
+        !$acc         tau_b, tau_o, tau_d) async(1)
         do i_out = 1, n_outputs
             do i = 1, nspec
                 curve = compute_attenuation_curve_point(ctx%state%spec_lambda(i), i, ctx%dust_type_val, settings, ctx)
 
                 if (dust1 <= SAFE_FLOOR .or. one_minus_obrun <= SAFE_FLOOR) then
+                    tau_b = 0.0_wp
                     trans_birth = 1.0_wp
                 else
-                    trans_birth = exp(-dust1 * (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**dust1_index)
+                    tau_b = dust1 * (ctx%state%spec_lambda(i) / V_BAND_ANGSTROMS)**dust1_index
+                    trans_birth = exp(-tau_b)
                 end if
 
                 if (abs(dust3) <= SAFE_FLOOR) then
+                    tau_o = 0.0_wp
                     trans_old = 1.0_wp
                 else
-                    trans_old = exp(-dust3 * curve)
+                    tau_o = dust3 * curve
+                    trans_old = exp(-tau_o)
                 end if
 
                 spec_sum = (ctx%state%spec_young(i, i_out) * trans_birth * one_minus_obrun + &
@@ -320,6 +345,28 @@ contains
                 else
                     ctx%state%dust_spec_total_work(i, i_out) = spec_sum * &
                                         (ctx%state%dust_transmission_diffuse(i) * one_minus_nodust + frac_nodust)
+                end if
+
+                ! Absorbed luminosity density, from 1 - T = -expm1(-tau); dust_emission_final
+                ! holds it until the emission replaces it in step 4
+                if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
+                    one_m_tb = one_minus_trans(tau_b, trans_birth)
+                    one_m_to = one_minus_trans(tau_o, trans_old)
+                    if (one_minus_nodust <= SAFE_FLOOR) then
+                        one_m_td = 0.0_wp
+                    else
+                        ! Recomputed in WP: 1 - T from the stored (KP) transmission would cancel
+                        if (dust_type_is3) then
+                            tau_d = curve
+                        else
+                            tau_d = dust2 * curve
+                        end if
+                        one_m_td = one_minus_nodust * one_minus_trans(tau_d, exp(-tau_d))
+                    end if
+                    a_young = trans_birth * one_minus_obrun + frac_obrun
+                    ctx%state%dust_emission_final(i, i_out) = &
+                        ctx%state%spec_young(i, i_out) * real(one_minus_obrun * one_m_tb + a_young * one_m_td, KP) + &
+                        ctx%state%spec_old(i, i_out) * real(one_m_to + trans_old * one_m_td, KP)
                 end if
             end do
         end do
@@ -390,30 +437,33 @@ contains
         ! 4. Add Dust Emission (Energy Balance)
         if (ctx%add_dust_emission_val == 1 .and. (dust1 > SAFE_FLOOR .or. dust2 > SAFE_FLOOR)) then
             !$acc parallel loop gang present(ctx) &
-            !$acc private(lum_bol_intrinsic, lum_bol_attenuated, lum_absorbed_total, normalization_factor) async(1)
+            !$acc private(lum_absorbed_total, normalization_factor, s_abs, c_abs) async(1)
             do i_out = 1, n_outputs
-                lum_bol_intrinsic = 0.0_wp
-                lum_bol_attenuated = 0.0_wp
+                s_abs = 0.0_KP; c_abs = 0.0_KP
 
-                !$acc loop vector reduction(+:lum_bol_intrinsic, lum_bol_attenuated) private(y1, y2)
+                !$acc loop vector reduction(+:s_abs) private(wt)
                 do i = 1, nspec-1
-                    y1 = ctx%state%spec_young(i, i_out) + ctx%state%spec_old(i, i_out)
-                    y2 = ctx%state%spec_young(i+1, i_out) + ctx%state%spec_old(i+1, i_out)
-                    lum_bol_intrinsic = lum_bol_intrinsic + 0.5_wp * &
-                                        abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)) * (y1 + y2)
-
-                    y1 = ctx%state%dust_spec_total_work(i, i_out)
-                    y2 = ctx%state%dust_spec_total_work(i+1, i_out)
-                    lum_bol_attenuated = lum_bol_attenuated + 0.5_wp * &
-                                         abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)) * (y1 + y2)
+                    wt = real(0.5_wp * abs(ctx%state%dust_frequencies(i+1) - ctx%state%dust_frequencies(i)), KP)
+#ifdef _OPENACC
+                    s_abs = s_abs + wt * (ctx%state%dust_emission_final(i, i_out) + &
+                                          ctx%state%dust_emission_final(i+1, i_out))
+#else
+                    if (KP == WP) then   ! compile-time constant: plain sum, no call
+                        s_abs = s_abs + wt * (ctx%state%dust_emission_final(i, i_out) + &
+                                              ctx%state%dust_emission_final(i+1, i_out))
+                    else
+                        call kahan_add(s_abs, c_abs, wt * (ctx%state%dust_emission_final(i, i_out) + &
+                                                           ctx%state%dust_emission_final(i+1, i_out)))
+                    end if
+#endif
                 end do
+                lum_absorbed_total = real(s_abs, WP)
 
+                ! Lines are few: their absorbed part is taken as the difference
                 if (ctx%nebemlineinspec_val == 0) then
-                    lum_bol_intrinsic  = lum_bol_intrinsic  + ctx%state%sfh_w_tmp1(1, i_out)
-                    lum_bol_attenuated = lum_bol_attenuated + ctx%state%sfh_w_tmp1(2, i_out)
+                    lum_absorbed_total = lum_absorbed_total + (ctx%state%sfh_w_tmp1(1, i_out) - &
+                                                               ctx%state%sfh_w_tmp1(2, i_out))
                 end if
-
-                lum_absorbed_total = lum_bol_intrinsic - lum_bol_attenuated
 
                 if (lum_escaped_profile > SAFE_FLOOR) then
                     normalization_factor = lum_absorbed_total / lum_escaped_profile
@@ -532,7 +582,7 @@ contains
         
         type(fsps_context_t), intent(inout)   :: ctx
         real(WP), intent(in)                  :: weight
-        real(WP), dimension(:), intent(inout) :: spectrum
+        real(KP), dimension(:), intent(inout) :: spectrum
         real(WP), intent(in)                  :: mass_act, log_t, log_l, log_g
         real(WP), intent(in)                  :: c_o_ratio, log_mdot
         
@@ -543,7 +593,8 @@ contains
         real(WP) :: tau_1um
         real(WP) :: teff_linear, log_tau
         real(WP) :: w_teff, w_tau ! Interpolation weights
-        real(WP) :: c00, c10, c11, c01, transfer_val
+        real(WP) :: c00, c10, c11, c01
+        real(KP) :: k00, k10, k11, k01, transfer_val   ! per-pixel arithmetic at kernel precision
         integer  :: i
 
         ! 1. Chemistry (C-rich vs O-rich) and circumstellar optical depth at 1 micron
@@ -595,11 +646,15 @@ contains
         c11 = w_teff            * w_tau
         c01 = (1.0_wp - w_teff) * w_tau
 
+        k00 = real(c00, KP)
+        k10 = real(c10, KP)
+        k11 = real(c11, KP)
+        k01 = real(c01, KP)
         do i = 1, size(spectrum)
-            transfer_val = c00 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau)     + &
-                           c10 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau)     + &
-                           c11 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau + 1) + &
-                           c01 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau + 1)
+            transfer_val = k00 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau)     + &
+                           k10 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau)     + &
+                           k11 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff + 1, idx_tau + 1) + &
+                           k01 * ctx%state%flux_dagb(i, c_rich_flag + 1, idx_teff,     idx_tau + 1)
             spectrum(i) = spectrum(i) * transfer_val
         end do
 
@@ -670,7 +725,7 @@ contains
         integer, intent(in)                    :: n_outputs
         real(WP), dimension(:), intent(in)     :: wavelengths
         real(WP), dimension(:), intent(in)     :: log_lbol_stellar
-        real(WP), dimension(:,:), intent(inout)  :: spectrum_inout
+        real(KP), dimension(:,:), intent(inout)  :: spectrum_inout
 
         ! Local variables
         real(WP) :: agn_template_interpolated
@@ -756,7 +811,7 @@ contains
     subroutine interpolate_draine_li_dust_model(ctx, settings, emission_spectrum)
         type(fsps_context_t), intent(in)   :: ctx
         type(params), intent(in)           :: settings
-        real(WP), dimension(:), intent(out) :: emission_spectrum
+        real(KP), dimension(:), intent(out) :: emission_spectrum
         
         integer :: idx_q, idx_u
         real(WP) :: w_q, w_u, gamma_frac
@@ -806,7 +861,7 @@ contains
         emission_spectrum = (1.0_wp - gamma_frac) * spec_u_min + gamma_frac * spec_u_max
         
         ! Safety floor
-        emission_spectrum = max(emission_spectrum, SAFE_FLOOR)
+        emission_spectrum = max(emission_spectrum, tiny(1.0_KP))
 
     end subroutine interpolate_draine_li_dust_model
 
@@ -1137,5 +1192,17 @@ contains
               inner_radius_cm / (4.0_wp * PI) / (velocity_exp * 1.0e5_wp)
 
     end function compute_circumstellar_optical_depth
+
+    !> 1 - exp(-x) given t = exp(-x), without cancellation for small x (Fortran has no expm1).
+    elemental function one_minus_trans(x, t) result(y)
+        !$acc routine seq
+        real(WP), intent(in) :: x, t
+        real(WP) :: y
+        if (abs(x) < 1.0e-3_wp) then
+            y = x * (1.0_wp - x * (0.5_wp - x * (1.0_wp / 6.0_wp - x / 24.0_wp)))
+        else
+            y = 1.0_wp - t
+        end if
+    end function one_minus_trans
 
 end module fsps_dust

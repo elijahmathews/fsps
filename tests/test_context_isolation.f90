@@ -12,7 +12,7 @@ program test_context_isolation
     !>      compute_vega_mags) select a separate entry.
     !> Requires the FSPS data tree (FSPS_DATA_HOME), like the regression tests.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy, fsps_set_param_int, fsps_set_param_float
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
@@ -24,6 +24,8 @@ program test_context_isolation
     use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true, &
                               assert_int_equals
     implicit none
+
+    real(WP), parameter :: SAME_RTOL = max(1.0e-10_wp, 100.0_wp * real(epsilon(1.0_KP), WP))
 
     integer, parameter :: ZMET = 10
     integer :: total_tests = 0
@@ -208,11 +210,13 @@ contains
     end subroutine test_cache_hit_reuses_shared_data
 
     !> Element-wise equality to 1e-10 relative (a cache error gives order-unity differences).
+    !> Parallel (OpenACC) reductions are not bitwise reproducible from run to run: they differ by
+    !> a few ulps of the kernel precision, ~1e-16 in FP64 but ~1e-7 with FP32 kernels.
     logical function same(a, b)
         real(WP), intent(in) :: a(:), b(:)
 
         same = size(a) == size(b)
-        if (same) same = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+        if (same) same = all(abs(a - b) <= SAME_RTOL*max(abs(a), abs(b)))
     end function same
 
     !> same() for a 2-D array, without reshaping (ifx would put the 5 MB temporary on the stack).
@@ -220,7 +224,7 @@ contains
         real(WP), intent(in) :: a(:, :), b(:, :)
 
         same_2d = all(shape(a) == shape(b))
-        if (same_2d) same_2d = all(abs(a - b) <= 1.0e-10_wp*max(abs(a), abs(b)))
+        if (same_2d) same_2d = all(abs(a - b) <= SAME_RTOL*max(abs(a), abs(b)))
     end function same_2d
 
     !> Configures a context for a nebular CSP and runs setup.

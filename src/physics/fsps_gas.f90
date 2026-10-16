@@ -15,7 +15,7 @@ module fsps_gas
     !> (`find_interval`), which create discontinuities. Special care is required
     !> for Automatic Differentiation (AD).
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP, kahan_add
     use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, &
                               H_PLANCK, L_SOL, SAFE_FLOOR, PI
     use fsps_types, only: params
@@ -60,9 +60,9 @@ contains
 
         type(fsps_context_t), intent(inout)       :: ctx
         type(params), intent(in)                  :: pset
-        real(WP), dimension(:,:), intent(in)      :: sspi
-        real(WP), dimension(:,:), intent(inout)   :: sspo
-        real(WP), dimension(:,:), intent(inout), optional :: nebemline
+        real(KP), dimension(:,:), intent(in)      :: sspi
+        real(KP), dimension(:,:), intent(inout)   :: sspo
+        real(KP), dimension(:,:), intent(inout), optional :: nebemline
 
         ! Loop variables
         integer :: t, k, max_neb_time_idx
@@ -242,15 +242,14 @@ contains
     subroutine process_ionizing_radiation(ctx, pset, spec_in, spec_out, t_idx, q_val)
         type(fsps_context_t), intent(in)    :: ctx
         type(params), intent(in)            :: pset
-        real(WP), dimension(:,:), intent(in)  :: spec_in
-        real(WP), dimension(:,:), intent(inout) :: spec_out
+        real(KP), dimension(:,:), intent(in)  :: spec_in
+        real(KP), dimension(:,:), intent(inout) :: spec_out
         integer, intent(in)                 :: t_idx
         real(WP), intent(out)               :: q_val
         
         integer :: whlylim
-        real(WP) :: integral_flux
+        real(KP) :: integral_flux, comp, wt   ! integral at kernel precision
         integer :: i
-        real(WP) :: y1, y2
         real(WP) :: frac_obrun_clamped
         
         whlylim = ctx%state%whlylim
@@ -263,7 +262,7 @@ contains
         if (whlylim > 0) then
             !$acc parallel loop present(ctx, spec_in, spec_out) firstprivate(frac_obrun_clamped, t_idx)
             do i = 1, whlylim
-                spec_out(i, t_idx) = spec_in(i, t_idx) * frac_obrun_clamped
+                spec_out(i, t_idx) = spec_in(i, t_idx) * real(frac_obrun_clamped, KP)
             end do
         end if
 
@@ -271,19 +270,31 @@ contains
         if (whlylim < 2) then
             q_val = 0.0_wp
         else
-            integral_flux = 0.0_wp
-            ! Use specialized loop to avoid array temp (spec_in / spec_nu)
-            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx) private(y1, y2)
+            ! Photon-number integral of L_nu / nu at kernel precision (the h and L_sun scaling,
+            ! ~6e59, stays in WP): a plain reduction on the GPU, compensated on the CPU
+            integral_flux = 0.0_KP
+            comp = 0.0_KP
+            !$acc parallel loop reduction(+:integral_flux) present(ctx, spec_in) firstprivate(t_idx) private(wt)
             do i = 1, whlylim - 1
-                y1 = spec_in(i, t_idx) / ctx%state%spec_nu(i)
-                y2 = spec_in(i+1, t_idx) / ctx%state%spec_nu(i+1)
-                integral_flux = integral_flux + 0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)) * (y1 + y2)
+                wt = real(0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)), KP)
+#ifdef _OPENACC
+                integral_flux = integral_flux + wt * (spec_in(i, t_idx) / real(ctx%state%spec_nu(i), KP) + &
+                                                      spec_in(i+1, t_idx) / real(ctx%state%spec_nu(i+1), KP))
+#else
+                if (KP == WP) then   ! compile-time constant: plain sum, no call
+                    integral_flux = integral_flux + wt * (spec_in(i, t_idx) / real(ctx%state%spec_nu(i), KP) + &
+                                                          spec_in(i+1, t_idx) / real(ctx%state%spec_nu(i+1), KP))
+                else
+                    call kahan_add(integral_flux, comp, wt * (spec_in(i, t_idx) / real(ctx%state%spec_nu(i), KP) + &
+                                                              spec_in(i+1, t_idx) / real(ctx%state%spec_nu(i+1), KP)))
+                end if
+#endif
             end do
             
             ! We check NaN on host? Or device?
             ! Can't check IEEE NaN easily on device across reduction.
             ! Assuming logic holds.
-            q_val = abs((integral_flux / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun))
+            q_val = abs((real(integral_flux, WP) / H_PLANCK * L_SOL) * (1.0_wp - pset%frac_obrun))
         end if
 
         !$acc end data
@@ -342,13 +353,13 @@ contains
     !> Adds emission lines to the spectrum.
     subroutine add_lines_to_spectrum(ctx, spectrum, t_idx, line_lum_log, q_val)
         type(fsps_context_t), intent(in)        :: ctx
-        real(WP), dimension(:,:), intent(inout) :: spectrum
+        real(KP), dimension(:,:), intent(inout) :: spectrum
         integer, intent(in)                     :: t_idx
         real(WP), dimension(:), intent(in)      :: line_lum_log
         real(WP), intent(in)                    :: q_val
 
         integer :: i, j
-        real(WP) :: sum_val
+        real(KP) :: sum_val
         real(WP) :: amp(NEMLINE)   ! Line luminosities (10**log * Q), computed once per call
         real(WP), parameter :: LINE_PROFILE_CUT = 1.0e-14_wp
         integer :: n, jc, j_lo, j_hi
@@ -366,9 +377,9 @@ contains
         ! spectrum(j) = sum(gauss(j, i) * amp(i)): one thread per pixel suits the device
         !$acc parallel loop gang vector present(ctx, spectrum, amp) private(sum_val, i) firstprivate(t_idx)
         do j = 1, size(spectrum, 1)
-            sum_val = 0.0_wp
+            sum_val = 0.0_KP
             do i = 1, NEMLINE
-                sum_val = sum_val + ctx%state%gaussnebarr(j, i) * amp(i)
+                sum_val = sum_val + ctx%state%gaussnebarr(j, i) * real(amp(i), KP)
             end do
             spectrum(j, t_idx) = spectrum(j, t_idx) + sum_val
         end do
@@ -393,7 +404,7 @@ contains
                 if (ctx%state%gaussnebarr(j_hi + 1, i) <= cut) exit
                 j_hi = j_hi + 1
             end do
-            spectrum(j_lo:j_hi, t_idx) = spectrum(j_lo:j_hi, t_idx) + amp(i) * ctx%state%gaussnebarr(j_lo:j_hi, i)
+            spectrum(j_lo:j_hi, t_idx) = spectrum(j_lo:j_hi, t_idx) + real(amp(i), KP) * ctx%state%gaussnebarr(j_lo:j_hi, i)
         end do
 #endif
         !$acc end data

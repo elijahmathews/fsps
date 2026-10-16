@@ -6,7 +6,7 @@ module fsps_cache
     !> Manages shared, read-only arrays (spectral libraries, filters, etc.) that
     !> can be reused across contexts to reduce I/O and allocation costs.
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: ndim_logt, ndim_logg, ndim_wmb_logt, ndim_wmb_logg, &
                               n_agb_o, n_agb_c, n_agb_car, ndim_pagb, ndim_wr, ntau_dagb, nteff_dagb, &
                               nemline, nebnz, nebnage, nebnip, nagndust, nm
@@ -109,31 +109,31 @@ module fsps_cache
         real(WP), pointer :: spec_res(:) => null()
         real(kind(1.0)), pointer :: speclib(:, :, :, :) => null()
         real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
-        real(WP), pointer :: agb_spec_o(:, :) => null()
+        real(KP), pointer :: agb_spec_o(:, :) => null()
         real(WP), pointer :: agb_logt_o(:, :) => null()
-        real(WP), pointer :: agb_spec_c(:, :) => null()
+        real(KP), pointer :: agb_spec_c(:, :) => null()
         real(WP), pointer :: agb_logt_c(:) => null()
-        real(WP), pointer :: agb_spec_car(:, :) => null()
+        real(KP), pointer :: agb_spec_car(:, :) => null()
         !> Templates used for dusty AGB stars, smoothed as legacy ADD_AGB_DUST smooths each such star
         !> (10^4 km/s, lambda >= 3 um); only the smoothed segment lambda >= AGB_SMOOTH_LAMBDA_MIN is
         !> stored. O-rich and Lancon-Wood C-rich templates include their lambda^2/c factor.
-        real(WP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
-        real(WP), pointer :: agb_spec_o_smooth(:, :) => null()
-        real(WP), pointer :: agb_spec_c_smooth(:, :) => null()
-        real(WP), pointer :: agb_spec_car_smooth(:, :) => null()
-        real(WP), pointer :: pagb_spec(:, :, :) => null()
-        real(WP), pointer :: wrn_spec(:, :, :) => null()
-        real(WP), pointer :: wrc_spec(:, :, :) => null()
+        real(KP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
+        real(KP), pointer :: agb_spec_o_smooth(:, :) => null()
+        real(KP), pointer :: agb_spec_c_smooth(:, :) => null()
+        real(KP), pointer :: agb_spec_car_smooth(:, :) => null()
+        real(KP), pointer :: pagb_spec(:, :, :) => null()
+        real(KP), pointer :: wrn_spec(:, :, :) => null()
+        real(KP), pointer :: wrc_spec(:, :, :) => null()
         real(WP), pointer :: qpaharr(:) => null()
         real(WP), pointer :: uminarr(:) => null()
         real(WP), pointer :: lambda_dustem(:) => null()
         real(WP), pointer :: dustem_dustem(:, :) => null()
         real(WP), pointer :: dustem2_dustem(:, :, :) => null()
-        real(WP), pointer :: flux_dagb(:, :, :, :) => null()
+        real(KP), pointer :: flux_dagb(:, :, :, :) => null()
         real(WP), pointer :: nebem_cont(:, :, :, :) => null()
         real(WP), pointer :: xnebem_cont(:, :, :, :) => null()
         real(WP), pointer :: neb_res_min(:) => null()
-        real(WP), pointer :: gaussnebarr(:, :) => null()
+        real(KP), pointer :: gaussnebarr(:, :) => null()
         real(WP), pointer :: agndust_spec(:, :) => null()
         real(WP), pointer :: mact_isoc(:, :, :) => null()
         real(WP), pointer :: logl_isoc(:, :, :) => null()

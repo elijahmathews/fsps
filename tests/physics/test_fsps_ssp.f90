@@ -1,5 +1,5 @@
 module test_fsps_ssp_mod
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: NM, SAFE_FLOOR, TIME_RES_INCR, BHB_SBS_TIME, C_LIGHT
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
@@ -19,6 +19,9 @@ module test_fsps_ssp_mod
 
     real(WP), parameter :: EPS = 1.0e-10_wp
     real(WP), parameter :: REL_EPS = 1.0e-10_wp
+    ! Relative rounding floor of the kernel precision KP (2.2e-14 for FP64, 1.2e-5 for FP32); tolerances on
+    ! KP-computed quantities use max(tol, KP_RTOL) so the FP64 build keeps its original tolerance
+    real(WP), parameter :: KP_RTOL = 100.0_wp * real(epsilon(1.0_KP), WP)
 
     public :: run_fsps_ssp_tests, total_failures, total_tests
 
@@ -281,7 +284,7 @@ contains
         type(params) :: pset
         type(isochrone_buffer_t) :: buf
         real(WP), allocatable :: spec_out(:)
-        real(WP), allocatable :: ref_spec(:)
+        real(KP), allocatable :: ref_spec(:)
         real(WP) :: expected_sum
         integer :: i, n_wave
 
@@ -355,7 +358,7 @@ contains
         !$acc exit data delete(ctx)
 
         do i = 1, n_wave
-            call assert_relative_error(ref_spec(i) * expected_sum, spec_out(i), 1.0e-12_wp, &
+            call assert_relative_error(ref_spec(i) * expected_sum, spec_out(i), max(1.0e-12_wp, KP_RTOL), &
                                        "Cache-block spec " // trim(adjustl(to_str(i))), total_tests, total_failures)
         end do
 
