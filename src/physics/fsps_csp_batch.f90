@@ -218,11 +218,10 @@ contains
         end do
 
         call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
-        call attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
+        call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
         if (any_emis) then
-            call dust_emission_reductions(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, wt, &
-                                          absorbed, s_abs, s_norm, s_esc)
-            call add_dust_emission(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, s_abs, s_esc, total)
+            call dust_emission_reductions(n_mod, nspec, emis, wt, yo, absorbed, s_abs, s_norm, s_esc)
+            call add_dust_emission(n_mod, nspec, emis, yo, s_abs, s_esc, total)
         end if
 
         ! IGM (common transmission)
@@ -479,12 +478,16 @@ contains
 #endif
     end subroutine age_sums
 
-    subroutine attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
+    !> Attenuation and absorbed light per (pixel, model). For models with dust emission the age
+    !> sums are then replaced by what the emission stages need: yo(:, m) = diffuse transmission
+    !> (stored at KP, as fsps_dust stores it), yo(:, N + m) = Draine & Li template.
+    subroutine attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: psets(:)
-        integer, intent(in)              :: n_mod, nspec
-        real(KP), intent(in)             :: yo(:,:)   ! young (1:N), old (N+1:2N)
+        integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
+        real(WP), intent(in)             :: wq(:), wu(:), gam(:)
         logical, intent(in)              :: emis(:)
+        real(KP), intent(inout)          :: yo(:,:)   ! in: young (1:N), old (N+1:2N)
         real(KP), intent(out)            :: total(:,:), absorbed(:,:)
 
         integer  :: m, i
@@ -492,7 +495,7 @@ contains
         real(WP) :: curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust
         real(WP) :: one_m_tb, one_m_to, one_m_td, a_young, spec_sum
 
-        !$acc parallel loop gang vector collapse(2) present(ctx, psets, yo, emis, total, absorbed) &
+        !$acc parallel loop gang vector collapse(2) present(ctx, psets, iq, iu, wq, wu, gam, yo, emis, total, absorbed) &
         !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
         !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
         do m = 1, n_mod
@@ -536,6 +539,8 @@ contains
                     a_young = trans_birth * (1.0_wp - frac_obrun) + frac_obrun
                     absorbed(i, m) = young * real((1.0_wp - frac_obrun) * one_m_tb + a_young * one_m_td, KP) + &
                                      old * real(one_m_to + trans_old * one_m_td, KP)
+                    yo(i, m) = real(trans_d, KP)
+                    yo(i, n_mod + m) = dl07_shape(ctx, i, iq(m), wq(m), iu(m), wu(m), gam(m))
                 else
                     absorbed(i, m) = 0.0_KP
                 end if
@@ -544,42 +549,30 @@ contains
     end subroutine attenuate_batch
 
     !> Per model: absorbed luminosity, template normalization and escaped template fraction.
-    subroutine dust_emission_reductions(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, wt, &
-                                        absorbed, s_abs, s_norm, s_esc)
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
-        integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
-        real(WP), intent(in)             :: wq(:), wu(:), gam(:)
+    subroutine dust_emission_reductions(n_mod, nspec, emis, wt, yo, absorbed, s_abs, s_norm, s_esc)
+        integer, intent(in)              :: n_mod, nspec
         logical, intent(in)              :: emis(:)
-        real(KP), intent(in)             :: wt(:), absorbed(:,:)
+        real(KP), intent(in)             :: wt(:), yo(:,:), absorbed(:,:)
         real(WP), intent(out)            :: s_abs(:), s_norm(:), s_esc(:)
 
         integer  :: m, i
-        real(KP) :: sa, sn, se, ca, cn, ce, sh0, sh1, t0, t1
-        real(WP) :: curve, tau_d, trans0, trans1
+        real(KP) :: sa, sn, se, ca, cn, ce
 
-        !$acc parallel loop gang present(ctx, psets, iq, iu, wq, wu, gam, emis, wt, absorbed, s_abs, s_norm, s_esc) &
-        !$acc private(sa, sn, se, ca, cn, ce)
+        !$acc parallel loop gang present(emis, wt, yo, absorbed, s_abs, s_norm, s_esc) private(sa, sn, se, ca, cn, ce)
         do m = 1, n_mod
             sa = 0.0_KP; sn = 0.0_KP; se = 0.0_KP
             ca = 0.0_KP; cn = 0.0_KP; ce = 0.0_KP
             if (emis(m)) then
-                !$acc loop vector reduction(+:sa, sn, se) private(sh0, sh1, t0, t1, curve, tau_d, trans0, trans1)
+                !$acc loop vector reduction(+:sa, sn, se)
                 do i = 1, nspec - 1
-                    sh0 = dl07_shape(ctx, i, iq(m), wq(m), iu(m), wu(m), gam(m))
-                    sh1 = dl07_shape(ctx, i + 1, iq(m), wq(m), iu(m), wu(m), gam(m))
-                    call diffuse_transmission(ctx, psets(m), i, curve, tau_d, trans0)
-                    call diffuse_transmission(ctx, psets(m), i + 1, curve, tau_d, trans1)
-                    t0 = real(trans0, KP)
-                    t1 = real(trans1, KP)
 #ifdef _OPENACC
                     sa = sa + wt(i) * (absorbed(i, m) + absorbed(i + 1, m))
-                    sn = sn + wt(i) * (sh0 + sh1)
-                    se = se + wt(i) * (sh0 * t0 + sh1 * t1)
+                    sn = sn + wt(i) * (yo(i, n_mod + m) + yo(i + 1, n_mod + m))
+                    se = se + wt(i) * (yo(i, n_mod + m) * yo(i, m) + yo(i + 1, n_mod + m) * yo(i + 1, m))
 #else
                     call kadd(sa, ca, wt(i) * (absorbed(i, m) + absorbed(i + 1, m)))
-                    call kadd(sn, cn, wt(i) * (sh0 + sh1))
-                    call kadd(se, ce, wt(i) * (sh0 * t0 + sh1 * t1))
+                    call kadd(sn, cn, wt(i) * (yo(i, n_mod + m) + yo(i + 1, n_mod + m)))
+                    call kadd(se, ce, wt(i) * (yo(i, n_mod + m) * yo(i, m) + yo(i + 1, n_mod + m) * yo(i + 1, m)))
 #endif
                 end do
             end if
@@ -590,28 +583,21 @@ contains
     end subroutine dust_emission_reductions
 
     !> Adds the dust emission, scaled to the absorbed luminosity (energy balance).
-    subroutine add_dust_emission(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, s_abs, s_esc, total)
-        type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
-        integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
-        real(WP), intent(in)             :: wq(:), wu(:), gam(:), s_abs(:), s_esc(:)
+    subroutine add_dust_emission(n_mod, nspec, emis, yo, s_abs, s_esc, total)
+        integer, intent(in)              :: n_mod, nspec
         logical, intent(in)              :: emis(:)
+        real(KP), intent(in)             :: yo(:,:)
+        real(WP), intent(in)             :: s_abs(:), s_esc(:)
         real(KP), intent(inout)          :: total(:,:)
 
         integer  :: m, i
-        real(WP) :: curve, tau_d, trans, norm
-        real(KP) :: em
 
-        !$acc parallel loop gang vector collapse(2) &
-        !$acc present(ctx, psets, iq, iu, wq, wu, gam, emis, s_abs, s_esc, total) private(curve, tau_d, trans, norm, em)
+        !$acc parallel loop gang vector collapse(2) present(emis, yo, s_abs, s_esc, total)
         do m = 1, n_mod
             do i = 1, nspec
                 if (emis(m) .and. s_esc(m) > SAFE_FLOOR) then
-                    norm = s_abs(m) / s_esc(m)
-                    call diffuse_transmission(ctx, psets(m), i, curve, tau_d, trans)
                     ! As dust_emission_final in fsps_dust: shape * transmission (KP), then * norm (WP)
-                    em = real(dl07_shape(ctx, i, iq(m), wq(m), iu(m), wu(m), gam(m)) * real(trans, KP) * norm, KP)
-                    total(i, m) = total(i, m) + em
+                    total(i, m) = total(i, m) + real(yo(i, n_mod + m) * yo(i, m) * (s_abs(m) / s_esc(m)), KP)
                 end if
             end do
         end do
