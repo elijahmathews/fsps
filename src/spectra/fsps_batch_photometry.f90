@@ -90,6 +90,10 @@ contains
 #endif
         end associate
 
+        ! The cache's device copies are released with the context's (remove_from_device); a context
+        ! not moved there by fsps_context_move_to_device would leave them behind, so drop them now
+        if (.not. ctx%on_device) call batch_grid_release(ctx%state%batch)
+
         do m = 1, n_col
             mags(:, m) = ieee_value(1.0_wp, ieee_quiet_nan)
             do b = 1, nbands
