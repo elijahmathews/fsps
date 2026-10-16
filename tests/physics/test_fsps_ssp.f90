@@ -811,6 +811,14 @@ contains
         ! Native isochrone only
         call load_timestep_data(ctx, 1, 1, buf)
         buf%weights(1:3) = 1.0_wp
+        ! compute_integrated_properties reads the buffer on the device in OpenACC builds
+        !$acc enter data copyin(buf)
+        !$acc enter data create(buf%initial_mass, buf%current_mass, buf%log_lum, buf%weights)
+        !$acc enter data attach(buf%initial_mass)
+        !$acc enter data attach(buf%current_mass)
+        !$acc enter data attach(buf%log_lum)
+        !$acc enter data attach(buf%weights)
+        !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
         call compute_integrated_properties(ctx, buf, mass_native, lbol)
 
         ! Same isochrone plus one appended straggler above the turn-off (as apply_blue_stragglers does)
@@ -822,7 +830,10 @@ contains
         buf%log_lum(4) = 0.5_wp
         buf%phase(4) = 7.0_wp
         buf%weights(4) = bs_weight
+        !$acc update device(buf%weights, buf%current_mass, buf%log_lum, buf%initial_mass)
         call compute_integrated_properties(ctx, buf, mass_with_bs, lbol)
+        !$acc exit data delete(buf%initial_mass, buf%current_mass, buf%log_lum, buf%weights)
+        !$acc exit data delete(buf)
 
         call assert_relative_error(mass_native + bs_weight * bs_mass, mass_with_bs, 1.0e-12_wp, &
                                    "straggler adds only its own mass (remnant turn-off unchanged)", &

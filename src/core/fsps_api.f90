@@ -10,7 +10,7 @@ module fsps_api
     use fsps_precision, only: WP
     use fsps_types, only: compspout
     use fsps_context_types, only: fsps_context_t
-    use fsps_context, only: fsps_context_create, fsps_context_setup, fsps_context_destroy, &
+    use fsps_context, only: fsps_context_create, fsps_context_remove_from_device, fsps_context_setup, fsps_context_destroy, &
                             fsps_context_set_param_int, fsps_context_set_param_float, &
                             fsps_context_set_param_str, fsps_context_get_paths, &
                             fsps_context_set_fast_mode, fsps_context_prepare_pset, fsps_context_compute_ssp, &
@@ -105,6 +105,7 @@ contains
     subroutine sps_takedown(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
         call fsps_cleanup(ctx)
     end subroutine sps_takedown
 

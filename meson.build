@@ -46,10 +46,19 @@ if accel_target != 'none'
         if accel_target == 'multicore'
             accel_args = ['-acc=multicore']
             accel_defs = ['-DACC_MULTICORE']
+        elif accel_target == 'omp_gpu'
+            # OpenMP target offload of the kernels with an OMP_TARGET version; OpenACC is off,
+            # so the rest runs on the host (run with OMP_TARGET_OFFLOAD=MANDATORY to catch fallback)
+            accel_args = ['-mp=gpu', '-gpu=' + get_option('gpu_arch')]
+            accel_defs = ['-DOMP_TARGET']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
             accel_args = ['-acc=gpu', '-gpu=' + get_option('gpu_arch')]
             accel_defs = ['-DACC_GPU']
+            if get_option('cublas')
+                accel_args += ['-cudalib=cublas']
+                accel_defs += ['-DFSPS_CUBLAS']
+            endif
         endif
     endif
 endif
@@ -124,6 +133,7 @@ lib_sources = files(
     # Physics Modules
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_csp.f90',
+    'src/physics/fsps_csp_batch.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
@@ -132,6 +142,7 @@ lib_sources = files(
     'src/physics/fsps_stellar_modifications.f90',
 
     # Spectra Modules
+    'src/spectra/fsps_batch_photometry.f90',
     'src/spectra/fsps_photometry.f90',
     'src/spectra/fsps_smoothing.f90',
     'src/spectra/fsps_spectral_indices.f90',
@@ -209,7 +220,8 @@ unit_test_sources = files(
 tests_units_exe = executable(
     'tests_units', 
     unit_test_sources, 
-    dependencies : [fsps_dep, test_utils_dep]
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
 )
 # One TAP test per module: meson runs them in parallel and reports every assertion
 unit_env = environment()
@@ -230,15 +242,18 @@ foreach unit_module : unit_modules
 endforeach
 
 # 3. Other Test Drivers
-test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep)
-executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep)
-executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep)
-executable('generate_opensps_fixtures', 'tests/generate_opensps_fixtures.f90', dependencies : fsps_dep)
-executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep)
-executable('benchmark_phases', 'tests/benchmark_phases.f90', dependencies : fsps_dep)
+# Fortran programs link with the Fortran compiler: meson otherwise picks the C linker because
+# libfsps has a C source, and nvc (HPC SDK 25.1) does not pull in the Fortran runtime
+test_runner_exe = executable('test_runner', 'tests/test_runner.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('test_cache', 'tests/test_cache.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('generate_test_data', 'tests/generate_test_data.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('generate_opensps_fixtures', 'tests/generate_opensps_fixtures.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('benchmark_phases', 'tests/benchmark_phases.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('benchmark_csp_batch', 'tests/benchmark_csp_batch.f90', dependencies : fsps_dep, link_language : 'fortran')
 
 if get_option('enable_stress_testing')
-    stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep)
+    stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep, link_language : 'fortran')
     stress_env = environment()
     stress_env.set('FSPS_DATA_HOME', meson.project_source_root())
     test('stress_test', stress_test_exe,
@@ -272,7 +287,9 @@ regression_env.set('FSPS_TEST_TAP', '1')
 
 # Integration test: contexts sharing a setup cache must not leak state into each other
 context_isolation_exe = executable('test_context_isolation', 'tests/test_context_isolation.f90',
-    dependencies : [fsps_dep, test_utils_dep])
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
 test('context_isolation', context_isolation_exe,
     protocol : 'tap',
     env : regression_env,
@@ -282,8 +299,22 @@ test('context_isolation', context_isolation_exe,
 
 # Integration test: outputs checked against independent physical identities and published values
 physics_oracles_exe = executable('test_physics_oracles', 'tests/test_physics_oracles.f90',
-    dependencies : [fsps_dep, test_utils_dep])
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
 test('physics_oracles', physics_oracles_exe,
+    protocol : 'tap',
+    env : regression_env,
+    suite : 'regression',
+    timeout : 900
+)
+
+# Integration test: the batched CSP (fsps_csp_batch) against compute_csp_scenario, model by model
+csp_batch_exe = executable('test_csp_batch', 'tests/test_csp_batch.f90',
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
+test('csp_batch', csp_batch_exe,
     protocol : 'tap',
     env : regression_env,
     suite : 'regression',
@@ -293,7 +324,9 @@ test('physics_oracles', physics_oracles_exe,
 # Parameterized regression over the parity case matrix (shared with generate_opensps_fixtures.sh),
 # sharded by case family so that meson runs the shards in parallel
 param_regression_exe = executable('test_param_regression', 'tests/test_param_regression.f90',
-    dependencies : [fsps_dep, test_utils_dep])
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
 param_filter_args = c3k_available ? [] : ['--skip-spec', 'c3k']
 foreach shard : ['ssp_', 'csp_', 'lib_']
     test('param_regression_' + shard.strip('_'), param_regression_exe,

@@ -13,7 +13,7 @@ module fsps_spectral_indices
     !> - Support for Equivalent Widths, Magnitudes, Dn4000, and Flux Ratios.
     !> - Robust handling of continuum fitting (blue/red sidebands).
 
-    use fsps_precision, only: WP
+    use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR
     use fsps_context_types, only: fsps_context_t
     use fsps_integration, only: integrate_trapezoid_array
@@ -23,7 +23,7 @@ module fsps_spectral_indices
     implicit none
     private
 
-    public :: compute_spectral_indices
+    public :: compute_spectral_indices, compute_spectral_indices_columns
     public :: integrate_interval, integrate_ratio_interval
 
     ! ------------------------------------------------------------------------
@@ -70,15 +70,6 @@ contains
         real(WP), dimension(:), intent(inout), contiguous :: indices
 
         integer :: j, n_idx
-        real(WP) :: idx_feat_lo, idx_feat_hi, idx_type
-        real(WP) :: idx_blue_lo, idx_blue_hi
-        real(WP) :: idx_red_lo, idx_red_hi
-        real(WP) :: val_blue_cont, val_red_cont
-        real(WP) :: lambda_blue_cen, lambda_red_cen
-        real(WP) :: integrated_flux, feature_width
-        
-        ! Variables for linear continuum slope
-        real(WP) :: cont_slope, cont_intercept, denom_width
 
         ! Local copies for speed/readability
         n_idx = ctx%state%nindx
@@ -93,97 +84,149 @@ contains
 
         ! Iterate over all defined indices
         ! Parallelize over indices (gang vector)
-        !$acc parallel loop gang vector present(spec, lambda, indices, ctx) private(denom_width, cont_slope, cont_intercept)
+        !$acc parallel loop gang vector present(spec, lambda, indices, ctx)
         do j = 1, n_idx
-            
-            ! 1. Extract Definitions
-            idx_feat_lo = ctx%state%indexdefined(IDX_FEAT_START, j)
-            idx_feat_hi = ctx%state%indexdefined(IDX_FEAT_END, j)
-            idx_blue_lo = ctx%state%indexdefined(IDX_BLUE_START, j)
-            idx_blue_hi = ctx%state%indexdefined(IDX_BLUE_END, j)
-            idx_red_lo  = ctx%state%indexdefined(IDX_RED_START, j)
-            idx_red_hi  = ctx%state%indexdefined(IDX_RED_END, j)
-            idx_type    = ctx%state%indexdefined(IDX_T, j)
-
-            ! 2. Check Bounds
-            ! If the feature definition is outside the provided wavelength grid, skip
-            if (idx_blue_lo < lambda(1) .or. idx_red_hi > lambda(size(lambda))) then
-                indices(j) = IND_UNDEFINED
-                cycle
-            end if
-
-            ! 3. Compute Blue Continuum
-            ! Integrate flux in blue band, divide by width to get mean level
-            val_blue_cont = integrate_interval(lambda, spec, idx_blue_lo, idx_blue_hi)
-            val_blue_cont = val_blue_cont / max(idx_blue_hi - idx_blue_lo, tiny(0.0_wp))
-            lambda_blue_cen = (idx_blue_lo + idx_blue_hi) * 0.5_wp
-
-            ! 4. Branch based on Index Type
-            if (abs(idx_type - UNIT_TYPE_FLUX_RATIO) > tiny(0.0_wp)) then
-                ! --------------------------------------------------------
-                ! Standard Indices (Mag, EW, Dn4000) - require Red Continuum
-                ! --------------------------------------------------------
-                
-                ! Compute Red Continuum
-                val_red_cont = integrate_interval(lambda, spec, idx_red_lo, idx_red_hi)
-                val_red_cont = val_red_cont / max(idx_red_hi - idx_red_lo, tiny(0.0_wp))
-                lambda_red_cen = (idx_red_lo + idx_red_hi) * 0.5_wp
-
-                ! Compute Integral of (Flux / Continuum)
-                ! Here, continuum is a linear interpolation between Blue and Red centers
-                denom_width = max(lambda_red_cen - lambda_blue_cen, tiny(0.0_wp))
-                cont_slope  = (val_red_cont - val_blue_cont) / denom_width
-                cont_intercept = val_blue_cont
-                
-                ! Integrate (Spec / Linear_Continuum)
-                ! Helper handles the division internally over the specific range
-                integrated_flux = integrate_ratio_interval(lambda, spec, &
-                                  idx_feat_lo, idx_feat_hi, &
-                                  cont_slope, cont_intercept, lambda_blue_cen)
-
-            else
-                ! --------------------------------------------------------
-                ! Flux Ratio Type - does not normalize by linear continuum
-                ! --------------------------------------------------------
-                integrated_flux = integrate_interval(lambda, spec, idx_feat_lo, idx_feat_hi)
-                integrated_flux = integrated_flux / max(idx_feat_hi - idx_feat_lo, tiny(0.0_wp))
-            end if
-
-            ! 5. Calculate Final Index Value
-            feature_width = idx_feat_hi - idx_feat_lo
-
-            if (abs(idx_type - UNIT_TYPE_MAG) < tiny(0.0_wp)) then
-                ! Magnitude
-                indices(j) = mag_from_flux(integrated_flux / feature_width)
-
-            else if (abs(idx_type - UNIT_TYPE_EW) < tiny(0.0_wp)) then
-                ! Equivalent Width
-                indices(j) = feature_width - integrated_flux
-
-            else if (abs(idx_type - UNIT_TYPE_DN4000) < tiny(0.0_wp)) then
-                ! Dn4000 (Red / Blue)
-                ! Note: Logic relies on pre-computed continua. 
-                ! Dn4000 uses the 'cr' and 'cb' values directly.
-                if (val_blue_cont > 0.0_wp) then
-                    indices(j) = val_red_cont / val_blue_cont
-                else
-                    indices(j) = IND_UNDEFINED
-                end if
-
-            else if (abs(idx_type - UNIT_TYPE_FLUX_RATIO) < tiny(0.0_wp)) then
-                ! Flux Ratio Magnitude
-                if (integrated_flux > 0.0_wp .and. val_blue_cont > 0.0_wp) then
-                    indices(j) = mag_from_flux(integrated_flux / val_blue_cont)
-                else
-                    indices(j) = IND_UNDEFINED
-                end if
-            end if
-
+            indices(j) = spectral_index_value(ctx, lambda, spec, j)
         end do
 
         !$acc end data
 
     end subroutine compute_spectral_indices
+
+
+    !> @brief Value of spectral index j of one spectrum (the body of compute_spectral_indices).
+    function spectral_index_value(ctx, lambda, spec, j) result(val)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), dimension(:), intent(in) :: lambda, spec
+        integer, intent(in) :: j
+        real(WP) :: val
+
+        real(WP) :: idx_feat_lo, idx_feat_hi, idx_type
+        real(WP) :: idx_blue_lo, idx_blue_hi
+        real(WP) :: idx_red_lo, idx_red_hi
+        real(WP) :: val_blue_cont, val_red_cont
+        real(WP) :: lambda_blue_cen, lambda_red_cen
+        real(WP) :: integrated_flux, feature_width
+        real(WP) :: cont_slope, cont_intercept, denom_width
+
+        val = IND_UNDEFINED
+        
+        ! 1. Extract Definitions
+        idx_feat_lo = ctx%state%indexdefined(IDX_FEAT_START, j)
+        idx_feat_hi = ctx%state%indexdefined(IDX_FEAT_END, j)
+        idx_blue_lo = ctx%state%indexdefined(IDX_BLUE_START, j)
+        idx_blue_hi = ctx%state%indexdefined(IDX_BLUE_END, j)
+        idx_red_lo  = ctx%state%indexdefined(IDX_RED_START, j)
+        idx_red_hi  = ctx%state%indexdefined(IDX_RED_END, j)
+        idx_type    = ctx%state%indexdefined(IDX_T, j)
+
+        ! 2. Check Bounds
+        ! If the feature definition is outside the provided wavelength grid, skip
+        if (idx_blue_lo < lambda(1) .or. idx_red_hi > lambda(size(lambda))) then
+            val = IND_UNDEFINED
+            return
+        end if
+
+        ! 3. Compute Blue Continuum
+        ! Integrate flux in blue band, divide by width to get mean level
+        val_blue_cont = integrate_interval(lambda, spec, idx_blue_lo, idx_blue_hi)
+        val_blue_cont = val_blue_cont / max(idx_blue_hi - idx_blue_lo, tiny(0.0_wp))
+        lambda_blue_cen = (idx_blue_lo + idx_blue_hi) * 0.5_wp
+
+        ! 4. Branch based on Index Type
+        if (abs(idx_type - UNIT_TYPE_FLUX_RATIO) > tiny(0.0_wp)) then
+            ! --------------------------------------------------------
+            ! Standard Indices (Mag, EW, Dn4000) - require Red Continuum
+            ! --------------------------------------------------------
+            
+            ! Compute Red Continuum
+            val_red_cont = integrate_interval(lambda, spec, idx_red_lo, idx_red_hi)
+            val_red_cont = val_red_cont / max(idx_red_hi - idx_red_lo, tiny(0.0_wp))
+            lambda_red_cen = (idx_red_lo + idx_red_hi) * 0.5_wp
+
+            ! Compute Integral of (Flux / Continuum)
+            ! Here, continuum is a linear interpolation between Blue and Red centers
+            denom_width = max(lambda_red_cen - lambda_blue_cen, tiny(0.0_wp))
+            cont_slope  = (val_red_cont - val_blue_cont) / denom_width
+            cont_intercept = val_blue_cont
+            
+            ! Integrate (Spec / Linear_Continuum)
+            ! Helper handles the division internally over the specific range
+            integrated_flux = integrate_ratio_interval(lambda, spec, &
+                              idx_feat_lo, idx_feat_hi, &
+                              cont_slope, cont_intercept, lambda_blue_cen)
+
+        else
+            ! --------------------------------------------------------
+            ! Flux Ratio Type - does not normalize by linear continuum
+            ! --------------------------------------------------------
+            integrated_flux = integrate_interval(lambda, spec, idx_feat_lo, idx_feat_hi)
+            integrated_flux = integrated_flux / max(idx_feat_hi - idx_feat_lo, tiny(0.0_wp))
+        end if
+
+        ! 5. Calculate Final Index Value
+        feature_width = idx_feat_hi - idx_feat_lo
+
+        if (abs(idx_type - UNIT_TYPE_MAG) < tiny(0.0_wp)) then
+            ! Magnitude
+            val = mag_from_flux(integrated_flux / feature_width)
+
+        else if (abs(idx_type - UNIT_TYPE_EW) < tiny(0.0_wp)) then
+            ! Equivalent Width
+            val = feature_width - integrated_flux
+
+        else if (abs(idx_type - UNIT_TYPE_DN4000) < tiny(0.0_wp)) then
+            ! Dn4000 (Red / Blue)
+            ! Note: Logic relies on pre-computed continua. 
+            ! Dn4000 uses the 'cr' and 'cb' values directly.
+            if (val_blue_cont > 0.0_wp) then
+                val = val_red_cont / val_blue_cont
+            else
+                val = IND_UNDEFINED
+            end if
+
+        else if (abs(idx_type - UNIT_TYPE_FLUX_RATIO) < tiny(0.0_wp)) then
+            ! Flux Ratio Magnitude
+            if (integrated_flux > 0.0_wp .and. val_blue_cont > 0.0_wp) then
+                val = mag_from_flux(integrated_flux / val_blue_cont)
+            else
+                val = IND_UNDEFINED
+            end if
+        end if
+    end function spectral_index_value
+
+    !> @brief compute_spectral_indices for the columns spec(:, 1:n_col) of a spectrum array
+    !> resident on the device at kernel precision (e.g. the CSP outputs): one thread per (index,
+    !> spectrum), on WP copies of the spectra, as the per-spectrum routine.
+    subroutine compute_spectral_indices_columns(ctx, lambda, spec, n_col, indices)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), dimension(:), intent(in), contiguous :: lambda
+        real(KP), dimension(:,:), intent(in) :: spec
+        integer, intent(in) :: n_col
+        real(WP), dimension(:,:), intent(out) :: indices   ! (nindx, n_col)
+
+        real(WP), allocatable :: specw(:,:)
+        integer :: j, m, i, n_idx, nspec
+
+        n_idx = ctx%state%nindx
+        nspec = size(lambda)
+        allocate(specw(nspec, n_col))
+        !$acc data present(spec) pcopyin(lambda) create(specw) copyout(indices(1:n_idx, 1:n_col))
+        !$acc parallel loop collapse(2) present(spec, specw)
+        do m = 1, n_col
+            do i = 1, nspec
+                specw(i, m) = real(spec(i, m), WP)
+            end do
+        end do
+        !$acc parallel loop gang vector collapse(2) present(ctx, lambda, specw, indices)
+        do m = 1, n_col
+            do j = 1, n_idx
+                indices(j, m) = spectral_index_value(ctx, lambda, specw(:, m), j)
+            end do
+        end do
+        !$acc end data
+    end subroutine compute_spectral_indices_columns
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPERS

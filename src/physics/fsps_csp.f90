@@ -25,7 +25,7 @@ module fsps_csp
     use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE, SAFE_FLOOR, C_LIGHT, VERBOSE
     use fsps_types, only: params, sfhparams, compspout
-    use fsps_context_types, only: fsps_context_t
+    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
 
     !> Physics Modules
     use fsps_sfh, only: get_sfh_properties_at_age, compute_ssp_weights
@@ -39,7 +39,8 @@ module fsps_csp
 
     !> Spectra Modules
     use fsps_photometry, only: compute_magnitudes
-    use fsps_spectral_indices, only: compute_spectral_indices
+    use fsps_batch_photometry, only: compute_magnitudes_columns
+    use fsps_spectral_indices, only: compute_spectral_indices, compute_spectral_indices_columns
 
     implicit none
     private
@@ -47,7 +48,7 @@ module fsps_csp
     !> Public API
     public :: compute_csp_scenario
     ! Expose internal kernels for unit testing
-    public :: compute_sfh_weights
+    public :: compute_sfh_weights, sfh_weights_core
     public :: convert_sfhparams
     public :: integrate_csp_step
     public :: apply_dust_physics
@@ -90,7 +91,10 @@ contains
 
         integer :: i, nt, nspec, n_outputs, start_idx
         integer :: k, i_spec, i_em
-        
+        logical :: dev_mags
+        real(WP), allocatable :: mags_all(:,:), indx_all(:,:)
+
+        call fsps_context_sync_device_settings(ctx)
         if (present(status)) status = 0
 
         ! 1. SETUP
@@ -113,6 +117,10 @@ contains
              if (present(status)) status = 2
              return
         end if
+
+        ! The parameter set is read by most kernels below (and by the dust and nebular routines it
+        ! is passed to): map it once instead of an implicit copy at every launch
+        !$acc enter data copyin(pset)
 
         ! Initialize working grids from SSP inputs natively on the device (Explicit loops to bypass NVHPC kernels bug)
         nt = ctx%state%ntfull
@@ -137,10 +145,7 @@ contains
         end do
 
         if (ctx%add_neb_emission_val == 1) then
-            if (nzin > 1) then
-                 if (present(status)) status = 2; return
-            end if
-
+            ! (nzin > 1 was rejected above)
             call apply_nebular_emission(ctx, pset, ctx%state%ssp_basis_spec(:,:,1), &
                                         ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
         end if
@@ -215,6 +220,30 @@ contains
 
         ! 6. POPULATE DERIVED TYPES ON HOST CPU (Cache-Coherent)
         ! -----------------------
+        ! On the GPU the magnitudes of all outputs are computed at once from the device spectra
+        ! (fsps_batch_photometry), when no step between here and compute_magnitudes changes them
+        ! (smoothing) or the redshift per output (redshift_colors), and without light-weighted ages
+        dev_mags = .false.
+#ifdef _OPENACC
+        dev_mags = (.not. ctx%fast_mode) .and. pset%compute_mags == 1 .and. pset%sigma_smooth <= 0.0_wp .and. &
+                   ctx%redshift_colors_val == 0 .and. ctx%compute_light_ages_val == 0
+#endif
+        if (dev_mags) then
+            allocate(mags_all(ctx%state%nbands, n_outputs))
+            if (allocated(pset%mag_compute)) then
+                call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
+                                                mags_all, pset%mag_compute)
+            else
+                call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
+                                                mags_all)
+            end if
+            if (pset%compute_indices == 1) then
+                allocate(indx_all(ctx%state%nindx, n_outputs))
+                call compute_spectral_indices_columns(ctx, ctx%state%spec_lambda, ctx%state%out_csp_spec, n_outputs, &
+                                                      indx_all)
+            end if
+        end if
+
         do i = 1, n_outputs
             if (.not. allocated(results(i)%spec)) allocate(results(i)%spec(nspec))
             if (.not. allocated(results(i)%emlines)) allocate(results(i)%emlines(NEMLINE))
@@ -253,6 +282,16 @@ contains
                 if (.not. allocated(results(i)%mags)) allocate(results(i)%mags(ctx%state%nbands))
                 if (.not. allocated(results(i)%indx)) allocate(results(i)%indx(ctx%state%nindx))
 
+                if (dev_mags) then
+                    results(i)%mags = mags_all(:, i)
+                    if (pset%compute_indices == 1) then
+                        results(i)%indx = indx_all(:, i)
+                    else
+                        results(i)%indx = -99.0_wp
+                    end if
+                    cycle
+                end if
+
                 ! Safely route the spectrum into the mapped device scratchpad
                 ctx%state%csp_spec_final(:) = results(i)%spec(:)
                 !$acc update device(ctx%state%csp_spec_final)
@@ -290,6 +329,8 @@ contains
                 results(i)%spec(:) = ctx%state%csp_spec_final(:)
             end if
         end do
+
+        !$acc exit data delete(pset)
 
     end subroutine compute_csp_scenario
 
@@ -364,10 +405,17 @@ contains
 
         ! 2. Compute SFH Weights (Gang Parallel over Time)
 #if defined(_OPENACC) && !defined(ACC_MULTICORE)
-        !$acc parallel loop gang present(ctx) async(1)
-        do i_out = 1, n_outputs
-            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
-        end do
+        if (n_outputs == 1) then
+            ! One output: a single device thread would run the whole SFH integral (~0.7 ms on a
+            ! P100); the host does it in ~20 us
+            call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(1), nzin, 1, ctx%state%csp_weights)
+            !$acc update device(ctx%state%csp_weights(:, :, 1))
+        else
+            !$acc parallel loop gang present(ctx) async(1)
+            do i_out = 1, n_outputs
+                call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
+            end do
+        end if
 #else
         do i_out = 1, n_outputs
             call compute_sfh_weights(ctx, pset, ctx%state%sfh_t_calc(i_out), nzin, i_out, ctx%state%csp_weights)
@@ -430,9 +478,10 @@ contains
         ! =====================================================================
         ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
         ! =====================================================================
-        if (n_outputs == 1) then
-            i_out = 1
-            !$acc parallel loop gang vector present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i) async(1)
+        ! One thread per (output, pixel), summing the ages in order (young up to i_tesc, then old)
+        !$acc parallel loop gang vector collapse(2) present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i) &
+        !$acc async(1)
+        do i_out = 1, n_outputs
             do i_spec = 1, nspec
                 sum_young = 0.0_wp
                 sum_old   = 0.0_wp
@@ -461,38 +510,7 @@ contains
                 ctx%state%spec_young(i_spec, i_out) = sum_young
                 ctx%state%spec_old(i_spec, i_out)   = sum_old
             end do
-        else
-            !$acc parallel loop gang present(ctx, ssp_grid) private(sum_young, sum_old, weight_ik, k, i, i_spec) async(1)
-            do i_out = 1, n_outputs
-                !$acc loop seq
-                do k = 1, nzin
-                    ! Young stars
-                    !$acc loop seq
-                    do i = 1, i_tesc
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_spec = 1, nspec
-                                ctx%state%spec_young(i_spec, i_out) = ctx%state%spec_young(i_spec, i_out) + &
-                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
-                            end do
-                        end if
-                    end do
-                    ! Old stars
-                    !$acc loop seq
-                    do i = i_tesc + 1, nt
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_spec = 1, nspec
-                                ctx%state%spec_old(i_spec, i_out) = ctx%state%spec_old(i_spec, i_out) + &
-                                    (real(weight_ik, KP) * ssp_grid(i_spec, i, k))
-                            end do
-                        end if
-                    end do
-                end do
-            end do
-        end if
+        end do
 #else
         ! =====================================================================
         ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
@@ -529,9 +547,9 @@ contains
         ! =====================================================================
         ! GPU OPTIMIZED PATH (Coalesced Stride-1 Memory)
         ! =====================================================================
-        if (n_outputs == 1) then
-            i_out = 1
-            !$acc parallel loop gang vector present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i) async(1)
+        !$acc parallel loop gang vector collapse(2) present(ctx, emlin_grid) &
+        !$acc private(sum_em_young, sum_em_old, weight_ik, k, i) async(1)
+        do i_out = 1, n_outputs
             do i_em = 1, nem
                 sum_em_young = 0.0_wp
                 sum_em_old   = 0.0_wp
@@ -559,39 +577,7 @@ contains
                 ctx%state%csp_emlin_young(i_em, i_out) = sum_em_young
                 ctx%state%csp_emlin_old(i_em, i_out)   = sum_em_old
             end do
-        else
-            ! Original N > 1 path
-            !$acc parallel loop gang present(ctx, emlin_grid) private(sum_em_young, sum_em_old, weight_ik, k, i, i_em) async(1)
-            do i_out = 1, n_outputs
-                !$acc loop seq
-                do k = 1, nzin
-                    ! Young stars
-                    !$acc loop seq
-                    do i = 1, i_tesc
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_em = 1, nem
-                                ctx%state%csp_emlin_young(i_em, i_out) = ctx%state%csp_emlin_young(i_em, i_out) + &
-                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
-                            end do
-                        end if
-                    end do
-                    ! Old stars
-                    !$acc loop seq
-                    do i = i_tesc + 1, nt
-                        weight_ik = ctx%state%csp_weights(i, k, i_out)
-                        if (weight_ik > SAFE_FLOOR) then
-                            !$acc loop vector
-                            do i_em = 1, nem
-                                ctx%state%csp_emlin_old(i_em, i_out) = ctx%state%csp_emlin_old(i_em, i_out) + &
-                                    (real(weight_ik, KP) * emlin_grid(i_em, i, k))
-                            end do
-                        end if
-                    end do
-                end do
-            end do
-        end if
+        end do
 #else
         ! =====================================================================
         ! CPU OPTIMIZED PATH (Strict Stride-1 Cache Locality, Vectorized)
@@ -752,6 +738,22 @@ contains
 
         !$acc routine seq
 
+        call sfh_weights_core(ctx, pset, tage, nzin, weights(:, :, i_out), ctx%state%sfh_w_tmp1(:, i_out), &
+                              ctx%state%sfh_w_tmp2(:, i_out))
+    end subroutine compute_sfh_weights
+
+    !> @brief compute_sfh_weights for one output, with caller-provided scratch columns (the batched
+    !> CSP runs one per model on the device).
+    subroutine sfh_weights_core(ctx, pset, tage, nzin, w, tmp1, tmp2)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: tage
+        integer, intent(in)                 :: nzin
+        real(WP), intent(inout), contiguous :: w(:,:)              ! (ages, nzin)
+        real(WP), intent(inout), contiguous :: tmp1(:), tmp2(:)    ! scratch (ages)
+
+        !$acc routine seq
+
         ! Local variables
         type(sfhparams) :: sfh
         real(WP) :: mass1, mass2
@@ -764,12 +766,12 @@ contains
         nt = ctx%state%ntfull
         do k = 1, nzin
             do i = 1, nt
-                weights(i, k, i_out) = 0.0_wp
+                w(i, k) = 0.0_wp
             end do
         end do
         do i = 1, nt
-            ctx%state%sfh_w_tmp1(i, i_out) = 0.0_wp
-            ctx%state%sfh_w_tmp2(i, i_out) = 0.0_wp
+            tmp1(i) = 0.0_wp
+            tmp2(i) = 0.0_wp
         end do
 
         ! Initialize SFH struct with unit conversions (Gyr -> Yr)
@@ -787,7 +789,7 @@ contains
             sfh%tb   = sfh%tage  ! Burst at 'now' (lookback time = tage)
             
             imin = max(imax - 2, 1) ! Optimization: SSP is local
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
             return
         end if
 
@@ -798,32 +800,32 @@ contains
             ! A. Main Exponential Component
             sfh%type = pset%sfh
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
 
             ! Normalize to 1.0 mass
-            mass1 = sum(weights(1:imax, 1, i_out))
+            mass1 = sum(w(1:imax, 1))
             if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
-            weights(:, 1, i_out) = weights(:, 1, i_out) / mass1
+            w(:, 1) = w(:, 1) / mass1
 
             ! B. Add Constant and Burst (if requested)
             if (pset%const > 0.0_wp .or. pset%fburst > SAFE_FLOOR) then
                 
                 ! Constant Component
                 sfh%type = 0 ! Constant
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
                 mass1 = 0.0_wp
                 do i = 1, imax
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                    mass1 = mass1 + tmp1(i)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
                 ! Burst Component
-                ctx%state%sfh_w_tmp2(:,i_out) = 0.0_wp
+                tmp2(:) = 0.0_wp
                 fburst_val = 0.0_wp
                 
                 if (sfh%tb >= 0.0_wp) then
                     sfh%type = -1 ! Burst
-                    call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
+                    call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
                     fburst_val = pset%fburst
                     
                     ! Extend imax to include burst if it happened earlier
@@ -832,9 +834,9 @@ contains
 
                 ! Combine: (1 - C - B) * Tau + C * Const + B * Burst
                 do i = 1, nt
-                    weights(i, 1, i_out) = (1.0_wp - pset%const - fburst_val) * weights(i, 1, i_out) + &
-                                           pset%const * (ctx%state%sfh_w_tmp1(i, i_out) / mass1) + &
-                                           fburst_val * ctx%state%sfh_w_tmp2(i, i_out)
+                    w(i, 1) = (1.0_wp - pset%const - fburst_val) * w(i, 1) + &
+                                           pset%const * (tmp1(i) / mass1) + &
+                                           fburst_val * tmp2(i)
                 end do
             end if
             return
@@ -847,20 +849,20 @@ contains
             ! A. Delayed Tau Portion
             sfh%type = 4
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
             mass1 = 0.0_wp
             do i = 1, imax
-                mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                mass1 = mass1 + tmp1(i)
             end do
 
             ! B. Linear Cutoff Portion
             sfh%type = 5
             sfh%use_simha_limits = 1
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
             sfh%use_simha_limits = 0
             mass2 = 0.0_wp
             do i = 1, imax
-                mass2 = mass2 + ctx%state%sfh_w_tmp2(i, i_out)
+                mass2 = mass2 + tmp2(i)
             end do
 
             ! Normalize
@@ -872,8 +874,8 @@ contains
 
             ! Combine
             do i = 1, nt
-                weights(i, 1, i_out) = (ctx%state%sfh_w_tmp1(i, i_out) / mass1) * (1.0_wp - frac_linear) + &
-                                       (ctx%state%sfh_w_tmp2(i, i_out) / mass2) * frac_linear
+                w(i, 1) = (tmp1(i) / mass1) * (1.0_wp - frac_linear) + &
+                                       (tmp2(i) / mass2) * frac_linear
             end do
             return
         end if
@@ -923,11 +925,11 @@ contains
                 imin = min(max(find_interval(ctx%state%time_full, log10(max(t1, SAFE_FLOOR))) - 1, 0), nt)
                 imax = min(max(find_interval(ctx%state%time_full, log10(max(t2, SAFE_FLOOR))) + 2, 0), nt)
                 
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
                 
                 mass1 = 0.0_wp
                 do i = 1, nt
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                    mass1 = mass1 + tmp1(i)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
@@ -943,21 +945,21 @@ contains
                     
                     ! Vectorized Add
                     do i = 1, nt
-                        weights(i, k, i_out)   = weights(i, k,   i_out) + &
-                                                 (1.0_wp - dz) * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
-                        weights(i, k+1, i_out) = weights(i, k+1, i_out) + &
-                                                 dz            * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
+                        w(i, k)   = w(i, k) + &
+                                                 (1.0_wp - dz) * tmp1(i) * (mass2 / mass1)
+                        w(i, k+1) = w(i, k+1) + &
+                                                 dz            * tmp1(i) * (mass2 / mass1)
                     end do
                 else
                     ! Single Z
                     do i = 1, nt
-                        weights(i, 1, i_out) = weights(i, 1, i_out) + ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
+                        w(i, 1) = w(i, 1) + tmp1(i) * (mass2 / mass1)
                     end do
                 end if
             end do
         end if
 
-    end subroutine compute_sfh_weights
+    end subroutine sfh_weights_core
 
     !> @brief Converts user parameters (pset) into internal physical units (sfhparams).
     !>

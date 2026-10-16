@@ -9,7 +9,7 @@ module fsps_context
     use fsps_precision, only: WP
     use fsps_constants, only: NEMLINE, NEBNAGE, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT
-    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
+    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy, batch_grid_release
     use fsps_environment, only: fsps_cleanup
     use fsps_initialization, only: fsps_initialize_data
     use fsps_ssp, only: generate_ssp_grid
@@ -110,6 +110,8 @@ contains
         character(len=*), intent(in), optional :: spec_type_in
         character(len=*), intent(in), optional :: dust_type_in
 
+        ! Setup repoints and reallocates the state arrays: drop the old device copies first
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
         ctx%zin = zin
         if (present(isoc_type_in)) ctx%isoc_type_name = trim(isoc_type_in)
         if (present(spec_type_in)) ctx%spec_type_name = trim(spec_type_in)
@@ -191,6 +193,7 @@ contains
     subroutine fsps_context_destroy(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
         if (ctx%initialized) then
             call fsps_cleanup(ctx)
             ctx%initialized = .false.
@@ -250,54 +253,79 @@ contains
             ctx%pset%evtype = value
         case ('imf_type')
             ctx%imf_type_val = value
+            ctx%settings_dirty = .true.
         case ('tpagb_norm_type')
             ctx%tpagb_norm_type_val = value
+            ctx%settings_dirty = .true.
         case ('pzcon')
             ctx%pzcon_val = value
+            ctx%settings_dirty = .true.
         case ('interpolation_type')
             ctx%interpolation_type_val = value
+            ctx%settings_dirty = .true.
         case ('add_agb_dust_model')
             ctx%add_agb_dust_model_val = value
+            ctx%settings_dirty = .true.
         case ('dust_type')
             ctx%dust_type_val = value
+            ctx%settings_dirty = .true.
         case ('add_dust_emission')
             ctx%add_dust_emission_val = value
+            ctx%settings_dirty = .true.
         case ('compute_vega_mags')
             ctx%compute_vega_mags_val = value
+            ctx%settings_dirty = .true.
         case ('vactoair_flag')
             ctx%vactoair_flag_val = value
+            ctx%settings_dirty = .true.
         case ('add_agn_dust')
             ctx%add_agn_dust_val = value
+            ctx%settings_dirty = .true.
         case ('use_wr_spectra')
             ctx%use_wr_spectra_val = value
+            ctx%settings_dirty = .true.
         case ('add_neb_emission')
             ctx%add_neb_emission_val = value
+            ctx%settings_dirty = .true.
         case ('add_neb_continuum')
             ctx%add_neb_continuum_val = value
+            ctx%settings_dirty = .true.
         case ('cloudy_dust')
             ctx%cloudy_dust_val = value
+            ctx%settings_dirty = .true.
         case ('add_igm_absorption')
             ctx%add_igm_absorption_val = value
+            ctx%settings_dirty = .true.
         case ('nebemlineinspec')
             ctx%nebemlineinspec_val = value
+            ctx%settings_dirty = .true.
         case ('add_xrb_emission')
             ctx%add_xrb_emission_val = value
+            ctx%settings_dirty = .true.
         case ('add_stellar_remnants')
             ctx%add_stellar_remnants_val = value
+            ctx%settings_dirty = .true.
         case ('smooth_velocity')
             ctx%smooth_velocity_val = value
+            ctx%settings_dirty = .true.
         case ('smooth_lsf')
             ctx%smooth_lsf_val = value
+            ctx%settings_dirty = .true.
         case ('smoothspec_fast')
             ctx%smoothspec_fast_val = value
+            ctx%settings_dirty = .true.
         case ('redshift_colors')
             ctx%redshift_colors_val = value
+            ctx%settings_dirty = .true.
         case ('compute_light_ages')
             ctx%compute_light_ages_val = value
+            ctx%settings_dirty = .true.
         case ('use_isoc_mdot')
             ctx%use_isoc_mdot_val = value
+            ctx%settings_dirty = .true.
         case ('setup_nebular_gaussians')
             ctx%setup_nebular_gaussians_val = value
+            ctx%settings_dirty = .true.
         case ('compute_mags')
             ctx%pset%compute_mags = value
         case ('compute_indices')
@@ -321,6 +349,7 @@ contains
         logical, intent(in) :: fast_mode_in
 
         ctx%fast_mode = fast_mode_in
+        ctx%settings_dirty = .true.   ! device copy refreshed by the next compute call
     end subroutine fsps_context_set_fast_mode
 
     !> @brief Set a floating-point parameter by key.
@@ -340,20 +369,28 @@ contains
         select case (key_norm)
         case ('om0')
             ctx%om0_val = value
+            ctx%settings_dirty = .true.
         case ('ol0')
             ctx%ol0_val = value
+            ctx%settings_dirty = .true.
         case ('H0')
             ctx%H0_val = value
+            ctx%settings_dirty = .true.
         case ('tiny_logt')
             ctx%tiny_logt_val = value
+            ctx%settings_dirty = .true.
         case ('imf_upper_limit')
             ctx%imf_upper_limit_val = value
+            ctx%settings_dirty = .true.
         case ('imf_lower_limit')
             ctx%imf_lower_limit_val = value
+            ctx%settings_dirty = .true.
         case ('logt_wmb_hot')
             ctx%logt_wmb_hot_val = value
+            ctx%settings_dirty = .true.
         case ('nebular_smooth_init')
             ctx%nebular_smooth_init_val = value
+            ctx%settings_dirty = .true.
         case ('imf1')
             ctx%pset%imf1 = value
         case ('imf2')
@@ -798,6 +835,11 @@ contains
     subroutine fsps_context_move_to_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        ! A second call refreshes the device copies rather than stacking reference counts
+        if (ctx%on_device) call fsps_context_remove_from_device(ctx)
+        ctx%on_device = .true.
+        ctx%settings_dirty = .false.   ! copied with ctx below
+
         ! Pre-allocate CSP workspace so it gets mapped correctly
         call fsps_context_prepare_csp_workspace(ctx)
 
@@ -1239,6 +1281,10 @@ contains
     subroutine fsps_context_remove_from_device(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
+        ! Nothing mapped (also avoids an exit data before any OpenACC initialization, which
+        ! crashes in the HPC SDK 25.1 runtime)
+        if (.not. ctx%on_device) return
+
         associate(s => ctx%state)
             if (allocated(s%sedfit_data%specerr)) then
                 !$acc exit data delete(s%sedfit_data%specerr)
@@ -1570,8 +1616,10 @@ contains
             !$acc exit data delete(ctx%pset%mag_compute)
         end if
 
+        call batch_grid_release(ctx%state%batch)
         !$acc exit data delete(ctx%state)
         !$acc exit data delete(ctx)
+        ctx%on_device = .false.
     end subroutine fsps_context_remove_from_device
 
 end module fsps_context
