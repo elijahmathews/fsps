@@ -82,10 +82,10 @@ Batched SSP+CSP per model was not measured (no batched SSP generation yet). FP64
 FP32 on the A100 (FP64 at half the FP32 rate, and much of the batch is memory- and
 transcendental-bound in FP64 anyway); that will not carry over to consumer GPUs.
 
-**What remains** (also in `doc/GPU_PLAN.md`, "Next"): (1) OpenMP target versions of the rest
-of the batch (attenuation, nebular, dust emission, IGM, AGN, smoothing, magnitudes) with device
-residency of the context: today `-Daccel=omp_gpu` runs those on the host (830 us per model),
-and this is the path to AMD and Intel GPUs; (2) per-call overhead, ~1 ms at N = 1 and the
+**What remains** (also in `doc/GPU_PLAN.md`, "Next"): (1) done later in the session: the whole
+batch now runs with OpenMP target offload (3.6 us per model FP32 basic, 7.8 full physics, vs
+2.9 / 7.0 with OpenACC; Status, branch `gpu/a100-omp-batch`); next there, the single CSP call and
+the SSP stages, and a run on an AMD or Intel GPU; (2) per-call overhead, ~1 ms at N = 1 and the
 single call (launches, small pageable transfers, host set-up); (3) spectra copy-back (pageable
 D2H at ~2.4 GB/s on this node: 16 us per model at N = 10000; pinned or device-resident output);
 (4) on GPUs with slow FP64, the FP64 exponentials of the nebular continuum and attenuation.
@@ -302,12 +302,27 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
     entries made `unit_csp` fail intermittently; they are now `if(ctx%on_device)`, and
     `move_to_device` maps an existing basis. (4) `igm_tau` takes local copies of the Lyman
     parameter arrays (OpenMP device code rejects the module's).
-  - Speed, N = 10000, FP32, us per model (OpenMP / OpenACC): basic 3.6 / 2.9, full physics with
-    smoothing 7.6 / 7.2 (the host fallback this replaces: 833 and 3788).
+  - Validation: suites 33/33 and batch test 146/146 in all ten builds (OpenMP with
+    `OMP_TARGET_OFFLOAD=MANDATORY`), case matrix PASS; and the case matrix through the batch
+    (`FIXTURE_ARGS=--batch`, 25 cases) against FP64 CPU: OpenMP FP32 4.2e-7 per pixel, 3.0e-7
+    mag, 1.2e-5 indices; OpenMP FP64 1.0e-11 per pixel (OpenACC: 4.2e-7 / 1.5e-7 / 1.1e-5 and
+    1.6e-11).
+  - Speed (`benchmark_csp_batch 10000 200`, us per model, magnitudes only; OpenMP / OpenACC,
+    same code; the host fallback before this branch: 833 / 3788 at N = 10000, FP32):
+
+    | N | FP32 basic | FP32 full physics | FP64 basic | FP64 full physics |
+    |---|---|---|---|---|
+    | 1 | 1125 / 827 | 1671 / 1311 | 1151 / 904 | 1680 / 1308 |
+    | 100 | 30.0 / 19.0 | 37.9 / 27.7 | 37.0 / 20.9 | 45.5 / 29.8 |
+    | 1000 | 5.2 / 4.1 | 9.4 / 8.5 | 6.4 / 4.6 | 11.2 / 9.3 |
+    | 10000 | 3.6 / 2.9 | 7.8 / 7.0 | 4.7 / 4.2 | 9.5 / 8.9 |
+
+    At large N the OpenMP build is within 10-25% of OpenACC; at small N it pays ~0.3-1 ms more
+    per call (runtime overhead of the target constructs and maps). The single CSP call
+    (`compute_csp_scenario`) is not ported and runs on the host in the OpenMP build (7 ms FP32).
 
 **In progress / queue**
-- Validation of the OpenMP branch in all builds (suites, batch tests, case matrix, and the case
-  matrix through the OpenMP batch with `--batch`).
+- Per-call overhead (both programming models), with the remaining job time.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with

@@ -181,7 +181,10 @@ C-API entry point) and tuned the portable FP32 kernels (7.2 us per model with fu
 N = 10000, 2.9 us basic). Branches `gpu/a100-*` are stacked in the order of
 doc/GPU_RESULTS.md's Status. In order:
 
-1. OpenMP target offload of the whole batch (the portability path to AMD and Intel GPUs): map
+1. (Done on branch `gpu/a100-omp-batch`: the whole batch with OpenMP target offload, within
+   10-25% of OpenACC at large N. Remaining: `compute_csp_scenario` and the SSP stages, the
+   small-N overhead of the OpenMP runtime, and a run on AMD / Intel.) Originally: OpenMP target
+   offload of the whole batch (the portability path to AMD and Intel GPUs): map
    the context (state arrays, grids, the batch caches) with `target enter data` as
    `fsps_context_move_to_device` does for OpenACC, and port the remaining OpenACC kernels of
    `fsps_csp_batch.f90` and `fsps_batch_photometry.f90`; today `-Daccel=omp_gpu` runs them on the
