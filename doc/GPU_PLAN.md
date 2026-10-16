@@ -1,6 +1,6 @@
-# GPU plan: first A100 session
+# GPU plan: first GPU session (A100 or P100)
 
-Runbook for the first session on an NVIDIA A100 node. The goal is to measure, then build the two
+Runbook for the first session on an NVIDIA GPU node (A100, or P100: see below). The goal is to measure, then build the two
 kernels that matter, with every step validated against the CPU build. Work on a branch
 (`gpu/a100-<topic>`), commit and push as you go (`git push origin <branch>`), and do not merge.
 
@@ -39,6 +39,23 @@ kernels that matter, with every step validated against the CPU build. Work on a 
 - nvfortran needs `CC=nvc` (the C sources get the OpenACC flags). If it fails with "Error in
   path /usr/lib/gcc/...", its `localrc` is stale after a GCC upgrade: rerun
   `makelocalrc -x <bindir>` (or point `NVLOCALRC` at a regenerated copy).
+
+## On a P100 node (ICDS cluster)
+
+The first session may run on a P100 (Pascal, `cc60`) instead of an A100. HPC SDK 26.x ships
+only CUDA 13 (`cc75` and newer), so load `nvhpc/25.1` (CUDA 12, still supports Pascal):
+
+```
+module load nvhpc/25.1
+FC=nvfortran CC=nvc meson setup build_gpu --buildtype=release -Daccel=gpu -Dgpu_arch=cc60
+```
+
+(If `meson`/`ninja` are missing: `python3 -m pip install --user meson ninja`.) CI tests
+nvfortran 26.1 only, so an older-compiler front-end issue may appear at the first build; fix
+it in place. A P100 answers the correctness and where-the-time-goes questions as well as an
+A100; it cannot measure A100 absolute speed, TF32 or FP64 tensor-core GEMMs, and Nsight
+Compute does not support Pascal (Nsight Systems and `compute-sanitizer` do). Its FP64 runs at
+half the FP32 rate, so FP32 gains there (~2x) understate those on consumer GPUs.
 
 ## Session goals, in order
 
