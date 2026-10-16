@@ -346,9 +346,10 @@ full).
 
 - Per-call overhead, second attempt (not committed): the OpenACC batch kernels on one async
   queue (one wait before the photometry instead of ~20 host synchronizations) crashed the batch
-  test with a corrupted stack; reverted for lack of time to find the race (likely a kernel that
-  implicitly copies a host-local array, which an async launch reads after the routine returns).
-  Expected gain ~0.15 ms per call.
+  test with a corrupted stack (host segfault); reverted. It is a real race: the same build
+  passes 146/146 with `NVCOMPILER_ACC_SYNCHRONOUS=1`. `-Minfo=accel` shows no implicit copies
+  in the kernels (only the batch data region's clauses), so the cause is still open. Expected
+  gain ~0.15 ms per call.
 
 **In progress / queue**
 - Nothing running. Next steps: `doc/GPU_PLAN.md`, "Next: after the A100 session".
