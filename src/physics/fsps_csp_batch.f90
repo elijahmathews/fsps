@@ -10,7 +10,11 @@ module fsps_csp_batch
     !> 1. SFH weights per model on the device (FP64), split into young and old ages by each
     !>    model's `dust_tesc`, cast once to kernel precision: W_young, W_old (ages x N).
     !> 2. Age sums: young = basis . W_young, old = basis . W_old (matrix products with K = number
-    !>    of ages).
+    !>    of ages). With the SSP bases of all metallicities resident (fsps_context_update_ssp_basis
+    !>    with nz bases), each model's basis is interpolated in log Z at its logzsol between the
+    !>    two bracketing metallicities (as compute_interpolated_ssp: linear in the spectra, the
+    !>    masses and log L_bol, not clamped); mass, L_bol and the nebular emission (Q, EUV) use the
+    !>    interpolated SSPs. This mode uses the portable kernels (also in cuBLAS builds).
     !> 3. Nebular emission (add_neb_emission = 1), as apply_nebular_emission does to each young SSP
     !>    before the age sum, but summed over ages per model: the EUV rows of the age sums are
     !>    redone with the escaping fraction (frac_obrun) for the nebular ages; the nebular
@@ -73,7 +77,7 @@ module fsps_csp_batch
         real(WP), allocatable :: dwa(:)         !< per age: wa(t) - wa(t-1) within an interval
         logical,  allocatable :: newr(:)        !< per age: the step dwa differs from the previous one
         real(WP), allocatable :: cy(:,:), co(:,:) !< (ages, N): SFH weight * Q, young and old (continuum)
-        real(WP), allocatable :: q0(:)          !< per age: ionizing photons of the basis (frac_obrun = 0)
+        real(WP), allocatable :: q0(:,:)        !< per age and basis: ionizing photons (frac_obrun = 0)
         integer,  allocatable :: iz(:), iu(:)   !< per model: gas_logz and gas_logu intervals and weights
         real(WP), allocatable :: wz(:), wu(:)
         real(WP), allocatable :: fesc(:)        !< per model: escaping EUV fraction (clamped frac_obrun)
@@ -109,7 +113,10 @@ contains
 
         integer :: n_mod, nt, nspec, nbands, m, k
         real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis, neb, agn, smooth
+        logical  :: igm, any_emis, neb, agn, smooth, zmode
+        integer  :: nzb
+        integer,  allocatable :: zlo(:), zhi(:)
+        real(WP), allocatable :: dz(:)
 
         ! Per-model parameters and results on the host
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
@@ -182,6 +189,21 @@ contains
             status = 2; return
         end if
 
+        ! Per-model metallicity: a basis per metallicity of the context
+        nzb = size(ctx%state%ssp_basis_spec, 3)
+        zmode = nzb > 1
+        if (zmode .and. nzb /= ctx%state%nz) then
+            status = 3; return
+        end if
+        allocate(zlo(n_mod), zhi(n_mod), dz(n_mod))
+        zlo = 1; zhi = 1; dz = 0.0_wp
+        if (zmode) then
+            do m = 1, n_mod
+                call metallicity_interval(ctx, psets(m)%logzsol, zlo(m), dz(m))
+                zhi(m) = zlo(m) + 1
+            end do
+        end if
+
         ! ------------------------------------------------------------------
         ! 1. Host: per-model indices (birth-cloud age, dust emission grid, nebular grid, AGN
         !    template) and SFR
@@ -213,7 +235,7 @@ contains
         any_emis = any(emis)
         agn = any(agn_on)
         neb = ctx%add_neb_emission_val == 1
-        call nebular_setup(ctx, psets, neb, nb)
+        call nebular_setup(ctx, psets, neb, nzb, nb)
         if (neb) then
             allocate(eml(NEMLINE, n_mod))
         else
@@ -233,6 +255,7 @@ contains
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
+        !$acc      copyin(zlo, zhi, dz) &
         !$acc      copyin(nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co) &
@@ -240,8 +263,8 @@ contains
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
-        !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum) &
-        !$acc private(k, w)
+        !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
+        !$acc zlo, zhi, dz) private(k, w)
         do m = 1, n_mod
             call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
             msum(m) = 0.0_wp
@@ -250,8 +273,16 @@ contains
             do k = 1, nt
                 w = weights(k, 1, m)
                 if (w > SAFE_FLOOR) then
-                    msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
-                    lsum(m) = lsum(m) + w * lum_linear(k)
+                    if (zmode) then
+                        ! The interpolated SSP's mass and L_bol (compute_interpolated_ssp)
+                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * ctx%state%ssp_basis_mass(k, zlo(m)) + &
+                                                 dz(m) * ctx%state%ssp_basis_mass(k, zhi(m)))
+                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * ctx%state%ssp_basis_lbol(k, zlo(m)) + &
+                                                          dz(m) * ctx%state%ssp_basis_lbol(k, zhi(m)))
+                    else
+                        msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
+                        lsum(m) = lsum(m) + w * lum_linear(k)
+                    end if
                 else
                     w = 0.0_wp
                 end if
@@ -263,9 +294,13 @@ contains
             end do
         end do
 
-        call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
-        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, &
-                                        nb, yo, eml)
+        if (zmode) then
+            call age_sums_z(nspec, nt, n_mod, ctx%state%ssp_basis_spec, w2, it_tesc, zlo, zhi, dz, yo)
+        else
+            call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
+        end if
+        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
+                                        zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb, eml, s_line)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, yo, total, absorbed)
         if (any_emis) then
@@ -333,10 +368,11 @@ contains
 
     !> Host-side nebular data of a batch: young ages and their grid interval, per-model grid
     !> indices and escape fractions, and per-pixel lists of the lines whose profile reaches it.
-    subroutine nebular_setup(ctx, psets, neb, nb)
+    subroutine nebular_setup(ctx, psets, neb, nzb, nb)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: psets(:)
         logical, intent(in)                 :: neb
+        integer, intent(in)                 :: nzb
         type(nebular_setup_t), intent(out)  :: nb
 
         real(WP), parameter :: LINE_PROFILE_CUT = 1.0e-14_wp   ! as add_lines_to_spectrum (CPU)
@@ -354,7 +390,7 @@ contains
         nb%xrb = (ctx%state%isoc_type == 'bpss') .and. (ctx%add_xrb_emission_val == 1)
         nb%whlylim = ctx%state%whlylim
         n = max(1, nb%nt_neb)
-        allocate(nb%ia(n), nb%wa(n), nb%q0(n))
+        allocate(nb%ia(n), nb%wa(n), nb%q0(n, nzb))
         allocate(nb%iz(n_mod), nb%wz(n_mod), nb%iu(n_mod), nb%wu(n_mod), nb%fesc(n_mod), nb%fabs(n_mod))
         nb%ia = 1; nb%wa = 0.0_wp
         do t = 1, nb%nt_neb
@@ -525,16 +561,17 @@ contains
     !> compute_csp_scenario: (1) the EUV escapes with fraction fesc, (2) the continuum
     !> 10**log(t; Z, U) * Q(t), (3) the lines, whose luminosities (also returned in eml) are summed
     !> over ages first and then spread over their profiles.
-    subroutine add_nebular_batch(ctx, n_mod, nspec, nt, basis, w2, it_tesc, nb, yo, eml)
+    subroutine add_nebular_batch(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, nb, yo, eml)
         type(fsps_context_t), intent(in) :: ctx
-        integer, intent(in)              :: n_mod, nspec, nt, it_tesc(:)
-        real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
+        integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
+        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        real(WP), intent(in)             :: dz(:)
         type(nebular_setup_t), intent(inout) :: nb
         real(KP), intent(inout)          :: yo(:,:)
         real(KP), intent(out)            :: eml(:,:)
 
         integer  :: m, i, j, k, t, nt_neb, whlylim, a, a_prev, p, iz, iu
-        real(KP) :: s, c, wt, bk, y, o, wk, v
+        real(KP) :: s, c, wt, bk, y, o, wk, v, dzk
         real(WP) :: q, lg, ra, rb, dl, f, r, sy, so, c00, c01, c10, c11
         real(WP), parameter :: LN10 = log(10.0_wp)
         logical  :: xrb
@@ -554,7 +591,9 @@ contains
 
         ! 1. Ionizing photons of each young basis spectrum (the photon-number integral of
         !    process_ionizing_radiation, without the absorbed fraction)
-        !$acc parallel loop gang present(ctx, basis, nb, nb%q0) private(s, c)
+        !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
+        !$acc parallel loop gang collapse(2) present(ctx, basis, nb, nb%q0) private(s, c)
+        do iz = 1, nzb
         do t = 1, nt_neb
             s = 0.0_KP
             c = 0.0_KP
@@ -562,8 +601,8 @@ contains
                 !$acc loop vector reduction(+:s) private(wt, v)
                 do i = 1, whlylim - 1
                     wt = real(0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)), KP)
-                    v = wt * (basis(i, t) / real(ctx%state%spec_nu(i), KP) + &
-                              basis(i+1, t) / real(ctx%state%spec_nu(i+1), KP))
+                    v = wt * (basis(i, t, iz) / real(ctx%state%spec_nu(i), KP) + &
+                              basis(i+1, t, iz) / real(ctx%state%spec_nu(i+1), KP))
 #ifdef _OPENACC
                     s = s + v
 #else
@@ -574,22 +613,29 @@ contains
                     end if
 #endif
                 end do
-                nb%q0(t) = real(s, WP) / H_PLANCK * L_SOL
+                nb%q0(t, iz) = real(s, WP) / H_PLANCK * L_SOL
             else
-                nb%q0(t) = 0.0_wp
+                nb%q0(t, iz) = 0.0_wp
             end if
+        end do
         end do
 
         ! 2. EUV rows: the age sums again, the nebular ages' spectra times the escaping fraction
         if (whlylim > 0) then
-            !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb, nb%fesc, yo) private(y, o, bk, k)
+            !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb, nb%fesc, yo, zlo, zhi, dz) &
+            !$acc private(y, o, bk, k, dzk)
             do m = 1, n_mod
                 do i = 1, whlylim
                     y = 0.0_KP
                     o = 0.0_KP
+                    dzk = real(dz(m), KP)
                     !$acc loop seq
                     do k = 1, nt
-                        bk = basis(i, k)
+                        if (nzb > 1) then
+                            bk = (1.0_KP - dzk) * basis(i, k, zlo(m)) + dzk * basis(i, k, zhi(m))
+                        else
+                            bk = basis(i, k, 1)
+                        end if
                         if (k <= nt_neb) bk = bk * real(nb%fesc(m), KP)
                         if (k <= it_tesc(m)) then
                             y = y + w2(k, m) * bk
@@ -611,10 +657,10 @@ contains
         !    the ratio), per age one multiply and one add, all in FP64 (each interval's sum is cast
         !    once). The FP64 exponentials are the cost of this kernel.
         if (nb%cont) then
-            !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co)
+            !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co, zlo, zhi, dz)
             do m = 1, n_mod
                 do t = 1, nt_neb
-                    q = abs(nb%q0(t) * nb%fabs(m))
+                    q = abs(((1.0_wp - dz(m)) * nb%q0(t, zlo(m)) + dz(m) * nb%q0(t, zhi(m))) * nb%fabs(m))
                     if (t <= it_tesc(m)) then
                         wk = w2(t, m)
                     else
@@ -709,7 +755,7 @@ contains
         ! 4. Line luminosities per (line, model), young and old: sum over ages of the weight times
         !    10**(log grid interpolated) * Q
         !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, nb%wz, &
-        !$acc nb%iu, nb%wu, nb%fabs, nb%lum, eml) private(y, o, wk, q, lg, ra, rb, a, t)
+        !$acc nb%iu, nb%wu, nb%fabs, nb%lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
         do m = 1, n_mod
             do i = 1, NEMLINE
                 y = 0.0_KP
@@ -722,7 +768,7 @@ contains
                         wk = w2(t, n_mod + m)
                     end if
                     if (wk == 0.0_KP) cycle
-                    q = abs(nb%q0(t) * nb%fabs(m))
+                    q = abs(((1.0_wp - dz(m)) * nb%q0(t, zlo(m)) + dz(m) * nb%q0(t, zhi(m))) * nb%fabs(m))
                     if (q <= SAFE_FLOOR) cycle
                     a = nb%ia(t)
                     if (xrb) then
@@ -873,6 +919,65 @@ contains
             end do
         end do
     end subroutine add_agn_batch
+
+    !> Interval and weight of log Z = logzsol in the context's metallicities, as
+    !> compute_interpolated_ssp (the weight is not clamped: outside the grid it extrapolates).
+    subroutine metallicity_interval(ctx, logzsol, zlo, dz)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in)             :: logzsol
+        integer, intent(out)             :: zlo
+        real(WP), intent(out)            :: dz
+        integer :: nz
+
+        nz = ctx%state%nz
+        zlo = max(1, min(find_interval(log10(ctx%state%zlegend(1:nz) / ctx%state%zsol), logzsol), nz - 1))
+        dz = (logzsol - log10(ctx%state%zlegend(zlo) / ctx%state%zsol)) / &
+             (log10(ctx%state%zlegend(zlo + 1) / ctx%state%zsol) - log10(ctx%state%zlegend(zlo) / ctx%state%zsol))
+    end subroutine metallicity_interval
+
+    !> Age sums with per-model metallicity: each model's basis is (1 - dz) basis(:, :, zlo) +
+    !> dz basis(:, :, zhi), formed at kernel precision term by term (portable kernel; also used in
+    !> cuBLAS builds). One pass over the ages (young or old per model), 4 models per thread.
+    subroutine age_sums_z(nspec, nt, n_mod, basis, w2, it_tesc, zlo, zhi, dz, yo)
+        integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:), zlo(:), zhi(:)
+        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        real(WP), intent(in)             :: dz(:)
+        real(KP), intent(out)            :: yo(:,:)
+        integer, parameter :: MT = 4
+        integer  :: mq, i, k, l, mm(MT)
+        real(KP) :: bk, y(MT), o(MT), d(MT)
+
+        !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, zlo, zhi, dz, yo) &
+        !$acc private(k, l, bk, mm, y, o, d)
+        do mq = 1, (n_mod + MT - 1) / MT
+            do i = 1, nspec
+                !$acc loop seq
+                do l = 1, MT
+                    mm(l) = min((mq - 1) * MT + l, n_mod)
+                    d(l) = real(dz(mm(l)), KP)
+                    y(l) = 0.0_KP
+                    o(l) = 0.0_KP
+                end do
+                !$acc loop seq
+                do k = 1, nt
+                    !$acc loop seq
+                    do l = 1, MT
+                        bk = (1.0_KP - d(l)) * basis(i, k, zlo(mm(l))) + d(l) * basis(i, k, zhi(mm(l)))
+                        if (k <= it_tesc(mm(l))) then
+                            y(l) = y(l) + w2(k, mm(l)) * bk
+                        else
+                            o(l) = o(l) + w2(k, n_mod + mm(l)) * bk
+                        end if
+                    end do
+                end do
+                !$acc loop seq
+                do l = 1, MT
+                    yo(i, mm(l)) = y(l)
+                    yo(i, n_mod + mm(l)) = o(l)
+                end do
+            end do
+        end do
+    end subroutine age_sums_z
 
     !> Common IGM transmission.
     subroutine apply_igm(n_mod, nspec, igm_t, total)

@@ -102,12 +102,27 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   Compute confirmed unavailable (`ERR_NVGPUCTRPERM`); kernels were tuned from Nsight Systems
   timings and experiments.
 
+- Per-model metallicity (branch `gpu/a100-batch-metallicity`, stacked): with the SSP bases of
+  all metallicities resident (`fsps_context_update_ssp_basis(..., nz)`), each model is
+  interpolated in log Z at its logzsol between the bracketing bases (`compute_interpolated_ssp`'s
+  simple Z interpolation: linear in spectra, mass and log L_bol, not clamped): age sums with
+  per-model bases (`age_sums_z`, portable kernel, also used in cuBLAS builds), mass and L_bol
+  from the interpolated SSPs, and nebular emission from them (Q interpolated, being linear in
+  the spectrum; EUV rows from the interpolated basis). New test group against
+  `compute_csp_scenario` on each model's interpolated SSP (z = 0.5, IGM, nebular, AGN): FP32
+  spectra 4.5e-7, mags 2.6e-7, lines 2.6e-7, indices 2.3e-6; FP64 1e-11. 96/96 and suites 32/32
+  in all builds. Cost: none measurable (full configuration, FP32, N = 10000: 8.3 us per model
+  with 12 resident bases vs 8.5 with one).
+- Full configuration with smoothing (`benchmark_csp_batch 10000 50 full_smooth[_z]`, FP32
+  OpenACC, A100): 8.9 us per model (8.6 with per-model metallicity); N = 100: 29 us; N = 1:
+  1.7 ms; one `compute_csp_scenario` call 2.4 ms.
+
 **In progress / queue** (user-added items first, in order)
-- Per-model metallicity in the batch (branch `gpu/a100-batch-metallicity`).
-- Then: full benchmark with sigma_smooth = 150; the rest of the FP32 path (age sums 10 ms,
-  attenuation 6.8, band fluxes 6.7, AGN 4.7 at N = 10000); TF32 / FP64 tensor-core experiments
-  (cuBLAS math mode switch, `--batch` mode for the case matrix to measure the net error);
-  write-up.
+- FP32 path: magnitudes assembled on the device (the host loop was ~20 ms per call at
+  N = 10000), register-tiled age sums, then attenuation / band fluxes / AGN; per-call host
+  overhead (1.7 ms at N = 1); spectra copy-back (pageable D2H at ~2.4 GB/s).
+- Then TF32 / FP64 tensor-core experiments (cuBLAS math mode switch, `--batch` mode for the case
+  matrix to measure the net error) and the write-up.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with

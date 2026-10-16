@@ -4,7 +4,9 @@ program test_csp_batch
     !> birth-cloud and diffuse dust (dust types 0, 1, 2, 4), dust emission (Draine & Li parameters
     !> varied per model), nebular emission (continuum and lines; gas_logu, gas_logz and the line
     !> luminosities compared too), AGN dust emission, and redshifts 0, 0.5 (with IGM absorption)
-    !> and 1.2. Requires the FSPS data tree, like the regression tests.
+    !> and 1.2; and per-model metallicity (logzsol varied, against compute_csp_scenario on the
+    !> SSP interpolated in log Z the same way). Requires the FSPS data tree, like the regression
+    !> tests.
 
     use fsps_precision, only: WP, KP
     use fsps_constants, only: NEMLINE
@@ -17,6 +19,7 @@ program test_csp_batch
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
                             fsps_context_set_param_int, fsps_context_set_param_float
     use fsps_context_types, only: fsps_context_t
+    use fsps_interpolation, only: find_interval
     use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
     implicit none
 
@@ -63,6 +66,8 @@ program test_csp_batch
     smooth_sigma = 150.0_wp
     call check_batch(2, 0.5_wp, 1, 1, 1, "Calzetti, z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s")
     smooth_sigma = 0.0_wp
+    ! Per-model metallicity: all bases resident, logzsol varied
+    call check_batch_z()
 
     call fsps_destroy(ctx)
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
@@ -244,6 +249,88 @@ contains
             if (any(bright .neqv. (mags(:, m) == mags(:, m) .and. bright))) d_mag = huge(1.0_wp)
         end do
     end subroutine max_differences
+
+    !> Per-model metallicity: the bases of all metallicities resident, each model at its own
+    !> logzsol, against compute_csp_scenario with that model's interpolated SSP as the basis
+    !> (z = 0.5, IGM, nebular emission, AGN, dust emission).
+    subroutine check_batch_z()
+        real(WP), parameter :: logz(N_MOD) = [-1.6_wp, -1.2_wp, -0.9_wp, -0.55_wp, -0.3_wp, -0.1_wp, &
+                                              0.0_wp, 0.1_wp, 0.18_wp, -0.75_wp, -1.4_wp, -0.2_wp]
+        type(PARAMS) :: pset, psets(N_MOD)
+        type(COMPSPOUT), allocatable :: results(:)
+        real(WP), allocatable :: spec_z(:, :, :), mass_z(:, :), lbol_z(:, :)
+        real(WP), allocatable :: spec(:, :), mags(:, :), ref_spec(:, :), ref_mags(:, :)
+        real(WP), allocatable :: eml(:, :), ref_eml(:, :), indx(:, :), ref_indx(:, :)
+        real(WP) :: mass(N_MOD), lbol(N_MOD), ref_mass(N_MOD), ref_lbol(N_MOD)
+        real(WP) :: d_spec, d_mag, d_scal, d_line, d_indx, dz
+        integer  :: nz, nt, nspec, nbands, z, m, status, zlo
+
+        call print_group("Batched CSP: per-model metallicity (z = 0.5, IGM, nebular, AGN)")
+        nz = ctx%state%nz
+        nt = ctx%state%ntfull
+        nspec = ctx%state%nspec
+        nbands = ctx%state%nbands
+        allocate(spec_z(nspec, nt, nz), mass_z(nt, nz), lbol_z(nt, nz))
+        do z = 1, nz
+            call set_int('zmet', z)
+            call fsps_context_prepare_pset(ctx)
+            call fsps_context_get_pset(ctx, pset)
+            call fsps_context_set_pset(ctx, pset)
+            call generate_ssp_grid(ctx, pset, mass_z(:, z), lbol_z(:, z), spec_z(:, :, z))
+        end do
+        call set_int('zmet', 10)
+        call set_int('dust_type', 2)
+        call set_int('add_igm_absorption', 1)
+        call set_int('add_neb_emission', 1)
+        call set_int('add_agn_dust', 1)
+
+        allocate(spec(nspec, N_MOD), mags(nbands, N_MOD), ref_spec(nspec, N_MOD), ref_mags(nbands, N_MOD))
+        allocate(eml(NEMLINE, N_MOD), ref_eml(NEMLINE, N_MOD), indx(ctx%state%nindx, N_MOD), &
+                 ref_indx(ctx%state%nindx, N_MOD))
+        do m = 1, N_MOD
+            call set_model(m, 0.5_wp)
+            call set_float('logzsol', logz(m))
+            call fsps_context_prepare_pset(ctx)
+            call fsps_context_get_pset(ctx, psets(m))
+            ! The interpolated SSP (compute_interpolated_ssp, simple Z interpolation)
+            zlo = max(1, min(find_interval(log10(ctx%state%zlegend(1:nz) / ctx%state%zsol), logz(m)), nz - 1))
+            dz = (logz(m) - log10(ctx%state%zlegend(zlo) / ctx%state%zsol)) / &
+                 (log10(ctx%state%zlegend(zlo + 1) / ctx%state%zsol) - log10(ctx%state%zlegend(zlo) / ctx%state%zsol))
+            ctx%state%ssp_basis_is_dirty = .true.
+            call fsps_context_update_ssp_basis(ctx, &
+                reshape((1.0_wp - dz) * spec_z(:, :, zlo) + dz * spec_z(:, :, zlo + 1), [nspec, nt, 1]), &
+                reshape((1.0_wp - dz) * mass_z(:, zlo) + dz * mass_z(:, zlo + 1), [nt, 1]), &
+                reshape((1.0_wp - dz) * lbol_z(:, zlo) + dz * lbol_z(:, zlo + 1), [nt, 1]), 1)
+            call compute_csp_scenario(ctx, psets(m), 1, results, status)
+            if (status /= 0) then
+                write(*, *) 'ERROR: compute_csp_scenario returned status ', status
+                stop 1
+            end if
+            ref_spec(:, m) = results(1)%spec(1:nspec)
+            ref_mags(:, m) = results(1)%mags(1:nbands)
+            ref_eml(:, m) = results(1)%emlines(1:NEMLINE)
+            ref_indx(:, m) = results(1)%indx(1:ctx%state%nindx)
+            ref_mass(m) = results(1)%mass_csp
+            ref_lbol(m) = results(1)%lbol_csp
+        end do
+
+        ctx%state%ssp_basis_is_dirty = .true.
+        call fsps_context_update_ssp_basis(ctx, spec_z, mass_z, lbol_z, nz)
+        call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, emlines=eml, indx=indx)
+        call assert_true(status == 0, "status 0", total_tests, total_failures)
+        if (status /= 0) return
+        call max_differences(spec, mags, ref_spec, ref_mags, d_spec, d_mag)
+        d_scal = max(maxval(abs(mass / ref_mass - 1.0_wp)), maxval(abs(lbol - ref_lbol)))
+        d_line = maxval(abs(eml / ref_eml - 1.0_wp), mask=ref_eml > 1.0e-3_wp * maxval(ref_eml))
+        d_indx = maxval(abs(indx - ref_indx))
+        write(*, '(A,5ES10.2)') "# max difference (spectrum, mag, mass/lbol, lines, indices): ", &
+            d_spec, d_mag, d_scal, d_line, d_indx
+        call assert_true(d_spec <= SPEC_RTOL, "spectra", total_tests, total_failures)
+        call assert_true(d_mag <= MAG_TOL, "magnitudes", total_tests, total_failures)
+        call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol", total_tests, total_failures)
+        call assert_true(d_line <= SPEC_RTOL, "emission lines", total_tests, total_failures)
+        call assert_true(d_indx <= INDX_TOL, "spectral indices", total_tests, total_failures)
+    end subroutine check_batch_z
 
     subroutine set_int(key, value)
         character(len=*), intent(in) :: key
