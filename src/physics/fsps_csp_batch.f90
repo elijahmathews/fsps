@@ -70,6 +70,9 @@ module fsps_csp_batch
         logical :: cont = .false., lines_in_spec = .false., xrb = .false.
         integer,  allocatable :: ia(:)          !< per age: CLOUDY age interval and weight
         real(WP), allocatable :: wa(:)
+        real(WP), allocatable :: dwa(:)         !< per age: wa(t) - wa(t-1) within an interval
+        logical,  allocatable :: newr(:)        !< per age: the step dwa differs from the previous one
+        real(WP), allocatable :: cy(:,:), co(:,:) !< (ages, N): SFH weight * Q, young and old (continuum)
         real(WP), allocatable :: q0(:)          !< per age: ionizing photons of the basis (frac_obrun = 0)
         integer,  allocatable :: iz(:), iu(:)   !< per model: gas_logz and gas_logu intervals and weights
         real(WP), allocatable :: wz(:), wu(:)
@@ -230,8 +233,9 @@ contains
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
-        !$acc      copyin(nb, nb%ia, nb%wa, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr, nb%lid, nb%llo) &
-        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
+        !$acc      copyin(nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
+        !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
+        !$acc      create(nb%cy, nb%co) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
@@ -356,6 +360,17 @@ contains
         do t = 1, nb%nt_neb
             call get_grid_indices_weights(ctx%state%nebem_age, ctx%state%time_full(t), NEBNAGE, nb%ia(t), nb%wa(t))
         end do
+        ! Steps of wa within each interval (constant on the uniform log-age grid, zero where wa is
+        ! clamped), and where a new step starts
+        allocate(nb%dwa(n), nb%newr(n))
+        nb%dwa = 0.0_wp
+        nb%newr = .false.
+        do t = 2, nb%nt_neb
+            if (nb%ia(t) /= nb%ia(t - 1)) cycle
+            nb%dwa(t) = nb%wa(t) - nb%wa(t - 1)
+            nb%newr(t) = nb%ia(t - 1) /= nb%ia(max(1, t - 2)) .or. t == 2 .or. nb%dwa(t) /= nb%dwa(t - 1)
+        end do
+        allocate(nb%cy(n, n_mod), nb%co(n, n_mod))
         do m = 1, n_mod
             nb%iz(m) = 1; nb%wz(m) = 0.0_wp; nb%iu(m) = 1; nb%wu(m) = 0.0_wp
             if (neb) then
@@ -518,9 +533,10 @@ contains
         real(KP), intent(inout)          :: yo(:,:)
         real(KP), intent(out)            :: eml(:,:)
 
-        integer  :: m, i, j, k, t, nt_neb, whlylim, a, a_prev, p
+        integer  :: m, i, j, k, t, nt_neb, whlylim, a, a_prev, p, iz, iu
         real(KP) :: s, c, wt, bk, y, o, wk, v
-        real(WP) :: q, lg, ra, rb
+        real(WP) :: q, lg, ra, rb, dl, f, r, sy, so, c00, c01, c10, c11
+        real(WP), parameter :: LN10 = log(10.0_wp)
         logical  :: xrb
 
         nt_neb = nb%nt_neb
@@ -587,46 +603,103 @@ contains
             end do
         end if
 
-        ! 3. Continuum: per (pixel, model), the SFH-weighted sum over the nebular ages of
-        !    10**(log grid interpolated in Z, U and age, FP64) * Q
+        ! 3. Continuum: per (pixel, model), sum over the nebular ages t of C(t) 10**lg(t), with
+        !    C = SFH weight * Q (per model, young or old; FP64) and lg the log grid interpolated
+        !    in Z, U (FP64) and age. Within one CLOUDY age interval [ra, rb], lg = ra + wa (rb - ra)
+        !    and on the uniform log-age grid wa advances by a constant step, so 10**lg is a
+        !    geometric progression: per interval two FP64 exponentials (the first age's value and
+        !    the ratio), per age one multiply and one add, all in FP64 (each interval's sum is cast
+        !    once). The FP64 exponentials are the cost of this kernel.
         if (nb%cont) then
-            !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb, nb%ia, nb%wa, nb%q0, nb%iz, &
-            !$acc nb%wz, nb%iu, nb%wu, nb%fabs, yo) private(y, o, wk, q, lg, ra, rb, a, a_prev, t)
+            !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb, nb%q0, nb%fabs, nb%cy, nb%co)
+            do m = 1, n_mod
+                do t = 1, nt_neb
+                    q = abs(nb%q0(t) * nb%fabs(m))
+                    if (t <= it_tesc(m)) then
+                        wk = w2(t, m)
+                    else
+                        wk = w2(t, n_mod + m)
+                    end if
+                    nb%cy(t, m) = 0.0_wp
+                    nb%co(t, m) = 0.0_wp
+                    if (wk /= 0.0_KP .and. q > SAFE_FLOOR) then
+                        if (t <= it_tesc(m)) then
+                            nb%cy(t, m) = real(wk, WP) * q
+                        else
+                            nb%co(t, m) = real(wk, WP) * q
+                        end if
+                    end if
+                end do
+            end do
+
+            !$acc parallel loop gang vector collapse(2) present(ctx, nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, &
+            !$acc nb%iu, nb%wu, nb%cy, nb%co, yo) &
+            !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
             do m = 1, n_mod
                 do j = 1, nspec
                     y = 0.0_KP
                     o = 0.0_KP
+                    sy = 0.0_wp
+                    so = 0.0_wp
                     a_prev = -1
-                    ra = 0.0_wp
-                    rb = 0.0_wp
+                    ra = 0.0_wp; rb = 0.0_wp
+                    dl = 0.0_wp; f = 0.0_wp; r = 1.0_wp
+                    iz = nb%iz(m)
+                    iu = nb%iu(m)
+                    ! As interpolate_zu_slice_point (written out: a call with the 4-d grid per
+                    ! interval and thread cost more than the arithmetic)
+                    c00 = (1.0_wp - nb%wz(m)) * (1.0_wp - nb%wu(m))
+                    c01 = (1.0_wp - nb%wz(m)) * (         nb%wu(m))
+                    c10 = (         nb%wz(m)) * (1.0_wp - nb%wu(m))
+                    c11 = (         nb%wz(m)) * (         nb%wu(m))
                     !$acc loop seq
                     do t = 1, nt_neb
-                        if (t <= it_tesc(m)) then
-                            wk = w2(t, m)
-                        else
-                            wk = w2(t, n_mod + m)
-                        end if
-                        if (wk == 0.0_KP) cycle
-                        q = abs(nb%q0(t) * nb%fabs(m))
-                        if (q <= SAFE_FLOOR) cycle
                         a = nb%ia(t)
                         if (a /= a_prev) then
-                            if (xrb) then
-                                ra = zu_point(ctx%state%xnebem_cont, j, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
-                                rb = zu_point(ctx%state%xnebem_cont, j, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                            ! Close the previous interval
+                            y = y + real(sy, KP)
+                            o = o + real(so, KP)
+                            sy = 0.0_wp
+                            so = 0.0_wp
+                            ! The interval only advances: its lower end is the previous upper end
+                            if (a == a_prev + 1) then
+                                ra = rb
                             else
-                                ra = zu_point(ctx%state%nebem_cont, j, a, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
-                                rb = zu_point(ctx%state%nebem_cont, j, a + 1, nb%iz(m), nb%iu(m), nb%wz(m), nb%wu(m))
+                                if (xrb) then
+                                    ra = c00 * ctx%state%xnebem_cont(j, iz, a, iu) + &
+                                         c01 * ctx%state%xnebem_cont(j, iz, a, iu + 1) + &
+                                         c10 * ctx%state%xnebem_cont(j, iz + 1, a, iu) + &
+                                         c11 * ctx%state%xnebem_cont(j, iz + 1, a, iu + 1)
+                                else
+                                    ra = c00 * ctx%state%nebem_cont(j, iz, a, iu) + &
+                                         c01 * ctx%state%nebem_cont(j, iz, a, iu + 1) + &
+                                         c10 * ctx%state%nebem_cont(j, iz + 1, a, iu) + &
+                                         c11 * ctx%state%nebem_cont(j, iz + 1, a, iu + 1)
+                                end if
+                            end if
+                            if (xrb) then
+                                rb = c00 * ctx%state%xnebem_cont(j, iz, a + 1, iu) + &
+                                     c01 * ctx%state%xnebem_cont(j, iz, a + 1, iu + 1) + &
+                                     c10 * ctx%state%xnebem_cont(j, iz + 1, a + 1, iu) + &
+                                     c11 * ctx%state%xnebem_cont(j, iz + 1, a + 1, iu + 1)
+                            else
+                                rb = c00 * ctx%state%nebem_cont(j, iz, a + 1, iu) + &
+                                     c01 * ctx%state%nebem_cont(j, iz, a + 1, iu + 1) + &
+                                     c10 * ctx%state%nebem_cont(j, iz + 1, a + 1, iu) + &
+                                     c11 * ctx%state%nebem_cont(j, iz + 1, a + 1, iu + 1)
                             end if
                             a_prev = a
-                        end if
-                        lg = (1.0_wp - nb%wa(t)) * ra + nb%wa(t) * rb
-                        if (t <= it_tesc(m)) then
-                            y = y + wk * real((10.0_wp**lg) * q, KP)
+                            dl = (rb - ra) * LN10
+                            f = exp(ra * LN10 + nb%wa(t) * dl)
                         else
-                            o = o + wk * real((10.0_wp**lg) * q, KP)
+                            if (nb%newr(t)) r = exp(nb%dwa(t) * dl)
+                            f = f * r
                         end if
+                        sy = sy + nb%cy(t, m) * f
+                        so = so + nb%co(t, m) * f
                     end do
+                    y = y + real(sy, KP)
+                    o = o + real(so, KP)
                     yo(j, m) = yo(j, m) + y
                     yo(j, n_mod + m) = yo(j, n_mod + m) + o
                 end do

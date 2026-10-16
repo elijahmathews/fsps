@@ -90,16 +90,29 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   (new group: z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s) 90/90, suites 32/32, case
   matrix PASS, all builds.
 
+- Nebular continuum speed-up (branch `gpu/a100-batch-neb-fast`, stacked): the kernel did one
+  FP64 `10**x` per (pixel, model, age), 47 nebular ages. Now per (pixel, model) and CLOUDY age
+  interval: the grid's (Z, U) interpolation written out (a device call with the 4-d grid per
+  interval cost 53 -> 41 ms), the upper endpoint reused as the next lower one, and 10**lg as a
+  geometric progression in age (the log-age grid is uniform, so wa steps by a constant inside an
+  interval): two FP64 exponentials per interval, one multiply-add per age against precomputed
+  C = SFH weight * Q, interval sums in FP64. Full configuration, FP32, N = 10000: kernel
+  81 -> 21 ms; 14.4 -> 9.1 us per model. Accuracy unchanged (FP32 spectra vs
+  `compute_csp_scenario` 6.5e-7, FP64 1.0e-11). Tests 90/90, suites 32/32, all builds. Nsight
+  Compute confirmed unavailable (`ERR_NVGPUCTRPERM`); kernels were tuned from Nsight Systems
+  timings and experiments.
+
 **In progress / queue** (user-added items first, in order)
-- Nebular continuum speed-up (one FP64 power per CLOUDY age interval instead of per age; 81 of
-  120 ms of GPU time at N = 10000 in the full configuration), branch `gpu/a100-batch-neb-fast`.
-- Then: per-model metallicity (log Z interpolation between resident bases); the full benchmark
-  with sigma_smooth = 150; profile and speed up the FP32 path; TF32 / FP64 tensor-core
-  experiments; the write-up.
+- Per-model metallicity in the batch (branch `gpu/a100-batch-metallicity`).
+- Then: full benchmark with sigma_smooth = 150; the rest of the FP32 path (age sums 10 ms,
+  attenuation 6.8, band fluxes 6.7, AGN 4.7 at N = 10000); TF32 / FP64 tensor-core experiments
+  (cuBLAS math mode switch, `--batch` mode for the case matrix to measure the net error);
+  write-up.
 
 **Open problems**
-- Nsight Compute: `RmProfilingAdminOnly: 1` on this node (GPU performance counters for admins
-  only); to be confirmed with a run.
+- Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
+  `ERR_NVGPUCTRPERM` (GPU performance counters for admins only). Kernels are tuned from Nsight
+  Systems timings instead.
 - OpenACC FP64 GPU builds: `test_csp_batch` spectra differ from `compute_csp_scenario` by up to
   8.6e-11 (tolerance 1e-10) and mass / L_bol / SFR by 7.7e-13, against <= 6e-16 and 0 in the
   CPU and OpenMP builds. The batch computes SFH weights on the device, the single-output
