@@ -20,10 +20,20 @@ status at the top; dated entries below.
 - Goal 1 baseline benchmarks and Nsight Systems profile (below): GPU SSP grid is 3-5x slower
   than one CPU core (per-star kernel = 95% of GPU time); CSP call 2.8 ms (FP64) vs 4.0 ms CPU.
 
+- Goal 2 (branch `gpu/p100-ssp-templates`, stacked on `gpu/p100-baseline`): the SSP template
+  sum runs in OpenACC builds; the main-library product is a device kernel (3.2 ms per grid).
+  SSP grid 2.48 s -> 0.38 s (FP64 GPU), 1.33 s -> 0.39 s (FP32 GPU); nvfortran CPU 0.45 s.
+  What remains is host work (weight aggregation, dust-shell AGB corners, small libraries,
+  IMF weights). Fixed an FP32 subnormal problem in the AGB template sums (nvfortran only).
+  All builds 31/31; case matrix PASS.
+
 **In progress**
-- Goal 2: SSP template sum on the GPU (branch `gpu/p100-ssp-templates`).
+- Goal 3: batched CSP entry point + benchmark (branch `gpu/p100-batched-csp`).
 
 **Open problems**
+- Branches are stacked (each later one contains the earlier ones' commits), because the
+  device-residency fixes on `gpu/p100-baseline` are needed for any GPU run; merge them in order
+  (baseline, ssp-templates, ...), or rebase after the first is merged.
 - gfortran 13.4 and nvfortran 25.1 CPU builds differ by up to 8.5e-10 per pixel (4e-10 mag)
   for the power-law IMFs (Salpeter, Kroupa, Dave); Chabrier agrees to 2e-13. Not a GPU issue
   (the GPU matches nvfortran CPU to 2e-13 on those cases), but an FP64 GPU build compared
@@ -140,3 +150,55 @@ Conclusions: (1) SSP time is entirely the per-star kernel: each thread loops ove
 spectrum of one star, with ~1000-2000 threads per age, so the P100 is latency bound; this is
 goal 2 (template GEMM). (2) The CSP call is ~1 ms of GPU work per call plus host orchestration
 and many small transfers; the age sum (line 367) is the largest kernel.
+
+### 2026-10-16: goal 2, SSP template sum on the GPU (branch `gpu/p100-ssp-templates`)
+
+**Change.** `generate_ssp_grid` now uses the template path in OpenACC builds as well: per age,
+`accumulate_by_templates` aggregates the main-library weights on the host in FP64
+(`w_main_all`, templates x ages) and sums the other libraries on the host; after the age loop
+`add_main_library_templates` runs on the device: one thread per (pixel, age) sums the used
+templates of the resident `speclib(:, zmet, :, :)` in the host order, compensated (Kahan) at
+FP32 kernel precision, plain at FP64. Results come back in a private array and are added on
+the host, so callers that map `spec_grid` themselves (test_runner does) stay consistent; the
+routine also refreshes caller-mapped outputs at exit (`update device ... if_present`). The
+per-star OpenACC kernel stays as the reference (`ssp_per_star = .true.`, used by
+`physics_oracles`).
+
+**Bug found on the way (nvfortran FP32, CPU and GPU).** The first FP32 GPU run failed
+`param_regression_ssp` (ssp_plain: 104 far-IR pixels off by up to 1%). The same error, to the
+last digit, appeared in an nvfortran FP32 *CPU* build, and not in gfortran FP32: the template
+path had never been compiled by nvfortran in a non-OpenACC build (CI's nvfortran job is
+OpenACC multicore, which used the per-star kernel). Dumping the per-age remainder showed the
+O/C-rich AGB term: the template path folds the IMF weight in before lambda^2, so at 1-2.7 mm
+(lambda^2 ~ 7e14 A^2) the sum is ~1e-37, at the bottom of the FP32 range. gfortran keeps
+subnormals; nvfortran's runtime and GPUs flush them. (Ruled out first: optimization level,
+FMA, vectorization, and the `-Mflushz/-Mnoflushz` main-program flag, which did not change the
+result.) Fix: those sums carry an exact factor 2^64, removed after lambda^2 (bit-identical in
+FP64). This is rule 5 of `doc/MIXED_PRECISION.md` (keep values in range) for an intermediate.
+
+**Validation.** Unit + regression 31/31 in all four builds (gfortran FP64 and FP32, GPU FP64 and
+FP32). Case matrix, worst over 36 cases:
+
+| Comparison | spec (912 A-2.5 um) | spec (all) | mag | indx | lines |
+|---|---|---|---|---|---|
+| FP64 GPU vs nvfortran CPU (rtol 1e-10) | 1.6e-11 | 1.2e-10 | 1.3e-11 | 2.3e-11 | 1.2e-12 |
+| FP32 GPU vs gfortran CPU FP64 (defaults) | 3.1e-7 | 4.1e-7 | 2.0e-7 | 4.1e-6 | 2.3e-7 |
+
+**Speed** (`benchmark_phases 5 200`, seconds per SSP grid):
+
+| Build | before | after |
+|---|---|---|
+| GPU FP64 | 2.475 | 0.383 |
+| GPU FP32 | 1.332 | 0.387 |
+| nvfortran CPU FP64 (reference) | | 0.446 |
+
+Nsight: `add_main_library_templates` kernel 3.16 ms per grid (FP32, Kahan, one thread per
+pixel x age, 1292 templates x 107 ages x 5994 pixels). The SSP call is now host-bound. gprof
+of the FP32 GPU build (`-pg`, 7 grids): per grid ~0.2 s in `accumulate_by_templates`
+(aggregation, the per-age small-library sums `add_column`, and above all the dust-shell AGB
+corners, where each corner slot does several full-spectrum passes per age) and ~0.09 s in the
+IMF weights (`get_imf_value` / Romberg `refine_trapezoid`). Next for SSP: move the per-age
+small-library and dust-corner sums to the device as products over all ages (continuation item
+1); the IMF weights need the analytic integrals (branch `perf/imf-analytic`) to leave the host.
+A batch of grids with different IMF parameters would currently be host-bound at ~0.38 s per
+grid, so it was not timed separately.
