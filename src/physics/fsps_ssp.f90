@@ -253,13 +253,16 @@ contains
             !    IMF, Horizontal Branch, Blue Stragglers, Giant Branch modifications
             call apply_isochrone_physics(ctx, pset, time_log_yr, buf)
 
-            ! Sync buffer to device for integration and spectral accumulation
+            ! Sync buffer to device for the per-star kernel (the template path and
+            ! compute_integrated_properties then run on the host)
             n_curr = buf%n_stars
-            !$acc update device(buf%n_stars)
-            if (n_curr > 0) then
-                !$acc update device(buf%initial_mass(1:n_curr), buf%current_mass(1:n_curr), buf%log_lum(1:n_curr))
-                !$acc update device(buf%log_teff(1:n_curr), buf%log_g(1:n_curr), buf%phase(1:n_curr))
-                !$acc update device(buf%co_ratio(1:n_curr), buf%log_mdot(1:n_curr), buf%weights(1:n_curr))
+            if (ssp_per_star) then
+                !$acc update device(buf%n_stars)
+                if (n_curr > 0) then
+                    !$acc update device(buf%initial_mass(1:n_curr), buf%current_mass(1:n_curr), buf%log_lum(1:n_curr))
+                    !$acc update device(buf%log_teff(1:n_curr), buf%log_g(1:n_curr), buf%phase(1:n_curr))
+                    !$acc update device(buf%co_ratio(1:n_curr), buf%log_mdot(1:n_curr), buf%weights(1:n_curr))
+                end if
             end if
 
             ! C. COMPUTE INTEGRATED PROPERTIES
@@ -590,7 +593,9 @@ contains
         ! 1. Calculate Mass of Living Stars
         !    Vectorized dot product: sum(weights * current_mass)
         local_mass = 0.0_wp
-        !$acc parallel loop reduction(+:local_mass) present(buf)
+        ! On the device only for the per-star kernel (buffer already there): otherwise a few
+        ! thousand terms, cheaper on the host than the uploads and launches (56 ms per SSP grid)
+        !$acc parallel loop reduction(+:local_mass) present(buf) if(ssp_per_star)
         do i = 1, n
             local_mass = local_mass + buf%weights(i) * buf%current_mass(i)
         end do
@@ -601,7 +606,7 @@ contains
              ! The turn-off mass is approximately the maximum initial mass
              ! of stars still present in the native isochrone.
              max_living_mass = -1.0_wp
-             !$acc parallel loop reduction(max:max_living_mass) present(buf)
+             !$acc parallel loop reduction(max:max_living_mass) present(buf) if(ssp_per_star)
              do i = 1, n_native
                  if (buf%initial_mass(i) > max_living_mass) max_living_mass = buf%initial_mass(i)
              end do
@@ -618,7 +623,7 @@ contains
         !    L_tot = sum( weight * 10^logL )
         !    We compute the linear sum first, then take log10.
         local_linear_lum = 0.0_wp
-        !$acc parallel loop reduction(+:local_linear_lum) present(buf)
+        !$acc parallel loop reduction(+:local_linear_lum) present(buf) if(ssp_per_star)
         do i = 1, n
             local_linear_lum = local_linear_lum + buf%weights(i) * exp(buf%log_lum(i) * LN10)
         end do
