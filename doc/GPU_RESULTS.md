@@ -75,6 +75,11 @@ only, the P100 batch did not support these):
 | 10000 | **7.2** | **6.5** | 8.7 | 7.1 |
 | 10000, spectra copied back | 23.9 | 23.1 | 34.6 | 33.0 |
 
+**OpenMP target offload** (end of the session, branch `gpu/a100-omp-batch`): the whole batch on
+the device with the same loops as OpenACC; N = 10000, us per model, OpenMP / OpenACC: FP32
+basic 3.6 / 2.9, FP32 full physics 7.8 / 7.0, FP64 basic 4.7 / 4.2, FP64 full physics 9.5 / 8.9
+(0.3-1 ms more per call at small N). Before: 833 / 3788 us (host fallback).
+
 **Against the forecasts** (A100): SSP grid ~0.1 s -> 0.07 s; single CSP call with full physics
 ~2.5 ms -> 2.2-2.3 ms; batched CSP per model ~8.5 us FP32 / ~13 us FP64 -> 7.2 / 8.7 us
 (OpenACC; 6.5 / 7.1 with cuBLAS); the plan's ~4 us (FP32, basic configuration) -> 2.9 us.
@@ -95,6 +100,14 @@ TF32 is not usable for the age sums at this project's tolerances (net 3e-4 mag) 
 ## Status (A100 session, 2026-10-16)
 
 If restarted: read this section, then `git log` of the newest `gpu/a100-*` branch.
+
+**Branches** (each stacked on the previous one, from `develop` 9dc0c19; merge in this order):
+`gpu/a100-cublas-threshold` -> `gpu/a100-batch-nebular` -> `gpu/a100-batch-smoothing` ->
+`gpu/a100-batch-neb-fast` -> `gpu/a100-batch-metallicity` -> `gpu/a100-fp32-kernels` ->
+`gpu/a100-batch-pipeline` -> `gpu/a100-tf32` -> `gpu/a100-call-overhead` -> `gpu/a100-omp-batch`
+(tip). Every branch was validated in all ten builds before its commit, except
+`gpu/a100-call-overhead` (dev builds only; its successor `gpu/a100-omp-batch` was validated in
+full).
 
 **Setup**
 - Node `p-gc-3009`, NVIDIA A100-PCIE-40GB, driver 580.178.04 (CUDA 13.0 driver API), 2x Xeon
@@ -321,8 +334,14 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
     per call (runtime overhead of the target constructs and maps). The single CSP call
     (`compute_csp_scenario`) is not ported and runs on the host in the OpenMP build (7 ms FP32).
 
+- Per-call overhead, second attempt (not committed): the OpenACC batch kernels on one async
+  queue (one wait before the photometry instead of ~20 host synchronizations) crashed the batch
+  test with a corrupted stack; reverted for lack of time to find the race (likely a kernel that
+  implicitly copies a host-local array, which an async launch reads after the routine returns).
+  Expected gain ~0.15 ms per call.
+
 **In progress / queue**
-- Per-call overhead (both programming models), with the remaining job time.
+- Nothing running. Next steps: `doc/GPU_PLAN.md`, "Next: after the A100 session".
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
