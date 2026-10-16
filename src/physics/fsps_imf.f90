@@ -9,7 +9,6 @@ module fsps_imf
     
     use fsps_precision, only: WP
     use fsps_context_types, only: fsps_context_t
-    use fsps_integration, only: integrate_romberg
     implicit none
 
     private
@@ -59,8 +58,7 @@ contains
         integer, intent(in) :: nmass
 
         real(WP) :: m1, m2, total_mass
-        integer :: i, imf_type_base
-        logical :: use_analytic
+        integer :: i
 
         ! Access limits from state
         real(WP) :: lower_limit, upper_limit, lower_bound
@@ -68,15 +66,6 @@ contains
         lower_limit = ctx%state%imf_lower_limit
         upper_limit = ctx%state%imf_upper_limit
         lower_bound = ctx%state%imf_lower_bound
-        imf_type_base = mod(ctx%imf_type_val, 10)
-
-        select case (imf_type_base)
-        case (0, 1, 2, 4, 5)
-            use_analytic = .true.
-        case default
-            use_analytic = .false.
-        end select
-
         weights = 0.0_wp
 
         ! 1. Calculate Number of Stars in each bin
@@ -111,20 +100,12 @@ contains
 
             ! Integrate dn/dM over [m1, m2]
             ! Uses the wrapper_imf_count to integrate number density
-            if (use_analytic) then
-                weights(i) = integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted=.false.)
-            else
-                weights(i) = integrate_romberg(ctx, wrapper_imf_count, m1, m2)
-            end if
+            weights(i) = integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted=.false.)
         end do
 
         ! 2. Calculate Total Mass (Normalization Factor)
         ! Integrate M * dn/dM over the full range [lower_limit, upper_limit]
-        if (use_analytic) then
-            total_mass = integrate_imf_interval_analytic(ctx, lower_limit, upper_limit, mass_weighted=.true.)
-        else
-            total_mass = integrate_romberg(ctx, wrapper_imf_mass, lower_limit, upper_limit)
-        end if
+        total_mass = integrate_imf_interval_analytic(ctx, lower_limit, upper_limit, mass_weighted=.true.)
 
         ! 3. Normalize
         if (total_mass > 0.0_wp) then
@@ -137,26 +118,6 @@ contains
     ! INTEGRATION WRAPPERS
     ! These match the interface required by fsps_integration
     ! ------------------------------------------------------------------------
-
-    !> @brief Wrapper to integrate Number Density (dn/dM)
-    pure function wrapper_imf_count(ctx, x) result(res)
-        !$acc routine seq
-        type(fsps_context_t), intent(in) :: ctx
-        real(WP), intent(in) :: x
-        real(WP) :: res
-        
-        res = get_imf_value(ctx, x, mass_weighted=.false.)
-    end function wrapper_imf_count
-
-    !> @brief Wrapper to integrate Mass Density (M * dn/dM)
-    pure function wrapper_imf_mass(ctx, x) result(res)
-        !$acc routine seq
-        type(fsps_context_t), intent(in) :: ctx
-        real(WP), intent(in) :: x
-        real(WP) :: res
-        
-        res = get_imf_value(ctx, x, mass_weighted=.true.)
-    end function wrapper_imf_mass
 
     !> @brief Analytic integral of IMF over [m1, m2] for power-law IMF families.
     !>
@@ -176,7 +137,7 @@ contains
         real(WP) :: int_val
 
         integer :: imf_type_base
-        real(WP) :: lo, hi, a1, a2, a3, mdave, c2
+        real(WP) :: lo, hi, a1, a2, a3, mdave, c2, vd_break
         real(WP) :: seg_lo, seg_hi, imfcu
         integer  :: n, n_user
 
@@ -195,11 +156,23 @@ contains
             ! Chabrier (2003): lognormal below 1 M_sun (closed form with erf), power law above
             seg_lo = lo
             seg_hi = min(hi, 1.0_wp)
-            if (seg_hi > seg_lo) int_val = int_val + integrate_chabrier_lognormal(seg_lo, seg_hi, mass_weighted)
+            if (seg_hi > seg_lo) int_val = int_val + integrate_lognormal(seg_lo, seg_hi, CHAB_LOG_MC, CHAB_SIGMA2, mass_weighted)
             seg_lo = max(lo, 1.0_wp)
             seg_hi = hi
             if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, CHAB_IND + 1.0_wp, &
                                                                        mass_weighted, CHAB_HIGH_NORM)
+
+        case (3)
+            ! van Dokkum (2008): scaled lognormal up to nc * mc, power law above (get_imf_value)
+            vd_break = VD_NC * ctx%state%imf_vdmc
+            seg_lo = lo
+            seg_hi = min(hi, vd_break)
+            if (seg_hi > seg_lo) int_val = int_val + VD_AL * (0.5_wp * vd_break)**(-VD_IND) * &
+                integrate_lognormal(seg_lo, seg_hi, log10(ctx%state%imf_vdmc), VD_SIGMA2, mass_weighted)
+            seg_lo = max(lo, vd_break)
+            seg_hi = hi
+            if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, VD_IND + 1.0_wp, &
+                                                                       mass_weighted, VD_AH)
 
         case (2)
             a1 = ctx%state%imf_alpha(1)
@@ -263,28 +236,29 @@ contains
         end select
     end function integrate_imf_interval_analytic
 
-    !> Integral of the Chabrier lognormal, exp(-(log10 m - log10 mc)^2 / (2 sigma^2)) / m, over
-    !> [m1, m2] (m2 <= 1), or of m times it when mass_weighted. With x = log10 m and k = ln 10:
-    !>   number: k sigma sqrt(pi/2) [erf((x2 - a)/(sigma sqrt 2)) - erf((x1 - a)/(sigma sqrt 2))], a = log10 mc
+    !> Integral of a lognormal IMF segment, exp(-(log10 m - log_mc)^2 / (2 sigma2)) / m, over
+    !> [m1, m2], or of m times it when mass_weighted (Chabrier and van Dokkum below their break).
+    !> With x = log10 m and k = ln 10:
+    !>   number: k sigma sqrt(pi/2) [erf((x2 - a)/(sigma sqrt 2)) - erf((x1 - a)/(sigma sqrt 2))], a = log_mc
     !>   mass:   the same about b = a + k sigma^2, times exp(k a + k^2 sigma^2 / 2)
-    pure function integrate_chabrier_lognormal(m1, m2, mass_weighted) result(val)
+    pure function integrate_lognormal(m1, m2, log_mc, sigma2, mass_weighted) result(val)
         !$acc routine seq
-        real(WP), intent(in) :: m1, m2
+        real(WP), intent(in) :: m1, m2, log_mc, sigma2
         logical,  intent(in) :: mass_weighted
         real(WP) :: val
         real(WP), parameter :: K = log(10.0_wp)
         real(WP) :: sig, centre, scale
-        sig = sqrt(CHAB_SIGMA2)
+        sig = sqrt(sigma2)
         if (mass_weighted) then
-            centre = CHAB_LOG_MC + K * CHAB_SIGMA2
-            scale = exp(K * CHAB_LOG_MC + 0.5_wp * K * K * CHAB_SIGMA2)
+            centre = log_mc + K * sigma2
+            scale = exp(K * log_mc + 0.5_wp * K * K * sigma2)
         else
-            centre = CHAB_LOG_MC
+            centre = log_mc
             scale = 1.0_wp
         end if
         val = scale * K * sig * sqrt(0.5_wp * acos(-1.0_wp)) * &
               (erf((log10(m2) - centre) / (sig * sqrt(2.0_wp))) - erf((log10(m1) - centre) / (sig * sqrt(2.0_wp))))
-    end function integrate_chabrier_lognormal
+    end function integrate_lognormal
 
     !> @brief Integral of coeff * m^(-alpha) or coeff * m^(1-alpha) over [lo, hi].
     pure function integrate_powerlaw(lo, hi, alpha, mass_weighted, coeff) result(val)
