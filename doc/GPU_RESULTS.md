@@ -80,9 +80,19 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   | 10000 | 14.4 | 13.0 | 16.2 | 14.0 |
   | 10000, spectra copied back | 31.0 | 29.6 | 42.7 | 40.0 |
 
+- Velocity smoothing (branch `gpu/a100-batch-smoothing`, stacked): `build_velocity_kernel`'s
+  sparse operator (the default `smoothspec_fast = 1` path of `apply_smoothing`) cached with the
+  redshift grid data and applied on the device to all columns (`smooth_columns`): in
+  `compute_csp_batch` (sigma_smooth shared by the batch, after AGN, before magnitudes and
+  indices) and in `compute_csp_scenario`, where it replaces the per-output host loop (so
+  magnitudes stay on the device with smoothing). Case `csp_smooth`, GPU vs nvfortran CPU (host
+  smoothing): FP64 1.1e-15 per pixel, 1.4e-14 mag; FP32 1.7e-7, 2.5e-7 mag. `test_csp_batch`
+  (new group: z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s) 90/90, suites 32/32, case
+  matrix PASS, all builds.
+
 **In progress / queue** (user-added items first, in order)
-- Velocity smoothing in the batch and on the device in the single call (written, next to
-  validate: branch `gpu/a100-batch-smoothing`).
+- Nebular continuum speed-up (one FP64 power per CLOUDY age interval instead of per age; 81 of
+  120 ms of GPU time at N = 10000 in the full configuration), branch `gpu/a100-batch-neb-fast`.
 - Then: per-model metallicity (log Z interpolation between resident bases); the full benchmark
   with sigma_smooth = 150; profile and speed up the FP32 path; TF32 / FP64 tensor-core
   experiments; the write-up.

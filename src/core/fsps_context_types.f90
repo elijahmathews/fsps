@@ -39,6 +39,12 @@ module fsps_context_types
         integer,  allocatable :: i_lo(:), j_lo(:), j_hi(:)
         real(WP), allocatable :: t_obs(:)
         real(KP), allocatable :: wt(:), wtl(:), wl(:), bands_t(:,:), cmat(:,:), igm_t(:)
+        !> Velocity smoothing operator (build_velocity_kernel) for sm_sigma, sm_minl, sm_maxl,
+        !> on the device too (prepare_smoothing_kernel); released with the rest
+        logical  :: sm_ready = .false.
+        real(WP) :: sm_sigma = 0.0_wp, sm_minl = 0.0_wp, sm_maxl = 0.0_wp
+        integer,  allocatable :: sm_lo(:), sm_hi(:), sm_off(:)
+        real(WP), allocatable :: sm_coef(:)
     end type batch_grid_t
 
     type :: fsps_context_state_t
@@ -312,6 +318,11 @@ contains
         if (allocated(g%i_lo)) deallocate(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
         if (allocated(g%cmat)) deallocate(g%cmat)
         g%ready = .false.
+        if (g%sm_ready) then
+            !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+        end if
+        if (allocated(g%sm_lo)) deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+        g%sm_ready = .false.
     end subroutine batch_grid_release
 
     !> @brief Release pointer members in a context state object.

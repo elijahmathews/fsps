@@ -32,6 +32,7 @@ program test_csp_batch
     ! Spectral indices (absolute, as tools/compare_builds)
     real(WP), parameter :: INDX_TOL = merge(1.0e-8_wp, 1.0e-4_wp, KP == WP)
     type(fsps_context_t), allocatable :: ctx
+    real(WP) :: smooth_sigma = 0.0_wp   ! sigma_smooth of every model
 
     call print_major_header("Batched CSP vs compute_csp_scenario")
 
@@ -57,6 +58,11 @@ program test_csp_batch
     call set_int('nebemlineinspec', 0)
     call check_batch(1, 0.0_wp, 0, 1, 0, "Cardelli et al., z = 0, nebular, lines not in the spectrum")
     call set_int('nebemlineinspec', 1)
+    ! Velocity smoothing (sigma_smooth = 150 km/s), with nebular emission and AGN
+    call set_int('smooth_velocity', 1)
+    smooth_sigma = 150.0_wp
+    call check_batch(2, 0.5_wp, 1, 1, 1, "Calzetti, z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s")
+    smooth_sigma = 0.0_wp
 
     call fsps_destroy(ctx)
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
@@ -128,6 +134,7 @@ contains
         call set_float('gas_logz', -1.0_wp + 0.2_wp * mod(m, 7))
         call set_float('fagn', merge(0.0_wp, 0.05_wp * mod(m, 5), mod(m, 6) == 0))
         call set_float('agn_tau', 5.0_wp + 15.0_wp * mod(m, 8))
+        call set_float('sigma_smooth', smooth_sigma)
         call set_float('zred', zred)
     end subroutine set_model
 

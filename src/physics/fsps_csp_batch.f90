@@ -22,14 +22,17 @@ module fsps_csp_batch
     !>    Draine & Li template, interpolated per model from the resident grid, is added.
     !> 6. IGM transmission (shared), then AGN dust emission (fagn, agn_tau per model), attenuated
     !>    by the model's diffuse dust, as apply_agn_dust_emission.
-    !> 7. Magnitudes: per (band, model) filter integrals over each band's support, compensated
+    !> 7. Velocity smoothing (sigma_smooth, shared by the batch; smooth_velocity = 1 with the
+    !>    default smoothspec_fast = 1), the sparse operator of apply_smoothing applied on the device.
+    !> 8. Magnitudes: per (band, model) filter integrals over each band's support, compensated
     !>    at FP32 kernel precision; optionally spectral indices.
     !>
     !> The two matrix products (age sums, band fluxes) use cuBLAS when built with -Dcublas=true
     !> (NVIDIA only; a ceiling for the portable OpenACC loops, which are the default).
     !>
-    !> Not supported (status 2): velocity smoothing, redshifted colors, light-weighted ages, and
-    !> models with tage <= 0 (all-ages output). Models must share zred and igm_factor.
+    !> Not supported (status 2): smoothing other than in velocity with smoothspec_fast = 1,
+    !> redshifted colors, light-weighted ages, and models with tage <= 0 (all-ages output). Models
+    !> must share zred, igm_factor and the smoothing parameters (sigma_smooth, min/max_wave_smooth).
     !>
     !> Mass, L_bol and SFR follow `compute_csp_scenario` in FP64; spectra, magnitudes, indices,
     !> line luminosities and dust masses agree with it to the rounding of the kernel precision
@@ -45,7 +48,8 @@ module fsps_csp_batch
     use fsps_interpolation, only: find_interval
     use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
     use fsps_spectral_indices, only: compute_spectral_indices_columns
-    use fsps_batch_photometry, only: compute_magnitudes_columns, prepare_batch_grid
+    use fsps_batch_photometry, only: compute_magnitudes_columns, prepare_batch_grid, smoothing_on_device, &
+                                     prepare_smoothing_kernel, smooth_columns
 #ifdef FSPS_CUBLAS
     use fsps_batch_photometry, only: blas, blas_init
     use cublas
@@ -102,7 +106,7 @@ contains
 
         integer :: n_mod, nt, nspec, nbands, m, k
         real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis, neb, agn
+        logical  :: igm, any_emis, neb, agn, smooth
 
         ! Per-model parameters and results on the host
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
@@ -160,12 +164,20 @@ contains
         end if
         zred = psets(1)%zred
         do m = 1, n_mod
-            if (psets(m)%tage <= 0.0_wp .or. psets(m)%sigma_smooth > 0.0_wp .or. &
+            if (psets(m)%tage <= 0.0_wp .or. psets(m)%sigma_smooth /= psets(1)%sigma_smooth .or. &
+                psets(m)%min_wave_smooth /= psets(1)%min_wave_smooth .or. &
+                psets(m)%max_wave_smooth /= psets(1)%max_wave_smooth .or. &
                 psets(m)%zred /= zred .or. psets(m)%igm_factor /= psets(1)%igm_factor .or. &
                 psets(m)%uvb < 0.0_wp .or. psets(m)%wgp1 < 1 .or. psets(m)%wgp2 < 1) then
                 status = 2; return
             end if
         end do
+
+        ! Smoothing as apply_smoothing (which does nothing for sigma <= SAFE_FLOOR)
+        smooth = psets(1)%sigma_smooth > SAFE_FLOOR
+        if (smooth .and. .not. smoothing_on_device(ctx)) then
+            status = 2; return
+        end if
 
         ! ------------------------------------------------------------------
         ! 1. Host: per-model indices (birth-cloud age, dust emission grid, nebular grid, AGN
@@ -208,9 +220,11 @@ contains
         ! Grid-only data for this redshift (cached in ctx%state%batch, on the device too)
         call prepare_batch_grid(ctx, zred, psets(1)%igm_factor)
         igm = ctx%state%batch%igm
+        if (smooth) call prepare_smoothing_kernel(ctx, psets(1)%sigma_smooth, psets(1)%min_wave_smooth, &
+                                                  psets(1)%max_wave_smooth)
 
         ! ------------------------------------------------------------------
-        ! 2-6. Device: age sums, nebular emission, attenuation, dust emission, IGM, AGN
+        ! 2-7. Device: age sums, nebular emission, attenuation, dust emission, IGM, AGN, smoothing
         ! ------------------------------------------------------------------
         allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(nspec, n_mod))
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
@@ -265,9 +279,10 @@ contains
 
         if (igm) call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
         if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, total)
+        if (smooth) call smooth_columns(ctx, total, n_mod)
 
         ! ------------------------------------------------------------------
-        ! 7. Magnitudes and indices
+        ! 8. Magnitudes and indices
         ! ------------------------------------------------------------------
         if (allocated(psets(1)%mag_compute)) then
             call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags, psets(1)%mag_compute)

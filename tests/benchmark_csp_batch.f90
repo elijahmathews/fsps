@@ -4,7 +4,8 @@ program benchmark_csp_batch
     !> dust emission). Tau, age and the dust parameters vary across the batch.
     !> Usage: benchmark_csp_batch [n_max [n_single [config]]]. config = "full": the real-world
     !> fitting configuration (dust1 = 0.5, dust2 = 0.3, DL07 dust emission, nebular emission,
-    !> IGM at zred = 0.5, AGN with fagn = 0.1, spectral indices; tau, age, U_min and gas_logu vary).
+    !> IGM at zred = 0.5, AGN with fagn = 0.1, spectral indices; tau, age, U_min and gas_logu vary);
+    !> "full_smooth": the same with velocity smoothing, sigma_smooth = 150 km/s.
     !> Prints one line per metric: name, value.
 
     use fsps_precision, only: WP
@@ -38,7 +39,7 @@ program benchmark_csp_batch
     if (len_trim(arg) > 0) read(arg, *) n_single
     call get_command_argument(3, arg)
     if (len_trim(arg) > 0) config = arg
-    full = trim(config) == 'full'
+    full = trim(config) == 'full' .or. trim(config) == 'full_smooth'
     call system_clock(count_rate=rate)
 
     allocate(ctx)
@@ -60,6 +61,10 @@ program benchmark_csp_batch
         call set_float('zred', 0.5_wp)
         call set_int('add_agn_dust', 1)
         call set_float('fagn', 0.1_wp)
+    end if
+    if (trim(config) == 'full_smooth') then
+        call set_int('smooth_velocity', 1)
+        call set_float('sigma_smooth', 150.0_wp)
     end if
     call fsps_context_prepare_pset(ctx)
     call fsps_context_get_pset(ctx, pset)

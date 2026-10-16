@@ -16,6 +16,7 @@ module fsps_batch_photometry
     use fsps_cosmology, only: compute_igm_transmission
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_special_functions, only: mag_from_flux
+    use fsps_smoothing, only: velocity_kernel_t, build_velocity_kernel
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 #ifdef FSPS_CUBLAS
     use cublas
@@ -26,6 +27,7 @@ module fsps_batch_photometry
     private
 
     public :: compute_magnitudes_columns, prepare_batch_grid
+    public :: smoothing_on_device, prepare_smoothing_kernel, smooth_columns
 #ifdef FSPS_CUBLAS
     public :: blas, blas_init
 #endif
@@ -226,6 +228,89 @@ contains
         g%ready = .true.
         end associate
     end subroutine prepare_batch_grid
+
+    !> True when apply_smoothing for these settings is the velocity operator that
+    !> smooth_columns applies (smooth_velocity = 1, smoothspec_fast = 1, no instrumental
+    !> resolution).
+    logical function smoothing_on_device(ctx)
+        type(fsps_context_t), intent(in) :: ctx
+        smoothing_on_device = ctx%smooth_velocity_val == 1 .and. ctx%smoothspec_fast_val == 1
+    end function smoothing_on_device
+
+    !> Velocity smoothing operator for (sigma, minl, maxl) (build_velocity_kernel: the
+    !> convolve_variable_resolution of apply_smoothing as a sparse matrix), cached with the
+    !> redshift grid data in ctx%state%batch and on the device. Call after prepare_batch_grid,
+    !> which releases it when the redshift changes.
+    subroutine prepare_smoothing_kernel(ctx, sigma, minl, maxl)
+        type(fsps_context_t), intent(inout) :: ctx
+        real(WP), intent(in)                :: sigma, minl, maxl
+        type(velocity_kernel_t) :: kern
+
+        associate(g => ctx%state%batch)
+        if (g%sm_ready) then
+            if (g%sm_sigma == sigma .and. g%sm_minl == minl .and. g%sm_maxl == maxl) return
+            !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            g%sm_ready = .false.
+        end if
+        call build_velocity_kernel(ctx%state%spec_lambda(1:ctx%state%nspec), sigma, minl, maxl, kern)
+        call move_alloc(kern%lo, g%sm_lo)
+        call move_alloc(kern%hi, g%sm_hi)
+        call move_alloc(kern%off, g%sm_off)
+        if (size(kern%coef) == 0) then
+            allocate(g%sm_coef(1)); g%sm_coef = 0.0_wp
+        else
+            call move_alloc(kern%coef, g%sm_coef)
+        end if
+        !$acc enter data copyin(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+        g%sm_sigma = sigma
+        g%sm_minl = minl
+        g%sm_maxl = maxl
+        g%sm_ready = .true.
+        end associate
+    end subroutine prepare_smoothing_kernel
+
+    !> Smooths spec(:, 1:n_col) (present on the device) with the prepared operator: per pixel the
+    !> normalized trapezoid weights of its window, summed in FP64 (apply_velocity_kernel).
+    subroutine smooth_columns(ctx, spec, n_col)
+        type(fsps_context_t), intent(inout) :: ctx
+        real(KP), intent(inout)             :: spec(:,:)
+        integer, intent(in)                 :: n_col
+
+        real(KP), allocatable :: sm(:,:)
+        integer  :: nspec, m, i, k, lo, off
+        real(WP) :: s
+
+        nspec = ctx%state%nspec
+        allocate(sm(nspec, n_col))
+        associate(g => ctx%state%batch)
+        !$acc data present(spec, g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef) create(sm)
+        !$acc parallel loop gang vector collapse(2) private(s, lo, off, k)
+        do m = 1, n_col
+            do i = 1, nspec
+                lo = g%sm_lo(i)
+                if (lo == 0) then
+                    sm(i, m) = spec(i, m)
+                else
+                    off = g%sm_off(i) - lo
+                    s = 0.0_wp
+                    !$acc loop seq
+                    do k = lo, g%sm_hi(i)
+                        s = s + g%sm_coef(off + k) * real(spec(k, m), WP)
+                    end do
+                    sm(i, m) = real(s, KP)
+                end if
+            end do
+        end do
+        !$acc parallel loop gang vector collapse(2)
+        do m = 1, n_col
+            do i = 1, nspec
+                spec(i, m) = sm(i, m)
+            end do
+        end do
+        !$acc end data
+        end associate
+    end subroutine smooth_columns
 
     !> Observed-frame spectrum / lambda (prepare_observed_spectrum), zero in the padding rows.
     subroutine observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, fobs)
