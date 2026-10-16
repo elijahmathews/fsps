@@ -17,8 +17,11 @@ status at the top; dated entries below.
 - Case matrix (tools/compare_builds): FP64 GPU = nvfortran CPU to 1.6e-11 per pixel; FP32 GPU
   vs FP64 CPU 3.3e-7 per pixel, 2e-7 mag (same as the laptop FP32 numbers). PASS.
 
+- Goal 1 baseline benchmarks and Nsight Systems profile (below): GPU SSP grid is 3-5x slower
+  than one CPU core (per-star kernel = 95% of GPU time); CSP call 2.8 ms (FP64) vs 4.0 ms CPU.
+
 **In progress**
-- Goal 1 benchmarks: `build_*/benchmark_phases 5 200` for cpu, gpu, gpu32, then nsys.
+- Goal 2: SSP template sum on the GPU (branch `gpu/p100-ssp-templates`).
 
 **Open problems**
 - gfortran 13.4 and nvfortran 25.1 CPU builds differ by up to 8.5e-10 per pixel (4e-10 mag)
@@ -100,3 +103,40 @@ builds on the same commit (`build_nvcpu`: no accel; `build_mc`: `-Daccel=multico
 show the same 5e-10 against gfortran, and the GPU matches both to 2e-13. It is a
 gfortran-vs-nvfortran difference in the power-law IMF weights (Chabrier agrees to 2e-13),
 not a device effect.
+
+### 2026-10-15: baseline benchmarks (goal 1)
+
+`build_<x>/benchmark_phases 5 200` (MIST + MILES + DL07, Chabrier; seconds; one CPU core of the
+Xeon E5-2680 v4 for the CPU builds; GPU builds use the P100 with the host orchestration on the
+same core):
+
+| Metric | gfortran CPU FP64 | nvfortran CPU FP64 | GPU FP64 | GPU FP32 kernels |
+|---|---|---|---|---|
+| setup | 9.47 | 6.41 | 7.17 | 7.55 |
+| first spectrum | 9.96 | 6.86 | 9.71 | 8.94 |
+| SSP grid (one call) | 0.477 | 0.424 | 2.475 | 1.332 |
+| CSP call | 0.00404 | 0.00481 | 0.00283 | 0.00594 |
+| SSP grid, nebular | 0.477 | 0.415 | 2.477 | 1.333 |
+| CSP call, nebular | 0.0327 | 0.0461 | 0.0380 | 0.0293 |
+
+(Laptop Ryzen 7840U for reference: SSP 0.147 s, CSP 1.7 ms, CSP+nebular 16 ms; this Broadwell
+core is ~3x slower.) Setup is file I/O on GPFS and varies run to run.
+
+Nsight Systems, `nsys profile -t cuda,openacc build_gpu32/benchmark_phases 2 50`
+(2+1 SSP grids, 101 CSP calls, 50 with nebular emission), GPU time:
+
+| Kernel / operation | Total | Per call | Share |
+|---|---|---|---|
+| `accumulate_spectrum` line 711: per-star spectra (one thread per star, seq over pixels) | 5.55 s | 10.4 ms x 535 ages | 94.8% of kernel time |
+| `accumulate_spectrum` line 753: weighted sum over stars | 54 ms | 0.10 ms | 0.9% |
+| `integrate_csp_step` line 367: CSP age sum, nt x nz per output | 85 ms | 0.84 ms per CSP call | 1.5% |
+| nebular kernels (`add_lines_to_spectrum` etc.) | ~100 ms | ~45 us x 2350 | 1.7% |
+| dust attenuation + emission | ~11 ms | ~0.1 ms per CSP | 0.2% |
+| H2D copies | 0.66 s, 11098 copies | median 1.5 us, max 43 ms | |
+| D2H copies | 10 ms, 5303 copies | | |
+
+`cuStreamSynchronize` accounts for 6.2 s of host API time (the host waits on every kernel).
+Conclusions: (1) SSP time is entirely the per-star kernel: each thread loops over the full
+spectrum of one star, with ~1000-2000 threads per age, so the P100 is latency bound; this is
+goal 2 (template GEMM). (2) The CSP call is ~1 ms of GPU work per call plus host orchestration
+and many small transfers; the age sum (line 367) is the largest kernel.
