@@ -34,9 +34,15 @@ status at the top; dated entries below.
   stale device copies of changed settings (dust_type, IGM, ... ignored on the GPU) and
   per-thread device heap allocations (crash at N = 10000). All builds 32/32; case matrix PASS.
 
+- Continuation items 2-3 (branches `gpu/p100-csp-allages`, `gpu/p100-device-mags`, stacked):
+  all-ages CSP sum collapsed over outputs (8x); magnitudes of all outputs computed on the
+  device (`fsps_batch_photometry`, shared with the batch); single-output SFH weights on the
+  host. P100 `compute_csp_scenario`: single call 1.93 -> 0.66 ms (FP64), 5.8 -> 0.66 ms (FP32);
+  all-ages call (107 outputs) 94 -> 6.0 ms (FP64), 500 -> 5.0 ms (FP32). All builds 32/32.
+
 **In progress**
-- Continuation item 2: the multi-age CSP sum (`tage = 0`) in `integrate_csp_step`
-  (branch `gpu/p100-csp-allages`, stacked on `gpu/p100-batched-csp`).
+- Nebular emission in the CSP call (33 ms per call on the GPU, mostly host / launches), then
+  continuation item 1 (remaining per-age SSP work on the device).
 
 **Open problems**
 - Branches are stacked (each later one contains the earlier ones' commits), because the
@@ -301,3 +307,36 @@ Profile of the OpenACC FP32 build at N = 10000 before the last two steps (per ca
 81 ms (before the one-pass change), band fluxes 36 ms, attenuation 26 ms, dust reductions
 18 ms, dust emission 13 ms, SFH weights 3.3 ms, observed frame 4 ms. With spectra copied back
 (`spec`), add ~20 us per model at N = 10000: 240 MB through pageable host memory.
+
+### 2026-10-16: continuation items 2 and 3, compute_csp_scenario on the device
+
+Timing harness: `compute_csp_scenario` with tage = 0 (107 outputs, tau model, dust), and
+`benchmark_phases` for single calls; ms per call on the P100 unless noted.
+
+| Change | single call FP64 / FP32 | all-ages FP64 / FP32 |
+|---|---|---|
+| before (branch `gpu/p100-batched-csp`) | 1.93 / 5.8 | 86 / 500 |
+| item 2: multi-output age sums, one thread per (output, pixel) | 1.93 / 5.8 | 89 / 499 (kernel 4.6 -> 0.57 ms) |
+| item 3: magnitudes of all outputs on the device | 1.93 / 2.0 | 6.1 / 5.4 |
+| single output: SFH weights on the host; band reductions for < 16 spectra | **0.66 / 0.66** | **6.0 / 5.0** |
+| nvfortran CPU, one Broadwell core (reference) | 4.8 | 278 |
+
+- Item 2: the multi-output spectra and emission-line sums in `integrate_csp_step` ran one gang
+  per output with the ages sequential and a loop-carried accumulator (`-Minfo`: serialized).
+  They now use the single-output kernel collapsed over (output, pixel); same summation order,
+  same results. (The batched GEMM form of the plan is what `compute_csp_batch` does; here the
+  weights differ per output only in the age range, and the collapsed kernel is 0.57 ms.)
+- Item 3: the per-output host loop computed magnitudes on the host after a device round trip
+  of each spectrum (FP32: compensated serial band sums, 4.6 ms per output). Now, without
+  smoothing, redshifted colors or light-weighted ages, `compute_magnitudes_columns` computes all
+  outputs' magnitudes from `out_csp_spec` on the device (OpenACC builds only; CPU results
+  unchanged), and indices take each spectrum directly. The batch grid cache had to be released
+  after the call for contexts mapped by hand (unit tests), which never reach
+  `remove_from_device`.
+- Single output: `compute_sfh_weights` ran on one device thread (0.65 ms); the host takes
+  ~20 us. Band sums for one spectrum ran one thread per band (0.65 ms); a gang reduction per
+  (band, spectrum) is used below 16 spectra (pairwise tree, as the dust integrals).
+- Profile of the remaining single call (FP32, 0.66 ms): device kernels ~0.3 ms (dust
+  attenuation and emission ~0.1 ms, age sum 50 us, post-processing 35 us, ...), the rest
+  launches, small transfers and host packing. With nebular emission: 22-33 ms per call, which
+  is the next item (47 kernel launches per call and host work).
