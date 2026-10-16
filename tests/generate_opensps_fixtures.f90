@@ -22,6 +22,7 @@ PROGRAM GENERATE_OPENSPS_FIXTURES
    use fsps_types, only: PARAMS, COMPSPOUT
    use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
    use fsps_csp, only: compute_csp_scenario
+   use fsps_csp_batch, only: compute_csp_batch
    use fsps_ssp, only: generate_ssp_grid, configure_imf_parameters
    use fsps_imf, only: compute_imf_weights
    use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
@@ -42,6 +43,13 @@ PROGRAM GENERATE_OPENSPS_FIXTURES
    character(len=256) :: overrides(MAX_OVERRIDES)
    integer :: n_overrides = 0
    logical :: csp_only = .false.
+   !> --batch: single-age CSPs (tage > 0) through compute_csp_batch, on N_BATCH copies of the
+   !> model (enough for the many-spectra kernels and the cuBLAS products); the first is written
+   logical :: use_batch = .false.
+   integer, parameter :: N_BATCH = 32
+   type(PARAMS), allocatable :: psets_b(:)
+   real(WP), allocatable :: mags_b(:,:), spec_b(:,:), indx_b(:,:), eml_b(:,:)
+   real(WP) :: mass_b(N_BATCH), lbol_b(N_BATCH), mdust_b(N_BATCH), sfr_b(N_BATCH)
 
    real(WP), allocatable :: spec_ssp(:,:), mass_ssp(:), lbol_ssp(:)
    real(WP), allocatable :: spec_ssp3(:,:,:), mass_ssp2(:,:), lbol_ssp2(:,:)
@@ -67,6 +75,8 @@ PROGRAM GENERATE_OPENSPS_FIXTURES
          i = i + 1; call get_command_argument(i, out_arg)
       case ('--csp-only')
          csp_only = .true.
+      case ('--batch')
+         use_batch = .true.
       case default
          if (index(arg_val, '=') == 0) then
             write(*,*) 'ERROR: unrecognised argument ', trim(arg_val)
@@ -155,6 +165,27 @@ PROGRAM GENERATE_OPENSPS_FIXTURES
    if (status /= 0) then
       write(*,*) 'ERROR: compute_csp_scenario returned status ', status
       stop EXIT_FAILURE
+   end if
+
+   if (use_batch .and. pset%tage > 0.0_wp) then
+      allocate(psets_b(N_BATCH), mags_b(nbands, N_BATCH), spec_b(nspec, N_BATCH), indx_b(nindx, N_BATCH), &
+               eml_b(NEMLINE, N_BATCH))
+      psets_b = pset
+      call compute_csp_batch(ctx, psets_b, mags_b, status, spec=spec_b, mass=mass_b, lbol=lbol_b, mdust=mdust_b, &
+                             sfr=sfr_b, emlines=eml_b, indx=indx_b)
+      if (status == 0) then
+         results(1)%spec(1:nspec) = spec_b(:, 1)
+         results(1)%mags(1:nbands) = mags_b(:, 1)
+         if (pset%compute_indices == 1) results(1)%indx(1:nindx) = indx_b(:, 1)
+         results(1)%emlines(1:NEMLINE) = eml_b(:, 1)
+         results(1)%mass_csp = mass_b(1)
+         results(1)%lbol_csp = lbol_b(1)
+         results(1)%mdust = mdust_b(1)
+         results(1)%sfr = sfr_b(1)
+         write(*,*) 'batch: used'
+      else
+         write(*,*) 'batch: not supported for this case, status ', status
+      end if
    end if
 
    n_out = size(results)

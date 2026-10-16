@@ -514,11 +514,24 @@ contains
         !$acc end data
     end subroutine band_fluxes_gemm
 
+    !> The cuBLAS handle, on the OpenACC default stream. Experiment switch (NVIDIA only):
+    !> FSPS_CUBLAS_MATH = tf32 lets the FP32 products use TF32 tensor cores (A100 and newer;
+    !> 10-bit mantissa inputs), pedantic forbids tensor cores and reduced-precision paths (the
+    !> FP64 products then run without the A100's FP64 tensor cores); unset: cuBLAS default math
+    !> (FP32 on FP32 units, FP64 on FP64 tensor cores where available).
     subroutine blas_init()
         integer :: istat
+        character(len=16) :: mode
         if (blas_ready) return
         istat = cublasCreate(blas)
         istat = cublasSetStream(blas, acc_get_cuda_stream(acc_async_sync))
+        call get_environment_variable('FSPS_CUBLAS_MATH', mode)
+        select case (trim(mode))
+        case ('tf32')
+            istat = cublasSetMathMode(blas, CUBLAS_TF32_TENSOR_OP_MATH)
+        case ('pedantic')
+            istat = cublasSetMathMode(blas, CUBLAS_PEDANTIC_MATH)
+        end select
         blas_ready = .true.
     end subroutine blas_init
 #endif

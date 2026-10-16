@@ -160,10 +160,35 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
     below) is the device-computed SFH weights: with the scenario's weights as a matrix the
     batch agrees to 6.7e-16.
 
+- Item 3, TF32 and FP64 tensor cores (branch `gpu/a100-tf32`, stacked): cuBLAS math-mode switch
+  `FSPS_CUBLAS_MATH` (`tf32`: TF32 tensor cores for the FP32 products; `pedantic`: no tensor
+  cores; unset: cuBLAS default, i.e. FP32 units for SGEMM and FP64 tensor cores for DGEMM on
+  the A100), and `generate_opensps_fixtures --batch`, which recomputes every single-age CSP case
+  (25 of the 35) through `compute_csp_batch` on 32 copies of the model (enough for the cuBLAS
+  products) so the case matrix measures the net error of the whole batch pipeline
+  (`FIXTURE_ARGS=--batch tools/compare_builds/run_cases.sh ...`). Net error against the FP64
+  nvfortran CPU matrix (scenario path), worst over all cases:
+
+  | Batch, cuBLAS | spec (912 A-2.5 um) | spec (all) | mag | indx | lines | result |
+  |---|---|---|---|---|---|---|
+  | FP32, default math | 4.2e-7 | 4.2e-7 | 3.3e-7 | 1.1e-5 | 3.5e-7 | PASS |
+  | FP32, TF32 | 6.8e-4 | 6.8e-4 | 3.1e-4 | 6.4e-3 | 3.5e-7 | FAIL (all 25 batch cases) |
+  | FP64, default (FP64 tensor cores) | 1.6e-11 | 1.2e-10 | 1.3e-11 | 2.3e-11 | 1.2e-12 | PASS (`--rtol 1e-10`) |
+  | FP64, pedantic (no tensor cores) | 1.6e-11 | 1.2e-10 | 1.3e-11 | 2.3e-11 | 1.2e-12 | PASS |
+
+  TF32 rounds both inputs to 10-bit mantissas (relative 2^-11 ~ 4.9e-4); in the age sums a few
+  ages dominate each pixel, so the input rounding passes into the spectra almost unchanged
+  (4.8e-4), then into magnitudes (2-3e-4) and indices. The band product alone tolerates it (the
+  all-ages case, where only the magnitudes use TF32: 3.1e-7 mag). TF32 is therefore not usable
+  for the age sums under this project's tolerances (FP32 ~1e-6, 1e-5 mag); 3e-4 mag is below
+  typical photometric errors, but it would have to be an explicit, documented choice.
+  FP64 tensor cores (DMMA) are IEEE FP64 FMAs: identical results to pedantic.
+  With  the FP32 cuBLAS build fails  (66/146 pass); FP64
+  is unaffected; default and pedantic pass 146/146.
+
 **In progress / queue**
-- TF32 / FP64 tensor-core experiments (branch `gpu/a100-tf32`: cuBLAS math-mode switch
-  `FSPS_CUBLAS_MATH`, `generate_opensps_fixtures --batch` to run the case matrix through the
-  batch and measure the net error); final benchmarks of every build; the write-up.
+- Final benchmarks of every build (,  basic and
+  full_smooth, cuBLAS math modes) and the write-up.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
