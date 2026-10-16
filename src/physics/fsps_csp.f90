@@ -40,7 +40,7 @@ module fsps_csp
     !> Spectra Modules
     use fsps_photometry, only: compute_magnitudes
     use fsps_batch_photometry, only: compute_magnitudes_columns
-    use fsps_spectral_indices, only: compute_spectral_indices
+    use fsps_spectral_indices, only: compute_spectral_indices, compute_spectral_indices_columns
 
     implicit none
     private
@@ -92,7 +92,7 @@ contains
         integer :: i, nt, nspec, n_outputs, start_idx
         integer :: k, i_spec, i_em
         logical :: dev_mags
-        real(WP), allocatable :: mags_all(:,:)
+        real(WP), allocatable :: mags_all(:,:), indx_all(:,:)
 
         call fsps_context_sync_device_settings(ctx)
         if (present(status)) status = 0
@@ -237,6 +237,11 @@ contains
                 call compute_magnitudes_columns(ctx, pset%zred, pset%igm_factor, ctx%state%out_csp_spec, n_outputs, &
                                                 mags_all)
             end if
+            if (pset%compute_indices == 1) then
+                allocate(indx_all(ctx%state%nindx, n_outputs))
+                call compute_spectral_indices_columns(ctx, ctx%state%spec_lambda, ctx%state%out_csp_spec, n_outputs, &
+                                                      indx_all)
+            end if
         end if
 
         do i = 1, n_outputs
@@ -280,7 +285,7 @@ contains
                 if (dev_mags) then
                     results(i)%mags = mags_all(:, i)
                     if (pset%compute_indices == 1) then
-                        call compute_spectral_indices(ctx, ctx%state%spec_lambda, results(i)%spec, results(i)%indx)
+                        results(i)%indx = indx_all(:, i)
                     else
                         results(i)%indx = -99.0_wp
                     end if
