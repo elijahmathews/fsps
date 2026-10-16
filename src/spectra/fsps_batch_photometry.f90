@@ -45,18 +45,21 @@ module fsps_batch_photometry
 contains
 
     !> @brief Magnitudes of spec(:, 1:n_col) (present on the device, L_sun/Hz) at redshift zred,
-    !> as compute_magnitudes(ctx, zred, spec(:, i), mags(:, i), mag_compute) for each column.
-    subroutine compute_magnitudes_columns(ctx, zred, igm_factor, spec, n_col, mags, mag_compute)
+    !> as compute_magnitudes(ctx, zred, spec(:, i), mags(:, i), mag_compute) for each column; with
+    !> zred_col, column i at redshift zred_col(i) (zred is then ignored).
+    subroutine compute_magnitudes_columns(ctx, zred, igm_factor, spec, n_col, mags, mag_compute, zred_col)
         type(fsps_context_t), intent(inout) :: ctx
         real(WP), intent(in)                :: zred, igm_factor
         real(KP), intent(in)                :: spec(:,:)
         integer, intent(in)                 :: n_col
         real(WP), intent(out)               :: mags(:,:)
         integer, intent(in), optional       :: mag_compute(:)
+        real(WP), intent(in), optional      :: zred_col(:)
 
         integer  :: nspec, nbands, b, m
         integer, allocatable  :: do_band(:)
-        real(WP), allocatable :: fband(:,:), mags_l(:,:)
+        real(WP), allocatable :: fband(:,:), mags_l(:,:), zc(:), dist(:)
+        logical  :: zvar
         real(KP), allocatable :: fobs(:,:)
         real(WP) :: flux
         logical  :: done
@@ -67,7 +70,24 @@ contains
 
         nspec = ctx%state%nspec
         nbands = ctx%state%nbands
-        call prepare_batch_grid(ctx, zred, igm_factor)
+        zvar = present(zred_col)
+        ! Per-column redshifts: the grid data of z = 0 (filters, trapezoid weights); the observed
+        ! frame is then formed per column on the device, and the distance terms per column here
+        if (zvar) then
+            call prepare_batch_grid(ctx, 0.0_wp, igm_factor)
+        else
+            call prepare_batch_grid(ctx, zred, igm_factor)
+        end if
+        allocate(zc(n_col), dist(n_col))
+        if (zvar) then
+            zc = zred_col(1:n_col)
+            do m = 1, n_col
+                dist(m) = distance_term(ctx, zc(m))
+            end do
+        else
+            zc = zred
+            dist = ctx%state%batch%dist_term
+        end if
 
         allocate(do_band(nbands), fband(nbands, n_col), mags_l(nbands, n_col))
         do_band = 1
@@ -85,20 +105,28 @@ contains
         if (n_col >= GEMM_MIN_COLS) then
             npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
             allocate(fobs(npad, n_col))
-            !$acc data present(spec) copyin(do_band) create(fobs, fband) copyout(mags_l)
-            call observed_frame(n_col, nspec, npad, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            !$acc data present(spec) copyin(do_band, zc, dist) create(fobs, fband) copyout(mags_l)
+            if (zvar) then
+                call observed_frame_z(ctx, n_col, nspec, npad, .false., zc, g%wl, spec, fobs)
+            else
+                call observed_frame(n_col, nspec, npad, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            end if
             call band_fluxes_gemm(n_col, npad, nbands, g%cmat, fobs, fband)
-            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
+            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, dist, fband, mags_l)
             !$acc end data
             done = .true.
         end if
 #endif
         if (.not. done) then
             allocate(fobs(n_col, nspec))
-            !$acc data present(spec) copyin(do_band) create(fobs, fband) copyout(mags_l)
-            call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            !$acc data present(spec) copyin(do_band, zc, dist) create(fobs, fband) copyout(mags_l)
+            if (zvar) then
+                call observed_frame_z(ctx, n_col, nspec, nspec, .true., zc, g%wl, spec, fobs)
+            else
+                call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
+            end if
             call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
-            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
+            call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, dist, fband, mags_l)
             !$acc end data
         end if
         end associate
@@ -113,32 +141,31 @@ contains
     !> Magnitudes from band fluxes (fband, present), as compute_magnitudes: AB, the distance term,
     !> NaN for bands not requested, and Vega magnitudes (relative to the V band) if requested.
     !> On the device (one thread per band and spectrum; the host loop was ~2 us per spectrum).
-    subroutine magnitudes_from_fluxes(ctx, n_col, nbands, do_band, fband, mags_l)
+    subroutine magnitudes_from_fluxes(ctx, n_col, nbands, do_band, dist, fband, mags_l)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: n_col, nbands, do_band(:)
+        real(WP), intent(in)             :: dist(:)   ! distance term per column (present)
         real(WP), intent(in)             :: fband(:,:)
         real(WP), intent(out)            :: mags_l(:,:)
 
         integer  :: m, b
-        real(WP) :: qnan, dist, v, vv, vega(nbands)
+        real(WP) :: qnan, v, vv, vega(nbands)
         logical  :: vega_on
 
         qnan = ieee_value(1.0_wp, ieee_quiet_nan)
-        ! A host scalar: the device copy of ctx%state%batch is not refreshed by prepare_batch_grid
-        dist = ctx%state%batch%dist_term
         vega_on = ctx%compute_vega_mags_val == 1
         vega = 0.0_wp
         if (vega_on) vega = ctx%state%magvega(1:nbands)
 
-        !$acc parallel loop gang vector collapse(2) present(fband, do_band, mags_l) copyin(vega) private(v, vv)
+        !$acc parallel loop gang vector collapse(2) present(fband, do_band, dist, mags_l) copyin(vega) private(v, vv)
         do m = 1, n_col
             do b = 1, nbands
                 v = qnan
-                if (do_band(b) /= 0) v = mag_from_flux(fband(b, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist
+                if (do_band(b) /= 0) v = mag_from_flux(fband(b, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist(m)
                 if (vega_on .and. b >= 2) then
                     vv = qnan
                     if (do_band(IDX_V_BAND) /= 0) &
-                        vv = mag_from_flux(fband(IDX_V_BAND, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist
+                        vv = mag_from_flux(fband(IDX_V_BAND, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist(m)
                     if (vv == vv) then
                         v = v - vega(b) + vega(IDX_V_BAND)
                     else
@@ -194,12 +221,7 @@ contains
                 g%t_obs(j) = (target - ctx%state%spec_lambda(g%i_lo(j))) / &
                              (ctx%state%spec_lambda(g%i_lo(j)+1) - ctx%state%spec_lambda(g%i_lo(j)))
             end do
-            dm = interpolate_linear(ctx%state%cosmospl(:,1), ctx%state%cosmospl(:,3), zred)
-            if (dm /= dm .or. dm <= SAFE_FLOOR) then
-                g%dist_term = 0.0_wp
-            else
-                g%dist_term = 5.0_wp * log10(dm / 10.0_wp) + mag_from_flux(z_factor)
-            end if
+            g%dist_term = distance_term(ctx, zred)
         else
             g%i_lo = [(j, j = 1, nspec)]
             g%t_obs = 0.0_wp
@@ -336,6 +358,61 @@ contains
         !$acc end data
         end associate
     end subroutine smooth_columns
+
+    !> Distance modulus and (1 + z) term of the magnitudes at redshift zred (0 at z = 0:
+    !> absolute magnitudes), as prepare_observed_spectrum.
+    function distance_term(ctx, zred) result(dist)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(in)             :: zred
+        real(WP) :: dist, dm
+
+        dist = 0.0_wp
+        if (abs(zred) <= SAFE_FLOOR) return
+        dm = interpolate_linear(ctx%state%cosmospl(:,1), ctx%state%cosmospl(:,3), zred)
+        if (dm /= dm .or. dm <= SAFE_FLOOR) return
+        dist = 5.0_wp * log10(dm / 10.0_wp) + mag_from_flux(1.0_wp + zred)
+    end function distance_term
+
+    !> Observed-frame spectrum / lambda with a redshift per column (zc, present): per (pixel,
+    !> column) the rest-frame interval and position as prepare_batch_grid finds them for one
+    !> redshift. transposed: fobs(column, pixel) (band_fluxes), else fobs(pixel, column) with zero
+    !> padding rows to npad (the cuBLAS product).
+    subroutine observed_frame_z(ctx, n_col, nspec, npad, transposed, zc, wl, total, fobs)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)     :: n_col, nspec, npad
+        logical, intent(in)     :: transposed
+        real(WP), intent(in)    :: zc(:)
+        real(KP), intent(in)    :: wl(:), total(:,:)
+        real(KP), intent(out)   :: fobs(:,:)
+
+        integer  :: m, j, il
+        real(WP) :: v, target, t
+        real(KP) :: f
+
+        !$acc parallel loop gang vector collapse(2) present(ctx, zc, wl, total, fobs) private(il, v, target, t, f)
+        do m = 1, n_col
+            do j = 1, npad
+                f = 0.0_KP
+                if (j <= nspec) then
+                    if (abs(zc(m)) > SAFE_FLOOR) then
+                        target = ctx%state%spec_lambda(j) / (1.0_wp + zc(m))
+                        il = max(1, min(find_interval(ctx%state%spec_lambda, target), nspec - 1))
+                        t = (target - ctx%state%spec_lambda(il)) / (ctx%state%spec_lambda(il + 1) - ctx%state%spec_lambda(il))
+                        v = real(total(il, m), WP) + t * (real(total(il + 1, m), WP) - real(total(il, m), WP))
+                    else
+                        v = real(total(j, m), WP)
+                    end if
+                    if (v /= v) v = 0.0_wp
+                    f = real(max(v, 0.0_wp), KP) * wl(j)
+                end if
+                if (transposed) then
+                    if (j <= nspec) fobs(m, j) = f
+                else
+                    fobs(j, m) = f
+                end if
+            end do
+        end do
+    end subroutine observed_frame_z
 
     !> Observed-frame spectrum / lambda (prepare_observed_spectrum), zero in the padding rows.
     subroutine observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, fobs)

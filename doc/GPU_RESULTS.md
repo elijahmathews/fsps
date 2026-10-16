@@ -130,12 +130,40 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   the AGN kernel reuses the diffuse transmission of the attenuation pass, 4.7 -> 0.6 ms.
   8.9 -> 7.1 us per model; GPU kernels 57 ms per call of ~71. Tests 96/96, suites 32/32.
 
-**In progress / queue** (user-added items first, in order)
-- Batch for real fitting pipelines: precomputed SSP-weight matrix (ages x N) instead of SFH
-  parameters; per-model zred (resampling to the fixed observed-frame grid, per-model IGM, shared
-  filters); a C-API entry point taking one array per parameter.
-- Then TF32 / FP64 tensor-core experiments (cuBLAS math mode switch, `--batch` mode for the case
-  matrix to measure the net error), final benchmarks of every build, the write-up.
+- Fitting-pipeline batch (branch `gpu/a100-batch-pipeline`, stacked):
+  - `ssp_weights(ntfull, N)`: a precomputed SSP-weight matrix instead of SFH parameters
+    (non-parametric SFHs; tage not used, SFR NaN). Tested in every batch group with the
+    scenario's own weights fed back: FP32 spectra <= 6.5e-7, FP64 <= 4.7e-13, mass/L_bol 1e-16.
+  - Per-model zred and igm_factor: IGM per model on the device (`igm_tau`, factored out of
+    `compute_igm_transmission`, which now calls it: same results), observed-frame resampling per
+    (pixel, model) on the device, distance term per model, shared filters. New test group
+    (z = 0 ... 3, IGM, nebular, AGN): FP32 spectra 6.5e-7, mags 2.5e-7; FP64 1e-11.
+  - C API `fsps_context_compute_csp_batch(handle, n, n_params, names, values, ssp_weights, mags,
+    spec, mass, lbol, mdust, sfr, emlines, indx, status)` (`include/fsps.h`): one array of n
+    doubles per named parameter on top of the context's parameters; builds the SSP basis on
+    demand (all metallicities if logzsol is among the names); SSP parameters give status 2,
+    unknown names status 3 (message via `fsps_get_last_error`). New C test `c_batch`
+    (regression suite): 6 models with tau, tage, dust2, gas_logu, zred, logzsol varied through
+    the arrays = the same models set one at a time (identical), plus the error statuses.
+  - nvfortran 25.1 bug found: with `-acc=gpu`, a disassociated pointer passed to an optional
+    assumed-shape dummy can be reported as present (reproduced in a 20-line program: absent
+    without `-acc`, present with it, for the fourth of four optional arguments). The C entry
+    point branches explicitly instead.
+  - Bug found (AddressSanitizer, gfortran `-Db_sanitize=address` build of the C test): the batch
+    sized its SFH scratch from the context's CSP workspace, which only exists after a
+    `compute_csp_scenario` call or `move_to_device`; a context used only through the batch (the
+    C path in CPU builds) overflowed the heap. Now sized from the ages. Both batch tests are
+    clean under ASan.
+  - Validation: suites 33/33 (with `c_batch`), batch test 146/146 in all ten builds; case matrix
+    PASS; nvfortran CPU outputs unchanged (`--rtol 1e-14`) by the IGM refactoring.
+  - Also: the parametric batch's FP64 difference to `compute_csp_scenario` (8.6e-11, open problem
+    below) is the device-computed SFH weights: with the scenario's weights as a matrix the
+    batch agrees to 6.7e-16.
+
+**In progress / queue**
+- TF32 / FP64 tensor-core experiments (branch `gpu/a100-tf32`: cuBLAS math-mode switch
+  `FSPS_CUBLAS_MATH`, `generate_opensps_fixtures --batch` to run the case matrix through the
+  batch and measure the net error); final benchmarks of every build; the write-up.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
@@ -144,8 +172,9 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
 - OpenACC FP64 GPU builds: `test_csp_batch` spectra differ from `compute_csp_scenario` by up to
   8.6e-11 (tolerance 1e-10) and mass / L_bol / SFR by 7.7e-13, against <= 6e-16 and 0 in the
   CPU and OpenMP builds. The batch computes SFH weights on the device, the single-output
-  scenario on the host (since the P100 session), so the difference is device vs host libm /
-  FMA in the SFH weights; not yet investigated (small margin to the tolerance).
+  scenario on the host (since the P100 session). Confirmed: given the scenario's weights as a
+  matrix, the batch agrees to 6.7e-16; the 8.6e-11 is device vs host arithmetic in
+  `sfh_weights_core` (libm / FMA contraction), within the tolerance but with little margin.
 
 ## P100 session status (final)
 

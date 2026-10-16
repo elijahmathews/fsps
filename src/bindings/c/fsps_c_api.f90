@@ -25,7 +25,9 @@ module fsps_c_api
     use fsps_interpolation, only: find_interval
     use fsps_spectral_indices, only: compute_spectral_indices
     use fsps_photometry, only: compute_magnitudes
-    use fsps_context, only: fsps_context_update_ssp_basis
+    use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
+                            is_ssp_sensitive_float_param
+    use fsps_csp_batch, only: compute_csp_batch
     use fsps_context_types, only: fsps_context_t
 
     implicit none
@@ -441,6 +443,209 @@ contains
 
         call fsps_set_fast_mode(ctx_pool(handle), fast_mode /= 0)
     end subroutine fsps_context_set_fast_mode_handle
+
+    !> @brief Batched CSPs from parameter arrays (fitting pipelines).
+    !>
+    !> @details
+    !> n models: the context's current parameters, with n_params of them varied per model,
+    !> names(i) (C strings) taking the n values values(i)(1:n) (one array per parameter). The
+    !> parameters must be per-model ones of compute_csp_batch (SFH, dust, dust emission, nebular,
+    !> AGN, logzsol, zred, igm_factor, ...; 'sfh' as an integer value): parameters that change the
+    !> SSPs (IMF, isochrone options, ...) give status 2, unknown names status 3. ssp_weights
+    !> (ntfull x n, column-major, or NULL) replaces the SFH parameters. The SSP basis is computed
+    !> on the first call and when an SSP parameter changes; if 'logzsol' is among the names, the
+    !> bases of all metallicities (per-model interpolation in log Z). Outputs are column-major
+    !> (quantity x n); any but mags may be NULL: mags (nbands), spec (nspec), mass, lbol, mdust,
+    !> sfr (1), emlines (nemline), indx (nindx). status: as compute_csp_batch, plus 1 for a bad
+    !> handle, 2 / 3 above.
+    subroutine fsps_context_compute_csp_batch_handle(handle, n, n_params, c_names, c_values, c_weights, &
+                                                     c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, &
+                                                     c_emlines, c_indx, status) &
+        bind(C, name="fsps_context_compute_csp_batch")
+        integer(c_int), value :: handle, n, n_params
+        type(c_ptr), value :: c_names, c_values, c_weights
+        type(c_ptr), value :: c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, c_emlines, c_indx
+        integer(c_int), intent(OUT) :: status
+        type(c_ptr), pointer :: name_ptrs(:), value_ptrs(:)
+        real(c_double), pointer :: v(:)
+        real(c_double), pointer :: mags(:, :), spec(:, :), emlines(:, :), indx(:, :), weights(:, :)
+        real(c_double), pointer :: mass(:), lbol(:), mdust(:), sfr(:)
+        character(LEN=64), allocatable :: names(:)
+        type(PARAMS) :: base
+        type(PARAMS), allocatable :: psets(:)
+        integer :: i, m, st, nspec, nt, nbands
+        logical :: zmode, dirty
+        real(WP), allocatable :: mass_l(:), lbol_l(:), mdust_l(:), sfr_l(:), eml_l(:, :)
+        character(LEN=10), parameter :: NEB_PARAMS(3) = [character(LEN=10) :: 'gas_logu', 'gas_logz', 'frac_obrun']
+
+        status = 0
+        if (handle < 1 .or. .not. ALLOCATED(ctx_pool) .or. handle > SIZE(ctx_pool)) then
+            status = 1
+            return
+        end if
+        if (.not. ctx_inuse(handle)) then
+            status = 1
+            return
+        end if
+        if (n <= 0) return
+        associate(ctx => ctx_pool(handle))
+        nspec = ctx%state%nspec
+        nt = ctx%state%ntfull
+        nbands = ctx%state%nbands
+
+        ! Parameter names; those that change the SSPs cannot vary per model
+        allocate(names(max(0, n_params)))
+        zmode = .false.
+        if (n_params > 0) then
+            call c_f_pointer(c_names, name_ptrs, [n_params])
+            call c_f_pointer(c_values, value_ptrs, [n_params])
+            do i = 1, n_params
+                call c_ptr_to_f_string(name_ptrs(i), names(i))
+                ! The nebular parameters are SSP parameters only with nebular emission in the SSPs
+                ! (add_neb_emission = 2); otherwise they act in the CSP and may vary per model
+                if (is_ssp_sensitive_float_param(trim(names(i))) .and. .not. &
+                    (ctx%add_neb_emission_val /= 2 .and. any(trim(names(i)) == NEB_PARAMS))) then
+                    status = 2
+                    call fsps_set_error(2, 'compute_csp_batch: '//trim(names(i))//' changes the SSPs')
+                    return
+                end if
+                if (trim(names(i)) == 'logzsol') zmode = .true.
+            end do
+        end if
+
+        ! Per-model parameter sets: the context's, with the named parameters set
+        call fsps_prepare_pset(ctx)
+        base = ctx%pset
+        ! The setters mark the SSP basis dirty for the nebular parameters; per-model values in a
+        ! batch do not change it
+        dirty = ctx%state%ssp_basis_is_dirty
+        allocate(psets(n))
+        do m = 1, n
+            ctx%pset = base
+            do i = 1, n_params
+                call c_f_pointer(value_ptrs(i), v, [n])
+                call fsps_set_param_float(ctx, trim(names(i)), real(v(m), WP), st)
+                if (st /= 0 .and. trim(names(i)) == 'sfh') then
+                    call fsps_set_param_int(ctx, 'sfh', nint(v(m)), st)
+                end if
+                if (st /= 0) then
+                    ctx%pset = base
+                    ctx%state%ssp_basis_is_dirty = dirty
+                    status = 3
+                    call fsps_set_error(3, 'compute_csp_batch: unknown parameter '//trim(names(i)))
+                    return
+                end if
+            end do
+            psets(m) = ctx%pset
+        end do
+        ctx%pset = base
+        ctx%state%ssp_basis_is_dirty = dirty
+
+        call ensure_batch_basis(ctx, zmode)
+
+        call c_f_pointer(c_mags, mags, [nbands, n])
+        if (c_associated(c_spec)) call c_f_pointer(c_spec, spec, [nspec, n])
+        if (c_associated(c_indx)) call c_f_pointer(c_indx, indx, [ctx%state%nindx, n])
+        if (c_associated(c_weights)) call c_f_pointer(c_weights, weights, [nt, n])
+        ! Small outputs always computed; spectra, indices and weights passed only when given.
+        ! (Not by passing disassociated pointers as absent arguments: with -acc=gpu, nvfortran
+        ! 25.1 reports some of them as present.)
+        allocate(mass_l(n), lbol_l(n), mdust_l(n), sfr_l(n), eml_l(NEMLINE, n))
+        if (c_associated(c_spec)) then
+            if (c_associated(c_indx)) then
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx, ssp_weights=weights)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx)
+                end if
+            else
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, ssp_weights=weights)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l)
+                end if
+            end if
+        else
+            if (c_associated(c_indx)) then
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx, ssp_weights=weights)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx)
+                end if
+            else
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, ssp_weights=weights)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l)
+                end if
+            end if
+        end if
+        if (st == 0) then
+            if (c_associated(c_mass)) then
+                call c_f_pointer(c_mass, mass, [n]); mass = mass_l
+            end if
+            if (c_associated(c_lbol)) then
+                call c_f_pointer(c_lbol, lbol, [n]); lbol = lbol_l
+            end if
+            if (c_associated(c_mdust)) then
+                call c_f_pointer(c_mdust, mdust, [n]); mdust = mdust_l
+            end if
+            if (c_associated(c_sfr)) then
+                call c_f_pointer(c_sfr, sfr, [n]); sfr = sfr_l
+            end if
+            if (c_associated(c_emlines)) then
+                call c_f_pointer(c_emlines, emlines, [NEMLINE, n]); emlines = eml_l
+            end if
+        end if
+        status = st
+        end associate
+    end subroutine fsps_context_compute_csp_batch_handle
+
+    !> The context's SSP basis for compute_csp_batch: on the device in OpenACC builds, for the
+    !> current SSP parameters, one metallicity (zmet) or, with zmode, all of them.
+    subroutine ensure_batch_basis(ctx, zmode)
+        type(fsps_context_t), intent(inout) :: ctx
+        logical, intent(in) :: zmode
+        type(PARAMS) :: pset
+        real(WP), allocatable :: spec(:, :, :), mass(:, :), lbol(:, :)
+        integer :: nz, z, zmet
+
+#ifdef _OPENACC
+        if (.not. ctx%on_device) call fsps_context_move_to_device(ctx)
+#endif
+        nz = merge(ctx%state%nz, 1, zmode)
+        if (allocated(ctx%state%ssp_basis_spec) .and. .not. ctx%state%ssp_basis_is_dirty) then
+            if (size(ctx%state%ssp_basis_spec, 3) == nz) return
+        end if
+        allocate(spec(ctx%state%nspec, ctx%state%ntfull, nz), mass(ctx%state%ntfull, nz), lbol(ctx%state%ntfull, nz))
+        zmet = ctx%pset%zmet
+        do z = 1, nz
+            pset = ctx%pset
+            if (zmode) pset%zmet = z
+            call generate_ssp_grid(ctx, pset, mass(:, z), lbol(:, z), spec(:, :, z))
+        end do
+        ctx%pset%zmet = zmet
+        ctx%state%ssp_basis_is_dirty = .true.
+        call fsps_context_update_ssp_basis(ctx, spec, mass, lbol, nz)
+    end subroutine ensure_batch_basis
+
+    !> A C string (char *) as a Fortran string.
+    subroutine c_ptr_to_f_string(p, f_str)
+        type(c_ptr), intent(IN) :: p
+        character(LEN=*), intent(OUT) :: f_str
+        character(KIND=c_char), pointer :: chars(:)
+
+        call c_f_pointer(p, chars, [len(f_str) + 1])
+        call c_to_f_string(chars, f_str)
+    end subroutine c_ptr_to_f_string
 
     subroutine fsps_context_compute_ssp_handle(handle, c_spec, c_mass, c_lbol, status) &
         bind(C, name="fsps_context_compute_ssp")

@@ -36,6 +36,9 @@ program test_csp_batch
     real(WP), parameter :: INDX_TOL = merge(1.0e-8_wp, 1.0e-4_wp, KP == WP)
     type(fsps_context_t), allocatable :: ctx
     real(WP) :: smooth_sigma = 0.0_wp   ! sigma_smooth of every model
+    logical  :: zred_per_model = .false.  ! models at the redshifts ZLIST instead of one
+    real(WP), parameter :: ZLIST(N_MOD) = [0.0_wp, 0.1_wp, 0.5_wp, 1.2_wp, 2.0_wp, 3.0_wp, &
+                                           0.02_wp, 0.8_wp, 1.6_wp, 2.5_wp, 0.3_wp, 0.0_wp]
 
     call print_major_header("Batched CSP vs compute_csp_scenario")
 
@@ -66,6 +69,10 @@ program test_csp_batch
     smooth_sigma = 150.0_wp
     call check_batch(2, 0.5_wp, 1, 1, 1, "Calzetti, z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s")
     smooth_sigma = 0.0_wp
+    ! Per-model redshift (IGM, resampling to the observed frame, distance per model)
+    zred_per_model = .true.
+    call check_batch(2, 0.0_wp, 1, 1, 1, "Calzetti, per-model zred 0-3, IGM, nebular, AGN")
+    zred_per_model = .false.
     ! Per-model metallicity: all bases resident, logzsol varied
     call check_batch_z()
 
@@ -153,7 +160,7 @@ contains
         real(WP) :: mass(N_MOD), lbol(N_MOD), mdust(N_MOD), sfr(N_MOD)
         real(WP) :: ref_mass(N_MOD), ref_lbol(N_MOD), ref_mdust(N_MOD), ref_sfr(N_MOD)
         real(WP), allocatable :: spec2(:, :), mags2(:, :)
-        real(WP), allocatable :: eml(:, :), ref_eml(:, :), indx(:, :), ref_indx(:, :)
+        real(WP), allocatable :: eml(:, :), ref_eml(:, :), indx(:, :), ref_indx(:, :), ref_w(:, :)
         real(WP) :: d_spec, d_mag, d_scal, d_line, d_indx
         integer :: m, status, nspec, nbands
 
@@ -162,14 +169,14 @@ contains
         nbands = ctx%state%nbands
         allocate(spec(nspec, N_MOD), mags(nbands, N_MOD), ref_spec(nspec, N_MOD), ref_mags(nbands, N_MOD))
         allocate(eml(NEMLINE, N_MOD), ref_eml(NEMLINE, N_MOD), indx(ctx%state%nindx, N_MOD), &
-                 ref_indx(ctx%state%nindx, N_MOD))
+                 ref_indx(ctx%state%nindx, N_MOD), ref_w(ctx%state%ntfull, N_MOD))
         call set_int('dust_type', dust_type)
         call set_int('add_igm_absorption', igm)
         call set_int('add_neb_emission', neb)
         call set_int('add_agn_dust', agn)
 
         do m = 1, N_MOD
-            call set_model(m, zred)
+            call set_model(m, merge(ZLIST(m), zred, zred_per_model))
             call fsps_context_prepare_pset(ctx)
             call fsps_context_get_pset(ctx, psets(m))
             call compute_csp_scenario(ctx, psets(m), 1, results, status)
@@ -185,6 +192,7 @@ contains
             ref_lbol(m) = results(1)%lbol_csp
             ref_mdust(m) = results(1)%mdust
             ref_sfr(m) = results(1)%sfr
+            ref_w(:, m) = ctx%state%csp_weights(1:ctx%state%ntfull, 1, 1)
         end do
 
         call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, mdust=mdust, sfr=sfr, &
@@ -211,6 +219,17 @@ contains
         call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol, SFR", total_tests, total_failures)
         call assert_true(maxval(abs(mdust / ref_mdust - 1.0_wp)) <= SPEC_RTOL, "dust mass", &
                          total_tests, total_failures)
+
+        ! The SFH weights given as a matrix (non-parametric SFH input) instead of the parameters
+        call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, ssp_weights=ref_w)
+        call assert_true(status == 0, "status 0 (weight matrix)", total_tests, total_failures)
+        if (status /= 0) return
+        call max_differences(spec, mags, ref_spec, ref_mags, d_spec, d_mag)
+        d_scal = max(maxval(abs(mass / ref_mass - 1.0_wp)), maxval(abs(lbol - ref_lbol)))
+        write(*, '(A,3ES10.2)') "# max difference, weight matrix (spectrum, mag, mass/lbol): ", d_spec, d_mag, d_scal
+        call assert_true(d_spec <= SPEC_RTOL, "spectra (weight matrix)", total_tests, total_failures)
+        call assert_true(d_mag <= MAG_TOL, "magnitudes (weight matrix)", total_tests, total_failures)
+        call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol (weight matrix)", total_tests, total_failures)
 
         ! The same models twice: 24 >= 16 spectra take the many-spectra band kernels (and the
         ! cuBLAS product with -Dcublas=true), which the 12 above do not reach

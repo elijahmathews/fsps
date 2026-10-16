@@ -34,9 +34,18 @@ module fsps_csp_batch
     !> The two matrix products (age sums, band fluxes) use cuBLAS when built with -Dcublas=true
     !> (NVIDIA only; a ceiling for the portable OpenACC loops, which are the default).
     !>
+    !> Redshift and igm_factor may differ per model: each model's IGM transmission is computed on
+    !> the device and its spectrum resampled to the (fixed) observed-frame grid for the shared
+    !> filters, with its own distance term.
+    !>
+    !> Instead of SFH parameters, a precomputed SSP-weight matrix (ages x N, ssp_weights) can be
+    !> given (non-parametric SFHs): the weights of each SSP age (mass formed in that bin, as
+    !> compute_csp_scenario's csp_weights; spectra, mass and L_bol are per that mass), used as
+    !> they are; tage is then not used, and SFR is not defined (NaN).
+    !>
     !> Not supported (status 2): smoothing other than in velocity with smoothspec_fast = 1,
     !> redshifted colors, light-weighted ages, and models with tage <= 0 (all-ages output). Models
-    !> must share zred, igm_factor and the smoothing parameters (sigma_smooth, min/max_wave_smooth).
+    !> must share the smoothing parameters (sigma_smooth, min/max_wave_smooth).
     !>
     !> Mass, L_bol and SFR follow `compute_csp_scenario` in FP64; spectra, magnitudes, indices,
     !> line luminosities and dust masses agree with it to the rounding of the kernel precision
@@ -50,6 +59,8 @@ module fsps_csp_batch
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
+    use fsps_cosmology, only: igm_tau
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
     use fsps_spectral_indices, only: compute_spectral_indices_columns
     use fsps_batch_photometry, only: compute_magnitudes_columns, prepare_batch_grid, smoothing_on_device, &
@@ -102,7 +113,8 @@ contains
     !> @param[out]   emlines Optional emission-line luminosities (NEMLINE, N), as compspout%emlines
     !>                       (zero without nebular emission).
     !> @param[out]   indx    Optional spectral indices (nindx, N), as compspout%indx.
-    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx)
+    !> @param[in]    ssp_weights Optional SSP weights (ntfull, N) instead of the SFH parameters.
+    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx, ssp_weights)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: psets(:)
         real(WP), intent(out)               :: mags(:,:)
@@ -110,10 +122,12 @@ contains
         real(WP), intent(out), optional     :: spec(:,:)
         real(WP), intent(out), optional     :: mass(:), lbol(:), mdust(:), sfr(:)
         real(WP), intent(out), optional     :: emlines(:,:), indx(:,:)
+        real(WP), intent(in), optional      :: ssp_weights(:,:)
 
         integer :: n_mod, nt, nspec, nbands, m, k
         real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis, neb, agn, smooth, zmode
+        logical  :: igm, any_emis, neb, agn, smooth, zmode, zvar, given_w
+        real(WP), allocatable :: wext(:,:), zcol(:)
         integer  :: nzb
         integer,  allocatable :: zlo(:), zhi(:)
         real(WP), allocatable :: dz(:)
@@ -172,16 +186,31 @@ contains
         if (ctx%redshift_colors_val /= 0 .or. ctx%compute_light_ages_val /= 0) then
             status = 2; return
         end if
+        given_w = present(ssp_weights)
+        if (given_w) then
+            if (size(ssp_weights, 1) < nt .or. size(ssp_weights, 2) < n_mod) then
+                status = 3; return
+            end if
+        end if
         zred = psets(1)%zred
+        zvar = .false.
         do m = 1, n_mod
-            if (psets(m)%tage <= 0.0_wp .or. psets(m)%sigma_smooth /= psets(1)%sigma_smooth .or. &
+            if ((psets(m)%tage <= 0.0_wp .and. .not. given_w) .or. psets(m)%sigma_smooth /= psets(1)%sigma_smooth .or. &
                 psets(m)%min_wave_smooth /= psets(1)%min_wave_smooth .or. &
                 psets(m)%max_wave_smooth /= psets(1)%max_wave_smooth .or. &
-                psets(m)%zred /= zred .or. psets(m)%igm_factor /= psets(1)%igm_factor .or. &
                 psets(m)%uvb < 0.0_wp .or. psets(m)%wgp1 < 1 .or. psets(m)%wgp2 < 1) then
                 status = 2; return
             end if
+            if (psets(m)%zred /= zred .or. psets(m)%igm_factor /= psets(1)%igm_factor) zvar = .true.
         end do
+        allocate(zcol(n_mod))
+        zcol = psets(1:n_mod)%zred
+        if (given_w) then
+            allocate(wext(nt, n_mod))
+            wext = ssp_weights(1:nt, 1:n_mod)
+        else
+            allocate(wext(1, 1))
+        end if
 
         ! Smoothing as apply_smoothing (which does nothing for sigma <= SAFE_FLOOR)
         smooth = psets(1)%sigma_smooth > SAFE_FLOOR
@@ -209,8 +238,9 @@ contains
         !    template) and SFR
         ! ------------------------------------------------------------------
         allocate(w2(nt, 2 * n_mod), lum_linear(nt), it_tesc(n_mod), msum(n_mod), lsum(n_mod))
-        allocate(weights(nt, 1, n_mod), tmp1(size(ctx%state%sfh_w_tmp1, 1), n_mod), &
-                 tmp2(size(ctx%state%sfh_w_tmp2, 1), n_mod))
+        ! SFH scratch: sfh_weights_core uses ntfull entries (sized from the ages, not from the
+        ! context's CSP workspace, which a context used only through the batch may not have)
+        allocate(weights(nt, 1, n_mod), tmp1(nt, n_mod), tmp2(nt, n_mod))
         allocate(iq(n_mod), iu(n_mod), wq(n_mod), wu(n_mod), gam(n_mod), emis(n_mod))
         allocate(ita(n_mod), wta(n_mod), agn_on(n_mod))
         lum_linear = 10.0_wp**ctx%state%ssp_basis_lbol(1:nt, 1)
@@ -221,7 +251,9 @@ contains
                 dust_age_log = 7.0_wp
             end if
             it_tesc(m) = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
-            if (present(sfr)) then
+            if (present(sfr) .and. given_w) then
+                sfr(m) = ieee_value(1.0_wp, ieee_quiet_nan)
+            else if (present(sfr)) then
                 call get_sfh_properties_at_age(ctx, psets(m), psets(m)%tage, mass_frac, sfr_norm, frac_linear)
                 if (mass_frac > SAFE_FLOOR) sfr_norm = sfr_norm / mass_frac
                 sfr(m) = sfr_norm
@@ -243,8 +275,14 @@ contains
         end if
 
         ! Grid-only data for this redshift (cached in ctx%state%batch, on the device too)
-        call prepare_batch_grid(ctx, zred, psets(1)%igm_factor)
-        igm = ctx%state%batch%igm
+        ! (with per-model redshifts: the z = 0 data, for the redshift-independent parts)
+        if (zvar) then
+            call prepare_batch_grid(ctx, 0.0_wp, psets(1)%igm_factor)
+            igm = ctx%add_igm_absorption_val == 1 .and. any(zcol > SAFE_FLOOR)
+        else
+            call prepare_batch_grid(ctx, zred, psets(1)%igm_factor)
+            igm = ctx%state%batch%igm
+        end if
         if (smooth) call prepare_smoothing_kernel(ctx, psets(1)%sigma_smooth, psets(1)%min_wave_smooth, &
                                                   psets(1)%max_wave_smooth)
 
@@ -261,7 +299,7 @@ contains
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
-        !$acc      copyin(zlo, zhi, dz) &
+        !$acc      copyin(zlo, zhi, dz, wext, zcol) &
         !$acc      copyin(nb, nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
@@ -270,9 +308,16 @@ contains
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
-        !$acc zlo, zhi, dz) private(k, w)
+        !$acc zlo, zhi, dz, wext) private(k, w)
         do m = 1, n_mod
-            call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
+            if (given_w) then
+                !$acc loop seq
+                do k = 1, nt
+                    weights(k, 1, m) = wext(k, m)
+                end do
+            else
+                call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
+            end if
             msum(m) = 0.0_wp
             lsum(m) = 0.0_wp
             !$acc loop seq
@@ -322,14 +367,23 @@ contains
             call add_dust_emission(n_mod, nspec, emis, yo, s_abs, s_esc, total)
         end if
 
-        if (igm) call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
+        if (igm .and. zvar) then
+            call apply_igm_z(ctx, psets, n_mod, nspec, absorbed, total)   ! absorbed: free by now
+        else if (igm) then
+            call apply_igm(n_mod, nspec, ctx%state%batch%igm_t, total)
+        end if
         if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         if (smooth) call smooth_columns(ctx, total, n_mod)
 
         ! ------------------------------------------------------------------
         ! 8. Magnitudes and indices
         ! ------------------------------------------------------------------
-        if (allocated(psets(1)%mag_compute)) then
+        if (zvar .and. allocated(psets(1)%mag_compute)) then
+            call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags, psets(1)%mag_compute, &
+                                            zred_col=zcol)
+        else if (zvar) then
+            call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags, zred_col=zcol)
+        else if (allocated(psets(1)%mag_compute)) then
             call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags, psets(1)%mag_compute)
         else
             call compute_magnitudes_columns(ctx, zred, psets(1)%igm_factor, total, n_mod, mags)
@@ -986,6 +1040,53 @@ contains
             end do
         end do
     end subroutine age_sums_z
+
+    !> IGM transmission per model (redshift and igm_factor per model), as compute_igm_transmission:
+    !> the optical depth at KP, capped below the wavelength of its maximum, then exp(-tau factor).
+    !> tau is work space (pixels x models).
+    subroutine apply_igm_z(ctx, psets, n_mod, nspec, tau, total)
+        type(fsps_context_t), intent(in) :: ctx
+        type(params), intent(in)         :: psets(:)
+        integer, intent(in)              :: n_mod, nspec
+        real(KP), intent(inout)          :: tau(:,:), total(:,:)
+        integer  :: m, j, jmax
+        real(WP) :: tmax
+
+        !$acc parallel loop gang vector collapse(2) present(ctx, psets, tau)
+        do m = 1, n_mod
+            do j = 1, nspec
+                if (psets(m)%zred > SAFE_FLOOR) tau(j, m) = real(igm_tau(ctx%state%spec_lambda(j), 1.0_wp + psets(m)%zred), KP)
+            end do
+        end do
+        ! The short-wavelength cap, one thread per model
+        !$acc parallel loop gang vector present(psets, tau) private(tmax, jmax, j)
+        do m = 1, n_mod
+            if (psets(m)%zred > SAFE_FLOOR) then
+                tmax = 0.0_wp
+                jmax = 1
+                !$acc loop seq
+                do j = 1, nspec
+                    if (tau(j, m) > tmax) then
+                        tmax = tau(j, m)
+                        jmax = j
+                    end if
+                end do
+                if (jmax > 1) then
+                    !$acc loop seq
+                    do j = 1, jmax
+                        tau(j, m) = real(tmax, KP)
+                    end do
+                end if
+            end if
+        end do
+        !$acc parallel loop gang vector collapse(2) present(psets, tau, total)
+        do m = 1, n_mod
+            do j = 1, nspec
+                if (psets(m)%zred > SAFE_FLOOR) &
+                    total(j, m) = total(j, m) * real(exp(-real(tau(j, m), WP) * psets(m)%igm_factor), KP)
+            end do
+        end do
+    end subroutine apply_igm_z
 
     !> Common IGM transmission.
     subroutine apply_igm(n_mod, nspec, igm_t, total)

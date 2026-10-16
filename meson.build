@@ -404,6 +404,15 @@ executable('test_c_driver', 'tests/test_c_driver.c',
     dependencies : fsps_dep,
     include_directories : include_directories('include')
 )
+test_c_batch_exe = executable('test_c_batch', 'tests/test_c_batch.c',
+    dependencies : fsps_dep,
+    include_directories : include_directories('include')
+)
+test('c_batch', test_c_batch_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
 
 # ===================================
 # Installation (PkgConfig & Data)
