@@ -187,7 +187,7 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   is unaffected; default and pedantic pass 146/146.
 
 **In progress / queue**
-- Final benchmarks of every build (,  basic and
+- Final benchmarks of every build (`benchmark_phases`, `benchmark_csp_batch` basic and
   full_smooth, cuBLAS math modes) and the write-up.
 
 **Open problems**
