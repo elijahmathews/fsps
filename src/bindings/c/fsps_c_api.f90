@@ -12,7 +12,8 @@ module fsps_c_api
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy, &
                         fsps_set_param_int, fsps_set_param_float, fsps_set_param_str, &
-                        fsps_set_fast_mode, fsps_get_paths, fsps_prepare_pset, fsps_compute_ssp, fsps_compute_csp
+                        fsps_set_fast_mode, fsps_get_paths, fsps_prepare_pset, &
+                        api_compute_ssp => fsps_compute_ssp, api_compute_csp => fsps_compute_csp
     use fsps_csp, only: compute_csp_scenario
     use fsps_io, only: load_tabular_sfh, write_isochrone_cmd
     use fsps_ssp, only: generate_ssp_grid, compute_interpolated_ssp
@@ -677,7 +678,7 @@ contains
         call c_f_pointer(c_lbol, lbol_ptr, [n_time])
         ! Computed in the working precision, returned as double (the C API is double throughout)
         allocate (spec(n_spec, n_time), mass(n_time), lbol(n_time))
-        call fsps_compute_ssp(ctx_pool(handle), mass, lbol, spec)
+        call api_compute_ssp(ctx_pool(handle), mass, lbol, spec)
         spec_ptr = spec
         mass_ptr = mass
         lbol_ptr = lbol
@@ -1394,7 +1395,7 @@ contains
             do zmet = zlo, zlo + 1
                 if (has_ssp(zmet) == 0) call fsps_compute_ssp(zmet)
             end do
-            call compute_interpolated_ssp(fsps_default_ctx, zpos, spec, lbol, mass)
+            call compute_interpolated_ssp(fsps_default_ctx, zpos, mass, lbol, spec)
             mass_zz(:, 1) = mass
             lbol_zz(:, 1) = lbol
             spec_zz(:, :, 1) = spec
@@ -1419,7 +1420,7 @@ contains
             do zmet = 1, fsps_default_ctx%state%nz
                 if (has_ssp(zmet) == 0) call fsps_compute_ssp(zmet)
             end do
-            call compute_interpolated_ssp(fsps_default_ctx, zpos, spec, lbol, mass, zpow=global_pset%pmetals)
+            call compute_interpolated_ssp(fsps_default_ctx, zpos, mass, lbol, spec, z_param=global_pset%pmetals)
             mass_zz(:, 1) = mass
             lbol_zz(:, 1) = lbol
             spec_zz(:, :, 1) = spec
@@ -1508,7 +1509,7 @@ contains
         call C_F_POINTER(c_spec, f_spec, [n_spec, 1])
         call C_F_POINTER(c_mass, f_mass, [1])
         call C_F_POINTER(c_lbol, f_lbol, [1])
-        call compute_interpolated_ssp(fsps_default_ctx, real(zpos, WP), f_spec, f_lbol, f_mass, tpos=real(tpos, WP))
+        call compute_interpolated_ssp(fsps_default_ctx, real(zpos, WP), f_mass, f_lbol, f_spec, t_pos=real(tpos, WP))
         deallocate (time)
     end subroutine fsps_interp_ssp
 

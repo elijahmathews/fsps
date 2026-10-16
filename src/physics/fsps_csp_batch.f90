@@ -38,8 +38,9 @@ module fsps_csp_batch
     !>
     !> Every stage runs on the device with OpenACC (-Daccel=gpu) or OpenMP target offload
     !> (-Daccel=omp_gpu), both directive sets on the same loops; the context must be on the
-    !> device (fsps_context_move_to_device). The two matrix products (age sums, band fluxes) use
-    !> cuBLAS when built with -Dcublas=true (NVIDIA only; a ceiling for the portable loops).
+    !> device (moved there on the first call if it is not). The two matrix products (age sums,
+    !> band fluxes) use cuBLAS when built with -Dcublas=true (NVIDIA only; a ceiling for the
+    !> portable loops).
     !>
     !> Redshift and igm_factor may differ per model: each model's IGM transmission is computed on
     !> the device and its spectrum resampled to the (fixed) observed-frame grid for the shared
@@ -62,6 +63,7 @@ module fsps_csp_batch
     use fsps_constants, only: SAFE_FLOOR, PI, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
+    use fsps_context, only: fsps_context_move_to_device
     use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
@@ -164,6 +166,10 @@ contains
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
 
+        ! Device builds: the batch runs on the device, so a context not yet there is moved
+#if (defined(_OPENACC) && !defined(ACC_MULTICORE)) || defined(OMP_TARGET)
+        if (.not. ctx%on_device) call fsps_context_move_to_device(ctx)
+#endif
         call fsps_context_sync_device_settings(ctx)
         status = 0
         n_mod = size(psets)

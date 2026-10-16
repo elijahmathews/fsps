@@ -5,28 +5,21 @@ entries below. The A100 session (2026-10-16) is first; the P100 session's status
 
 ## Questions for Elijah
 
-(Decisions that are yours; the agent took the conservative option in each case and kept working.)
+(Decisions that are yours; the agent took the conservative option and kept working.) All five
+questions of the A100 session were answered on 2026-10-16:
 
-1. The legacy C API's metallicity paths (`fsps_compute_zdep` cases 1 and 2, `fsps_interp_ssp`
-   in `src/bindings/c/fsps_c_api.f90`, only built with `FSPS_ENABLE_LEGACY`) call
-   `compute_interpolated_ssp(ctx, zpos, spec, lbol, mass [, zpow= | tpos=])`, which does not
-   match its signature `(ctx, z_pos, mass_out, lbol_out, spec_out, t_pos, z_param)`: argument
-   order and keyword names. That code cannot compile with the flag on. Left unchanged; the
-   batched per-model metallicity follows the routine's simple Z interpolation (linear in the
-   spectra, mass and log L_bol between the two bracketing metallicities).
-2. The request for the fitting-pipeline batch API mentions "the parameter list in this message",
-   but no list arrived. The C-API batch entry point exposes the per-model parameters the batch
-   already varies (SFH, dust, dust emission, nebular, AGN, metallicity, redshift); please send
-   the list if it should differ.
-3. Order of the late requests: the fitting-pipeline features (weight matrix, per-model zred,
-   C-API arrays) were done before the TF32 / FP64 tensor-core experiments (original item 3).
-4. TF32: not enabled anywhere by default; `FSPS_CUBLAS_MATH=tf32` exists for experiments only
-   (net 3e-4 mag over the case matrix, 3-10% faster). Enabling it in production would be your
-   call.
-5. The batch (OpenACC GPU and OpenMP target builds) requires the context on the device
-   (`fsps_context_move_to_device`, done automatically by the C entry point). Should
-   `compute_csp_batch` move the context itself when it is not? (Not done: it changes the
-   lifetime of device data for Fortran callers.)
+1. Legacy C API `compute_interpolated_ssp` calls: fix them. Done (argument order and keywords;
+   the clashing `fsps_compute_ssp` / `fsps_compute_csp` imports renamed). The legacy layer
+   (`FSPS_ENABLE_LEGACY`, not built by meson) still does not compile: it refers to globals that
+   no longer exist (`om0`, `ol0`, `h0`, `tiny_logt`, ..., `ntabmax`) and has a shape error at
+   `fsps_c_api.f90` ~1900; left as an open problem.
+2. Fitting parameters: logmass, logzsol, dust2, dust_ratio, dust_index, the non-parametric SFH
+   (logsfr_ratio_i via the SSP-weight matrix), fagn, agn_tau, gas_logz, gas_logu, duste_umin,
+   duste_gamma, duste_qpah, zred. `c_batch` now varies exactly these (dust1 = dust_ratio * dust2
+   and logmass formed by the caller).
+3. `compute_csp_batch` moves the context to the device itself when needed: done.
+4. TF32 stays off by default (it is only reachable through `FSPS_CUBLAS_MATH=tf32`).
+5. Order of the late requests: accepted.
 
 ## Summary: P100 and A100
 
@@ -112,7 +105,7 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
 `gpu/a100-cublas-threshold` -> `gpu/a100-batch-nebular` -> `gpu/a100-batch-smoothing` ->
 `gpu/a100-batch-neb-fast` -> `gpu/a100-batch-metallicity` -> `gpu/a100-fp32-kernels` ->
 `gpu/a100-batch-pipeline` -> `gpu/a100-tf32` -> `gpu/a100-call-overhead` -> `gpu/a100-omp-batch`
--> `gpu/a100-omp-portability` (tip). Every branch was validated in all ten builds before its commit, except
+-> `gpu/a100-omp-portability` -> `gpu/a100-final` (tip). Every branch was validated in all ten builds before its commit, except
 `gpu/a100-call-overhead` (dev builds only; its successor `gpu/a100-omp-batch` was validated in
 full).
 
@@ -374,11 +367,25 @@ full).
   - Validation: suites 33/33 and batch test 146/146 in all ten builds, case matrix PASS; the
     nvfortran CPU outputs match the pre-cherry-pick ones to `--rtol 1e-14`.
 
+- Final items (branch `gpu/a100-final`, stacked on `gpu/a100-omp-portability`): the legacy
+  `compute_interpolated_ssp` calls fixed; `compute_csp_batch` moves the context to the device
+  when needed; `c_batch` varies exactly the fitting parameters (logzsol, dust2, dust1 =
+  dust_ratio * dust2, dust_index, fagn, agn_tau, gas_logz, gas_logu, duste_umin, duste_gamma,
+  duste_qpah, zred) with a non-parametric SFH as an SSP-weight matrix: identical to setting the
+  models one at a time.
+  Validation: suites 33/33, batch test 146/146 in all ten builds, case matrix PASS.
+
 **In progress / queue**
-- Nothing running. To confirm on the 780M: the mapping conflict is gone, and `c_batch` with a
-  longer timeout.
+- Pull request from the tip of the `gpu/a100-*` stack to `develop` (CI); not merged.
 
 **Open problems**
+- AMD Radeon 780M (LLVM flang 22 + ROCm 7.1.1, `gpu/a100-omp-portability` tip): builds, 31/33
+  pass with `OMP_TARGET_OFFLOAD=MANDATORY`, but `csp_batch` and `c_batch` abort (after 9 s /
+  22 s), and direct reruns hang the GPU (amdgpu resets; it is the display GPU, so testing is
+  paused). Still open after the mapping fix of that branch; to debug from a text console (next:
+  `LIBOMPTARGET_INFO=-1` / `LIBOMPTARGET_DEBUG` to find the failing construct, then a reduced
+  batch, e.g. one model without nebular emission).
+- Legacy C API (`FSPS_ENABLE_LEGACY`): does not compile (see Questions, 1).
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
   `ERR_NVGPUCTRPERM` (GPU performance counters for admins only). Kernels are tuned from Nsight
   Systems timings instead.

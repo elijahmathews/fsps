@@ -1,7 +1,10 @@
-/* The C batch entry point (fsps_context_compute_csp_batch): parameter arrays (one per
- * parameter, length n) against the same models set one at a time on the context, and the error
- * statuses for a parameter that changes the SSPs and an unknown one. Requires the FSPS data tree
- * (SPS_HOME), like the regression tests. */
+/* The C batch entry point (fsps_context_compute_csp_batch) with the fitting parameters of a
+ * real pipeline: logzsol, dust2, dust1 (= dust_ratio * dust2, formed by the caller), dust_index,
+ * fagn, agn_tau, gas_logz, gas_logu, duste_umin, duste_gamma, duste_qpah, zred, and a
+ * non-parametric SFH as an SSP-weight matrix (logmass is a caller-side scaling). The arrays
+ * (one per parameter, length n) are checked against the same models set one at a time on the
+ * context, and the error statuses for a parameter that changes the SSPs and an unknown one.
+ * Requires the FSPS data tree (SPS_HOME), like the regression tests. */
 #include "fsps.h"
 
 #include <math.h>
@@ -10,36 +13,58 @@
 #include <string.h>
 
 #define N_MOD 6
-#define N_PAR 6
+#define N_PAR 12
 
 int main(void) {
     int status = 0, h = 0, nspec = 0, ntfull = 0, nbands = 0, failures = 0;
-    const char *names[N_PAR] = {"tau", "tage", "dust2", "gas_logu", "zred", "logzsol"};
-    double tau[N_MOD] = {0.5, 1.0, 2.0, 5.0, 0.3, 1.5};
-    double tage[N_MOD] = {1.0, 3.0, 8.0, 12.0, 0.5, 6.0};
-    double dust2[N_MOD] = {0.0, 0.3, 0.6, 1.0, 0.1, 0.4};
-    double logu[N_MOD] = {-3.5, -3.0, -2.5, -2.0, -1.5, -2.2};
-    double zred[N_MOD] = {0.0, 0.1, 0.5, 1.0, 2.0, 0.3};
+    const char *names[N_PAR] = {"logzsol", "dust2", "dust1", "dust_index", "fagn", "agn_tau",
+                                "gas_logz", "gas_logu", "duste_umin", "duste_gamma", "duste_qpah", "zred"};
     double logz[N_MOD] = {-1.5, -1.0, -0.5, 0.0, 0.15, -0.8};
-    const double *values[N_PAR] = {tau, tage, dust2, logu, zred, logz};
+    double dust2[N_MOD] = {0.05, 0.3, 0.6, 1.0, 0.1, 0.4};
+    double dust_ratio[N_MOD] = {0.5, 1.0, 1.5, 0.8, 2.0, 1.2};
+    double dust1[N_MOD];
+    double dindex[N_MOD] = {-0.7, -0.3, -1.0, 0.0, -0.5, 0.2};
+    double fagn[N_MOD] = {0.0, 0.05, 0.1, 0.3, 0.01, 0.2};
+    double agn_tau[N_MOD] = {5.0, 10.0, 20.0, 40.0, 80.0, 15.0};
+    double gas_logz[N_MOD] = {-1.5, -1.0, -0.5, 0.0, 0.15, -0.8};
+    double gas_logu[N_MOD] = {-3.5, -3.0, -2.5, -2.0, -1.5, -2.2};
+    double umin[N_MOD] = {1.0, 2.0, 5.0, 10.0, 0.5, 20.0};
+    double gamma_[N_MOD] = {0.01, 0.05, 0.1, 0.3, 0.0, 0.5};
+    double qpah[N_MOD] = {0.5, 1.5, 2.5, 3.5, 4.5, 2.0};
+    double zred[N_MOD] = {0.0, 0.1, 0.5, 1.0, 2.0, 0.3};
+    const double *values[N_PAR] = {logz, dust2, dust1, dindex, fagn, agn_tau, gas_logz, gas_logu,
+                                   umin, gamma_, qpah, zred};
+    for (int m = 0; m < N_MOD; m++) dust1[m] = dust_ratio[m] * dust2[m];
 
     fsps_context_create(&h, &status);
     fsps_context_setup(-1, "mist", "miles", "DL07", h, &status);
     if (status != 0) { printf("setup failed\n"); return 1; }
-    fsps_context_set_int(h, "sfh", 4, &status);
     fsps_context_set_int(h, "add_neb_emission", 1, &status);
     fsps_context_set_int(h, "add_dust_emission", 1, &status);
     fsps_context_set_int(h, "add_igm_absorption", 1, &status);
-    fsps_context_set_float(h, "dust1", 0.5, &status);
+    fsps_context_set_int(h, "add_agn_dust", 1, &status);
     fsps_context_get_nspec(h, &nspec, &status);
     fsps_context_get_ntfull(h, &ntfull, &status);
     fsps_context_get_nbands(h, &nbands, &status);
+
+    /* Non-parametric SFHs: per model a smooth bump over the SSP ages, normalized to one solar
+     * mass formed (column-major, ntfull x n) */
+    double *w = malloc(sizeof(double) * ntfull * N_MOD);
+    for (int m = 0; m < N_MOD; m++) {
+        double c = 0.3 * ntfull + 0.1 * ntfull * m, sum = 0.0;
+        for (int k = 0; k < ntfull; k++) {
+            double x = (k - c) / (0.15 * ntfull);
+            w[(size_t)m * ntfull + k] = exp(-0.5 * x * x) + 1e-3;
+            sum += w[(size_t)m * ntfull + k];
+        }
+        for (int k = 0; k < ntfull; k++) w[(size_t)m * ntfull + k] /= sum;
+    }
 
     double *mags = malloc(sizeof(double) * nbands * N_MOD), *spec = malloc(sizeof(double) * nspec * N_MOD);
     double *mags1 = malloc(sizeof(double) * nbands), *spec1 = malloc(sizeof(double) * nspec);
     double mass[N_MOD], lbol[N_MOD], mass1, lbol1;
 
-    fsps_context_compute_csp_batch(h, N_MOD, N_PAR, names, values, NULL, mags, spec, mass, lbol,
+    fsps_context_compute_csp_batch(h, N_MOD, N_PAR, names, values, w, mags, spec, mass, lbol,
                                    NULL, NULL, NULL, NULL, &status);
     printf("batch of %d models: status %d\n", N_MOD, status);
     if (status != 0) {
@@ -53,16 +78,12 @@ int main(void) {
     double d_mag = 0.0, d_spec = 0.0, d_scal = 0.0;
     for (int m = 0; m < N_MOD; m++) {
         /* The same model, its parameters set on the context (logzsol through the arrays, so the
-         * basis is the per-metallicity one in both cases) */
-        fsps_context_set_float(h, "tau", tau[m], &status);
-        fsps_context_set_float(h, "tage", tage[m], &status);
-        fsps_context_set_float(h, "dust2", dust2[m], &status);
-        fsps_context_set_float(h, "gas_logu", logu[m], &status);
-        fsps_context_set_float(h, "zred", zred[m], &status);
+         * basis is the per-metallicity one in both cases; the SFH as that model's weights) */
+        for (int i = 1; i < N_PAR; i++) fsps_context_set_float(h, names[i], values[i][m], &status);
         const char *zname[1] = {"logzsol"};
         const double *zval[1] = {&logz[m]};
-        fsps_context_compute_csp_batch(h, 1, 1, zname, zval, NULL, mags1, spec1, &mass1, &lbol1,
-                                       NULL, NULL, NULL, NULL, &status);
+        fsps_context_compute_csp_batch(h, 1, 1, zname, zval, w + (size_t)m * ntfull, mags1, spec1, &mass1,
+                                       &lbol1, NULL, NULL, NULL, NULL, &status);
         if (status != 0) { printf("single model %d: status %d\n", m, status); return 1; }
         double peak = 0.0;
         for (int i = 0; i < nspec; i++) peak = fmax(peak, spec1[i]);
@@ -84,7 +105,7 @@ int main(void) {
     /* A parameter that changes the SSPs cannot vary per model; unknown names are rejected */
     const char *bad1[1] = {"imf1"};
     const char *bad2[1] = {"not_a_parameter"};
-    const double *bv[1] = {tau};
+    const double *bv[1] = {dust2};
     fsps_context_compute_csp_batch(h, N_MOD, 1, bad1, bv, NULL, mags, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                                    &status);
     if (status != 2) { printf("FAIL: imf1 per model gave status %d (expected 2)\n", status); failures++; }
@@ -93,7 +114,7 @@ int main(void) {
     if (status != 3) { printf("FAIL: unknown parameter gave status %d (expected 3)\n", status); failures++; }
 
     fsps_context_destroy(h, &status);
-    free(mags); free(spec); free(mags1); free(spec1);
+    free(w); free(mags); free(spec); free(mags1); free(spec1);
     printf(failures ? "FAILED\n" : "PASSED\n");
     return failures ? 1 : 0;
 }
