@@ -50,11 +50,22 @@ status at the top; dated entries below.
   host work, half of it IMF integrals (see open questions). Fixed the template-vs-per-star
   oracle, which compared the template path with itself in nvfortran builds.
 
+- Continuation item 4 (branch `gpu/p100-omp-target`): OpenMP target offload versions of the
+  template product, the batched age sums and the band fluxes (`-Daccel=omp_gpu`). Compiles;
+  passes 32/32 with `OMP_TARGET_OFFLOAD=DISABLED` (host fallback). Not runnable on the P100
+  (see open problems).
+
 **In progress**
-- Continuation item 4: OpenMP target offload of the two kernels (template product, batched
-  CSP products), branch `gpu/p100-omp-target`.
+- Item 3 remainder: map `pset` once per call (implicit per-launch copies), branch
+  `gpu/p100-pset-resident`.
 
 **Open problems**
+- *OpenMP offload cannot run on this node.* nvfortran's OpenMP GPU offload needs compute
+  capability >= 7.0 ("OpenMP GPU Offload is available only on systems with NVIDIA GPUs with
+  compute capability >= cc70"); the P100 is cc60. No offload-capable gfortran/LLVM is installed
+  (gcc 12.2-13.4 have no OFFLOAD_TARGET_NAMES; Intel LLVM targets Intel GPUs). `-Daccel=omp_gpu`
+  is built for cc70,cc80 and validated with host fallback only; the device run with
+  `OMP_TARGET_OFFLOAD=MANDATORY` (which aborts here, as it should) is for an A100 node.
 - *Open question (physics/parity, needs a decision):* half of the remaining SSP-grid time on the
   GPU is host IMF integrals (Romberg: IMF weights ~127 ms, remnant masses ~44 ms of ~270 ms).
   Branch `perf/imf-analytic` (exact erf integrals for Chabrier) is marked "needs a parity
@@ -415,3 +426,23 @@ indices, illegal address in the kernel); explicit `allocate` fixed it.
 Current `benchmark_phases 5 200` (s), P100, FP64 / FP32: SSP 0.270 / 0.270, CSP 0.00067 /
 0.00067, SSP + nebular 0.269 / 0.278, CSP + nebular 0.0027 / 0.0024. Case matrix: FP64 GPU vs
 nvfortran CPU 1.6e-11 per pixel, 1.3e-11 mag; FP32 GPU vs FP64 CPU 3.8e-7, 4.6e-7 mag. PASS.
+
+### 2026-10-16: continuation item 4, OpenMP target offload
+
+New build mode `-Daccel=omp_gpu` (nvfortran `-mp=gpu`, `-DOMP_TARGET`, OpenACC off): OpenMP
+`target teams distribute parallel do` versions of the main-library template product
+(`main_templates_omp` in `fsps_ssp.f90`), the batched age sums and the band fluxes (same
+arithmetic as the OpenACC kernels; arrays mapped per call with `map(to:/from:)`, no device
+residency yet). Everything else runs on the host in this mode.
+
+```
+FC=nvfortran CC=nvc meson setup build_omp32 --buildtype=release -Daccel=omp_gpu \
+    -Dgpu_arch=cc70,cc80 -Dkernel_precision=single
+OMP_TARGET_OFFLOAD=MANDATORY build_omp32/test_csp_batch   # aborts on the P100 (cc60)
+OMP_TARGET_OFFLOAD=DISABLED meson test -C build_omp32 --suite unit --suite regression  # 32/32
+```
+
+With `-Dgpu_arch=cc60` nvfortran 25.1 refuses the target regions: OpenMP GPU offload needs
+cc70+. So on this node the OpenMP path is validated numerically through host fallback only
+(csp_batch: spectra 5.9e-7, magnitudes 1.5e-7 against `compute_csp_scenario`); the device run
+is pending an A100 (V100 or newer).
