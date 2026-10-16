@@ -61,6 +61,16 @@ module fsps_ssp
     real(WP), parameter :: AGB_SCALE = 2.0_wp**64
     !> Libraries of the deferred template weights (OpenACC builds: main library, then these)
     integer, parameter :: L_MAIN = 0, L_WMB = 1, L_PAGB = 2, L_WRN = 3, L_WRC = 4, L_CAR = 5, L_AGBO = 6, L_AGBC = 7
+
+    !> Dust-shell AGB corners of all ages, deferred to the device product (OpenACC builds): per
+    !> corner ("slot") its age, transfer-function indices (flux_dagb) and template weights
+    !> (library, a, b, weight), stored as consecutive entries slot_ptr(s) .. slot_ptr(s+1) - 1.
+    type :: dusty_defer_t
+        integer :: cur_age = 0, n_slots = 0, n_ent = 0
+        integer,  allocatable :: slot_age(:), slot_key(:,:), slot_ptr(:)
+        integer,  allocatable :: ent_lib(:), ent_a(:), ent_b(:)
+        real(WP), allocatable :: ent_w(:)
+    end type dusty_defer_t
     public :: init_isochrone_buffer, reset_buffer, free_isochrone_buffer
     public :: load_timestep_data
     public :: apply_isochrone_physics
@@ -152,6 +162,7 @@ contains
         ! Main-library template weights of every age (templates x ages), summed after the age
         ! loop as one blocked product (CPU template-sum path)
         real(WP), allocatable :: w_main_all(:,:)
+        type(dusty_defer_t) :: dusty
 
         ! --------------------------------------------------------------------
         ! 1. INITIALIZATION
@@ -286,7 +297,12 @@ contains
             ! D. ACCUMULATE SPECTRA
             !    Sum individual stellar spectra into the grid
             if (allocated(w_main_all)) then
+#ifdef _OPENACC
+                dusty%cur_age = i_time
+                call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx), w_main_all(:, i_time), dusty)
+#else
                 call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx), w_main_all(:, i_time))
+#endif
             else
                 call accumulate_spectrum(ctx, pset, buf, spec_grid(:, out_idx))
             end if
@@ -300,7 +316,11 @@ contains
         end if
 
         if (allocated(w_main_all)) then
+#ifdef _OPENACC
+            call add_main_library_templates(ctx, pset, w_main_all, spec_grid, dusty)
+#else
             call add_main_library_templates(ctx, pset, w_main_all, spec_grid)
+#endif
             deallocate(w_main_all)
         end if
 
@@ -656,7 +676,7 @@ contains
     !> @param[in]     pset      User settings (for EVTYPE/MASSCUT).
     !> @param[in]     buf       The isochrone buffer.
     !> @param[in,out] spec_out  The output spectrum accumulator (L_sol/Hz).
-    subroutine accumulate_spectrum(ctx, pset, buf, spec_out, w_main_out)
+    subroutine accumulate_spectrum(ctx, pset, buf, spec_out, w_main_out, dusty)
         type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)            :: pset
         type(isochrone_buffer_t), intent(in):: buf
@@ -664,6 +684,8 @@ contains
         !> If present (template path), the main-library template weights are returned here instead
         !> of summed, and spec_out holds the rest, unfloored (see add_main_library_templates)
         real(WP), intent(inout), optional   :: w_main_out(:)
+        !> If present (OpenACC template path), dust-shell AGB corners are appended here
+        type(dusty_defer_t), intent(inout), optional :: dusty
 
         ! Local variables
         integer :: j, i_spec
@@ -714,7 +736,7 @@ contains
         ! Template-sum form (on the host; the main library is added on the device in OpenACC
         ! builds, see add_main_library_templates); the per-star loop below is the reference
         if (n_active > 0 .and. .not. ssp_per_star) then
-            call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out, w_main_out)
+            call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out, w_main_out, dusty)
             deallocate(active_idx, active_w)
             return
         end if
@@ -833,13 +855,14 @@ contains
     !> template sum touches each used template once, instead of up to four times per star.
     !> Stars that are not such a combination (AGB stars with a dust shell, degenerate cases) are
     !> added from get_stellar_spectrum.
-    subroutine accumulate_by_templates(ctx, pset, buf, idx, spec_out, w_main_out)
+    subroutine accumulate_by_templates(ctx, pset, buf, idx, spec_out, w_main_out, ddefer)
         type(fsps_context_t), target, intent(inout) :: ctx
         type(params), intent(in)                    :: pset
         type(isochrone_buffer_t), intent(in)        :: buf
         integer, intent(in)                         :: idx(:)
         real(WP), intent(inout), contiguous         :: spec_out(:)
         real(WP), intent(inout), optional           :: w_main_out(:)
+        type(dusty_defer_t), intent(inout), optional :: ddefer
 
         real(WP), allocatable :: w_main(:,:), w_wmb(:,:), w_pagb(:,:), w_wrn(:), w_wrc(:), &
                                  w_agbo(:), w_agbc(:), w_car(:)
@@ -997,7 +1020,11 @@ contains
 
         ! 3. Dust-shell AGB stars: per dust corner, the template sum (smoothed beyond 3 um, as in
         !    get_stellar_spectrum) times that corner's transfer function
-        if (nslot > 0) then
+        if (nslot > 0 .and. present(ddefer)) then
+            do slot = 1, nslot
+                call defer_slot(slot)
+            end do
+        else if (nslot > 0) then
             i0 = nspec - size(ctx%state%speclib_agb_smooth, 1) + 1
             allocate(tmp(nspec), tmp_comp(nspec), low(nspec), low_comp(nspec))
             do slot = 1, nslot
@@ -1048,6 +1075,27 @@ contains
         end if
 
     contains
+
+        !> Appends dust corner slot (of age dusty%cur_age) and its non-zero template weights.
+        subroutine defer_slot(sl)
+            integer, intent(in) :: sl
+            integer :: aa, bb
+            call dusty_push_slot(ddefer, ddefer%cur_age, [dkey(1, sl) + 1, dkey(2, sl), dkey(3, sl)])
+            do bb = 1, size(dw_main, 2)
+                do aa = 1, size(dw_main, 1)
+                    if (dw_main(aa, bb, sl) /= 0.0_wp) call dusty_push_entry(ddefer, L_MAIN, aa, bb, dw_main(aa, bb, sl))
+                end do
+            end do
+            do aa = 1, size(dw_car, 1)
+                if (dw_car(aa, sl) /= 0.0_wp) call dusty_push_entry(ddefer, L_CAR, aa, 1, dw_car(aa, sl))
+            end do
+            do aa = 1, size(dw_o, 1)
+                if (dw_o(aa, sl) /= 0.0_wp) call dusty_push_entry(ddefer, L_AGBO, aa, 1, dw_o(aa, sl))
+            end do
+            do aa = 1, size(dw_c, 1)
+                if (dw_c(aa, sl) /= 0.0_wp) call dusty_push_entry(ddefer, L_AGBC, aa, 1, dw_c(aa, sl))
+            end do
+        end subroutine defer_slot
 
         !> Appends a library's template weights to the deferred rows (n: rows filled so far).
         subroutine add_rows(wl)
@@ -1134,6 +1182,54 @@ contains
 
     end subroutine accumulate_by_templates
 
+    !> Starts a new deferred dust corner (slot) of age t with transfer-function indices key.
+    subroutine dusty_push_slot(d, t, key)
+        type(dusty_defer_t), intent(inout) :: d
+        integer, intent(in) :: t, key(3)
+        integer, allocatable :: ia(:), ik(:,:)
+        integer :: cap
+
+        if (.not. allocated(d%slot_age)) then
+            allocate(d%slot_age(64), d%slot_key(3, 64), d%slot_ptr(65))
+            d%slot_ptr(1) = 1
+        else if (d%n_slots == size(d%slot_age)) then
+            cap = 2 * size(d%slot_age)
+            allocate(ia(cap)); ia(1:d%n_slots) = d%slot_age(1:d%n_slots); call move_alloc(ia, d%slot_age)
+            allocate(ik(3, cap)); ik(:, 1:d%n_slots) = d%slot_key(:, 1:d%n_slots); call move_alloc(ik, d%slot_key)
+            allocate(ia(cap + 1)); ia(1:d%n_slots + 1) = d%slot_ptr(1:d%n_slots + 1); call move_alloc(ia, d%slot_ptr)
+        end if
+        d%n_slots = d%n_slots + 1
+        d%slot_age(d%n_slots) = t
+        d%slot_key(:, d%n_slots) = key
+        d%slot_ptr(d%n_slots + 1) = d%n_ent + 1
+    end subroutine dusty_push_slot
+
+    !> Appends a template weight to the current deferred dust corner.
+    subroutine dusty_push_entry(d, lib, a, b, w)
+        type(dusty_defer_t), intent(inout) :: d
+        integer, intent(in)  :: lib, a, b
+        real(WP), intent(in) :: w
+        integer, allocatable  :: ia(:)
+        real(WP), allocatable :: wa(:)
+        integer :: cap
+
+        if (.not. allocated(d%ent_lib)) then
+            allocate(d%ent_lib(1024), d%ent_a(1024), d%ent_b(1024), d%ent_w(1024))
+        else if (d%n_ent == size(d%ent_lib)) then
+            cap = 2 * size(d%ent_lib)
+            allocate(ia(cap)); ia(1:d%n_ent) = d%ent_lib(1:d%n_ent); call move_alloc(ia, d%ent_lib)
+            allocate(ia(cap)); ia(1:d%n_ent) = d%ent_a(1:d%n_ent); call move_alloc(ia, d%ent_a)
+            allocate(ia(cap)); ia(1:d%n_ent) = d%ent_b(1:d%n_ent); call move_alloc(ia, d%ent_b)
+            allocate(wa(cap)); wa(1:d%n_ent) = d%ent_w(1:d%n_ent); call move_alloc(wa, d%ent_w)
+        end if
+        d%n_ent = d%n_ent + 1
+        d%ent_lib(d%n_ent) = lib
+        d%ent_a(d%n_ent) = a
+        d%ent_b(d%n_ent) = b
+        d%ent_w(d%n_ent) = w
+        d%slot_ptr(d%n_slots + 1) = d%n_ent + 1
+    end subroutine dusty_push_entry
+
     !> Number of templates of the libraries other than the main one (deferred rows, OpenACC).
     integer function n_small_templates(ctx)
         type(fsps_context_t), intent(in) :: ctx
@@ -1204,11 +1300,13 @@ contains
     !> blocked over pixels so that a block of each template and the accumulators of all ages stay
     !> in cache: each template is read once per SSP grid. Compensated at FP32 kernel precision.
     !> Ages with no stars are left at zero; computed ages are floored as in the per-age path.
-    subroutine add_main_library_templates(ctx, pset, w, spec_grid)
+    subroutine add_main_library_templates(ctx, pset, w, spec_grid, dusty)
         type(fsps_context_t), intent(in)    :: ctx
         type(params), intent(in)            :: pset
         real(WP), intent(in)                :: w(:,:)          ! (templates, ages)
         real(WP), intent(inout), contiguous :: spec_grid(:,:)  ! (pixels, output ages)
+        !> Deferred dust-shell AGB corners (OpenACC template path)
+        type(dusty_defer_t), intent(in), optional :: dusty
         integer, parameter :: PIX_BLOCK = 512
         real(KP), allocatable :: acc(:,:), comp(:,:)
         integer, allocatable :: used(:)
@@ -1218,9 +1316,12 @@ contains
 #ifdef _OPENACC
         real(KP), allocatable :: w_used(:,:), t_sum(:,:)
         integer, allocatable :: a_used(:), b_used(:), lib_used(:)
-        real(KP) :: acc1, comp1, lacc, lcomp, x, inv_scale
-        integer :: zmet, n_ages, n_main, r, lib, n2
-        logical :: any_agb
+        real(KP) :: acc1, comp1, lacc, lcomp, x, inv_scale, ta, tc, la, lc, tmpv
+        integer :: zmet, n_ages, n_main, r, lib, n2, nsl, sl, e, j, i0
+        logical :: any_agb, low
+        real(WP) :: wv
+        integer, allocatable  :: age_first(:), age_last(:), sl_key(:,:), sl_ptr(:), e_lib(:), e_a(:), e_b(:)
+        real(WP), allocatable :: e_w(:)
 #endif
 
         nspec = size(spec_grid, 1)
@@ -1260,9 +1361,41 @@ contains
         end do
         any_agb = any(lib_used == L_AGBO .or. lib_used == L_AGBC)
         inv_scale = real(1.0_wp / AGB_SCALE, KP)
+
+        ! Dust-shell AGB corners: the slots of age t are age_first(t) .. age_last(t) (appended in
+        ! age order); empty placeholders keep the data clauses valid without any
+        nsl = 0
+        if (present(dusty)) nsl = dusty%n_slots
+        allocate(age_first(n_ages), age_last(n_ages))
+        age_first = 1
+        age_last = 0
+        i0 = nspec + 1
+        if (nsl > 0) then
+            ! Explicit allocations (nvfortran: no reallocation on assignment by default)
+            allocate(sl_key(3, nsl), sl_ptr(nsl + 1), e_lib(max(dusty%n_ent, 1)), e_a(max(dusty%n_ent, 1)), &
+                     e_b(max(dusty%n_ent, 1)), e_w(max(dusty%n_ent, 1)))
+            sl_key = dusty%slot_key(:, 1:nsl)
+            sl_ptr = dusty%slot_ptr(1:nsl + 1)
+            e_lib(1:dusty%n_ent) = dusty%ent_lib(1:dusty%n_ent)
+            e_a(1:dusty%n_ent) = dusty%ent_a(1:dusty%n_ent)
+            e_b(1:dusty%n_ent) = dusty%ent_b(1:dusty%n_ent)
+            e_w(1:dusty%n_ent) = dusty%ent_w(1:dusty%n_ent)
+            do sl = nsl, 1, -1
+                age_first(dusty%slot_age(sl)) = sl
+            end do
+            do sl = 1, nsl
+                age_last(dusty%slot_age(sl)) = sl
+                has_stars(dusty%slot_age(sl)) = pset%ssp_gen_age(dusty%slot_age(sl)) /= 0
+            end do
+            i0 = nspec - size(ctx%state%speclib_agb_smooth, 1) + 1
+        else
+            allocate(sl_key(3, 1), sl_ptr(2), e_lib(1), e_a(1), e_b(1), e_w(1))
+            sl_key = 1; sl_ptr = 1; e_lib = 0; e_a = 1; e_b = 1; e_w = 0.0_wp
+        end if
         !$acc parallel loop gang vector collapse(2) present(ctx) &
-        !$acc private(acc1, comp1, lacc, lcomp, x, lib, wk, term, tsum, k) &
-        !$acc copyin(w_used, a_used, b_used, lib_used, has_stars) copyout(t_sum)
+        !$acc private(acc1, comp1, lacc, lcomp, x, lib, wk, term, tsum, k, ta, tc, la, lc, tmpv, sl, e, j, wv, low) &
+        !$acc copyin(w_used, a_used, b_used, lib_used, has_stars, age_first, age_last, sl_key, sl_ptr, e_lib, e_a, &
+        !$acc        e_b, e_w) copyout(t_sum)
         do i_time = 1, n_ages
             do i = 1, nspec
                 if (has_stars(i_time)) then
@@ -1314,6 +1447,72 @@ contains
                         comp1 = (tsum - acc1) - term
                         acc1 = tsum
                     end if
+                    ! Dust-shell AGB corners of this age, as step 3 of accumulate_by_templates: the
+                    ! template sum (smoothed beyond 3 um; O/C-rich below it times lambda^2, with the
+                    ! factor AGB_SCALE) times the corner's transfer function
+                    !$acc loop seq
+                    do sl = age_first(i_time), age_last(i_time)
+                        ta = 0.0_KP; tc = 0.0_KP; la = 0.0_KP; lc = 0.0_KP
+                        !$acc loop seq
+                        do e = sl_ptr(sl), sl_ptr(sl + 1) - 1
+                            wv = e_w(e)
+                            low = .false.
+                            if (i < i0) then
+                                select case (e_lib(e))
+                                case (L_MAIN)
+                                    x = ctx%state%speclib(i, zmet, e_a(e), e_b(e)); wk = real(wv, KP)
+                                case (L_CAR)
+                                    x = ctx%state%agb_spec_car(i, e_a(e)); wk = real(wv, KP)
+                                case (L_AGBO)
+                                    x = ctx%state%agb_spec_o(i, e_a(e)); wk = real(wv * AGB_SCALE, KP); low = .true.
+                                case default
+                                    x = ctx%state%agb_spec_c(i, e_a(e)); wk = real(wv * AGB_SCALE, KP); low = .true.
+                                end select
+                            else
+                                j = i - i0 + 1
+                                select case (e_lib(e))
+                                case (L_MAIN)
+                                    x = ctx%state%speclib_agb_smooth(j, zmet, e_a(e), e_b(e)); wk = real(wv, KP)
+                                case (L_CAR)
+                                    x = ctx%state%agb_spec_car_smooth(j, e_a(e)); wk = real(wv, KP)
+                                case (L_AGBO)
+                                    x = ctx%state%agb_spec_o_smooth(j, e_a(e)); wk = real(wv * C_LIGHT, KP)
+                                case default
+                                    x = ctx%state%agb_spec_c_smooth(j, e_a(e)); wk = real(wv * C_LIGHT, KP)
+                                end select
+                            end if
+                            if (KP == WP) then
+                                if (low) then
+                                    la = la + wk * x
+                                else
+                                    ta = ta + wk * x
+                                end if
+                            else if (low) then
+                                term = wk * x - lc
+                                tsum = la + term
+                                lc = (tsum - la) - term
+                                la = tsum
+                            else
+                                term = wk * x - tc
+                                tsum = ta + term
+                                tc = (tsum - ta) - term
+                                ta = tsum
+                            end if
+                        end do
+                        if (i < i0) then
+                            tmpv = ta + real(ctx%state%spec_lambda(i), KP)**2 * la * inv_scale
+                        else
+                            tmpv = ta
+                        end if
+                        if (KP == WP) then
+                            acc1 = acc1 + tmpv * ctx%state%flux_dagb(i, sl_key(1, sl), sl_key(2, sl), sl_key(3, sl))
+                        else
+                            term = tmpv * ctx%state%flux_dagb(i, sl_key(1, sl), sl_key(2, sl), sl_key(3, sl)) - comp1
+                            tsum = acc1 + term
+                            comp1 = (tsum - acc1) - term
+                            acc1 = tsum
+                        end if
+                    end do
                     t_sum(i, i_time) = acc1
                 else
                     t_sum(i, i_time) = 0.0_KP
