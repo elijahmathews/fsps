@@ -126,7 +126,13 @@ contains
 
         integer :: n_mod, nt, nspec, nbands, m, k
         real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis, neb, agn, smooth, zmode, zvar, given_w
+        logical  :: igm, any_emis, neb, agn, smooth, zmode, zvar, given_w, host_w
+        !> Below this batch size the SFH weights are computed on the host: on the device each
+        !> model's SFH integral is one serial thread (~0.3 ms on the A100, the same on the P100),
+        !> on the host ~20 us per model. (Hardware note: the crossover depends on the host core
+        !> and on the GPU's single-thread FP64 speed; measured on the A100 node.)
+        integer, parameter :: HOST_SFH_MAX = 16
+        real(WP), allocatable :: wh(:,:), t1h(:), t2h(:)
         real(WP), allocatable :: wext(:,:), zcol(:)
         integer  :: nzb
         integer,  allocatable :: zlo(:), zhi(:)
@@ -205,9 +211,21 @@ contains
         end do
         allocate(zcol(n_mod))
         zcol = psets(1:n_mod)%zred
+        host_w = .false.
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        host_w = (.not. given_w) .and. n_mod < HOST_SFH_MAX
+#endif
         if (given_w) then
             allocate(wext(nt, n_mod))
             wext = ssp_weights(1:nt, 1:n_mod)
+        else if (host_w) then
+            ! Few models: the SFH weights on the host (as compute_csp_scenario does for one output),
+            ! then used as a given weight matrix
+            allocate(wext(nt, n_mod), wh(nt, 1), t1h(nt), t2h(nt))
+            do m = 1, n_mod
+                call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, wh, t1h, t2h)
+                wext(:, m) = wh(:, 1)
+            end do
         else
             allocate(wext(1, 1))
         end if
@@ -310,7 +328,7 @@ contains
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
         !$acc zlo, zhi, dz, wext) private(k, w)
         do m = 1, n_mod
-            if (given_w) then
+            if (given_w .or. host_w) then
                 !$acc loop seq
                 do k = 1, nt
                     weights(k, 1, m) = wext(k, m)

@@ -272,9 +272,18 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
 - Item 4: final benchmarks of every build (`benchmark outputs in the session scratch directory`, numbers in the Summary above) and the
   write-up (Summary section; `doc/GPU_PLAN.md`, "Next: after the A100 session").
 
+- Per-call overhead, started (branch `gpu/a100-call-overhead`, paused for the OpenMP port): a
+  batch of N = 1 spends ~0.6 ms in kernels of ~1.9 ms per call (full physics); the SFH-weight
+  kernel alone was 314 us (one serial device thread). Below 16 models the SFH weights are now
+  computed on the host (as the single call does): 1720 -> 1500 us per call at N = 1, and
+  small FP64 batches agree with `compute_csp_scenario` to 6.7e-16 (8.6e-11 before). Validated
+  in the dev builds only (batch test 146/146 FP64 and FP32); next there: async kernel queue
+  (~20 synchronous launches per call), fewer small transfers.
+
 **In progress / queue**
-- With the remaining job time: per-call overhead of the batch and the single call (next item 2
-  of `doc/GPU_PLAN.md`), on a new branch `gpu/a100-call-overhead`.
+- "Next" item 1 of `doc/GPU_PLAN.md`: OpenMP target offload of the whole batch
+  (`compute_csp_batch`, `fsps_batch_photometry`) with device residency, directives on the
+  OpenACC loops (branch `gpu/a100-omp-batch`).
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
