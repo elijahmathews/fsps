@@ -172,3 +172,26 @@ main kernels; see doc/GPU_RESULTS.md. Work on a new branch based on `gpu/p100-ps
 
 Open decision for the user, not for the agent: exact Chabrier IMF integrals (branch
 `perf/imf-analytic`) would remove about half of the remaining host time per SSP grid.
+
+## Next: after the A100 session (read doc/GPU_RESULTS.md, "Summary", first)
+
+The A100 session validated every configuration, extended `compute_csp_batch` to full physics
+(nebular, AGN, smoothing, indices, per-model metallicity and redshift, SSP-weight matrices, a
+C-API entry point) and tuned the portable FP32 kernels (7.2 us per model with full physics at
+N = 10000, 2.9 us basic). Branches `gpu/a100-*` are stacked in the order of
+doc/GPU_RESULTS.md's Status. In order:
+
+1. OpenMP target offload of the whole batch (the portability path to AMD and Intel GPUs): map
+   the context (state arrays, grids, the batch caches) with `target enter data` as
+   `fsps_context_move_to_device` does for OpenACC, and port the remaining OpenACC kernels of
+   `fsps_csp_batch.f90` and `fsps_batch_photometry.f90`; today `-Daccel=omp_gpu` runs them on the
+   host (830 us per model). Then run on an AMD or Intel GPU and retune the A100-specific choices
+   marked in comments (age-sum tile sizes; the FP64 exponentials of the nebular continuum, which
+   cost far more on GPUs with slow FP64).
+2. Per-call overhead (~1 ms at N = 1, 2.2 ms for one full-physics `compute_csp_scenario` call):
+   fewer launches and small pageable transfers, cached per-call host set-up (nebular line lists,
+   per-model indices).
+3. Spectra copy-back (pageable D2H, ~16 us per model at N = 10000): pinned staging or a
+   device-resident output for callers that keep working on the device.
+4. Batched SSP generation (IMF parameters varied across a batch) for SSP+CSP fitting.
+

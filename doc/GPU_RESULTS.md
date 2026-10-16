@@ -21,6 +21,77 @@ entries below. The A100 session (2026-10-16) is first; the P100 session's status
 3. Order of the late requests: the fitting-pipeline features (weight matrix, per-model zred,
    C-API arrays) were done before the TF32 / FP64 tensor-core experiments (original item 3).
 
+## Summary: P100 and A100
+
+Nodes: P100-PCIE-12GB with 2x Xeon E5-2680 v4 (Broadwell), nvhpc 25.1; A100-PCIE-40GB with 2x
+Xeon Gold 6248R (Cascade Lake), nvhpc 25.1 (the newest installed; CUDA 12.6 runtime on a CUDA
+13.0 driver). The P100 numbers are from the P100 session's code (branch `gpu/p100-pset-resident`
+plus the merged `develop` items it had); the A100 numbers from this session's branch tip
+(`gpu/a100-tf32`), which also includes the A100 session's kernel and feature work, so the
+columns compare hardware and software together. CPU references run one core of each node.
+
+**Validation.** All configurations pass the unit + regression suites (33 tests) and the case
+matrix against an nvfortran CPU build on the A100: OpenACC FP64 / FP32, cuBLAS FP64 / FP32,
+OpenMP target FP64 / FP32 (first device run; `OMP_TARGET_OFFLOAD=MANDATORY`), nvfortran and
+gfortran CPU FP64 / FP32. FP64 GPU = CPU to 1.6e-11 per pixel; FP32 GPU vs FP64 CPU 4.2e-7 per
+pixel, 5e-7 mag.
+
+**`benchmark_phases 5 200`** (MIST + MILES + DL07; seconds per SSP grid, ms per CSP call):
+
+| | P100 FP64 | P100 FP32 | A100 FP64 | A100 FP32 | A100 OpenMP tgt FP64 / FP32 | CPU core, P100 node | CPU core, A100 node |
+|---|---|---|---|---|---|---|---|
+| SSP grid (s) | 0.270 | 0.270 | 0.072 | 0.069 | 0.135 / 0.115 | 0.45 | 0.145 |
+| CSP call (ms) | 0.67 | 0.67 | 0.69 | 0.59 | 3.2 / 6.8 | 4.8 | 3.2 |
+| CSP call, nebular (ms) | 2.7 | 2.4 | 1.75 | 1.59 | 13.0 / 16.6 | 46 | 13.0 |
+
+(SSP grid: the A100 gain over the P100 is mostly the exact IMF integrals merged into `develop`
+since, which took the Romberg host time out, and the faster host core; the single CSP call is
+host- and launch-bound on both GPUs. The OpenMP-target build offloads only the template
+product and the batch's two products, so its CSP call runs on the host.)
+
+**Batched CSP, `benchmark_csp_batch 10000 200`** (us per model, magnitudes only; basic
+configuration: tau model, dust1/dust2, DL07 dust emission; P100 FP64 rows are from the first
+version of the batch, before the kernel work):
+
+| N | P100 FP32 OpenACC | P100 FP32 cuBLAS | A100 FP32 OpenACC | A100 FP32 cuBLAS | A100 FP64 OpenACC | A100 FP64 cuBLAS |
+|---|---|---|---|---|---|---|
+| one `compute_csp_scenario` call | 660 | 660 | 634 | 568 | 648 | 586 |
+| 1 | 1688 | 1076 | 1128 | 1006 | 1230 | 983 |
+| 100 | 31 | 24 | 19.0 | 17.0 | 20.6 | 16.5 |
+| 1000 | 16 | 9.4 | 4.1 | 3.6 | 4.5 | 3.8 |
+| 10000 | 14.6 | 8.1 | **2.9** | **2.2** | 4.1 | 2.3 |
+| 10000, spectra copied back | | 31.4 | 19.4 | 18.7 | 29.1 | 28.0 |
+
+**Full physics** (`benchmark_csp_batch 10000 200 full_smooth`: dust1 0.5, dust2 0.3, DL07,
+nebular emission, IGM at z = 0.5, AGN fagn 0.1, spectral indices, sigma_smooth 150 km/s; A100
+only, the P100 batch did not support these):
+
+| N | A100 FP32 OpenACC | A100 FP32 cuBLAS | A100 FP64 OpenACC | A100 FP64 cuBLAS |
+|---|---|---|---|---|
+| one `compute_csp_scenario` call | 2179 | 2315 | 2268 | 2241 |
+| 1 | 1538 | 1521 | 1505 | 1416 |
+| 100 | 27.5 | 25.4 | 29.1 | 25.1 |
+| 1000 | 8.4 | 8.0 | 9.2 | 8.6 |
+| 10000 | **7.2** | **6.5** | 8.7 | 7.1 |
+| 10000, spectra copied back | 23.9 | 23.1 | 34.6 | 33.0 |
+
+**Against the forecasts** (A100): SSP grid ~0.1 s -> 0.07 s; single CSP call with full physics
+~2.5 ms -> 2.2-2.3 ms; batched CSP per model ~8.5 us FP32 / ~13 us FP64 -> 7.2 / 8.7 us
+(OpenACC; 6.5 / 7.1 with cuBLAS); the plan's ~4 us (FP32, basic configuration) -> 2.9 us.
+Batched SSP+CSP per model was not measured (no batched SSP generation yet). FP64 is close to
+FP32 on the A100 (FP64 at half the FP32 rate, and much of the batch is memory- and
+transcendental-bound in FP64 anyway); that will not carry over to consumer GPUs.
+
+**What remains** (also in `doc/GPU_PLAN.md`, "Next"): (1) OpenMP target versions of the rest
+of the batch (attenuation, nebular, dust emission, IGM, AGN, smoothing, magnitudes) with device
+residency of the context: today `-Daccel=omp_gpu` runs those on the host (830 us per model),
+and this is the path to AMD and Intel GPUs; (2) per-call overhead, ~1 ms at N = 1 and the
+single call (launches, small pageable transfers, host set-up); (3) spectra copy-back (pageable
+D2H at ~2.4 GB/s on this node: 16 us per model at N = 10000; pinned or device-resident output);
+(4) on GPUs with slow FP64, the FP64 exponentials of the nebular continuum and attenuation.
+TF32 is not usable for the age sums at this project's tolerances (net 3e-4 mag) and gains only
+3-10%; FP64 tensor cores change nothing, numerically or in speed, at these product sizes.
+
 ## Status (A100 session, 2026-10-16)
 
 If restarted: read this section, then `git log` of the newest `gpu/a100-*` branch.
@@ -185,10 +256,25 @@ If restarted: read this section, then `git log` of the newest `gpu/a100-*` branc
   FP64 tensor cores (DMMA) are IEEE FP64 FMAs: identical results to pedantic.
   With `FSPS_CUBLAS_MATH=tf32` the FP32 cuBLAS build fails `test_csp_batch` (66/146 pass); FP64
   is unaffected; default and pedantic pass 146/146.
+  Speed (`benchmark_csp_batch 10000 200`, us per model at N = 10000, magnitudes only):
+
+  | cuBLAS build | default | tf32 | pedantic |
+  |---|---|---|---|
+  | FP32, basic | 2.2 | 1.9 | 2.2 |
+  | FP32, full physics + smoothing | 6.5 | 6.3 | 6.4 |
+  | FP64, basic | 2.3 | 2.3 | 2.3 |
+  | FP64, full physics + smoothing | 7.1 | 7.1 | 7.1 |
+
+  The products are a small part of a call after the kernel work (cuBLAS SGEMM age sums ~1 ms of
+  ~22 ms at N = 10000, basic), so TF32 gains 3-10% for 1000x the error, and FP64 tensor cores
+  give no measurable gain.
+
+- Item 4: final benchmarks of every build (`benchmark outputs in the session scratch directory`, numbers in the Summary above) and the
+  write-up (Summary section; `doc/GPU_PLAN.md`, "Next: after the A100 session").
 
 **In progress / queue**
-- Final benchmarks of every build (`benchmark_phases`, `benchmark_csp_batch` basic and
-  full_smooth, cuBLAS math modes) and the write-up.
+- With the remaining job time: per-call overhead of the batch and the single call (next item 2
+  of `doc/GPU_PLAN.md`), on a new branch `gpu/a100-call-overhead`.
 
 **Open problems**
 - Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
