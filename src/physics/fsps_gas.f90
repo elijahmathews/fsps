@@ -79,8 +79,9 @@ contains
 
         nspec = size(sspi, 1)
 
+        ! sspi is either mapped by the caller (the SSP basis in compute_csp_scenario, current on the
+        ! device) or copied in here; no update (it re-sent the whole basis on every call)
         !$acc data pcopyin(sspi) pcopy(sspo)
-        !$acc update device(sspi)
 
         ! 0. Initialization & Validation
         ! ------------------------------
@@ -255,8 +256,9 @@ contains
         whlylim = ctx%state%whlylim
         frac_obrun_clamped = max(0.0_wp, min(pset%frac_obrun, 1.0_wp))
 
+        ! spec_in is mapped by the caller or copied in here; an update here re-sent the whole SSP
+        ! grid for every young age (~50 x 5 MB per nebular CSP call)
         !$acc data pcopyin(spec_in) pcopy(spec_out)
-        !$acc update device(spec_in)
 
         ! 1. Attenuate Output Spectrum (EUV < 912 A)
         if (whlylim > 0) then
