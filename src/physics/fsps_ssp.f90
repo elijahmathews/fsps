@@ -57,8 +57,9 @@ module fsps_ssp
     !> equal; the per-star form is kept for the OpenACC build and to test the template form)
     logical :: ssp_per_star = .false.
 
-    !> Exact power of two keeping the O/C-rich AGB sums (before lambda^2) clear of FP32 subnormals
-    real(WP), parameter :: AGB_SCALE = 2.0_wp**64
+    !> Exact power of two keeping the O/C-rich AGB sums (before lambda^2) clear of FP32 subnormals;
+    !> 1 with FP64 kernels, which do not need it (with it, gfortran FP64 SSP grids ran 25% slower)
+    real(WP), parameter :: AGB_SCALE = merge(2.0_wp**64, 1.0_wp, KP /= WP)
     !> Libraries of the deferred template weights (OpenACC builds: main library, then these)
     integer, parameter :: L_MAIN = 0, L_WMB = 1, L_PAGB = 2, L_WRN = 3, L_WRC = 4, L_CAR = 5, L_AGBO = 6, L_AGBC = 7
 
