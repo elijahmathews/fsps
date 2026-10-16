@@ -44,11 +44,21 @@ status at the top; dated entries below.
   SSP grid per young age; all young ages in a few kernels. P100 CSP call with nebular
   emission 33 -> 2.8 ms (FP64), 22 -> 2.4 ms (FP32). All GPU builds 32/32; case matrix PASS.
 
+- Continuation item 1 (branch `gpu/p100-ssp-small-libs`): the other libraries' templates and
+  the dust-shell AGB corners are summed on the device with the main library; per-age buffer
+  uploads removed. P100 SSP grid 0.38 -> 0.27 s (FP64), 0.33 -> 0.27 s (FP32); what remains is
+  host work, half of it IMF integrals (see open questions). Fixed the template-vs-per-star
+  oracle, which compared the template path with itself in nvfortran builds.
+
 **In progress**
-- Continuation item 1: remaining per-age SSP work (small libraries, dust-shell AGB corners)
-  on the device (branch `gpu/p100-ssp-small-libs`).
+- Continuation item 4: OpenMP target offload of the two kernels (template product, batched
+  CSP products), branch `gpu/p100-omp-target`.
 
 **Open problems**
+- *Open question (physics/parity, needs a decision):* half of the remaining SSP-grid time on the
+  GPU is host IMF integrals (Romberg: IMF weights ~127 ms, remnant masses ~44 ms of ~270 ms).
+  Branch `perf/imf-analytic` (exact erf integrals for Chabrier) is marked "needs a parity
+  decision"; not merged or used here (conservative choice).
 - Branches are stacked (each later one contains the earlier ones' commits), because the
   device-residency fixes on `gpu/p100-baseline` are needed for any GPU run; merge them in order
   (baseline, ssp-templates, ...), or rebase after the first is merged.
@@ -365,3 +375,43 @@ worst magnitude 4.6e-7, csp_ssp_offgrid, from the single-spectrum band reduction
 
 Current `benchmark_phases 5 200` on the P100 (s): SSP grid 0.38 / 0.33, CSP call 0.00066 /
 0.00066, SSP grid with nebular 0.40 / 0.33, CSP with nebular 0.0028 / 0.0024 (FP64 / FP32).
+
+### 2026-10-16: continuation item 1, the rest of the SSP template sum on the device
+
+Timers in `generate_ssp_grid` (FP32 GPU, per grid, before): load 9 ms, isochrone physics (IMF
+weights) 127 ms, buffer upload + integrated properties 56 ms, template aggregation + other
+libraries + dust corners 133 ms (of which: aggregation 56, other libraries ~10, dust corners
+75), main-library kernel 3-5 ms; total 330 ms.
+
+1. Buffer uploads: the isochrone buffer is only needed on the device by the per-star kernel;
+   with the template path the 9 per-age uploads and the device reductions of
+   `compute_integrated_properties` are skipped (`if(ssp_per_star)` clauses). The remaining
+   44 ms there is `add_remnant_mass` (an IMF integral, host).
+2. Other libraries (WMBasic, post-AGB, WN/WC, carbon stars, O/C-rich AGB): in OpenACC builds
+   their template weights are deferred as extra rows of the all-ages weight matrix and summed
+   in the main-library kernel (O/C-rich apart, times lambda^2, with the exact 2^64 factor).
+3. Dust-shell AGB corners: each age's corners are recorded (transfer-function indices and the
+   corner's template weights, CSR-style) and the device kernel rebuilds each corner's template
+   sum (smoothed beyond 3 um; O/C-rich below it times lambda^2) times its transfer function,
+   compensated at FP32 as on the host. 75 ms -> ~0 on the host.
+
+CPU builds keep the per-age host sums (unchanged results). SSP grid, P100: FP64 0.38 -> 0.27 s,
+FP32 0.33 -> 0.27 s (nvfortran CPU: 0.45 s; gfortran CPU 0.48 s, one Broadwell core).
+
+**Test gap found:** `physics_oracles` (template sum = per-star sum) set `fsps_ssp::ssp_per_star`
+by assignment from the test program. With nvfortran, a program that assigns a module variable
+of a shared library changes its own copy (the library keeps its own): both runs used the
+template path, the check printed 0.00 and passed vacuously in every nvfortran build
+(including CI's multicore job, where it compared per-star with per-star). New setter
+`fsps_ssp_set_per_star`; the oracle now compares the two paths on the GPU: FP64 8.9e-12 per
+pixel (tolerance 1e-10), FP32 within KP_RTOL above 1e-6 of the peak (the printed maximum,
+1.8e5, is from pixels near FP32 underflow, ~1e-30 of the grid maximum, which the GPU flushes
+to zero).
+
+**nvfortran quirk:** assigning `dusty%slot_ptr(1:n)` (a component of an optional
+`intent(in)` derived-type dummy) to an unallocated local allocatable left it unset (garbage
+indices, illegal address in the kernel); explicit `allocate` fixed it.
+
+Current `benchmark_phases 5 200` (s), P100, FP64 / FP32: SSP 0.270 / 0.270, CSP 0.00067 /
+0.00067, SSP + nebular 0.269 / 0.278, CSP + nebular 0.0027 / 0.0024. Case matrix: FP64 GPU vs
+nvfortran CPU 1.6e-11 per pixel, 1.3e-11 mag; FP32 GPU vs FP64 CPU 3.8e-7, 4.6e-7 mag. PASS.
