@@ -447,7 +447,7 @@ contains
             ! The table is stored in ctx%state%sfh_tab(1:3, :) -> 1=Time(Yr), 2=SFR
             ! Note: Table time is in YEARS, age_gyr is in GYR.
             
-            tab_idx = find_interval(ctx%state%sfh_tab(1, 1:ctx%state%ntabsfh), age_gyr * 1.0e9_wp)
+            tab_idx = find_interval_tab_time(ctx, ctx%state%ntabsfh, age_gyr * 1.0e9_wp)
             
             ! Clamp index to valid interpolation range [1, n-1]
             tab_idx = max(min(tab_idx, ctx%state%ntabsfh - 1), 1)
@@ -614,7 +614,7 @@ contains
             ! The table might go beyond age_current_yr.
             
             ! Find index just below current age
-            idx_cut = find_interval(ctx%state%sfh_tab(1, 1:n_tab), age_current_yr)
+            idx_cut = find_interval_tab_time(ctx, n_tab, age_current_yr)
             idx_cut = min(max(idx_cut, 1), n_tab - 1)
 
             ! Interpolate SFR at exactly age_current_yr
@@ -760,8 +760,8 @@ contains
 
         ! 2. Find relevant table indices
         ! find_interval returns i such that tab(i) <= val < tab(i+1)
-        idx_start = find_interval(ctx%state%sfh_tab(1, 1:ctx%state%ntabsfh), t_start_yr)
-        idx_end   = find_interval(ctx%state%sfh_tab(1, 1:ctx%state%ntabsfh), t_end_yr)
+        idx_start = find_interval_tab_time(ctx, ctx%state%ntabsfh, t_start_yr)
+        idx_end   = find_interval_tab_time(ctx, ctx%state%ntabsfh, t_end_yr)
 
         ! Clamp indices
         idx_start = max(1, min(idx_start, ctx%state%ntabsfh - 1))
@@ -1015,5 +1015,40 @@ contains
         end if
 
     end function get_time_interval
+
+    !> find_interval over the table times sfh_tab(1, 1:n), searched in place: the row is strided,
+    !> and passing it to find_interval (contiguous dummy) makes a copy, a heap allocation per call
+    !> in device code. Same result as find_interval(ctx%state%sfh_tab(1, 1:n), value).
+    pure function find_interval_tab_time(ctx, n, value) result(idx)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)  :: n
+        real(WP), intent(in) :: value
+        integer :: idx, lower, upper, mid
+        logical :: is_ascending
+
+        if (n < 2) then
+            idx = 1
+            return
+        end if
+        is_ascending = (ctx%state%sfh_tab(1, n) >= ctx%state%sfh_tab(1, 1))
+        lower = 0
+        upper = n + 1
+        do while (upper - lower > 1)
+            mid = (upper + lower) / 2
+            if (is_ascending .eqv. (value >= ctx%state%sfh_tab(1, mid))) then
+                lower = mid
+            else
+                upper = mid
+            end if
+        end do
+        if (value == ctx%state%sfh_tab(1, 1)) then
+            idx = 1
+        else if (value == ctx%state%sfh_tab(1, n)) then
+            idx = n - 1
+        else
+            idx = lower
+        end if
+    end function find_interval_tab_time
 
 end module fsps_sfh

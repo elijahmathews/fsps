@@ -31,7 +31,7 @@ module fsps_csp_batch
     use fsps_constants, only: SAFE_FLOOR, C_LIGHT, PI, ABS_MAG_ZEROPOINT_LOG
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
-    use fsps_csp, only: compute_sfh_weights
+    use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_cosmology, only: compute_igm_transmission
@@ -80,14 +80,15 @@ contains
         real(WP), intent(out), optional     :: spec(:,:)
         real(WP), intent(out), optional     :: mass(:), lbol(:), mdust(:), sfr(:)
 
-        integer :: n_mod, nt, nspec, nbands, m, k, i, j, b, it_tesc, ilo, ihi
-        real(WP) :: zred, dust_age_log, w, msum, lsum, mass_frac, sfr_norm, frac_linear
+        integer :: n_mod, nt, nspec, nbands, m, k, i, j, b, ilo, ihi
+        real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
         real(WP) :: z_factor, target, dm, dist_term, flux
         logical  :: igm, any_emis
 
         ! Per-model parameters and results on the host
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
-        real(WP), allocatable :: weights(:,:,:), lum_linear(:)
+        real(WP), allocatable :: weights(:,:,:), tmp1(:,:), tmp2(:,:), lum_linear(:), msum(:), lsum(:)
+        integer,  allocatable :: it_tesc(:)
         integer,  allocatable :: iq(:), iu(:), i_lo(:), j_lo(:), j_hi(:), do_band(:)
         real(WP), allocatable :: wq(:), wu(:), gam(:), t_obs(:)
         logical,  allocatable :: emis(:)
@@ -138,43 +139,20 @@ contains
         end do
 
         ! ------------------------------------------------------------------
-        ! 1. Host: SFH weights, mass, L_bol, SFR (FP64); per-model dust emission indices
+        ! 1. Host: per-model indices (birth-cloud age, dust emission grid) and SFR
         ! ------------------------------------------------------------------
-        allocate(w2(nt, 2 * n_mod), weights(nt, 1, 1), lum_linear(nt))
+        allocate(w2(nt, 2 * n_mod), lum_linear(nt), it_tesc(n_mod), msum(n_mod), lsum(n_mod))
+        allocate(weights(nt, 1, n_mod), tmp1(size(ctx%state%sfh_w_tmp1, 1), n_mod), &
+                 tmp2(size(ctx%state%sfh_w_tmp2, 1), n_mod))
         allocate(iq(n_mod), iu(n_mod), wq(n_mod), wu(n_mod), gam(n_mod), emis(n_mod))
         lum_linear = 10.0_wp**ctx%state%ssp_basis_lbol(1:nt, 1)
         do m = 1, n_mod
-            call compute_sfh_weights(ctx, psets(m), psets(m)%tage, 1, 1, weights)
             if (psets(m)%dust_tesc > SAFE_FLOOR) then
                 dust_age_log = psets(m)%dust_tesc
             else
                 dust_age_log = 7.0_wp
             end if
-            it_tesc = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
-            msum = 0.0_wp
-            lsum = 0.0_wp
-            do k = 1, nt
-                w = weights(k, 1, 1)
-                if (w > SAFE_FLOOR) then
-                    msum = msum + w * ctx%state%ssp_basis_mass(k, 1)
-                    lsum = lsum + w * lum_linear(k)
-                else
-                    w = 0.0_wp
-                end if
-                if (k <= it_tesc) then
-                    w2(k, m) = real(w, KP); w2(k, n_mod + m) = 0.0_KP
-                else
-                    w2(k, m) = 0.0_KP; w2(k, n_mod + m) = real(w, KP)
-                end if
-            end do
-            if (present(mass)) mass(m) = msum
-            if (present(lbol)) then
-                if (lsum > SAFE_FLOOR) then
-                    lbol(m) = log10(lsum)
-                else
-                    lbol(m) = 0.0_wp
-                end if
-            end if
+            it_tesc(m) = max(1, min(find_interval(ctx%state%time_full, dust_age_log), nt))
             if (present(sfr)) then
                 call get_sfh_properties_at_age(ctx, psets(m), psets(m)%tage, mass_frac, sfr_norm, frac_linear)
                 if (mass_frac > SAFE_FLOOR) sfr_norm = sfr_norm / mass_frac
@@ -210,9 +188,34 @@ contains
         allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(npad, n_mod))
         allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod))
 
-        !$acc data present(ctx) copyin(psets, w2, iq, iu, wq, wu, gam, emis, wt) &
-        !$acc      create(yo, total, absorbed, igm_t) copyout(s_abs, s_norm, s_esc)
+        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, wt, it_tesc, lum_linear) &
+        !$acc      create(w2, weights, tmp1, tmp2, yo, total, absorbed, igm_t) copyout(s_abs, s_norm, s_esc, msum, lsum)
         if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, psets(1)%igm_factor, igm_t)
+
+        ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
+        ! into young and old ages at the model's dust_tesc and cast once to kernel precision
+        !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum) &
+        !$acc private(k, w)
+        do m = 1, n_mod
+            call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
+            msum(m) = 0.0_wp
+            lsum(m) = 0.0_wp
+            !$acc loop seq
+            do k = 1, nt
+                w = weights(k, 1, m)
+                if (w > SAFE_FLOOR) then
+                    msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
+                    lsum(m) = lsum(m) + w * lum_linear(k)
+                else
+                    w = 0.0_wp
+                end if
+                if (k <= it_tesc(m)) then
+                    w2(k, m) = real(w, KP); w2(k, n_mod + m) = 0.0_KP
+                else
+                    w2(k, m) = 0.0_KP; w2(k, n_mod + m) = real(w, KP)
+                end if
+            end do
+        end do
 
         call age_sums(nspec, nt, 2 * n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, yo)
         call attenuate_batch(ctx, psets, n_mod, nspec, yo, emis, total, absorbed)
@@ -314,6 +317,14 @@ contains
         !$acc end data
 
         do m = 1, n_mod
+            if (present(mass)) mass(m) = msum(m)
+            if (present(lbol)) then
+                if (lsum(m) > SAFE_FLOOR) then
+                    lbol(m) = log10(lsum(m))
+                else
+                    lbol(m) = 0.0_wp
+                end if
+            end if
             mags(:, m) = ieee_value(1.0_wp, ieee_quiet_nan)
             do b = 1, nbands
                 if (do_band(b) == 0) cycle
@@ -586,7 +597,11 @@ contains
             do j = 1, npad
                 if (j <= nspec) then
                     il = i_lo(j)
-                    v = real(total(il, m), WP) + t_obs(j) * (real(total(il + 1, m), WP) - real(total(il, m), WP))
+                    if (t_obs(j) == 0.0_wp) then   ! rest frame (i_lo = j: no right neighbour at j = nspec)
+                        v = real(total(il, m), WP)
+                    else
+                        v = real(total(il, m), WP) + t_obs(j) * (real(total(il + 1, m), WP) - real(total(il, m), WP))
+                    end if
                     if (v /= v) v = 0.0_wp
                     fobs(j, m) = real(max(v, 0.0_wp), KP) * wl(j)
                 else

@@ -62,65 +62,65 @@ module fsps_context_types
         real(WP) :: mlim_bh = 40.0_wp
         real(WP) :: mlim_ns = 8.5_wp
         character(len=30) :: alt_filter_file = ''
-        real(WP), pointer :: indexdefined(:, :) => null()
-        real(WP), pointer :: wgdust(:, :, :, :) => null()
-        real(WP), pointer :: g03smcextn(:) => null()
-        real(WP), pointer :: bands(:, :) => null()
-        real(WP), pointer :: magsun(:) => null()
-        real(WP), pointer :: magvega(:) => null()
-        real(WP), pointer :: filter_leff(:) => null()
-        real(WP), pointer :: vega_spec(:) => null()
-        real(WP), pointer :: sun_spec(:) => null()
-        real(WP), pointer :: spec_lambda(:) => null()
-        real(WP), pointer :: spec_nu(:) => null()
-        real(WP), pointer :: spec_res(:) => null()
+        real(WP), pointer, contiguous :: indexdefined(:, :) => null()
+        real(WP), pointer, contiguous :: wgdust(:, :, :, :) => null()
+        real(WP), pointer, contiguous :: g03smcextn(:) => null()
+        real(WP), pointer, contiguous :: bands(:, :) => null()
+        real(WP), pointer, contiguous :: magsun(:) => null()
+        real(WP), pointer, contiguous :: magvega(:) => null()
+        real(WP), pointer, contiguous :: filter_leff(:) => null()
+        real(WP), pointer, contiguous :: vega_spec(:) => null()
+        real(WP), pointer, contiguous :: sun_spec(:) => null()
+        real(WP), pointer, contiguous :: spec_lambda(:) => null()
+        real(WP), pointer, contiguous :: spec_nu(:) => null()
+        real(WP), pointer, contiguous :: spec_res(:) => null()
         real(WP), dimension(NDIM_LOGT) :: speclib_logt = 0.0_wp
         real(WP), dimension(NDIM_LOGG) :: speclib_logg = 0.0_wp
-        real(kind(1.0)), pointer :: speclib(:, :, :, :) => null()
+        real(kind(1.0)), pointer, contiguous :: speclib(:, :, :, :) => null()
         real(WP), dimension(NDIM_WMB_LOGT) :: wmb_logt = 0.0_wp
         real(WP), dimension(NDIM_WMB_LOGG) :: wmb_logg = 0.0_wp
-        real(kind(1.0)), pointer :: wmb_spec(:, :, :, :) => null()
-        real(KP), pointer :: agb_spec_o(:, :) => null()
-        real(WP), pointer :: agb_logt_o(:, :) => null()
-        real(KP), pointer :: agb_spec_c(:, :) => null()
-        real(WP), pointer :: agb_logt_c(:) => null()
+        real(kind(1.0)), pointer, contiguous :: wmb_spec(:, :, :, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_o(:, :) => null()
+        real(WP), pointer, contiguous :: agb_logt_o(:, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_c(:, :) => null()
+        real(WP), pointer, contiguous :: agb_logt_c(:) => null()
         real(WP), dimension(N_AGB_CAR) :: agb_logt_car = 0.0_wp
-        real(KP), pointer :: agb_spec_car(:, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_car(:, :) => null()
         !> Templates used for dusty AGB stars, smoothed as legacy ADD_AGB_DUST smooths each such star
         !> (10^4 km/s, lambda >= 3 um); only the smoothed segment lambda >= AGB_SMOOTH_LAMBDA_MIN is
         !> stored. O-rich and Lancon-Wood C-rich templates include their lambda^2/c factor.
-        real(KP), pointer :: speclib_agb_smooth(:, :, :, :) => null()
-        real(KP), pointer :: agb_spec_o_smooth(:, :) => null()
-        real(KP), pointer :: agb_spec_c_smooth(:, :) => null()
-        real(KP), pointer :: agb_spec_car_smooth(:, :) => null()
-        real(KP), pointer :: pagb_spec(:, :, :) => null()
+        real(KP), pointer, contiguous :: speclib_agb_smooth(:, :, :, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_o_smooth(:, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_c_smooth(:, :) => null()
+        real(KP), pointer, contiguous :: agb_spec_car_smooth(:, :) => null()
+        real(KP), pointer, contiguous :: pagb_spec(:, :, :) => null()
         real(WP), dimension(NDIM_PAGB) :: pagb_logt = 0.0_wp
-        real(KP), pointer :: wrn_spec(:, :, :) => null()
-        real(KP), pointer :: wrc_spec(:, :, :) => null()
+        real(KP), pointer, contiguous :: wrn_spec(:, :, :) => null()
+        real(KP), pointer, contiguous :: wrc_spec(:, :, :) => null()
         real(WP), dimension(NDIM_WR) :: wrn_logt = 0.0_wp
         real(WP), dimension(NDIM_WR) :: wrc_logt = 0.0_wp
         integer :: ndim_dustem = 0
         integer :: numin_dustem = 0
         integer :: nqpah_dustem = 0
         character(len=6) :: str_dustem = 'DL07'
-        real(WP), pointer :: qpaharr(:) => null()
-        real(WP), pointer :: uminarr(:) => null()
-        real(WP), pointer :: lambda_dustem(:) => null()
-        real(WP), pointer :: dustem_dustem(:, :) => null()
-        real(WP), pointer :: dustem2_dustem(:, :, :) => null()
-        real(KP), pointer :: flux_dagb(:, :, :, :) => null()
+        real(WP), pointer, contiguous :: qpaharr(:) => null()
+        real(WP), pointer, contiguous :: uminarr(:) => null()
+        real(WP), pointer, contiguous :: lambda_dustem(:) => null()
+        real(WP), pointer, contiguous :: dustem_dustem(:, :) => null()
+        real(WP), pointer, contiguous :: dustem2_dustem(:, :, :) => null()
+        real(KP), pointer, contiguous :: flux_dagb(:, :, :, :) => null()
         real(WP), dimension(2, NTAU_DAGB) :: tau1_dagb = 0.0_wp
         real(WP), dimension(2, NTEFF_DAGB) :: teff_dagb = 0.0_wp
         real(WP), dimension(NEMLINE) :: nebem_line_pos = 0.0_wp
         real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: nebem_line = 0.0_wp
         real(WP), dimension(NEMLINE, NEBNZ, NEBNAGE, NEBNIP) :: xnebem_line = 0.0_wp
-        real(WP), pointer :: nebem_cont(:, :, :, :) => null()
-        real(WP), pointer :: xnebem_cont(:, :, :, :) => null()
+        real(WP), pointer, contiguous :: nebem_cont(:, :, :, :) => null()
+        real(WP), pointer, contiguous :: xnebem_cont(:, :, :, :) => null()
         real(WP), dimension(NEBNZ) :: nebem_logz = 0.0_wp
         real(WP), dimension(NEBNAGE) :: nebem_age = 0.0_wp
         real(WP), dimension(NEBNIP) :: nebem_logu = 0.0_wp
-        real(WP), pointer :: neb_res_min(:) => null()
-        real(KP), pointer :: gaussnebarr(:, :) => null()
+        real(WP), pointer, contiguous :: neb_res_min(:) => null()
+        real(KP), pointer, contiguous :: gaussnebarr(:, :) => null()
         !> True when gaussnebarr is a private per-context allocation (per-call kernels) rather than a
         !> pointer into the shared setup cache; it is then deallocated, not nullified, on destroy
         logical :: owns_gaussnebarr = .false.
@@ -129,23 +129,23 @@ module fsps_context_types
         real(WP) :: gauss_built_sigma = -1.0_wp
         integer :: gauss_built_velocity = -1
         real(WP), dimension(NAGNDUST) :: agndust_tau = 0.0_wp
-        real(WP), pointer :: agndust_spec(:, :) => null()
-        real(WP), pointer :: mact_isoc(:, :, :) => null()
-        real(WP), pointer :: logl_isoc(:, :, :) => null()
-        real(WP), pointer :: logt_isoc(:, :, :) => null()
-        real(WP), pointer :: logg_isoc(:, :, :) => null()
-        real(WP), pointer :: ffco_isoc(:, :, :) => null()
-        real(WP), pointer :: phase_isoc(:, :, :) => null()
-        real(WP), pointer :: mini_isoc(:, :, :) => null()
-        real(WP), pointer :: lmdot_isoc(:, :, :) => null()
-        integer, pointer :: nmass_isoc(:, :) => null()
-        real(WP), pointer :: timestep_isoc(:, :) => null()
-        real(WP), pointer :: zlegend(:) => null()
-        real(WP), pointer :: zlegendinit(:) => null()
+        real(WP), pointer, contiguous :: agndust_spec(:, :) => null()
+        real(WP), pointer, contiguous :: mact_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: logl_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: logt_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: logg_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: ffco_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: phase_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: mini_isoc(:, :, :) => null()
+        real(WP), pointer, contiguous :: lmdot_isoc(:, :, :) => null()
+        integer, pointer, contiguous :: nmass_isoc(:, :) => null()
+        real(WP), pointer, contiguous :: timestep_isoc(:, :) => null()
+        real(WP), pointer, contiguous :: zlegend(:) => null()
+        real(WP), pointer, contiguous :: zlegendinit(:) => null()
         real(WP), allocatable :: spec_ssp_zz(:, :, :)
         real(WP), allocatable :: mass_ssp_zz(:, :)
         real(WP), allocatable :: lbol_ssp_zz(:, :)
-        real(WP), pointer :: time_full(:) => null()
+        real(WP), pointer, contiguous :: time_full(:) => null()
         real(WP), allocatable :: weight_ssp(:, :)
         real(KP), allocatable :: spec_young(:,:)
         real(KP), allocatable :: spec_old(:,:)
@@ -154,12 +154,12 @@ module fsps_context_types
         real(WP), allocatable :: ssp_active_w(:)
         integer :: ssp_temp_nspec = 0
         integer :: ssp_temp_nstars = 0
-        real(WP), pointer :: bpass_spec_ssp(:, :, :) => null()
-        real(WP), pointer :: bpass_mass_ssp(:, :) => null()
-        real(WP), pointer :: lam_xrb(:) => null()
-        real(WP), pointer :: spec_xrb(:, :, :) => null()
-        real(WP), pointer :: ages_xrb(:) => null()
-        real(WP), pointer :: zmet_xrb(:) => null()
+        real(WP), pointer, contiguous :: bpass_spec_ssp(:, :, :) => null()
+        real(WP), pointer, contiguous :: bpass_mass_ssp(:, :) => null()
+        real(WP), pointer, contiguous :: lam_xrb(:) => null()
+        real(WP), pointer, contiguous :: spec_xrb(:, :, :) => null()
+        real(WP), pointer, contiguous :: ages_xrb(:) => null()
+        real(WP), pointer, contiguous :: zmet_xrb(:) => null()
         type(TLSF) :: lsfinfo
         type(OBSDAT) :: powell_data
         type(OBSDAT) :: sedfit_data

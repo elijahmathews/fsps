@@ -47,7 +47,7 @@ module fsps_csp
     !> Public API
     public :: compute_csp_scenario
     ! Expose internal kernels for unit testing
-    public :: compute_sfh_weights
+    public :: compute_sfh_weights, sfh_weights_core
     public :: convert_sfhparams
     public :: integrate_csp_step
     public :: apply_dust_physics
@@ -753,6 +753,22 @@ contains
 
         !$acc routine seq
 
+        call sfh_weights_core(ctx, pset, tage, nzin, weights(:, :, i_out), ctx%state%sfh_w_tmp1(:, i_out), &
+                              ctx%state%sfh_w_tmp2(:, i_out))
+    end subroutine compute_sfh_weights
+
+    !> @brief compute_sfh_weights for one output, with caller-provided scratch columns (the batched
+    !> CSP runs one per model on the device).
+    subroutine sfh_weights_core(ctx, pset, tage, nzin, w, tmp1, tmp2)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: tage
+        integer, intent(in)                 :: nzin
+        real(WP), intent(inout), contiguous :: w(:,:)              ! (ages, nzin)
+        real(WP), intent(inout), contiguous :: tmp1(:), tmp2(:)    ! scratch (ages)
+
+        !$acc routine seq
+
         ! Local variables
         type(sfhparams) :: sfh
         real(WP) :: mass1, mass2
@@ -765,12 +781,12 @@ contains
         nt = ctx%state%ntfull
         do k = 1, nzin
             do i = 1, nt
-                weights(i, k, i_out) = 0.0_wp
+                w(i, k) = 0.0_wp
             end do
         end do
         do i = 1, nt
-            ctx%state%sfh_w_tmp1(i, i_out) = 0.0_wp
-            ctx%state%sfh_w_tmp2(i, i_out) = 0.0_wp
+            tmp1(i) = 0.0_wp
+            tmp2(i) = 0.0_wp
         end do
 
         ! Initialize SFH struct with unit conversions (Gyr -> Yr)
@@ -788,7 +804,7 @@ contains
             sfh%tb   = sfh%tage  ! Burst at 'now' (lookback time = tage)
             
             imin = max(imax - 2, 1) ! Optimization: SSP is local
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
             return
         end if
 
@@ -799,32 +815,32 @@ contains
             ! A. Main Exponential Component
             sfh%type = pset%sfh
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, weights(:, 1, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
 
             ! Normalize to 1.0 mass
-            mass1 = sum(weights(1:imax, 1, i_out))
+            mass1 = sum(w(1:imax, 1))
             if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
-            weights(:, 1, i_out) = weights(:, 1, i_out) / mass1
+            w(:, 1) = w(:, 1) / mass1
 
             ! B. Add Constant and Burst (if requested)
             if (pset%const > 0.0_wp .or. pset%fburst > SAFE_FLOOR) then
                 
                 ! Constant Component
                 sfh%type = 0 ! Constant
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
                 mass1 = 0.0_wp
                 do i = 1, imax
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                    mass1 = mass1 + tmp1(i)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
                 ! Burst Component
-                ctx%state%sfh_w_tmp2(:,i_out) = 0.0_wp
+                tmp2(:) = 0.0_wp
                 fburst_val = 0.0_wp
                 
                 if (sfh%tb >= 0.0_wp) then
                     sfh%type = -1 ! Burst
-                    call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
+                    call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
                     fburst_val = pset%fburst
                     
                     ! Extend imax to include burst if it happened earlier
@@ -833,9 +849,9 @@ contains
 
                 ! Combine: (1 - C - B) * Tau + C * Const + B * Burst
                 do i = 1, nt
-                    weights(i, 1, i_out) = (1.0_wp - pset%const - fburst_val) * weights(i, 1, i_out) + &
-                                           pset%const * (ctx%state%sfh_w_tmp1(i, i_out) / mass1) + &
-                                           fburst_val * ctx%state%sfh_w_tmp2(i, i_out)
+                    w(i, 1) = (1.0_wp - pset%const - fburst_val) * w(i, 1) + &
+                                           pset%const * (tmp1(i) / mass1) + &
+                                           fburst_val * tmp2(i)
                 end do
             end if
             return
@@ -848,20 +864,20 @@ contains
             ! A. Delayed Tau Portion
             sfh%type = 4
             imin = 0
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
             mass1 = 0.0_wp
             do i = 1, imax
-                mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                mass1 = mass1 + tmp1(i)
             end do
 
             ! B. Linear Cutoff Portion
             sfh%type = 5
             sfh%use_simha_limits = 1
-            call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp2(:, i_out))
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
             sfh%use_simha_limits = 0
             mass2 = 0.0_wp
             do i = 1, imax
-                mass2 = mass2 + ctx%state%sfh_w_tmp2(i, i_out)
+                mass2 = mass2 + tmp2(i)
             end do
 
             ! Normalize
@@ -873,8 +889,8 @@ contains
 
             ! Combine
             do i = 1, nt
-                weights(i, 1, i_out) = (ctx%state%sfh_w_tmp1(i, i_out) / mass1) * (1.0_wp - frac_linear) + &
-                                       (ctx%state%sfh_w_tmp2(i, i_out) / mass2) * frac_linear
+                w(i, 1) = (tmp1(i) / mass1) * (1.0_wp - frac_linear) + &
+                                       (tmp2(i) / mass2) * frac_linear
             end do
             return
         end if
@@ -924,11 +940,11 @@ contains
                 imin = min(max(find_interval(ctx%state%time_full, log10(max(t1, SAFE_FLOOR))) - 1, 0), nt)
                 imax = min(max(find_interval(ctx%state%time_full, log10(max(t2, SAFE_FLOOR))) + 2, 0), nt)
                 
-                call compute_ssp_weights(ctx, sfh, imin, imax, ctx%state%sfh_w_tmp1(:, i_out))
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
                 
                 mass1 = 0.0_wp
                 do i = 1, nt
-                    mass1 = mass1 + ctx%state%sfh_w_tmp1(i, i_out)
+                    mass1 = mass1 + tmp1(i)
                 end do
                 if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
 
@@ -944,21 +960,21 @@ contains
                     
                     ! Vectorized Add
                     do i = 1, nt
-                        weights(i, k, i_out)   = weights(i, k,   i_out) + &
-                                                 (1.0_wp - dz) * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
-                        weights(i, k+1, i_out) = weights(i, k+1, i_out) + &
-                                                 dz            * ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
+                        w(i, k)   = w(i, k) + &
+                                                 (1.0_wp - dz) * tmp1(i) * (mass2 / mass1)
+                        w(i, k+1) = w(i, k+1) + &
+                                                 dz            * tmp1(i) * (mass2 / mass1)
                     end do
                 else
                     ! Single Z
                     do i = 1, nt
-                        weights(i, 1, i_out) = weights(i, 1, i_out) + ctx%state%sfh_w_tmp1(i, i_out) * (mass2 / mass1)
+                        w(i, 1) = w(i, 1) + tmp1(i) * (mass2 / mass1)
                     end do
                 end if
             end do
         end if
 
-    end subroutine compute_sfh_weights
+    end subroutine sfh_weights_core
 
     !> @brief Converts user parameters (pset) into internal physical units (sfhparams).
     !>
