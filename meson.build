@@ -39,7 +39,13 @@ datadir = get_option('datadir')
 accel_target = get_option('accel')
 accel_args = []
 accel_defs = []
-if accel_target != 'none'
+if accel_target == 'omp_gpu' and fc_id in ['llvm-flang', 'flang']
+    # LLVM flang (AMD and other GPUs): -Dgpu_arch is an offload target such as gfx1103 or gfx942;
+    # system-specific device-library paths go in -Dfortran_args / -Dfortran_link_args
+    # (doc/GPU_PLAN.md, "AMD GPUs with LLVM flang")
+    accel_args = ['-fopenmp', '--offload-arch=' + get_option('gpu_arch')]
+    accel_defs = ['-DOMP_TARGET']
+elif accel_target != 'none'
     if fc_id != 'nvidia_hpc'
         warning('Hardware acceleration requested but compiler does not support OpenACC. Ignoring accel option.')
     else
