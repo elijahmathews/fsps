@@ -20,7 +20,7 @@ program test_physics_oracles
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_ssp, only: generate_ssp_grid
+    use fsps_ssp, only: generate_ssp_grid, ssp_per_star
     use fsps_photometry, only: compute_magnitudes
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
@@ -64,6 +64,7 @@ contains
         call check_flat_ab_source(ctx)
         call check_solar_magnitudes(ctx)
         call check_single_vs_all_ages(ctx)
+        call check_template_vs_per_star(ctx, "MIST + MILES")
         call fsps_destroy(ctx)
     end subroutine run_mist_miles_checks
 
@@ -73,6 +74,7 @@ contains
         call new_context(ctx, 'pdva', 'basel', 20)
         call check_spectral_lbol(ctx, "Padova + BaSeL", 0.05_wp)
         call check_indices_defined(ctx, "Padova + BaSeL")
+        call check_template_vs_per_star(ctx, "Padova + BaSeL")
         call fsps_destroy(ctx)
     end subroutine run_padova_basel_checks
 
@@ -327,6 +329,48 @@ contains
         end do
         call reset_csp_params(ctx)
     end subroutine check_single_vs_all_ages
+
+    !> The SSP as a sum over library templates (the CPU default) equals the sum over individual
+    !> star spectra, with default parameters (which include AGB stars with dust shells) and with
+    !> modified populations (blue stragglers, horizontal branch, stronger AGB dust).
+    subroutine check_template_vs_per_star(ctx, label)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: label
+        real(WP), allocatable :: mass_t(:), lbol_t(:), spec_t(:, :), mass_s(:), lbol_s(:), spec_s(:, :)
+        integer :: pass
+        logical :: ok
+        character(len=40) :: what(2) = [character(len=40) :: "default parameters", &
+                                        "sbss = 2, fbhb = 0.2, agb_dust = 2"]
+
+        call print_group("SSP template sum equals per-star sum: " // label)
+        call reset_csp_params(ctx)
+        do pass = 1, 2
+            if (pass == 2) then
+                call set_float(ctx, 'sbss', 2.0_wp)
+                call set_float(ctx, 'fbhb', 0.2_wp)
+                call set_float(ctx, 'agb_dust', 2.0_wp)
+            end if
+            ssp_per_star = .false.
+            call run_ssp(ctx, mass_t, lbol_t, spec_t)
+            ssp_per_star = .true.
+            call run_ssp(ctx, mass_s, lbol_s, spec_s)
+            ssp_per_star = .false.
+            ! FP64: every pixel to 1e-10. FP32 kernels: the two summation orders round differently,
+            ! to ~1e-7 of the flux, so pixels more than 6 decades below an age's peak (near FP32
+            ! underflow) are excluded
+            if (KP == WP) then
+                ok = all(abs(spec_t - spec_s) <= 1.0e-10_wp * max(abs(spec_s), 1.0e-30_wp * maxval(spec_s)))
+            else
+                ok = all(abs(spec_t - spec_s) <= KP_RTOL * abs(spec_s) .or. &
+                         spec_s <= 1.0e-6_wp * spread(maxval(spec_s, dim=1), 1, size(spec_s, 1)))
+            end if
+            call assert_true(ok .and. all(mass_t == mass_s) .and. all(lbol_t == lbol_s), trim(what(pass)), &
+                             total_tests, total_failures)
+        end do
+        call set_float(ctx, 'sbss', 0.0_wp)
+        call set_float(ctx, 'fbhb', 0.0_wp)
+        call set_float(ctx, 'agb_dust', 1.0_wp)
+    end subroutine check_template_vs_per_star
 
     !> Spectral indices of an ordinary old population are finite on a coarse (20 A) grid.
     subroutine check_indices_defined(ctx, label)

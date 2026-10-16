@@ -105,488 +105,126 @@ contains
         real(WP),             intent(in)    :: phase, ffco, lmdot
         real(KP),             intent(out)   :: spec(:)
 
-        ! Local variables
-        real(WP) :: r2_cm, logg_calc, scale_factor
-        real(WP) :: gravity_cgs, logt_cut_wmb
-        integer  :: library_source
-        integer  :: i_phase
-        logical  :: agb_dust_star, smooth_ir
-        
-        ! 1. Determine Spectral Library
-        i_phase = int(phase)
+        integer  :: src, nterm, i1(4), i2(4)
+        real(WP) :: coef(4)
+        logical  :: linear, dusty, smooth_ir
 
-        ! AGB stars (phases 4, 5) with a circumstellar dust shell are built from the pre-smoothed
-        ! templates beyond 3 um (see precompute_agb_smoothed_templates), as legacy FSPS smooths
-        ! their spectra before applying the DUSTY transfer function
-        agb_dust_star = (i_phase == 4 .or. i_phase == 5) .and. ctx%add_agb_dust_model_val == 1 .and. &
-                        pset%agb_dust > SAFE_FLOOR
-        smooth_ir = .false.
-        if (agb_dust_star .and. associated(ctx%state%speclib_agb_smooth)) then
-            smooth_ir = agb_circumstellar_tau(ctx, pset%agb_dust, mact, logt, log10(lbol), logg, ffco, lmdot) &
-                        > SAFE_FLOOR
-        end if
+        ! 1. The star as a combination of library templates (library choice, consistent gravity
+        !    and radius, interpolation corners: get_stellar_terms)
+        call get_stellar_terms(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, &
+                               src, i1, i2, coef, nterm, linear, allow_dust=.true., dusty=dusty)
 
-        ! Default to main library
-        library_source = SRC_MAIN_LIB
-
-        ! Post-AGB
-        if (i_phase == 6 .and. logt >= LOGT_CUT_PAGB) then
-            library_source = SRC_PAGB
-        ! Wolf-Rayet
-        else if (i_phase == 9 .and. ctx%use_wr_spectra_val == 1) then
-            library_source = SRC_WR
-        ! Cool TP-AGB
-        else if (i_phase == 5 .and. logt < LOGT_CUT_AGB_COOL) then
-            if (ffco <= 1.0_wp) then
-                library_source = SRC_AGB_O
-            else
-                library_source = SRC_AGB_C
+        ! 2. Evaluate it. AGB stars with a circumstellar dust shell (phases 4, 5) use the
+        !    pre-smoothed templates beyond 3 um (see precompute_agb_smoothed_templates), as legacy
+        !    FSPS smooths their spectra before applying the DUSTY transfer function
+        if (linear) then
+            smooth_ir = .false.
+            if (dusty .and. associated(ctx%state%speclib_agb_smooth)) then
+                smooth_ir = agb_circumstellar_tau(ctx, pset%agb_dust, mact, logt, log10(lbol), logg, ffco, lmdot) &
+                            > SAFE_FLOOR
             end if
+            call apply_stellar_terms(ctx, pset%zmet, src, i1, i2, coef, nterm, smooth_ir, spec)
         else
-            ! Hot main sequence extension
-            logt_cut_wmb = max(ctx%state%wmb_logt(1), ctx%logt_wmb_hot_val)
-            if (i_phase == 0 .and. logt > logt_cut_wmb) library_source = SRC_WMBASIC
+            spec = KP_FLOOR   ! no valid main-library corner
         end if
 
-        ! 2. Compute physical quantities only when needed by the selected source.
-        !    (Main library, WMBasic, and WR require consistent gravity/radius)
-        select case (library_source)
-        case (SRC_MAIN_LIB, SRC_WMBASIC, SRC_WR)
-            if (lbol > tiny(0.0_wp)) then
-                logg_calc = log10(GRAVITY_L_M_T_COEFF * mact / lbol) + (4.0_wp * logt)
-            else
-                logg_calc = logg
-            end if
-
-            gravity_cgs = 10.0_wp**logg_calc
-            if (gravity_cgs > tiny(0.0_wp)) then
-                r2_cm = (mact * M_SOL * G_NEWTON) / gravity_cgs
-            else
-                r2_cm = 0.0_wp
-            end if
-        case default
-            r2_cm = 0.0_wp
-            logg_calc = logg
-        end select
-
-        ! 3. Calculate scale factor pre-dispatch
-        select case (library_source)
-        case (SRC_MAIN_LIB)
-            ! Surface Flux -> Luminosity: Scale by Surface Area (4*pi*R^2) * 4pi (Eddington)
-            ! Note: dividing by L_SOL to get solar units
-            scale_factor = (16.0_wp * PI * PI * r2_cm) / L_SOL
-        
-        case default
-            ! Normalized Libraries -> Luminosity: Scale by Lbol
-            scale_factor = lbol
-        end select
-
-        ! 4. Dispatch to Interpolation Routines
-        select case (library_source)
-        
-        case (SRC_PAGB)
-            ! Post-AGB (Rauch)
-            call get_pagb_spectrum(ctx, pset, logt, scale_factor, spec)
-        
-        case (SRC_WR)
-            ! Wolf-Rayet (CMFGEN)
-            call get_wr_spectrum(ctx, pset, logt, lmdot, r2_cm, ffco, scale_factor, spec)
-            
-        case (SRC_AGB_O)
-            ! Oxygen-rich TP-AGB (Lancon & Mouhcine)
-            call get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec, smooth_ir)
-            
-        case (SRC_AGB_C)
-            ! Carbon-rich TP-AGB (Aringer or Lancon & Wood)
-            call get_agb_c_spectrum(ctx, logt, scale_factor, spec, smooth_ir)
-            
-        case (SRC_WMBASIC)
-            ! Hot Main Sequence (WMBasic)
-            ! Note: Uses the CALCULATED logg_calc for physical consistency
-            call get_wmbasic_spectrum(ctx, pset, logt, logg_calc, scale_factor, spec)
-            
-        case default ! SRC_MAIN_LIB
-            ! Standard Library (BaSeL/MILES/etc)
-            ! Note: Uses the CALCULATED logg_calc
-            call get_main_lib_spectrum(ctx, pset, logt, logg_calc, scale_factor, spec, smooth_ir)
-            
-        end select
-
-        ! 5. Apply AGB Circumstellar Dust (If applicable)
-        !    Only for AGB phases (4=RGB/E-AGB, 5=TP-AGB) if model is enabled.
-        if (agb_dust_star) then
-             
-             ! Note: Passing LOG10(lbol) as expected by the legacy interface.
-             ! Note: Passing input 'logg' to match legacy behavior exactly.
-             call apply_agb_dust_screen(ctx, pset%agb_dust, spec, mact, &
-                                        logt, log10(lbol), logg, ffco, lmdot)
+        ! 3. Circumstellar AGB dust (the legacy interface takes log10(lbol) and the isochrone logg)
+        if (dusty) then
+            call apply_agb_dust_screen(ctx, pset%agb_dust, spec, mact, logt, log10(lbol), logg, ffco, lmdot)
         end if
 
-        ! 6. Preserve strict zero-luminosity safety behavior expected by tests.
-        !    For normal stars, the clamp is deferred to higher-level accumulation
-        !    to avoid paying a full-spectrum clamp cost per star.
+        ! 4. Zero-luminosity stars keep a strictly positive spectrum
         if (lbol <= tiny(0.0_wp)) then
             spec = max(spec, KP_FLOOR)
         end if
 
     end subroutine get_stellar_spectrum
 
+    !> @brief Evaluates sum(coef(n) * template(n)) of library `src` (terms of get_stellar_terms),
+    !> with the pre-smoothed templates beyond 3 um when `smooth_ir`.
+    subroutine apply_stellar_terms(ctx, nz, src, i1, i2, coef, nterm, smooth_ir, spec)
+        !$acc routine seq
+        type(fsps_context_t), intent(in) :: ctx
+        integer,  intent(in)  :: nz, src, nterm, i1(4), i2(4)
+        real(WP), intent(in)  :: coef(4)
+        logical,  intent(in)  :: smooth_ir
+        real(KP), intent(out) :: spec(:)
+        integer :: n, i0
+
+        spec = 0.0_KP
+        select case (src)
+        case (SRC_MAIN_LIB)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%speclib(:, nz, i1(n), i2(n))
+            end do
+            if (smooth_ir) then
+                i0 = size(spec) - size(ctx%state%speclib_agb_smooth, 1) + 1
+                spec(i0:) = 0.0_KP
+                do n = 1, nterm
+                    spec(i0:) = spec(i0:) + real(coef(n), KP) * ctx%state%speclib_agb_smooth(:, nz, i1(n), i2(n))
+                end do
+            end if
+        case (SRC_WMBASIC)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%wmb_spec(:, nz, i1(n), i2(n))
+            end do
+        case (SRC_PAGB)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%pagb_spec(:, i1(n), i2(n))
+            end do
+        case (SRC_WRN)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%wrn_spec(:, i1(n), nz)
+            end do
+        case (SRC_WRC)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%wrc_spec(:, i1(n), nz)
+            end do
+        case (SRC_AGB_CAR)
+            do n = 1, nterm
+                spec = spec + real(coef(n), KP) * ctx%state%agb_spec_car(:, i1(n))
+            end do
+            if (smooth_ir .and. associated(ctx%state%agb_spec_car_smooth)) then
+                i0 = size(spec) - size(ctx%state%agb_spec_car_smooth, 1) + 1
+                spec(i0:) = 0.0_KP
+                do n = 1, nterm
+                    spec(i0:) = spec(i0:) + real(coef(n), KP) * ctx%state%agb_spec_car_smooth(:, i1(n))
+                end do
+            end if
+        case (SRC_AGB_O, SRC_AGB_C)
+            ! Per unit wavelength templates: lambda^2 (the 1/c is in coef); the smoothed templates
+            ! already include lambda^2 / c
+            if (src == SRC_AGB_O) then
+                do n = 1, nterm
+                    spec = spec + real(coef(n), KP) * ctx%state%agb_spec_o(:, i1(n))
+                end do
+            else
+                do n = 1, nterm
+                    spec = spec + real(coef(n), KP) * ctx%state%agb_spec_c(:, i1(n))
+                end do
+            end if
+            spec = real(ctx%state%spec_lambda(1:size(spec)), KP)**2 * spec
+            if (smooth_ir) then
+                if (src == SRC_AGB_O .and. associated(ctx%state%agb_spec_o_smooth)) then
+                    i0 = size(spec) - size(ctx%state%agb_spec_o_smooth, 1) + 1
+                    spec(i0:) = 0.0_KP
+                    do n = 1, nterm
+                        spec(i0:) = spec(i0:) + real(coef(n) * C_LIGHT, KP) * ctx%state%agb_spec_o_smooth(:, i1(n))
+                    end do
+                else if (src == SRC_AGB_C .and. associated(ctx%state%agb_spec_c_smooth)) then
+                    i0 = size(spec) - size(ctx%state%agb_spec_c_smooth, 1) + 1
+                    spec(i0:) = 0.0_KP
+                    do n = 1, nterm
+                        spec(i0:) = spec(i0:) + real(coef(n) * C_LIGHT, KP) * ctx%state%agb_spec_c_smooth(:, i1(n))
+                    end do
+                end if
+            end if
+        end select
+    end subroutine apply_stellar_terms
+
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPER PROCEDURES
     ! ------------------------------------------------------------------------
-
-    !> @brief Calculates derived physical parameters (Radius, Gravity).
-    !>
-    !> @details
-    !> Re-computes the surface gravity (log g) and Radius squared based on the 
-    !> input Mass, Luminosity, and Temperature. 
-    !>
-    !> **Physical Consistency:**
-    !> This routine intentionally ignores the `logg_in` (from the isochrone) 
-    !> and recalculates it. This is strictly necessary because FSPS modifies 
-    !> Log(L) and Log(T) for various evolutionary phases (e.g., AGB dust, 
-    !> changes in Teff). Using the consistent parameters ensures the 
-    !> Stefan-Boltzmann law and Newton's Gravity are satisfied.
-    !>
-    !> **Formulae:**
-    !> 1. \f$ g = \frac{4 \pi G \sigma M T^4}{L} \f$
-    !> 2. \f$ R^2 = \frac{G M}{g} \f$
-    !>
-    !> @param[in]  mact      Actual Mass [M_sol].
-    !> @param[in]  lbol      Bolometric Luminosity [L_sol] (Linear, not Log).
-    !> @param[in]  logt      Log(Temperature) [K].
-    !> @param[in]  logg_in   Input Log(g) from isochrone (Unused for calculation).
-    !> @param[out] r2        Stellar Radius Squared [cm^2].
-    !> @param[out] logg_out  Calculated consistent Log(g) [cgs].
-    pure subroutine calculate_physical_parameters(mact, lbol, logt, logg_in, r2, logg_out)
-        !$acc routine seq
-        real(WP), intent(in)  :: mact, lbol, logt, logg_in
-        real(WP), intent(out) :: r2, logg_out
-
-        ! Local variables
-        real(WP) :: gravity_cgs
-
-        ! 1. Calculate Consistent Surface Gravity (logg_out)
-        !    logg = log10( C * M / L ) + 4 * logT
-        !    GRAVITY_L_M_T_COEFF encapsulates (4 * pi * G * sigma) and unit conversions.
-        
-        if (lbol > tiny(0.0_wp)) then
-            logg_out = log10(GRAVITY_L_M_T_COEFF * mact / lbol) + (4.0_wp * logt)
-        else
-            ! Fallback for zero-luminosity objects (e.g., dark remnants) to avoid NaN.
-            ! We default to the input isochrone gravity if available.
-            logg_out = logg_in 
-        end if
-
-        ! 2. Calculate Radius Squared (cm^2)
-        !    R^2 = (G * M) / g
-        !    Note: We calculate g = 10^logg_out
-        
-        gravity_cgs = 10.0_wp**logg_out
-        
-        ! Protect against division by zero if gravity is extremely small (unlikely)
-        if (gravity_cgs > tiny(0.0_wp)) then
-            r2 = (mact * M_SOL * G_NEWTON) / gravity_cgs
-        else
-            r2 = 0.0_wp
-        end if
-
-    end subroutine calculate_physical_parameters
-
-    !> @brief Determines which spectral library to use for a given star.
-    !>
-    !> @details
-    !> Implements the FSPS decision tree based on evolutionary phase, 
-    !> temperature, composition, and user settings.
-    !>
-    !> **Decision Logic:**
-    !> 1. **Post-AGB (Phase 6):** If LogT >= 4.699.
-    !> 2. **Wolf-Rayet (Phase 9):** If enabled by user.
-    !> 3. **TP-AGB (Phase 5):** If LogT < 3.6 (Cool Giants).
-    !>    - O-rich if ffco <= 1.0
-    !>    - C-rich if ffco > 1.0
-    !> 4. **Hot Main Sequence:** If LogT > Cutoff (WMBasic).
-    !> 5. **Default:** Main Library (BaSeL/MILES/etc).
-    !>
-    !> @param[in] ctx    FSPS context (for settings and grid bounds).
-    !> @param[in] phase  Evolutionary phase (0=MS, 5=AGB, 6=PAGB, 9=WR, etc).
-    !> @param[in] logt   Log(Temperature).
-    !> @param[in] ffco   Composition flag (C/O ratio).
-    !> 
-    !> @return Integer ID of the library source (SRC_* constants).
-    pure function determine_library_source(ctx, phase, logt, ffco) result(src)
-        !$acc routine seq
-        type(fsps_context_t), intent(in) :: ctx
-        real(WP),             intent(in) :: phase, logt, ffco
-        integer                          :: src
-        
-        ! Local variables
-        real(WP) :: logt_cut_wmb
-        integer  :: i_phase
-
-        ! Convert phase to integer for cleaner comparisons
-        i_phase = int(phase)
-        
-        ! Default to Main Library
-        src = SRC_MAIN_LIB
-
-        ! 1. Check Post-AGB (Phase 6)
-        !    Only used for hot Post-AGB stars (LogT >= 4.699)
-        if (i_phase == 6 .and. logt >= LOGT_CUT_PAGB) then
-            src = SRC_PAGB
-            return
-        end if
-
-        ! 2. Check Wolf-Rayet (Phase 9)
-        if (i_phase == 9 .and. ctx%use_wr_spectra_val == 1) then
-            src = SRC_WR
-            return
-        end if
-
-        ! 3. Check TP-AGB (Phase 5) - Cool Giants
-        !    Specific cutoff at LogT < 3.6
-        if (i_phase == 5 .and. logt < LOGT_CUT_AGB_COOL) then
-            if (ffco <= 1.0_wp) then
-                src = SRC_AGB_O
-            else
-                src = SRC_AGB_C
-            end if
-            return
-        end if
-
-        ! 4. Check Hot Main Sequence (WMBasic)
-        !    Usually applies to Phase 0 (Main Sequence) or generic phases.
-        !    Calculate the switch-over temperature logic.
-        !    Cutoff is MAX of the library start and the user setting.
-        logt_cut_wmb = max(ctx%state%wmb_logt(1), ctx%logt_wmb_hot_val)
-
-        if (logt > logt_cut_wmb) then
-            ! Note: Legacy code checks phase=0, but often allows others if hot enough?
-            ! Legacy strict check: IF (phase.EQ.0.0.AND.logt.GT.logt_cut)
-            if (i_phase == 0) then
-                src = SRC_WMBASIC
-                return
-            end if
-        end if
-
-        ! 5. Fallback: Main Library
-        !    Used for MS, RGB, Horizontal Branch, and anything not caught above.
-        src = SRC_MAIN_LIB
-
-    end function determine_library_source
-
-    ! ------------------------------------------------------------------------
-    ! SPECIFIC LIBRARY RETRIEVALS
-    ! ------------------------------------------------------------------------
-    
-    !> @brief Interpolates the Post-AGB spectral library (Rauch 2003).
-    !>
-    !> @details
-    !> Used for high-temperature stars in the Post-AGB phase (Phase 6).
-    !> Performs 1D Linear Interpolation in Log(Teff).
-    !>
-    !> **Metallicity Handling:**
-    !> The library only supports two metallicities:
-    !> * **Solar (Index 2):** Used if Z > 0.5 Z_sol.
-    !> * **0.1 Solar (Index 1):** Used if Z <= 0.5 Z_sol.
-    !>
-    !> @param[in]    ctx            FSPS context.
-    !> @param[in]    pset           Parameters (provides metallicity index).
-    !> @param[in]    logt           Log(Temperature).
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated spectrum (Normalized).
-    pure subroutine get_pagb_spectrum(ctx, pset, logt, scale_factor, spec)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        type(params),         intent(in)  :: pset
-        real(WP),             intent(in)  :: logt
-        real(WP),             intent(in)  :: scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        ! Local variables
-        integer  :: jlo, k_z
-        real(WP) :: t, w1, w2, metallicity_ratio
-
-        ! 1. Determine Metallicity Grid (Binary Selection)
-        !    Compare current Z against Solar Z.
-        metallicity_ratio = ctx%state%zlegend(pset%zmet) / ctx%state%zsol
-        
-        if (metallicity_ratio > 0.5_wp) then
-            k_z = 2 ! Use Solar models
-        else
-            k_z = 1 ! Use 0.1 Solar models
-        end if
-
-        ! 2. Find Indices (Temperature)
-        jlo = find_interval(ctx%state%pagb_logt, logt)
-        jlo = max(1, min(jlo, NDIM_PAGB - 1))
-
-        ! 3. Calculate Weight
-        t = (logt - ctx%state%pagb_logt(jlo)) / &
-            (ctx%state%pagb_logt(jlo+1) - ctx%state%pagb_logt(jlo))
-        
-        t = max(0.0_wp, min(t, 1.0_wp)) ! Clamp
-
-        ! 4. Compute Scaled weights
-        w1 = (1.0_wp - t) * scale_factor
-        w2 = (t)          * scale_factor
-        
-        ! 5. Interpolate
-        !    pagb_spec is (Lambda, Temp, Metallicity)
-        spec = real(w1, KP) * ctx%state%pagb_spec(:, jlo,   k_z) + &
-               real(w2, KP) * ctx%state%pagb_spec(:, jlo+1, k_z)
-
-    end subroutine get_pagb_spectrum
-
-    !> @brief Interpolates Wolf-Rayet spectral libraries (WN/WC).
-    !>
-    !> @details
-    !> Source: Smith et al. (2002) (CMFGEN).
-    !> 
-    !> **Physics (MIST Isochrones):**
-    !> If using MIST, this routine calculates a modified "Wind Temperature" (`twr`)
-    !> accounting for the optical depth of the stellar wind (Maeder 1990).
-    !> 
-    !> **Library Selection:**
-    !> Determined by `ffco` (composition flag):
-    !> * `ffco < 10`: WN (Nitrogen-rich).
-    !> * `ffco >= 10`: WC (Carbon-rich).
-    !>
-    !> @param[in]    ctx            FSPS context.
-    !> @param[in]    pset           Parameters (provides metallicity index).
-    !> @param[in]    logt           Log(Temperature) (Photospheric).
-    !> @param[in]    lmdot          Log(Mass Loss Rate) [M_sol/yr].
-    !> @param[in]    r2             Stellar Radius Squared [cm^2].
-    !> @param[in]    ffco           Composition flag.
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated spectrum (Normalized).
-    pure subroutine get_wr_spectrum(ctx, pset, logt, lmdot, r2, ffco, scale_factor, spec)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        type(params),         intent(in)  :: pset
-        real(WP),             intent(in)  :: logt, lmdot, r2, ffco, scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        ! Local variables
-        integer  :: jlo, nz
-        real(WP) :: t, w1, w2, twr
-        real(WP) :: r_phot, r_wr, mdot_cgs
-
-        ! 1. Calculate Effective "Wind Temperature" (twr)
-        if (ctx%state%isoc_type == 'mist') then
-            ! Convert Mdot to g/s
-            mdot_cgs = (10.0_wp**lmdot) * M_SOL / YEAR_TO_SECOND
-            
-            ! Calculate Radius of the pseudo-photosphere in the wind
-            r_phot = sqrt(r2)
-            r_wr   = r_phot + (3.0_wp * KAPPA_ES * abs(mdot_cgs)) / &
-                              (8.0_wp * PI * V_INF_WR)
-
-            ! Calculate Temperature at R_wr
-            twr = (10.0_wp**logt) * sqrt(r_phot / r_wr)
-
-            ! Empirical mixing from Smith et al. 2002
-            twr = log10((1.0_wp - MIX_FAC) * (10.0_wp**logt) + MIX_FAC * twr)
-        else
-            ! Standard Isochrones: Use photospheric temperature
-            twr = logt
-        end if
-
-        nz = pset%zmet
-
-        ! 2. Select Grid and Interpolate (Directly, no pointers)
-        if (ffco < 10.0_wp) then
-            ! --- WN Spectra ---
-            jlo = find_interval(ctx%state%wrn_logt, twr)
-            jlo = max(1, min(jlo, NDIM_WR - 1))
-
-            t = (twr - ctx%state%wrn_logt(jlo)) / &
-                (ctx%state%wrn_logt(jlo+1) - ctx%state%wrn_logt(jlo))
-            t = max(0.0_wp, min(t, 1.0_wp))
-
-            w1 = (1.0_wp - t) * scale_factor
-            w2 = (t)          * scale_factor
-
-            spec = real(w1, KP) * ctx%state%wrn_spec(:, jlo, nz) + &
-                   real(w2, KP) * ctx%state%wrn_spec(:, jlo+1, nz)
-        else
-            ! --- WC Spectra ---
-            jlo = find_interval(ctx%state%wrc_logt, twr)
-            jlo = max(1, min(jlo, NDIM_WR - 1))
-
-            t = (twr - ctx%state%wrc_logt(jlo)) / &
-                (ctx%state%wrc_logt(jlo+1) - ctx%state%wrc_logt(jlo))
-            t = max(0.0_wp, min(t, 1.0_wp))
-
-            w1 = (1.0_wp - t) * scale_factor
-            w2 = (t)          * scale_factor
-
-            spec = real(w1, KP) * ctx%state%wrc_spec(:, jlo, nz) + &
-                   real(w2, KP) * ctx%state%wrc_spec(:, jlo+1, nz)
-        end if
-
-    end subroutine get_wr_spectrum
-
-    !> @brief Interpolates the Oxygen-rich TP-AGB spectral library.
-    !>
-    !> @details
-    !> Source: Lancon & Mouhcine (2002) Empirical Spectra.
-    !> Performs 1D Linear Interpolation in Log(Teff).
-    !>
-    !> **Metallicity Handling:**
-    !> The temperature grid `agb_logt_o` varies with metallicity (Z), so the 
-    !> lookup depends on `pset%zmet`.
-    !>
-    !> **Unit Conversion:**
-    !> Source units are F_lambda. Converted to F_nu internal units using 
-    !> (lambda^2 / c). The result is normalized to L_bol = 1.
-    !>
-    !> @param[in]    ctx            FSPS context.
-    !> @param[in]    pset           Parameters (provides metallicity index).
-    !> @param[in]    logt           Log(Temperature).
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
-    pure subroutine get_agb_o_spectrum(ctx, pset, logt, scale_factor, spec, smooth_ir)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        type(params),         intent(in)  :: pset
-        real(WP),             intent(in)  :: logt
-        real(WP),             intent(in)  :: scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        integer  :: jlo, nz
-        real(WP) :: t, w1, w2
-        logical,  intent(in), optional :: smooth_ir  ! use the pre-smoothed templates beyond 3 um
-        integer  :: i0
-        
-        nz = pset%zmet
-
-        ! Search directly on the strided row to avoid per-call copies.
-        jlo = find_interval_row_2d(ctx%state%agb_logt_o, nz, N_AGB_O, logt)
-        jlo = max(1, min(jlo, N_AGB_O - 1))
-
-        t = (logt - ctx%state%agb_logt_o(nz, jlo)) / &
-            (ctx%state%agb_logt_o(nz, jlo+1) - ctx%state%agb_logt_o(nz, jlo))
-        
-        t = max(0.0_wp, min(t, 1.0_wp)) 
-
-        w1 = (1.0_wp - t)
-        w2 = t
-
-        spec = real(scale_factor / C_LIGHT, KP) * real(ctx%state%spec_lambda, KP)**2 * &
-               ( real(w1, KP) * ctx%state%agb_spec_o(:, jlo) + &
-                 real(w2, KP) * ctx%state%agb_spec_o(:, jlo+1) )
-
-        ! Dusty AGB stars: pre-smoothed templates beyond 3 um (lambda^2/c already included)
-        if (present(smooth_ir)) then
-            if (smooth_ir .and. associated(ctx%state%agb_spec_o_smooth)) then
-                i0 = size(spec) - size(ctx%state%agb_spec_o_smooth, 1) + 1
-                spec(i0:) = real(scale_factor, KP) * (real(w1, KP) * ctx%state%agb_spec_o_smooth(:, jlo) + &
-                                            real(w2, KP) * ctx%state%agb_spec_o_smooth(:, jlo+1))
-            end if
-        end if
-
-    end subroutine get_agb_o_spectrum
 
     !> @brief Find interpolation interval on a strided row in a 2D array.
     !>
@@ -633,303 +271,6 @@ contains
 
     end function find_interval_row_2d
 
-    !> @brief Interpolates the Carbon-rich TP-AGB spectral library.
-    !>
-    !> @details
-    !> Handles two possible source libraries based on the configuration:
-    !> 1. **Aringer et al. (2009):** Synthetic spectra (Default if CSTAR_ARINGER=1).
-    !>    Native units are F_nu / L_bol.
-    !> 2. **Lancon & Wood (2002):** Empirical spectra.
-    !>    Native units are F_lambda. This routine converts them to F_nu
-    !>    using (lambda^2 / c) so the output units are consistent.
-    !>
-    !> Performs 1D Linear Interpolation in Log(Teff).
-    !>
-    !> @param[in]    ctx            FSPS context containing AGB grids.
-    !> @param[in]    logt           Log(Temperature).
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
-    pure subroutine get_agb_c_spectrum(ctx, logt, scale_factor, spec, smooth_ir)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        real(WP),             intent(in)  :: logt
-        real(WP),             intent(in)  :: scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        ! Local variables
-        integer  :: jlo, n_grid
-        real(WP) :: t, w1, w2
-        logical,  intent(in), optional :: smooth_ir  ! use the pre-smoothed templates beyond 3 um
-        integer  :: i0
-        
-        ! 1. Select the Library Source
-        if (CSTAR_ARINGER == 1) then
-            ! --- Aringer et al. (2009) ---
-            ! Point to Aringer Data
-            n_grid = N_AGB_CAR
-            
-            ! 2. Find Indices (1D Interpolation)
-            jlo = find_interval(ctx%state%agb_logt_car, logt)
-            jlo = max(1, min(jlo, n_grid - 1))
-
-            ! 3. Calculate Weight
-            t = (logt - ctx%state%agb_logt_car(jlo)) / &
-                (ctx%state%agb_logt_car(jlo+1) - ctx%state%agb_logt_car(jlo))
-            t = max(0.0_wp, min(t, 1.0_wp)) ! Clamp
-
-            w1 = (1.0_wp - t) * scale_factor
-            w2 = (t)          * scale_factor
-
-            ! 4. Interpolate (Units are already F_nu)
-            spec = real(w1, KP) * ctx%state%agb_spec_car(:, jlo) + &
-                   real(w2, KP) * ctx%state%agb_spec_car(:, jlo+1)
-            if (present(smooth_ir)) then
-                if (smooth_ir .and. associated(ctx%state%agb_spec_car_smooth)) then
-                    i0 = size(spec) - size(ctx%state%agb_spec_car_smooth, 1) + 1
-                    spec(i0:) = real(w1, KP) * ctx%state%agb_spec_car_smooth(:, jlo) + &
-                                real(w2, KP) * ctx%state%agb_spec_car_smooth(:, jlo+1)
-                end if
-            end if
-
-        else
-            ! --- Lancon & Wood (2002) ---
-            ! Point to LW02 Data
-            n_grid = N_AGB_C
-
-            ! 2. Find Indices
-            jlo = find_interval(ctx%state%agb_logt_c, logt)
-            jlo = max(1, min(jlo, n_grid - 1))
-
-            ! 3. Calculate Weight
-            t = (logt - ctx%state%agb_logt_c(jlo)) / &
-                (ctx%state%agb_logt_c(jlo+1) - ctx%state%agb_logt_c(jlo))
-            t = max(0.0_wp, min(t, 1.0_wp)) ! Clamp
-
-            w1 = (1.0_wp - t)
-            w2 = t
-
-            ! 4. Interpolate and Convert Units (F_lambda -> F_nu)
-            !    F_nu ~ lambda^2 * F_lambda
-            spec = real(scale_factor / C_LIGHT, KP) * real(ctx%state%spec_lambda, KP)**2 * &
-               ( real(w1, KP) * ctx%state%agb_spec_c(:, jlo) + &
-                 real(w2, KP) * ctx%state%agb_spec_c(:, jlo+1) )
-            if (present(smooth_ir)) then
-                if (smooth_ir .and. associated(ctx%state%agb_spec_c_smooth)) then
-                    i0 = size(spec) - size(ctx%state%agb_spec_c_smooth, 1) + 1
-                    spec(i0:) = real(scale_factor, KP) * (real(w1, KP) * ctx%state%agb_spec_c_smooth(:, jlo) + &
-                                                real(w2, KP) * ctx%state%agb_spec_c_smooth(:, jlo+1))
-                end if
-            end if
-
-        end if
-
-    end subroutine get_agb_c_spectrum
-
-    !> @brief Interpolates the WMBasic spectral library (Hot Stars / O-stars).
-    !>
-    !> @details
-    !> Used for high-temperature Main Sequence stars (typically > 25,000K or > 50,000K).
-    !> Performs a 2D Bilinear Interpolation in (logT, logg) for a fixed Metallicity.
-    !> The resulting spectrum is normalized to unity (L_bol = 1), to be scaled later.
-    !>
-    !> @param[in]    ctx            FSPS context containing the `wmb_spec` grid.
-    !> @param[in]    pset           Parameters (provides metallicity index).
-    !> @param[in]    logt           Log(Temperature) of the star.
-    !> @param[in]    logg           Log(Gravity) of the star.
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated spectrum (Normalized L_nu).
-    pure subroutine get_wmbasic_spectrum(ctx, pset, logt, logg, scale_factor, spec)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        type(params),         intent(in)  :: pset
-        real(WP),             intent(in)  :: logt, logg
-        real(WP),             intent(in)  :: scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        ! Local variables
-        integer  :: jlo, klo   ! Grid indices
-        real(WP) :: t, u       ! Interpolation weights
-        real(WP) :: w1, w2, w3, w4
-        integer  :: nz, nt, ng
-
-        ! 1. Setup Dimensions
-        nz = pset%zmet
-        nt = size(ctx%state%wmb_logt)
-        ng = size(ctx%state%wmb_logg)
-
-        ! 2. Find Indices & Clamp
-        !    Ensure we stay within bounds [1, N-1] for valid interpolation
-        jlo = find_interval(ctx%state%wmb_logt, logt)
-        jlo = max(1, min(jlo, nt - 1))
-
-        klo = find_interval(ctx%state%wmb_logg, logg)
-        klo = max(1, min(klo, ng - 1))
-
-        ! 3. Calculate Weights (Bilinear)
-        !    t = fraction along logT, u = fraction along logg
-        t = (logt - ctx%state%wmb_logt(jlo)) / &
-            (ctx%state%wmb_logt(jlo+1) - ctx%state%wmb_logt(jlo))
-        
-        u = (logg - ctx%state%wmb_logg(klo)) / &
-            (ctx%state%wmb_logg(klo+1) - ctx%state%wmb_logg(klo))
-
-        ! 4. Strict Clamping (No Extrapolation)
-        !    If logT > max_grid_T, we clamp to the hottest model.
-        t = max(0.0_wp, min(t, 1.0_wp))
-        u = max(0.0_wp, min(u, 1.0_wp))
-
-        ! 5. Pre-calculate Scalar Coefficients
-        w1 = scale_factor * (1.0_wp - t) * (1.0_wp - u)  ! Corner (j, k)
-        w2 = scale_factor * t * (1.0_wp - u)             ! Corner (j+1, k)
-        w3 = scale_factor * t * u                        ! Corner (j+1, k+1)
-        w4 = scale_factor * (1.0_wp - t) * u             ! Corner (j, k+1)
-
-        ! 6. Vectorized Interpolation
-        !    wmb_spec is usually rank 4: (lambda, Z, logT, logg)
-        spec = real(w1, KP) * ctx%state%wmb_spec(:, nz, jlo,   klo)   + &
-               real(w2, KP) * ctx%state%wmb_spec(:, nz, jlo+1, klo)   + &
-               real(w3, KP) * ctx%state%wmb_spec(:, nz, jlo+1, klo+1) + &
-               real(w4, KP) * ctx%state%wmb_spec(:, nz, jlo,   klo+1)
-
-    end subroutine get_wmbasic_spectrum
-
-    !> @brief Interpolates the main spectral library (BaSeL, MILES, etc.).
-    !>
-    !> @details
-    !> Performs a 2D Bilinear Interpolation in (logT, logg) for a fixed Metallicity (Z).
-    !> 
-    !> **Grid Boundary Handling:**
-    !> It checks the flux at a reference wavelength (typically 5000A) to ensure 
-    !> the grid points contain valid data. 
-    !> 1. If all 4 corners are valid: Standard Bilinear Interpolation.
-    !> 2. If all 4 corners are invalid: Returns SAFE_FLOOR.
-    !> 3. If some corners are invalid (partial overlap): Snaps to the *closest* !>    valid neighbor (highest weight) to avoid interpolating zeros.
-    !>
-    !> @param[in]    ctx            FSPS context containing the main `speclib` (4D grid).
-    !> @param[in]    pset           Parameters (provides metallicity index).
-    !> @param[in]    logt           Log(Temperature) of the star.
-    !> @param[in]    logg           Log(Gravity) of the star.
-    !> @param[in]    scale_factor   Scaling factor to convert normalized spectrum to Luminosity Density.
-    !> @param[out]   spec           Interpolated Surface Flux (normalized units).
-    pure subroutine get_main_lib_spectrum(ctx, pset, logt, logg, scale_factor, spec, smooth_ir)
-        !$acc routine seq
-        type(fsps_context_t), intent(in)  :: ctx
-        type(params),         intent(in)  :: pset
-        real(WP),             intent(in)  :: logt, logg
-        real(WP),             intent(in)  :: scale_factor
-        real(KP),             intent(out) :: spec(:)
-
-        ! Local variables
-        integer  :: jlo, klo   ! Grid indices for logT, logg
-        real(WP) :: t, u       ! Interpolation weights (0..1)
-        real(WP) :: w1, w2, w3, w4 ! Final bilinear weights
-        integer  :: nz, nt, ng ! Grid dimensions
-        integer  :: idx_check  ! Wavelength index for validity check
-        
-        ! Validity flags
-        logical  :: v1, v2, v3, v4
-
-        ! Use the pre-smoothed templates beyond 3 um (dusty AGB stars)
-        logical, intent(in), optional :: smooth_ir
-        real(WP) :: c(4)   ! Coefficients of the four corners, as applied to spec
-        integer  :: i0
-
-        ! 1. Setup & Dimensions
-        c = 0.0_wp
-        nz = pset%zmet
-        nt = size(ctx%state%speclib_logt)
-        ng = size(ctx%state%speclib_logg)
-        idx_check = ctx%state%whlam5000
-
-        ! 2. Find Indices & Clamp
-        !    We clamp to (1, N-1) to ensure we always have a valid upper neighbor (j+1).
-        jlo = find_interval(ctx%state%speclib_logt, logt)
-        jlo = max(1, min(jlo, nt - 1))
-
-        klo = find_interval(ctx%state%speclib_logg, logg)
-        klo = max(1, min(klo, ng - 1))
-
-        ! 3. Calculate Linear Weights
-        !    t = fraction along logT, u = fraction along logg
-        t = (logt - ctx%state%speclib_logt(jlo)) / &
-            (ctx%state%speclib_logt(jlo+1) - ctx%state%speclib_logt(jlo))
-        t = max(0.0_wp, min(t, 1.0_wp)) ! Strict clamping to avoid extrapolation
-
-        u = (logg - ctx%state%speclib_logg(klo)) / &
-            (ctx%state%speclib_logg(klo+1) - ctx%state%speclib_logg(klo))
-        u = max(0.0_wp, min(u, 1.0_wp))
-
-        ! 4. Check Grid Validity (Off-Grid Detection)
-        !    Check the flux at the reference wavelength for all 4 corners.
-        !    Corner mapping: 
-        !    1: (j, k),  2: (j+1, k),  3: (j+1, k+1),  4: (j, k+1)
-        
-        ! Corner validity at reference wavelength
-        v1 = (ctx%state%speclib(idx_check, nz, jlo,   klo)   > SAFE_FLOOR)
-        v2 = (ctx%state%speclib(idx_check, nz, jlo+1, klo)   > SAFE_FLOOR)
-        v3 = (ctx%state%speclib(idx_check, nz, jlo+1, klo+1) > SAFE_FLOOR)
-        v4 = (ctx%state%speclib(idx_check, nz, jlo,   klo+1) > SAFE_FLOOR)
-
-        ! 5. Interpolation Dispatch
-        if (v1 .and. v2 .and. v3 .and. v4) then
-            ! --- Standard Case: All corners valid ---
-            
-            ! Pre-calculate scalar weights
-            w1 = scale_factor * (1.0_wp - t) * (1.0_wp - u)
-            w2 = scale_factor * t * (1.0_wp - u)
-            w3 = scale_factor * t * u
-            w4 = scale_factor * (1.0_wp - t) * u
-            c = [w1, w2, w3, w4]
-
-            ! Vectorized accumulation
-            ! Note: Accessing speclib is contiguous in the first dimension (wavelength).
-            spec = real(w1, KP) * ctx%state%speclib(:, nz, jlo,   klo)   + &
-                   real(w2, KP) * ctx%state%speclib(:, nz, jlo+1, klo)   + &
-                   real(w3, KP) * ctx%state%speclib(:, nz, jlo+1, klo+1) + &
-                   real(w4, KP) * ctx%state%speclib(:, nz, jlo,   klo+1)
-
-        else if ((.not. v1) .and. (.not. v2) .and. (.not. v3) .and. (.not. v4)) then
-            ! --- Failure Case: All corners invalid ---
-            spec = KP_FLOOR
-
-        else
-            ! --- Edge Case: Partial Overlap ---
-            ! Use a single valid corner, chosen as legacy FSPS does: the last valid one in the order
-            ! (j,k), (j+1,k), (j,k+1), (j+1,k+1), i.e. corners 1, 2, 4, 3 here. Legacy calls this
-            ! "a very crude hack"; choosing the corner with the largest bilinear weight is no more
-            ! physical, and keeping legacy's choice keeps the fork's spectra identical to legacy's
-            ! (it decides the spectrum of e.g. the cool, dusty E-AGB stars at log t ~ 7.8).
-            c = 0.0_wp
-            if (v3) then
-                spec = ctx%state%speclib(:, nz, jlo+1, klo+1) * real(scale_factor, KP)
-                c(3) = scale_factor
-            else if (v4) then
-                spec = ctx%state%speclib(:, nz, jlo, klo+1) * real(scale_factor, KP)
-                c(4) = scale_factor
-            else if (v2) then
-                spec = ctx%state%speclib(:, nz, jlo+1, klo) * real(scale_factor, KP)
-                c(2) = scale_factor
-            else
-                spec = ctx%state%speclib(:, nz, jlo, klo) * real(scale_factor, KP)
-                c(1) = scale_factor
-            end if
-
-        end if
-
-        ! 6. Dusty AGB stars: the same combination of the pre-smoothed templates beyond 3 um
-        !    (all-invalid corners keep the SAFE_FLOOR spectrum)
-        if (present(smooth_ir)) then
-            if (smooth_ir .and. any(c /= 0.0_wp)) then
-                i0 = size(spec) - size(ctx%state%speclib_agb_smooth, 1) + 1
-                spec(i0:) = real(c(1), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo)   + &
-                            real(c(2), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo)   + &
-                            real(c(3), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo+1, klo+1) + &
-                            real(c(4), KP) * ctx%state%speclib_agb_smooth(:, nz, jlo,   klo+1)
-            end if
-        end if
-
-    end subroutine get_main_lib_spectrum
-
     !> @brief A star's spectrum as a linear combination of library templates.
     !>
     !> @details
@@ -938,10 +279,12 @@ contains
     !> speclib(:, zmet, i1, i2) (main), wmb_spec(:, zmet, i1, i2) (WMBasic), pagb_spec(:, i1, i2),
     !> wrn_spec / wrc_spec(:, i1, zmet), agb_spec_car(:, i1), and lambda^2 * agb_spec_o / agb_spec_c(:, i1)
     !> for the O- and C-rich AGB templates (the lambda^2 factor is applied by the caller).
-    !> Stars whose spectrum is not such a sum (`linear` = .false.: AGB stars with a circumstellar
-    !> dust shell, zero luminosity, or no valid main-library corner) must use get_stellar_spectrum.
+    !> get_stellar_spectrum evaluates these terms, so the two cannot disagree. `linear` is false
+    !> for AGB stars with a circumstellar dust shell (unless allow_dust) and when no main-library
+    !> corner is valid (floor spectrum). Zero-luminosity stars are floored by get_stellar_spectrum.
     subroutine get_stellar_terms(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, &
                                  src, i1, i2, coef, nterm, linear, allow_dust, dusty)
+        !$acc routine seq
         type(fsps_context_t), intent(in) :: ctx
         type(params),         intent(in) :: pset
         real(WP),             intent(in) :: mact, logt, lbol, logg, phase, ffco, lmdot
@@ -968,7 +311,6 @@ contains
             if (.not. allow_dust) return
             if (present(dusty)) dusty = .true.
         end if
-        if (lbol <= tiny(0.0_wp)) return
 
         library_source = SRC_MAIN_LIB
         if (i_phase == 6 .and. logt >= LOGT_CUT_PAGB) then
@@ -988,7 +330,12 @@ contains
 
         select case (library_source)
         case (SRC_MAIN_LIB, SRC_WMBASIC, SRC_WR)
-            logg_calc = log10(GRAVITY_L_M_T_COEFF * mact / lbol) + (4.0_wp * logt)
+            ! Gravity consistent with M, L and Teff (modified stars: AGB, HB, ...), and radius
+            if (lbol > tiny(0.0_wp)) then
+                logg_calc = log10(GRAVITY_L_M_T_COEFF * mact / lbol) + (4.0_wp * logt)
+            else
+                logg_calc = logg
+            end if
             gravity_cgs = 10.0_wp**logg_calc
             if (gravity_cgs > tiny(0.0_wp)) then
                 r2_cm = (mact * M_SOL * G_NEWTON) / gravity_cgs

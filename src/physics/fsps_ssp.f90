@@ -51,6 +51,11 @@ module fsps_ssp
 
     public :: generate_ssp_grid
     public :: isochrone_buffer_t
+    public :: ssp_per_star
+
+    !> Sum the SSP over individual star spectra instead of over library templates (the two are
+    !> equal; the per-star form is kept for the OpenACC build and to test the template form)
+    logical :: ssp_per_star = .false.
     public :: init_isochrone_buffer, reset_buffer, free_isochrone_buffer
     public :: load_timestep_data
     public :: apply_isochrone_physics
@@ -662,8 +667,8 @@ contains
         end do
 
 #ifndef _OPENACC
-        ! Template-sum form (the per-star loop below remains for comparison: FSPS_SSP_PERSTAR=1)
-        if (n_active > 0 .and. .not. per_star_requested()) then
+        ! Template-sum form; the per-star loop below is the OpenACC kernel and the reference
+        if (n_active > 0 .and. .not. ssp_per_star) then
             call accumulate_by_templates(ctx, pset, buf, active_idx(1:n_active), spec_out)
             deallocate(active_idx, active_w)
             return
@@ -773,13 +778,6 @@ contains
 
     end subroutine accumulate_spectrum
 
-    !> True if FSPS_SSP_PERSTAR is set: use the per-star spectrum sum (study switch).
-    logical function per_star_requested()
-        integer :: status
-        call get_environment_variable('FSPS_SSP_PERSTAR', status=status)
-        per_star_requested = (status == 0)
-    end function per_star_requested
-
     !> @brief SSP spectrum of one isochrone as a sum over library templates.
     !>
     !> @details
@@ -862,6 +860,7 @@ contains
                 end if
                 ! no optical depth: no shell and no smoothed templates, a plain linear star
             end if
+            if (buf%log_lum(j) * LN10 < log(tiny(0.0_wp))) linear = .false.   ! zero luminosity: floored
             if (.not. linear) then
                 call get_stellar_spectrum(ctx, pset, buf%current_mass(j), buf%log_teff(j), &
                                           exp(buf%log_lum(j) * LN10), buf%log_g(j), buf%phase(j), &
