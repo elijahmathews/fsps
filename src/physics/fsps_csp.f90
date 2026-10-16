@@ -746,7 +746,9 @@ contains
         real(WP), intent(inout), contiguous :: weights(:,:,:)
 
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
 
         call sfh_weights_core(ctx, pset, tage, nzin, weights(:, :, i_out), ctx%state%sfh_w_tmp1(:, i_out), &
                               ctx%state%sfh_w_tmp2(:, i_out))
@@ -763,7 +765,9 @@ contains
         real(WP), intent(inout), contiguous :: tmp1(:), tmp2(:)    ! scratch (ages)
 
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
 
         ! Local variables
         type(sfhparams) :: sfh

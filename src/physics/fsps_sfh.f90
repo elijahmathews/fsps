@@ -90,7 +90,9 @@ contains
         real(WP), dimension(:), intent(inout), contiguous :: weights
 
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
 
         integer :: j, nt
         integer :: j_start, j_end
@@ -271,7 +273,9 @@ contains
         real(WP), intent(out) :: mass_frac, sfr_norm, frac_linear
 
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
 
         ! Local variables
         real(WP) :: t_max_gyr, t_prime_gyr, t_trunc_gyr, t_zero_sfr_gyr
@@ -747,7 +751,9 @@ contains
         real(WP), intent(out) :: m0, m1
 
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
 
         integer :: idx_start, idx_end, i
         real(WP) :: t_start_yr, t_end_yr
@@ -1024,7 +1030,9 @@ contains
     !> in device code. Same result as find_interval(ctx%state%sfh_tab(1, 1:n), value).
     pure function find_interval_tab_time(ctx, n, value) result(idx)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)  :: n
         real(WP), intent(in) :: value

@@ -1593,8 +1593,10 @@ contains
             b_used(k) = (used(k) - 1) / nt_lib + 1
             w_used(k, :) = real(w(used(k), :), KP)
         end do
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(acc1, comp1, wk, term, tsum, k) &
         !$omp map(to: lib, w_used, a_used, b_used, has_stars) map(from: t_sum)
+#endif
         do i_time = 1, n_ages
             do i = 1, nspec
                 acc1 = 0.0_KP

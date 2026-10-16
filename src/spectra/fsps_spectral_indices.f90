@@ -97,7 +97,9 @@ contains
     !> @brief Value of spectral index j of one spectrum (the body of compute_spectral_indices).
     function spectral_index_value(ctx, lambda, spec, j) result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         real(WP), dimension(:), intent(in), contiguous :: lambda, spec
         integer, intent(in) :: j
@@ -220,22 +222,30 @@ contains
         ! enclosing host routine; local arrays and their sections work
         lam = lambda
         !$acc data present(spec) copyin(lam) create(specw) copyout(ind)
+#ifdef OMP_TARGET
         !$omp target data map(to: lam) map(alloc: specw) map(from: ind)
+#endif
         !$acc parallel loop collapse(2) present(spec, specw)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_col
             do i = 1, nspec
                 specw(i, m) = real(spec(i, m), WP)
             end do
         end do
         !$acc parallel loop gang vector collapse(2) present(ctx, lam, specw, ind)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_col
             do j = 1, n_idx
                 ind(j, m) = spectral_index_value(ctx, lam, specw(:, m), j)
             end do
         end do
+#ifdef OMP_TARGET
         !$omp end target data
+#endif
         !$acc end data
         indices(1:n_idx, 1:n_col) = ind
     end subroutine compute_spectral_indices_columns
@@ -253,7 +263,9 @@ contains
     !> integration between them.
     pure function integrate_interval(lam, func, lo, hi) result(area)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), dimension(:), intent(in), contiguous :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP) :: area
@@ -302,7 +314,9 @@ contains
     !> defined by the blue and red sidebands.
     pure function integrate_ratio_interval(lam, func, lo, hi, slope, intercept, x_ref) result(area)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), dimension(:), intent(in), contiguous :: lam, func
         real(WP), intent(in) :: lo, hi
         real(WP), intent(in) :: slope, intercept, x_ref
@@ -367,7 +381,9 @@ contains
     !> Helper: Linear interpolation for a single point.
     pure function interpolate_linear_point(x1, y1, x2, y2, x_target) result(y_target)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), intent(in) :: x1, y1, x2, y2, x_target
         real(WP) :: y_target
         

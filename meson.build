@@ -413,7 +413,7 @@ executable('test_c_driver', 'tests/test_c_driver.c',
     include_directories : include_directories('include')
 )
 test_c_batch_exe = executable('test_c_batch', 'tests/test_c_batch.c',
-    dependencies : fsps_dep,
+    dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
     include_directories : include_directories('include')
 )
 test('c_batch', test_c_batch_exe,

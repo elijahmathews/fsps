@@ -335,18 +335,24 @@ contains
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+#ifdef OMP_TARGET
         !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$omp map(to: zlo, zhi, dz, wext, zcol) &
         !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
         !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
+#endif
+#ifdef OMP_TARGET
         !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
         !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
+#endif
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
         !$acc zlo, zhi, dz, wext) private(k, w)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do private(k, w)
+#endif
         do m = 1, n_mod
             if (given_w .or. host_w) then
                 !$acc loop seq
@@ -398,7 +404,9 @@ contains
             ! in apply_dust_attenuation_and_emission
             if (neb .and. ctx%nebemlineinspec_val == 0) then
                 !$acc parallel loop present(s_abs, s_line)
+#ifdef OMP_TARGET
                 !$omp target teams distribute parallel do
+#endif
                 do m = 1, n_mod
                     s_abs(m) = s_abs(m) + s_line(m)
                 end do
@@ -431,13 +439,19 @@ contains
 
         if (present(spec)) then
             !$acc update self(total)
+#ifdef OMP_TARGET
             !$omp target update from(total)
+#endif
             do m = 1, n_mod
                 spec(1:nspec, m) = real(total(:, m), WP)
             end do
         end if
+#ifdef OMP_TARGET
         !$omp end target data
+#endif
+#ifdef OMP_TARGET
         !$omp end target data
+#endif
         !$acc end data
 
         if (present(emlines)) then
@@ -622,7 +636,9 @@ contains
     !> Draine & Li emission template at one pixel (as interpolate_draine_li_dust_model).
     function dl07_shape(ctx, i, iq, wq, iu, wu, gam) result(shape)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: i, iq, iu
         real(WP), intent(in)             :: wq, wu, gam
@@ -643,7 +659,9 @@ contains
     !> Diffuse-dust transmission of model pset at pixel i (and its optical depth).
     subroutine diffuse_transmission(ctx, pset, i, curve, tau_d, trans)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         type(params), intent(in)         :: pset
         integer, intent(in)              :: i
@@ -713,7 +731,9 @@ contains
         xrb = nb_xrb
         if (nt_neb < 1) then
             !$acc parallel loop collapse(2) present(eml)
+#ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2)
+#endif
             do m = 1, n_mod
                 do i = 1, NEMLINE
                     eml(i, m) = 0.0_KP
@@ -726,14 +746,18 @@ contains
         !    process_ionizing_radiation, without the absorbed fraction)
         !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
         !$acc parallel loop gang collapse(2) present(ctx, basis, nb_q0) private(s, c)
+#ifdef OMP_TARGET
         !$omp target teams distribute collapse(2) private(s, c)
+#endif
         do iz = 1, nzb
         do t = 1, nt_neb
             s = 0.0_KP
             c = 0.0_KP
             if (whlylim >= 2) then
                 !$acc loop vector reduction(+:s) private(wt, v)
+#ifdef OMP_TARGET
                 !$omp parallel do reduction(+:s) private(wt, v)
+#endif
                 do i = 1, whlylim - 1
                     wt = real(0.5_wp * abs(ctx%state%spec_nu(i+1) - ctx%state%spec_nu(i)), KP)
                     v = wt * (basis(i, t, iz) / real(ctx%state%spec_nu(i), KP) + &
@@ -759,7 +783,9 @@ contains
         if (whlylim > 0) then
             !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb_fesc, yo, zlo, zhi, dz) &
             !$acc private(y, o, bk, k, dzk)
+#ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2) private(y, o, bk, k, dzk)
+#endif
             do m = 1, n_mod
                 do i = 1, whlylim
                     y = 0.0_KP
@@ -797,7 +823,9 @@ contains
         !    the progression's ratio in FP32 with the argument reduced in FP64.
         if (nb_cont) then
             !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb_q0, nb_fabs, nb_cy, nb_co, zlo, zhi, dz)
+#ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2)
+#endif
             do m = 1, n_mod
                 do t = 1, nt_neb
                     q = abs(((1.0_wp - dz(m)) * nb_q0(t, zlo(m)) + dz(m) * nb_q0(t, zhi(m))) * nb_fabs(m))
@@ -821,8 +849,10 @@ contains
             !$acc parallel loop gang vector collapse(2) present(ctx, nb_ia, nb_wa, nb_dwa, nb_newr, nb_iz, nb_wz, &
             !$acc nb_iu, nb_wu, nb_cy, nb_co, yo) &
             !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
+#ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
             !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11)
+#endif
             do m = 1, n_mod
                 do j = 1, nspec
                     y = 0.0_KP
@@ -899,7 +929,9 @@ contains
         !    10**(log grid interpolated) * Q
         !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb_ia, nb_wa, nb_q0, nb_iz, nb_wz, &
         !$acc nb_iu, nb_wu, nb_fabs, nb_lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
+#endif
         do m = 1, n_mod
             do i = 1, NEMLINE
                 y = 0.0_KP
@@ -938,7 +970,9 @@ contains
         ! 5. Line profiles: per pixel, the lines whose profile reaches it
         if (nb_lines_in_spec) then
             !$acc parallel loop gang vector collapse(2) present(ctx, nb_lptr, nb_lid, nb_lum, yo) private(s, p, i)
+#ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2) private(s, p, i)
+#endif
             do m = 1, 2 * n_mod
                 do j = 1, nspec
                     s = 0.0_KP
@@ -971,7 +1005,9 @@ contains
         real(KP) :: ly, lo_
 
         !$acc parallel loop gang present(ctx, psets, nb_lum, nb_llo, eml, s_line) private(si, sa, fob, fnd)
+#ifdef OMP_TARGET
         !$omp target teams distribute private(si, sa, fob, fnd)
+#endif
         do m = 1, n_mod
             si = 0.0_wp
             sa = 0.0_wp
@@ -979,8 +1015,10 @@ contains
             fnd = psets(m)%frac_nodust
             !$acc loop vector reduction(+:si, sa) private(lo, t_lo, t_hi, curve, tau_d, trans, td, birth, ay, ao, &
             !$acc ly, lo_, pos)
+#ifdef OMP_TARGET
             !$omp parallel do reduction(+:si, sa) private(lo, t_lo, t_hi, curve, tau_d, trans, td, birth, &
             !$omp& ay, ao, ly, lo_, pos)
+#endif
             do i = 1, NEMLINE
                 pos = ctx%state%nebem_line_pos(i)
                 if (1.0_wp - fnd <= SAFE_FLOOR) then
@@ -1019,7 +1057,9 @@ contains
     !> CLOUDY grid value at (i, age a) bilinear in (Z, U), as interpolate_zu_slice_point.
     pure function zu_point(grid, i, a, iz, iu, wz, wu) result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), intent(in) :: grid(:,:,:,:)
         integer, intent(in)  :: i, a, iz, iu
         real(WP), intent(in) :: wz, wu
@@ -1047,7 +1087,9 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, tdiff, total) &
         !$acc private(lagn, tmpl, lb)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(lagn, tmpl, lb)
+#endif
         do m = 1, n_mod
             do i = 1, nspec
                 if (agn_on(m)) then
@@ -1098,7 +1140,9 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, zlo, zhi, dz, yo) &
         !$acc private(k, l, bk, mm, y, o, d)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(k, l, bk, mm, y, o, d)
+#endif
         do mq = 1, (n_mod + MT - 1) / MT
             do i = 1, nspec
                 !$acc loop seq
@@ -1141,7 +1185,9 @@ contains
         real(WP) :: tmax
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, tau)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_mod
             do j = 1, nspec
                 if (psets(m)%zred > SAFE_FLOOR) tau(j, m) = real(igm_tau(ctx%state%spec_lambda(j), 1.0_wp + psets(m)%zred), KP)
@@ -1149,7 +1195,9 @@ contains
         end do
         ! The short-wavelength cap, one thread per model
         !$acc parallel loop gang vector present(psets, tau) private(tmax, jmax, j)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do private(tmax, jmax, j)
+#endif
         do m = 1, n_mod
             if (psets(m)%zred > SAFE_FLOOR) then
                 tmax = 0.0_wp
@@ -1170,7 +1218,9 @@ contains
             end if
         end do
         !$acc parallel loop gang vector collapse(2) present(psets, tau, total)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_mod
             do j = 1, nspec
                 if (psets(m)%zred > SAFE_FLOOR) &
@@ -1187,7 +1237,9 @@ contains
         integer :: m, i
 
         !$acc parallel loop collapse(2) present(total, igm_t)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_mod
             do i = 1, nspec
                 total(i, m) = total(i, m) * igm_t(i)
@@ -1231,7 +1283,9 @@ contains
         npt = (nspec + PT - 1) / PT
         !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, yo) &
         !$acc private(mm, it, ii, bk, wk, acc, yy, k, l, p, i)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(mm, it, ii, bk, wk, acc, yy, k, l, p, i)
+#endif
         do mq = 1, (n_mod + MT - 1) / MT
             do ip = 1, npt
                 !$acc loop seq
@@ -1306,9 +1360,11 @@ contains
         !$acc present(agn_on, tdiff) &
         !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
         !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(young, old, curve, tau_b, tau_o, &
         !$omp& tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust, one_m_tb, one_m_to, &
         !$omp& one_m_td, a_young, spec_sum)
+#endif
         do m = 1, n_mod
             do i = 1, nspec
                 young = yo(i, m)
@@ -1371,13 +1427,17 @@ contains
         real(KP) :: sa, sn, se, ca, cn, ce
 
         !$acc parallel loop gang present(emis, wt, yo, absorbed, s_abs, s_norm, s_esc) private(sa, sn, se, ca, cn, ce)
+#ifdef OMP_TARGET
         !$omp target teams distribute private(sa, sn, se, ca, cn, ce)
+#endif
         do m = 1, n_mod
             sa = 0.0_KP; sn = 0.0_KP; se = 0.0_KP
             ca = 0.0_KP; cn = 0.0_KP; ce = 0.0_KP
             if (emis(m)) then
                 !$acc loop vector reduction(+:sa, sn, se)
+#ifdef OMP_TARGET
                 !$omp parallel do reduction(+:sa, sn, se)
+#endif
                 do i = 1, nspec - 1
 #if defined(_OPENACC) || defined(OMP_TARGET)
                     sa = sa + wt(i) * (absorbed(i, m) + absorbed(i + 1, m))
@@ -1407,7 +1467,9 @@ contains
         integer  :: m, i
 
         !$acc parallel loop gang vector collapse(2) present(emis, yo, s_abs, s_esc, total)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_mod
             do i = 1, nspec
                 if (emis(m) .and. s_esc(m) > SAFE_FLOOR) then

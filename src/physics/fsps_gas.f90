@@ -229,7 +229,9 @@ contains
                 ctx%smooth_velocity_val /= ctx%state%gauss_built_velocity) then
                 call compute_line_gaussians(ctx, pset)
                 !$acc update device(ctx%state%gaussnebarr(:,:))
+#ifdef OMP_TARGET
                 !$omp target update if(ctx%on_device) to(ctx%state%gaussnebarr)
+#endif
                 ctx%state%gauss_built_sigma = pset%sigma_smooth
                 ctx%state%gauss_built_velocity = ctx%smooth_velocity_val
             end if
@@ -579,7 +581,9 @@ contains
     !> Returns single value at index `i_wave`.
     pure function interpolate_zu_slice_point(grid, i_wave, idx_age, idx_z, idx_u, w_z, w_u) result(val)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), dimension(:,:,:,:), intent(in) :: grid
         integer, intent(in)  :: i_wave, idx_age, idx_z, idx_u
         real(WP), intent(in) :: w_z, w_u

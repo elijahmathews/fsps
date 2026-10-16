@@ -293,17 +293,42 @@ contains
         real(WP), intent(in) :: optical_depth_factor
         real(KP), dimension(:), intent(out) :: transmission
 
-        real(WP) :: one_plus_z
+        real(WP) :: one_plus_z, observed_wavelength, lambda_ratio, tau_val
         real(WP) :: max_tau
-        integer :: j, max_valid_idx, num_wavelengths
+        integer :: i, j, max_valid_idx, num_wavelengths
 
         one_plus_z      = 1.0_wp + source_redshift
         num_wavelengths = size(wavelength_grid)
 
         ! 1. Calculate Tau directly into transmission array (Single Pass)
-        !$acc parallel loop present(wavelength_grid, transmission)
+        !$acc parallel loop present(wavelength_grid, transmission) private(observed_wavelength, lambda_ratio, tau_val, i)
         do j = 1, num_wavelengths
-            transmission(j) = igm_tau(wavelength_grid(j), one_plus_z)
+            observed_wavelength = wavelength_grid(j) * one_plus_z
+            lambda_ratio        = observed_wavelength / LYMAN_LIMIT
+            tau_val             = 0.0_wp
+
+            ! A. Lyman Series Line Blanketing
+            do i = 1, N_LYMAN_LINES
+                if (wavelength_grid(j) < LY_WAVE(i)) then
+                    tau_val = tau_val + LY_COEFF(i) * (observed_wavelength / LY_WAVE(i))**3.46_wp
+
+                    ! Metal blanketing (only for Ly-alpha)
+                    if (i == 1) then
+                        tau_val = tau_val + A_METAL * (observed_wavelength / LY_WAVE(i))**1.68_wp
+                    end if
+                end if
+            end do
+
+            ! B. Lyman Continuum Absorption
+            if (wavelength_grid(j) < LYMAN_LIMIT) then
+                 tau_val = tau_val + &
+                    (MADAU_C1 * lambda_ratio**3.0_wp * (one_plus_z**MADAU_P1 - lambda_ratio**MADAU_P1)) + &
+                    (MADAU_C2 * lambda_ratio**1.5_wp * (one_plus_z**MADAU_P2 - lambda_ratio**MADAU_P2)) - &
+                    (MADAU_C3 * lambda_ratio**3.0_wp * (lambda_ratio**(-MADAU_P3) - one_plus_z**(-MADAU_P3))) - &
+                    (MADAU_C4 * (one_plus_z**MADAU_P4 - lambda_ratio**MADAU_P4))
+            end if
+
+            transmission(j) = tau_val
         end do
 
         ! 2. Safety Cap for Short Wavelengths
@@ -335,17 +360,28 @@ contains
 
     !> @brief Madau (1995) IGM optical depth at rest wavelength `wavelength` for a source at
     !> redshift one_plus_z - 1 (the per-wavelength part of compute_igm_transmission, before the
-    !> short-wavelength cap and the optical_depth_factor).
-    pure function igm_tau(wavelength, one_plus_z) result(tau_val)
+    !> short-wavelength cap and the optical_depth_factor), for the batch's per-model IGM.
+    !> compute_igm_transmission keeps its own copy of these lines: calling this function from
+    !> its OpenACC kernel gave wrong optical depths in OpenACC multicore builds (nvfortran 25.1,
+    !> IGM unit tests; GPU builds were fine), cause not found.
+    function igm_tau(wavelength, one_plus_z) result(tau_val)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), intent(in) :: wavelength, one_plus_z
         real(WP) :: tau_val
         real(WP) :: observed_wavelength, lambda_ratio
         integer  :: i
-        ! Local copies: OpenMP device code (nvfortran 25.1) does not take the module's parameter
-        ! arrays in a declare-target routine
+        ! Local copies for OpenMP target builds: OpenMP device code (nvfortran 25.1) does not take
+        ! the module's parameter arrays in a declare-target routine; OpenACC multicore (nvfortran
+        ! 25.1) gets the local copies wrong (IGM unit tests fail), so other builds use the module's
+#ifdef OMP_TARGET
         real(WP), parameter :: LYW(N_LYMAN_LINES) = LY_WAVE, LYC(N_LYMAN_LINES) = LY_COEFF
+#else
+#define LYW LY_WAVE
+#define LYC LY_COEFF
+#endif
 
         observed_wavelength = wavelength * one_plus_z
         lambda_ratio        = observed_wavelength / LYMAN_LIMIT

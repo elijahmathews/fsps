@@ -375,6 +375,18 @@ full).
   models one at a time.
   Validation: suites 33/33, batch test 146/146 in all ten builds, case matrix PASS.
 
+- CI fixes after PR #10's first run (4 of 15 jobs failed): (1) gfortran `-fopenmp` (CPU
+  threading, ThreadSanitizer job) compiled the OpenMP *target* directives and rejected maps of
+  derived types with allocatable components: every target / declare-target directive and the
+  inner `parallel do` of the kernels are now under `#ifdef OMP_TARGET`; (2) OpenACC multicore
+  (both precisions) failed the IGM tests: `compute_igm_transmission` is back to its own loop
+  (calling `igm_tau` from it gave wrong optical depths under multicore; `igm_tau` stays for the
+  batch's per-model IGM, which passes there); (3) LLVM flang: `test_c_batch` links libm. Checked
+  with targeted runs before the job ended (unit suites, batch test 146/146, `c_batch`) on
+  OpenACC multicore FP32, OpenACC GPU FP32 / FP64, OpenMP target FP32, gfortran, gfortran
+  `-fopenmp`; not the full ten-build validation (no time left on the job). CI on the PR is the
+  check.
+
 **In progress / queue**
 - PR #10 (https://github.com/elijahmathews/fsps/pull/10) from `gpu/a100-final` (the tip of the
   stack) to `develop`, opened for CI; not merged. Session ended here.

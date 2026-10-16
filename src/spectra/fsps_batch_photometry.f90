@@ -120,7 +120,9 @@ contains
         if (.not. done) then
             allocate(fobs(n_col, nspec))
             !$acc data present(spec) copyin(do_band, zc, dist) create(fobs, fband) copyout(mags_l)
+#ifdef OMP_TARGET
             !$omp target data map(to: do_band, zc, dist) map(alloc: fobs, fband) map(from: mags_l)
+#endif
             if (zvar) then
                 call observed_frame_z(ctx, n_col, nspec, nspec, .true., zc, g%wl, spec, fobs)
             else
@@ -128,7 +130,9 @@ contains
             end if
             call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
             call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, dist, fband, mags_l)
+#ifdef OMP_TARGET
             !$omp end target data
+#endif
             !$acc end data
         end if
         end associate
@@ -160,7 +164,9 @@ contains
         if (vega_on) vega = ctx%state%magvega(1:nbands)
 
         !$acc parallel loop gang vector collapse(2) present(fband, do_band, dist, mags_l) copyin(vega) private(v, vv)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(v, vv)
+#endif
         do m = 1, n_col
             do b = 1, nbands
                 v = qnan
@@ -256,10 +262,14 @@ contains
         end do
         g%igm_t = 1.0_KP
         !$acc enter data copyin(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+#ifdef OMP_TARGET
         !$omp target enter data map(to: g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+#endif
         if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, igm_factor, g%igm_t)
         ! (with OpenMP target offload compute_igm_transmission runs on the host)
+#ifdef OMP_TARGET
         !$omp target update to(g%igm_t)
+#endif
 
 #ifdef FSPS_CUBLAS
         ! Filter matrix of the split-K band product, padded to whole pixel blocks
@@ -277,7 +287,9 @@ contains
             end do
         end do
         !$acc enter data copyin(g%cmat)
+#ifdef OMP_TARGET
         !$omp target enter data map(to: g%cmat)
+#endif
 #endif
         g%ready = .true.
         end associate
@@ -304,7 +316,9 @@ contains
         if (g%sm_ready) then
             if (g%sm_sigma == sigma .and. g%sm_minl == minl .and. g%sm_maxl == maxl) return
             !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+#ifdef OMP_TARGET
             !$omp target exit data map(delete: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+#endif
             deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
             g%sm_ready = .false.
         end if
@@ -318,7 +332,9 @@ contains
             call move_alloc(kern%coef, g%sm_coef)
         end if
         !$acc enter data copyin(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+#ifdef OMP_TARGET
         !$omp target enter data map(to: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+#endif
         g%sm_sigma = sigma
         g%sm_minl = minl
         g%sm_maxl = maxl
@@ -351,9 +367,13 @@ contains
 
         allocate(sm(nspec, n_col))
         !$acc data present(spec, sm_lo, sm_hi, sm_off, sm_coef) create(sm)
+#ifdef OMP_TARGET
         !$omp target data map(alloc: sm)
+#endif
         !$acc parallel loop gang vector collapse(2) private(s, lo, off, k)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(s, lo, off, k)
+#endif
         do m = 1, n_col
             do i = 1, nspec
                 lo = sm_lo(i)
@@ -371,13 +391,17 @@ contains
             end do
         end do
         !$acc parallel loop gang vector collapse(2)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
+#endif
         do m = 1, n_col
             do i = 1, nspec
                 spec(i, m) = sm(i, m)
             end do
         end do
+#ifdef OMP_TARGET
         !$omp end target data
+#endif
         !$acc end data
     end subroutine smooth_kernel
 
@@ -412,7 +436,9 @@ contains
         real(KP) :: f
 
         !$acc parallel loop gang vector collapse(2) present(ctx, zc, wl, total, fobs) private(il, v, target, t, f)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(il, v, target, t, f)
+#endif
         do m = 1, n_col
             do j = 1, npad
                 f = 0.0_KP
@@ -448,7 +474,9 @@ contains
         real(WP) :: v
 
         !$acc parallel loop gang vector collapse(2) present(i_lo, t_obs, wl, total, fobs) private(il, v)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(il, v)
+#endif
         do m = 1, n_mod
             do j = 1, npad
                 if (j <= nspec) then
@@ -478,7 +506,9 @@ contains
         real(WP) :: v
 
         !$acc parallel loop gang vector collapse(2) present(i_lo, t_obs, wl, total, fobs_t) private(il, v)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(il, v)
+#endif
         do j = 1, nspec
             do m = 1, n_mod
                 il = i_lo(j)
@@ -526,7 +556,9 @@ contains
         !$acc end host_data
         if (istat /= 0) error stop 'compute_csp_batch: cuBLAS GEMM failed'
         !$acc parallel loop gang vector collapse(2) present(partial, fband) private(sw, q)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(sw, q)
+#endif
         do m = 1, n_mod
             do b = 1, nbands
                 sw = 0.0_wp
@@ -583,13 +615,17 @@ contains
             ! (a tree reduction, pairwise like the dust integrals in fsps_dust). Measured on the
             ! P100: 1 spectrum 0.65 -> 0.03 ms; slower than the kernel below from ~100 spectra
             !$acc parallel loop gang collapse(2) present(bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband) private(s)
+#ifdef OMP_TARGET
             !$omp target teams distribute collapse(2) private(s)
+#endif
             do b = 1, nbands
                 do m = 1, n_mod
                     s = 0.0_KP
                     if (do_band(b) /= 0) then
                         !$acc loop vector reduction(+:s)
+#ifdef OMP_TARGET
                         !$omp parallel do reduction(+:s)
+#endif
                         do j = j_lo(b), j_hi(b)
                             s = s + wt(j) * (fobs_t(m, j) * bands_t(b, j) + fobs_t(m, j + 1) * bands_t(b, j + 1))
                         end do
@@ -604,7 +640,9 @@ contains
         ! on consecutive models of one band as with OpenACC; teams distribute over (band, block) with
         ! an inner parallel do ran 8x slower with nvfortran 25.1 on the A100 (56 vs 6.7 ms at N = 1e4)
         !$acc parallel loop gang collapse(2) vector_length(MBLK) present(bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
+#ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(3) private(m, s, c, term, tsum, j)
+#endif
         do b = 1, nbands
             do mb = 1, (n_mod + MBLK - 1) / MBLK
                 !$acc loop vector private(m, s, c, term, tsum, j)

@@ -99,7 +99,9 @@ contains
     !> @param[out]   spec   The resulting spectrum (L_sun/Hz).
     subroutine get_stellar_spectrum(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, spec)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(inout) :: ctx
         type(params),         intent(in)    :: pset
         real(WP),             intent(in)    :: mact, logt, lbol, logg
@@ -145,7 +147,9 @@ contains
     !> with the pre-smoothed templates beyond 3 um when `smooth_ir`.
     subroutine apply_stellar_terms(ctx, nz, src, i1, i2, coef, nterm, smooth_ir, spec)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         integer,  intent(in)  :: nz, src, nterm, i1(4), i2(4)
         real(WP), intent(in)  :: coef(4)
@@ -236,7 +240,9 @@ contains
     !> temporary contiguous copies on every call.
     pure function find_interval_row_2d(array2d, row, ncol, value) result(idx)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         real(WP), intent(in) :: array2d(:, :)
         integer,  intent(in) :: row, ncol
         real(WP), intent(in) :: value
@@ -288,7 +294,9 @@ contains
     subroutine get_stellar_terms(ctx, pset, mact, logt, lbol, logg, phase, ffco, lmdot, &
                                  src, i1, i2, coef, nterm, linear, allow_dust, dusty)
         !$acc routine seq
+#ifdef OMP_TARGET
         !$omp declare target
+#endif
         type(fsps_context_t), intent(in) :: ctx
         type(params),         intent(in) :: pset
         real(WP),             intent(in) :: mact, logt, lbol, logg, phase, ffco, lmdot
