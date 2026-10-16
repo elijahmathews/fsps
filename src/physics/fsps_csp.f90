@@ -118,6 +118,10 @@ contains
              return
         end if
 
+        ! The parameter set is read by most kernels below (and by the dust and nebular routines it
+        ! is passed to): map it once instead of an implicit copy at every launch
+        !$acc enter data copyin(pset)
+
         ! Initialize working grids from SSP inputs natively on the device (Explicit loops to bypass NVHPC kernels bug)
         nt = ctx%state%ntfull
         nspec = ctx%state%nspec
@@ -141,10 +145,7 @@ contains
         end do
 
         if (ctx%add_neb_emission_val == 1) then
-            if (nzin > 1) then
-                 if (present(status)) status = 2; return
-            end if
-
+            ! (nzin > 1 was rejected above)
             call apply_nebular_emission(ctx, pset, ctx%state%ssp_basis_spec(:,:,1), &
                                         ctx%state%csp_ssp_grid(:,:,1), ctx%state%csp_emlin_grid(:,:,1))
         end if
@@ -323,6 +324,8 @@ contains
                 results(i)%spec(:) = ctx%state%csp_spec_final(:)
             end if
         end do
+
+        !$acc exit data delete(pset)
 
     end subroutine compute_csp_scenario
 
