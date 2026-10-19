@@ -100,6 +100,12 @@ void fsps_context_compute_csp_batch(int handle, int n, int n_params, const char 
 void fsps_context_batch_spec_device(int handle, void **ptr, int *nspec, int *n, int *bytes,
                                     int *status);
 
+// The same spectra copied to a page-locked host buffer owned by the context, in kernel precision
+// (no conversion to double: the fastest way to get the spectra on the host when single
+// precision is enough). *ptr is a host address; valid until the next batch call on the handle.
+void fsps_context_batch_spec_host(int handle, void **ptr, int *nspec, int *n, int *bytes,
+                                  int *status);
+
 // ----------------------------------------------------------------------------
 // Legacy Global State API (Backward Compatibility)
 // ----------------------------------------------------------------------------
