@@ -301,9 +301,13 @@ contains
         integer(c_int), intent(OUT) :: handle
         integer(c_int), intent(OUT) :: status
         integer :: slot
+        type(PARAMS) :: default_pset
 
         call fsps_context_alloc_slot(slot)
         call reset_store(ctx_store(slot))
+        ! A reused slot keeps the previous context's parameter set (fsps_create resets only the
+        ! context settings): start from the defaults
+        ctx_pool(slot)%pset = default_pset
         call fsps_create(ctx_pool(slot))
         ctx_inuse(slot) = .true.
         handle = slot
