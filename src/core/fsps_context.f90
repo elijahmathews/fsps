@@ -644,9 +644,12 @@ contains
 #ifdef OMP_TARGET
                     ! (OpenMP: by address, never naming a component; see fsps_omp_data)
                     if (ctx%on_device) then
-                        call omp_data_delete(loc(ctx%state%ssp_basis_spec), OMP_BYTES(ctx%state%ssp_basis_spec))
-                        call omp_data_delete(loc(ctx%state%ssp_basis_mass), OMP_BYTES(ctx%state%ssp_basis_mass))
-                        call omp_data_delete(loc(ctx%state%ssp_basis_lbol), OMP_BYTES(ctx%state%ssp_basis_lbol))
+                        call omp_data_delete(loc(ctx%state%ssp_basis_spec), &
+                            OMP_BYTES(ctx%state%ssp_basis_spec))
+                        call omp_data_delete(loc(ctx%state%ssp_basis_mass), &
+                            OMP_BYTES(ctx%state%ssp_basis_mass))
+                        call omp_data_delete(loc(ctx%state%ssp_basis_lbol), &
+                            OMP_BYTES(ctx%state%ssp_basis_lbol))
                     end if
 #endif
                 end if
@@ -667,9 +670,12 @@ contains
             !$acc enter data copyin(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
 #ifdef OMP_TARGET
             if (ctx%on_device) then
-                call omp_data_to(loc(ctx%state%ssp_basis_spec), OMP_BYTES(ctx%state%ssp_basis_spec))
-                call omp_data_to(loc(ctx%state%ssp_basis_mass), OMP_BYTES(ctx%state%ssp_basis_mass))
-                call omp_data_to(loc(ctx%state%ssp_basis_lbol), OMP_BYTES(ctx%state%ssp_basis_lbol))
+                call omp_data_to(loc(ctx%state%ssp_basis_spec), &
+                                 OMP_BYTES(ctx%state%ssp_basis_spec))
+                call omp_data_to(loc(ctx%state%ssp_basis_mass), &
+                                 OMP_BYTES(ctx%state%ssp_basis_mass))
+                call omp_data_to(loc(ctx%state%ssp_basis_lbol), &
+                                 OMP_BYTES(ctx%state%ssp_basis_lbol))
             end if
 #endif
             !$acc enter data attach(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
@@ -684,9 +690,12 @@ contains
             !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
 #ifdef OMP_TARGET
             if (ctx%on_device) then
-                call omp_data_update_to(loc(ctx%state%ssp_basis_spec), OMP_BYTES(ctx%state%ssp_basis_spec))
-                call omp_data_update_to(loc(ctx%state%ssp_basis_mass), OMP_BYTES(ctx%state%ssp_basis_mass))
-                call omp_data_update_to(loc(ctx%state%ssp_basis_lbol), OMP_BYTES(ctx%state%ssp_basis_lbol))
+                call omp_data_update_to(loc(ctx%state%ssp_basis_spec), &
+                    OMP_BYTES(ctx%state%ssp_basis_spec))
+                call omp_data_update_to(loc(ctx%state%ssp_basis_mass), &
+                    OMP_BYTES(ctx%state%ssp_basis_mass))
+                call omp_data_update_to(loc(ctx%state%ssp_basis_lbol), &
+                    OMP_BYTES(ctx%state%ssp_basis_lbol))
             end if
 #endif
             ctx%state%ssp_basis_is_dirty = .false.
@@ -880,9 +889,12 @@ contains
         ! only for contexts on the device; OpenACC maps it there regardless)
         ! (device code reads the bases only as kernel arguments, so their data suffices)
         if (allocated(ctx%state%ssp_basis_spec)) then
-            call omp_data_to(loc(ctx%state%ssp_basis_spec), OMP_BYTES(ctx%state%ssp_basis_spec))
-            call omp_data_to(loc(ctx%state%ssp_basis_mass), OMP_BYTES(ctx%state%ssp_basis_mass))
-            call omp_data_to(loc(ctx%state%ssp_basis_lbol), OMP_BYTES(ctx%state%ssp_basis_lbol))
+            call omp_data_to(loc(ctx%state%ssp_basis_spec), &
+                             OMP_BYTES(ctx%state%ssp_basis_spec))
+            call omp_data_to(loc(ctx%state%ssp_basis_mass), &
+                             OMP_BYTES(ctx%state%ssp_basis_mass))
+            call omp_data_to(loc(ctx%state%ssp_basis_lbol), &
+                             OMP_BYTES(ctx%state%ssp_basis_lbol))
         end if
         
         ! Copy allocatable parameter arrays in pset
@@ -1843,49 +1855,57 @@ contains
             if (allocated(s%sedfit_data%specerr)) then
                 !$acc exit data delete(s%sedfit_data%specerr)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%sedfit_data%specerr), OMP_BYTES(s%sedfit_data%specerr))
+                call omp_data_delete(loc(s%sedfit_data%specerr), &
+                                     OMP_BYTES(s%sedfit_data%specerr))
 #endif
             end if
             if (allocated(s%sedfit_data%spec)) then
                 !$acc exit data delete(s%sedfit_data%spec)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%sedfit_data%spec), OMP_BYTES(s%sedfit_data%spec))
+                call omp_data_delete(loc(s%sedfit_data%spec), &
+                                     OMP_BYTES(s%sedfit_data%spec))
 #endif
             end if
             if (allocated(s%sedfit_data%magerr)) then
                 !$acc exit data delete(s%sedfit_data%magerr)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%sedfit_data%magerr), OMP_BYTES(s%sedfit_data%magerr))
+                call omp_data_delete(loc(s%sedfit_data%magerr), &
+                                     OMP_BYTES(s%sedfit_data%magerr))
 #endif
             end if
             if (allocated(s%sedfit_data%mags)) then
                 !$acc exit data delete(s%sedfit_data%mags)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%sedfit_data%mags), OMP_BYTES(s%sedfit_data%mags))
+                call omp_data_delete(loc(s%sedfit_data%mags), &
+                                     OMP_BYTES(s%sedfit_data%mags))
 #endif
             end if
             if (allocated(s%powell_data%specerr)) then
                 !$acc exit data delete(s%powell_data%specerr)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%powell_data%specerr), OMP_BYTES(s%powell_data%specerr))
+                call omp_data_delete(loc(s%powell_data%specerr), &
+                                     OMP_BYTES(s%powell_data%specerr))
 #endif
             end if
             if (allocated(s%powell_data%spec)) then
                 !$acc exit data delete(s%powell_data%spec)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%powell_data%spec), OMP_BYTES(s%powell_data%spec))
+                call omp_data_delete(loc(s%powell_data%spec), &
+                                     OMP_BYTES(s%powell_data%spec))
 #endif
             end if
             if (allocated(s%powell_data%magerr)) then
                 !$acc exit data delete(s%powell_data%magerr)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%powell_data%magerr), OMP_BYTES(s%powell_data%magerr))
+                call omp_data_delete(loc(s%powell_data%magerr), &
+                                     OMP_BYTES(s%powell_data%magerr))
 #endif
             end if
             if (allocated(s%powell_data%mags)) then
                 !$acc exit data delete(s%powell_data%mags)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%powell_data%mags), OMP_BYTES(s%powell_data%mags))
+                call omp_data_delete(loc(s%powell_data%mags), &
+                                     OMP_BYTES(s%powell_data%mags))
 #endif
             end if
             if (allocated(s%lsfinfo%lsf)) then
@@ -1921,13 +1941,15 @@ contains
             if (associated(s%bpass_mass_ssp)) then
                 !$acc exit data delete(s%bpass_mass_ssp)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%bpass_mass_ssp), OMP_BYTES(s%bpass_mass_ssp))
+                call omp_data_delete(loc(s%bpass_mass_ssp), &
+                                     OMP_BYTES(s%bpass_mass_ssp))
 #endif
             end if
             if (associated(s%bpass_spec_ssp)) then
                 !$acc exit data delete(s%bpass_spec_ssp)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%bpass_spec_ssp), OMP_BYTES(s%bpass_spec_ssp))
+                call omp_data_delete(loc(s%bpass_spec_ssp), &
+                                     OMP_BYTES(s%bpass_spec_ssp))
 #endif
             end if
             if (allocated(s%spec_old)) then
@@ -1939,13 +1961,15 @@ contains
             if (allocated(s%ssp_temp_grid)) then
                 !$acc exit data delete(s%ssp_temp_grid)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%ssp_temp_grid), OMP_BYTES(s%ssp_temp_grid))
+                call omp_data_delete(loc(s%ssp_temp_grid), &
+                                     OMP_BYTES(s%ssp_temp_grid))
 #endif
             end if
             if (allocated(s%ssp_active_idx)) then
                 !$acc exit data delete(s%ssp_active_idx)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%ssp_active_idx), OMP_BYTES(s%ssp_active_idx))
+                call omp_data_delete(loc(s%ssp_active_idx), &
+                                     OMP_BYTES(s%ssp_active_idx))
 #endif
             end if
             if (allocated(s%ssp_active_w)) then
@@ -2005,7 +2029,8 @@ contains
             if (associated(s%timestep_isoc)) then
                 !$acc exit data delete(s%timestep_isoc)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%timestep_isoc), OMP_BYTES(s%timestep_isoc))
+                call omp_data_delete(loc(s%timestep_isoc), &
+                                     OMP_BYTES(s%timestep_isoc))
 #endif
             end if
             if (associated(s%nmass_isoc)) then
@@ -2101,19 +2126,22 @@ contains
             if (associated(s%dustem2_dustem)) then
                 !$acc exit data delete(s%dustem2_dustem)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dustem2_dustem), OMP_BYTES(s%dustem2_dustem))
+                call omp_data_delete(loc(s%dustem2_dustem), &
+                                     OMP_BYTES(s%dustem2_dustem))
 #endif
             end if
             if (associated(s%dustem_dustem)) then
                 !$acc exit data delete(s%dustem_dustem)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dustem_dustem), OMP_BYTES(s%dustem_dustem))
+                call omp_data_delete(loc(s%dustem_dustem), &
+                                     OMP_BYTES(s%dustem_dustem))
 #endif
             end if
             if (associated(s%lambda_dustem)) then
                 !$acc exit data delete(s%lambda_dustem)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%lambda_dustem), OMP_BYTES(s%lambda_dustem))
+                call omp_data_delete(loc(s%lambda_dustem), &
+                                     OMP_BYTES(s%lambda_dustem))
 #endif
             end if
             if (associated(s%uminarr)) then
@@ -2155,25 +2183,29 @@ contains
             if (associated(s%speclib_agb_smooth)) then
                 !$acc exit data delete(s%speclib_agb_smooth)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%speclib_agb_smooth), OMP_BYTES(s%speclib_agb_smooth))
+                call omp_data_delete(loc(s%speclib_agb_smooth), &
+                                     OMP_BYTES(s%speclib_agb_smooth))
 #endif
             end if
             if (associated(s%agb_spec_o_smooth)) then
                 !$acc exit data delete(s%agb_spec_o_smooth)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%agb_spec_o_smooth), OMP_BYTES(s%agb_spec_o_smooth))
+                call omp_data_delete(loc(s%agb_spec_o_smooth), &
+                                     OMP_BYTES(s%agb_spec_o_smooth))
 #endif
             end if
             if (associated(s%agb_spec_c_smooth)) then
                 !$acc exit data delete(s%agb_spec_c_smooth)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%agb_spec_c_smooth), OMP_BYTES(s%agb_spec_c_smooth))
+                call omp_data_delete(loc(s%agb_spec_c_smooth), &
+                                     OMP_BYTES(s%agb_spec_c_smooth))
 #endif
             end if
             if (associated(s%agb_spec_car_smooth)) then
                 !$acc exit data delete(s%agb_spec_car_smooth)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%agb_spec_car_smooth), OMP_BYTES(s%agb_spec_car_smooth))
+                call omp_data_delete(loc(s%agb_spec_car_smooth), &
+                                     OMP_BYTES(s%agb_spec_car_smooth))
 #endif
             end if
             if (associated(s%agb_logt_c)) then
@@ -2289,19 +2321,22 @@ contains
             if (allocated(s%ssp_basis_spec)) then
                 !$acc exit data delete(s%ssp_basis_spec)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%ssp_basis_spec), OMP_BYTES(s%ssp_basis_spec))
+                call omp_data_delete(loc(s%ssp_basis_spec), &
+                                     OMP_BYTES(s%ssp_basis_spec))
 #endif
             end if
             if (allocated(s%ssp_basis_mass)) then
                 !$acc exit data delete(s%ssp_basis_mass)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%ssp_basis_mass), OMP_BYTES(s%ssp_basis_mass))
+                call omp_data_delete(loc(s%ssp_basis_mass), &
+                                     OMP_BYTES(s%ssp_basis_mass))
 #endif
             end if
             if (allocated(s%ssp_basis_lbol)) then
                 !$acc exit data delete(s%ssp_basis_lbol)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%ssp_basis_lbol), OMP_BYTES(s%ssp_basis_lbol))
+                call omp_data_delete(loc(s%ssp_basis_lbol), &
+                                     OMP_BYTES(s%ssp_basis_lbol))
 #endif
             end if
             if (allocated(s%csp_ssp_grid)) then
@@ -2313,31 +2348,36 @@ contains
             if (allocated(s%csp_emlin_grid)) then
                 !$acc exit data delete(s%csp_emlin_grid)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_emlin_grid), OMP_BYTES(s%csp_emlin_grid))
+                call omp_data_delete(loc(s%csp_emlin_grid), &
+                                     OMP_BYTES(s%csp_emlin_grid))
 #endif
             end if
             if (allocated(s%csp_ssp_lum_linear)) then
                 !$acc exit data delete(s%csp_ssp_lum_linear)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_ssp_lum_linear), OMP_BYTES(s%csp_ssp_lum_linear))
+                call omp_data_delete(loc(s%csp_ssp_lum_linear), &
+                                     OMP_BYTES(s%csp_ssp_lum_linear))
 #endif
             end if
             if (allocated(s%csp_igm_transmission)) then
                 !$acc exit data delete(s%csp_igm_transmission)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_igm_transmission), OMP_BYTES(s%csp_igm_transmission))
+                call omp_data_delete(loc(s%csp_igm_transmission), &
+                                     OMP_BYTES(s%csp_igm_transmission))
 #endif
             end if
             if (allocated(s%csp_spec_final)) then
                 !$acc exit data delete(s%csp_spec_final)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_spec_final), OMP_BYTES(s%csp_spec_final))
+                call omp_data_delete(loc(s%csp_spec_final), &
+                                     OMP_BYTES(s%csp_spec_final))
 #endif
             end if
             if (allocated(s%csp_emlin_final)) then
                 !$acc exit data delete(s%csp_emlin_final)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_emlin_final), OMP_BYTES(s%csp_emlin_final))
+                call omp_data_delete(loc(s%csp_emlin_final), &
+                                     OMP_BYTES(s%csp_emlin_final))
 #endif
             end if
             if (allocated(s%csp_weights)) then
@@ -2349,13 +2389,15 @@ contains
             if (allocated(s%csp_emlin_young)) then
                 !$acc exit data delete(s%csp_emlin_young)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_emlin_young), OMP_BYTES(s%csp_emlin_young))
+                call omp_data_delete(loc(s%csp_emlin_young), &
+                                     OMP_BYTES(s%csp_emlin_young))
 #endif
             end if
             if (allocated(s%csp_emlin_old)) then
                 !$acc exit data delete(s%csp_emlin_old)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%csp_emlin_old), OMP_BYTES(s%csp_emlin_old))
+                call omp_data_delete(loc(s%csp_emlin_old), &
+                                     OMP_BYTES(s%csp_emlin_old))
 #endif
             end if
 
@@ -2363,61 +2405,71 @@ contains
             if (allocated(s%dust_transmission_diffuse)) then
                 !$acc exit data delete(s%dust_transmission_diffuse)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dust_transmission_diffuse), OMP_BYTES(s%dust_transmission_diffuse))
+                call omp_data_delete(loc(s%dust_transmission_diffuse), &
+                    OMP_BYTES(s%dust_transmission_diffuse))
 #endif
             end if
             if (allocated(s%dust_frequencies)) then
                 !$acc exit data delete(s%dust_frequencies)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dust_frequencies), OMP_BYTES(s%dust_frequencies))
+                call omp_data_delete(loc(s%dust_frequencies), &
+                                     OMP_BYTES(s%dust_frequencies))
 #endif
             end if
             if (allocated(s%dust_spec_total_work)) then
                 !$acc exit data delete(s%dust_spec_total_work)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dust_spec_total_work), OMP_BYTES(s%dust_spec_total_work))
+                call omp_data_delete(loc(s%dust_spec_total_work), &
+                                     OMP_BYTES(s%dust_spec_total_work))
 #endif
             end if
             if (allocated(s%dust_emission_shape)) then
                 !$acc exit data delete(s%dust_emission_shape)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dust_emission_shape), OMP_BYTES(s%dust_emission_shape))
+                call omp_data_delete(loc(s%dust_emission_shape), &
+                                     OMP_BYTES(s%dust_emission_shape))
 #endif
             end if
             if (allocated(s%dust_emission_final)) then
                 !$acc exit data delete(s%dust_emission_final)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%dust_emission_final), OMP_BYTES(s%dust_emission_final))
+                call omp_data_delete(loc(s%dust_emission_final), &
+                                     OMP_BYTES(s%dust_emission_final))
 #endif
             end if
             if (allocated(s%gas_neb_cont_reduced)) then
                 !$acc exit data delete(s%gas_neb_cont_reduced)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%gas_neb_cont_reduced), OMP_BYTES(s%gas_neb_cont_reduced))
+                call omp_data_delete(loc(s%gas_neb_cont_reduced), &
+                                     OMP_BYTES(s%gas_neb_cont_reduced))
 #endif
             end if
             if (allocated(s%gas_neb_line_reduced)) then
                 !$acc exit data delete(s%gas_neb_line_reduced)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%gas_neb_line_reduced), OMP_BYTES(s%gas_neb_line_reduced))
+                call omp_data_delete(loc(s%gas_neb_line_reduced), &
+                                     OMP_BYTES(s%gas_neb_line_reduced))
 #endif
             end if
             if (allocated(s%gas_current_step_cont)) then
                 !$acc exit data delete(s%gas_current_step_cont)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%gas_current_step_cont), OMP_BYTES(s%gas_current_step_cont))
+                call omp_data_delete(loc(s%gas_current_step_cont), &
+                                     OMP_BYTES(s%gas_current_step_cont))
 #endif
             end if
             if (allocated(s%gas_current_step_lines)) then
                 !$acc exit data delete(s%gas_current_step_lines)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%gas_current_step_lines), OMP_BYTES(s%gas_current_step_lines))
+                call omp_data_delete(loc(s%gas_current_step_lines), &
+                                     OMP_BYTES(s%gas_current_step_lines))
 #endif
             end if
             if (allocated(s%scalar_reductions)) then
                 !$acc exit data delete(s%scalar_reductions)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%scalar_reductions), OMP_BYTES(s%scalar_reductions))
+                call omp_data_delete(loc(s%scalar_reductions), &
+                                     OMP_BYTES(s%scalar_reductions))
 #endif
             end if
             if (allocated(s%sfh_t_calc)) then
@@ -2435,7 +2487,8 @@ contains
             if (allocated(s%sfh_age_integrand)) then
                 !$acc exit data delete(s%sfh_age_integrand)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%sfh_age_integrand), OMP_BYTES(s%sfh_age_integrand))
+                call omp_data_delete(loc(s%sfh_age_integrand), &
+                                     OMP_BYTES(s%sfh_age_integrand))
 #endif
             end if
             if (allocated(s%sfh_w_tmp1)) then
@@ -2461,7 +2514,8 @@ contains
             if (allocated(s%out_csp_emlin)) then
                 !$acc exit data delete(s%out_csp_emlin)
 #ifdef OMP_TARGET
-                call omp_data_delete(loc(s%out_csp_emlin), OMP_BYTES(s%out_csp_emlin))
+                call omp_data_delete(loc(s%out_csp_emlin), &
+                                     OMP_BYTES(s%out_csp_emlin))
 #endif
             end if
             if (allocated(s%out_mass_csp)) then

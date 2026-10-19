@@ -349,15 +349,23 @@ contains
         ! mapped after a target data region naming it (a derived type with allocatable
         ! components), and named components would be released with their parent structure
         call omp_data_to(loc(psets), OMP_BYTES(psets))
-        call omp_data_to(loc(nb%ia), OMP_BYTES(nb%ia)); call omp_data_to(loc(nb%wa), OMP_BYTES(nb%wa))
-        call omp_data_to(loc(nb%dwa), OMP_BYTES(nb%dwa)); call omp_data_to(loc(nb%newr), OMP_BYTES(nb%newr))
-        call omp_data_to(loc(nb%iz), OMP_BYTES(nb%iz)); call omp_data_to(loc(nb%wz), OMP_BYTES(nb%wz))
-        call omp_data_to(loc(nb%iu), OMP_BYTES(nb%iu)); call omp_data_to(loc(nb%wu), OMP_BYTES(nb%wu))
-        call omp_data_to(loc(nb%fesc), OMP_BYTES(nb%fesc)); call omp_data_to(loc(nb%fabs), OMP_BYTES(nb%fabs))
-        call omp_data_to(loc(nb%lptr), OMP_BYTES(nb%lptr)); call omp_data_to(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_to(loc(nb%ia), OMP_BYTES(nb%ia))
+        call omp_data_to(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_to(loc(nb%dwa), OMP_BYTES(nb%dwa))
+        call omp_data_to(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_to(loc(nb%iz), OMP_BYTES(nb%iz))
+        call omp_data_to(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_to(loc(nb%iu), OMP_BYTES(nb%iu))
+        call omp_data_to(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_to(loc(nb%fesc), OMP_BYTES(nb%fesc))
+        call omp_data_to(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_to(loc(nb%lptr), OMP_BYTES(nb%lptr))
+        call omp_data_to(loc(nb%lid), OMP_BYTES(nb%lid))
         call omp_data_to(loc(nb%llo), OMP_BYTES(nb%llo))
-        call omp_data_alloc(loc(nb%q0), OMP_BYTES(nb%q0)); call omp_data_alloc(loc(nb%lum), OMP_BYTES(nb%lum))
-        call omp_data_alloc(loc(nb%cy), OMP_BYTES(nb%cy)); call omp_data_alloc(loc(nb%co), OMP_BYTES(nb%co))
+        call omp_data_alloc(loc(nb%q0), OMP_BYTES(nb%q0))
+        call omp_data_alloc(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_alloc(loc(nb%cy), OMP_BYTES(nb%cy))
+        call omp_data_alloc(loc(nb%co), OMP_BYTES(nb%co))
         !$omp target data map(to: iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$omp map(to: zlo, zhi, dz, wext, zcol) &
         !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
@@ -471,15 +479,23 @@ contains
 #ifdef OMP_TARGET
         !$omp end target data
         call omp_data_delete(loc(psets), OMP_BYTES(psets))
-        call omp_data_delete(loc(nb%ia), OMP_BYTES(nb%ia)); call omp_data_delete(loc(nb%wa), OMP_BYTES(nb%wa))
-        call omp_data_delete(loc(nb%dwa), OMP_BYTES(nb%dwa)); call omp_data_delete(loc(nb%newr), OMP_BYTES(nb%newr))
-        call omp_data_delete(loc(nb%iz), OMP_BYTES(nb%iz)); call omp_data_delete(loc(nb%wz), OMP_BYTES(nb%wz))
-        call omp_data_delete(loc(nb%iu), OMP_BYTES(nb%iu)); call omp_data_delete(loc(nb%wu), OMP_BYTES(nb%wu))
-        call omp_data_delete(loc(nb%fesc), OMP_BYTES(nb%fesc)); call omp_data_delete(loc(nb%fabs), OMP_BYTES(nb%fabs))
-        call omp_data_delete(loc(nb%lptr), OMP_BYTES(nb%lptr)); call omp_data_delete(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_delete(loc(nb%ia), OMP_BYTES(nb%ia))
+        call omp_data_delete(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_delete(loc(nb%dwa), OMP_BYTES(nb%dwa))
+        call omp_data_delete(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_delete(loc(nb%iz), OMP_BYTES(nb%iz))
+        call omp_data_delete(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_delete(loc(nb%iu), OMP_BYTES(nb%iu))
+        call omp_data_delete(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_delete(loc(nb%fesc), OMP_BYTES(nb%fesc))
+        call omp_data_delete(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_delete(loc(nb%lptr), OMP_BYTES(nb%lptr))
+        call omp_data_delete(loc(nb%lid), OMP_BYTES(nb%lid))
         call omp_data_delete(loc(nb%llo), OMP_BYTES(nb%llo))
-        call omp_data_delete(loc(nb%q0), OMP_BYTES(nb%q0)); call omp_data_delete(loc(nb%lum), OMP_BYTES(nb%lum))
-        call omp_data_delete(loc(nb%cy), OMP_BYTES(nb%cy)); call omp_data_delete(loc(nb%co), OMP_BYTES(nb%co))
+        call omp_data_delete(loc(nb%q0), OMP_BYTES(nb%q0))
+        call omp_data_delete(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_delete(loc(nb%cy), OMP_BYTES(nb%cy))
+        call omp_data_delete(loc(nb%co), OMP_BYTES(nb%co))
 #endif
         !$acc end data
 

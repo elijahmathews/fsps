@@ -232,7 +232,8 @@ contains
                 call compute_line_gaussians(ctx, pset)
                 !$acc update device(ctx%state%gaussnebarr(:,:))
 #ifdef OMP_TARGET
-                if (ctx%on_device) call omp_data_update_to(loc(ctx%state%gaussnebarr), OMP_BYTES(ctx%state%gaussnebarr))
+                if (ctx%on_device) call omp_data_update_to(loc(ctx%state%gaussnebarr), &
+                    OMP_BYTES(ctx%state%gaussnebarr))
 #endif
                 ctx%state%gauss_built_sigma = pset%sigma_smooth
                 ctx%state%gauss_built_velocity = ctx%smooth_velocity_val
