@@ -173,6 +173,10 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
     no other way: a kernel naming a component does not attach it, and pointer assignment in
     device code is unsupported); they are released by address too. Never map zero-size
     arrays (their entries cannot be released by address).
+  - OpenMP compute constructs that can see ctx map it explicitly with `map(alloc: ctx)` (never
+    an implicit tofrom of the context); kernels receive data mapped by address as arguments
+    (explicit-shape dummies), through pointers taken before the first launch, not by reading
+    ctx's host descriptors after a launch.
   - module variables read in device code need `!$omp declare target` and an update after host
     assignments (flang emits a separate device copy of a module variable, which host
     assignments never reach); module constants are fine. None is read on the device today.

@@ -130,6 +130,24 @@ on the 780M:
 - Validation (A100): unit + regression 33/33 in gfortran FP64 / FP32, gfortran `-fopenmp`,
   OpenACC multicore FP32, OpenACC GPU FP32 / FP64, OpenMP target FP32 / FP64 (MANDATORY); flang
   22 (AOMP, gfx1103) builds the project.
+- Second 780M run (Elijah, PR #16): `FSPS_OMP_CHECK_PRE` passed and the SFH kernel ran, then
+  `age_sums_z` failed before launch: the map of its basis argument had a null host address
+  (size = the FP32 bases). Follow-ups on the branch:
+  - 8b1aff4: explicit-shape dummies for every kernel argument mapped by address (bases, psets,
+    nebular arrays, batch caches). flang's host map table for the age-sums launch is identical
+    before and after (it already lowers a `contiguous` assumed-shape dummy to address + length),
+    so this is hygiene rather than the fix;
+  - fa77e40: flang's host code reloads the bases' address from the host ctx right after the SFH
+    kernel (the SFH kernel itself took them through pointers set before the launch and ran), so
+    the host copy of ctx most likely changed during that kernel, e.g. an implicit map of ctx
+    copying the device copy (stale descriptors for data mapped by address) back. The later
+    kernels now get the bases through such pointers too, and `FSPS_OMP_CHECK_PRE` stops naming
+    the field if ctx's host addresses for the bases or batch caches change during the kernels;
+  - 7f28a2d: every OpenMP compute construct with ctx in scope maps it explicitly with
+    `map(alloc: ctx)` (21 constructs): the existing mapping is referenced and never copied in
+    either direction (checked on the A100: host and device values stay independent).
+    `map(present, alloc: ...)` would be stricter, but nvfortran 25.1 does not parse `present`.
+  Each validated in all eight A100 builds (33/33; batch test 158/158 OpenMP, 146/146 others).
 - To run on the 780M (text console): `FSPS_OMP_CHECK_PRE=1 OMP_TARGET_OFFLOAD=MANDATORY
   LIBOMPTARGET_INFO=-1 ./test_c_batch` (and `test_csp_batch`). A check failure names the
   unmapped / unattached array; if the checks pass and it still faults, the fault is inside one
