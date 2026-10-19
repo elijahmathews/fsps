@@ -49,6 +49,10 @@ code, small test data and references (megabytes).
 - **Tests:** a small test library (coarse subsets, a few MB) in the repository for unit tests
   and CI; the regression references and the legacy-parity matrix, which need the full
   MIST + MILES data, run in a CI job that downloads and caches it.
+- **Name:** the fresh repository is `libopensps`. Rename the core with it: library
+  `libopensps` (soname), header `opensps.h`, pkg-config `opensps`, C prefix `opensps_`, Meson
+  project name; keep the FSPS license, copyright notice and credit in the README and citation
+  file.
 - **Done when:** the suites pass from fetched data, a new library can be added without code
   changes, and a fresh repository from that commit is below ~50 MB.
 
@@ -62,7 +66,11 @@ versioned interface: semantic versioning of the library, an API version macro an
 function, and a changelog of API changes. Language bindings live in separate repositories that
 depend on a pinned version of the C library, each with its own release cycle and packaging.
 
-- **Python first** (`fsps-python`): a pip-installable package (meson-python) that builds the
+- **Naming:** each binding follows its ecosystem's convention around the `opensps` name:
+  Python `opensps-python` (`pip install opensps`, `import opensps`), Julia `OpenSPS.jl` with
+  the binary as `libopensps_jll`, R `opensps-r` (package `opensps`), Rust `opensps-rs` (crates
+  `opensps-sys` and `opensps`).
+- **Python first** (`opensps-python`): a pip-installable package (meson-python) that builds the
   core as a Meson subproject pinned to a tag, or links an installed `libfsps` found through
   pkg-config; NumPy arrays in and out, the batch entry point with one array per parameter,
   device-resident outputs where available, and a layer compatible with python-fsps
