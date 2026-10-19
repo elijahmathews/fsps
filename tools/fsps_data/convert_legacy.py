@@ -12,6 +12,7 @@ libraries are copied byte for byte. See doc/DATA_FORMAT.md.
 """
 
 import argparse
+import decimal
 import os
 import shutil
 import sys
@@ -577,9 +578,12 @@ class Converter:
                 spec[j, i] = r.read(nspec)
         lib = self.writer("xrb", "xsp", "X-ray binary spectra of simple populations", "spectra/xrb")
         lib.axis("feh", "[Fe/H]", values=XRB_FEH)
-        lib.axis("age", "Myr", values=XRB_AGES_MYR)
+        # log10(age / yr), correctly rounded as the compile-time constant of the legacy code
+        logage = [float(decimal.Decimal(repr(a)).log10()) + 6.0 for a in XRB_AGES_MYR]
+        lib.axis("log_age", "log10(yr)", values=logage)
         lib.axis("wavelength", "angstrom", data=lam)
-        lib.array("flux", spec, axes=["feh", "age", "wavelength"], units="L_sun Hz^-1 per M_sun (scaled by L_sun on load)")
+        lib.array("flux", spec, axes=["feh", "log_age", "wavelength"],
+                  units="L_sun Hz^-1 per M_sun (scaled by L_sun on load)")
         self.finish(lib)
 
     def small_tables(self):

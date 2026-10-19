@@ -45,7 +45,7 @@ module fsps_io
                               NLAM_NEBCONT, NEBNZ, NEBNAGE, NEBNIP, &
                               NDIM_WR, BASEL_STR, N_AGB_C, N_AGB_O, N_AGB_CAR, &
                               NDIM_PAGB, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
-                              NAGNDUST, NAGNDUST_SPEC
+                              NAGNDUST, NAGNDUST_SPEC, NEMLINE
     use fsps_context_types, only: fsps_context_t
     use fsps_types, only: params, compspout
     use fsps_cosmology, only: vacuum_to_air
@@ -55,6 +55,7 @@ module fsps_io
                             datalib_axis_len, datalib_has_array, datalib_check_array, datalib_read_real, &
                             datalib_read_int, datalib_array_len, datalib_meta_real, datalib_meta_string, &
                             datalib_meta_node, datalib_has_meta
+    use fsps_json, only: json_len, json_item, json_child, json_real
     use, intrinsic :: iso_fortran_env, only: real32, int64, iostat_end, error_unit, file_storage_size
 
     implicit none
@@ -739,113 +740,144 @@ contains
     !> @param[inout] ctx        The FSPS context. Populates `nebem_cont` and `nebem_line`.
     !> @param[in]    isoc_type  Isochrone identifier (e.g. 'mist') to match the stellar grid.
     !> @param[in]    use_cloudy Logical flag to select dust-attenuated or dust-free models.
-    subroutine load_nebular_grid(ctx, isoc_type, use_cloudy)
+    subroutine load_nebular_grid(ctx, isoc_type, use_cloudy, xray)
         type(fsps_context_t), intent(inout) :: ctx
         character(len=*), intent(in) :: isoc_type
         logical, intent(in) :: use_cloudy
+        !> Load the grid photoionized with X-ray binaries included (BPASS) into xnebem_cont and
+        !> xnebem_line instead of nebem_cont and nebem_line
+        logical, intent(in), optional :: xray
 
-        integer :: u_file, io_stat, i, j, k, i_spec
-        character(len=1024) :: file_path_cont, file_path_lines
-        character(len=32) :: suffix
-        
-        ! Temporary arrays for the raw grid reading
-        real(WP), allocatable :: raw_lam(:), raw_spec(:), raw_spec_log(:)
-        real(WP) :: val_logz, val_age, val_logu
+        integer :: i, j, k, i_spec
+        logical :: is_xray
+        character(len=64) :: std_name
+        real(WP), allocatable :: raw_lam(:), raw_spec_log(:)
+        real(WP), allocatable :: cont(:, :, :, :), lines(:, :, :, :)   ! (lambda or line, U, age, Z)
         real(WP), parameter :: NEBULAR_FLOOR = 10.0_wp**(-95.0_wp)
 
-        ! 1. Construct File Paths
-        ! -----------------------
-        ! "WD" = With Dust, "ND" = No Dust
+        is_xray = .false.
+        if (present(xray)) is_xray = xray
+
+        ! 1. Raw tables: continuum on its own wavelength grid, line luminosities, grid axes
+        ! ---------------------------------------------------------------------------------
+        std_name = trim(isoc_type)
+        if (is_xray) std_name = trim(std_name) // '_xray'
         if (use_cloudy) then
-            suffix = '_WD_'
+            std_name = trim(std_name) // '_dust'
         else
-            suffix = '_ND_'
+            std_name = trim(std_name) // '_nodust'
         end if
-        
-        file_path_cont = trim(ctx%sps_home) // '/data/nebular/ZAU' // trim(suffix) // &
-                         trim(isoc_type) // '.cont'
-        
-        file_path_lines = trim(ctx%sps_home) // '/data/nebular/ZAU' // trim(suffix) // &
-                          trim(isoc_type) // '.lines'
+        if (use_standard_library(ctx, 'nebular', std_name)) then
+            call read_nebular_standard(ctx, trim(std_name), raw_lam, cont, lines)
+        else
+            call read_nebular_legacy(ctx, isoc_type, use_cloudy, is_xray, raw_lam, cont, lines)
+        end if
 
-        ! 2. Read Continuum (.cont)
-        ! -------------------------
-        if (VERBOSE > 1) print *, 'Reading Nebular Cont: ', trim(file_path_cont)
-
-        open(newunit=u_file, file=trim(file_path_cont), status='old', &
-             action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path_cont, 0)
-
-        ! Header skip
-        read(u_file, *) 
-        
-        ! Allocate using the Constant from fsps_constants
-        allocate(raw_lam(NLAM_NEBCONT))
-        allocate(raw_spec(NLAM_NEBCONT))
-        allocate(raw_spec_log(NLAM_NEBCONT))
-
-        read(u_file, *) raw_lam
-
-        ! Nested Loops: Z -> Age -> U
-        ! Uses constants NEBNZ, NEBNAGE, NEBNIP directly
+        ! 2. Continuum: log10(f + 1e-95), interpolated linearly onto the spectral grid
+        ! -----------------------------------------------------------------------------
+        allocate(raw_spec_log(size(raw_lam)))
         do i = 1, NEBNZ
             do j = 1, NEBNAGE
                 do k = 1, NEBNIP
-                    
-                    ! Read Metadata (LogZ, Age, LogU) and Spectrum
+                    raw_spec_log = log10(cont(:, k, j, i) + NEBULAR_FLOOR)
+                    if (is_xray) then
+                        do i_spec = 1, ctx%state%nspec
+                            ctx%state%xnebem_cont(i_spec, i, j, k) = interpolate_linear( &
+                                raw_lam, raw_spec_log, ctx%state%spec_lambda(i_spec))
+                        end do
+                    else
+                        do i_spec = 1, ctx%state%nspec
+                            ctx%state%nebem_cont(i_spec, i, j, k) = interpolate_linear( &
+                                raw_lam, raw_spec_log, ctx%state%spec_lambda(i_spec))
+                        end do
+                    end if
+                end do
+            end do
+        end do
+
+        if (env_flag_true('FSPS_DEBUG_IO')) then
+            call debug_stats_1d('[DEBUG_IO] nebem_logz', ctx%state%nebem_logz)
+            call debug_stats_1d('[DEBUG_IO] nebem_logu', ctx%state%nebem_logu)
+            call debug_stats_1d('[DEBUG_IO] nebem_age', ctx%state%nebem_age)
+        end if
+
+        ! 3. Lines: log10(L + 1e-95); the age axis to log10 (matches legacy setup)
+        ! -------------------------------------------------------------------------
+        do i = 1, NEBNZ
+            do j = 1, NEBNAGE
+                do k = 1, NEBNIP
+                    if (is_xray) then
+                        ctx%state%xnebem_line(:, i, j, k) = log10(lines(:, k, j, i) + NEBULAR_FLOOR)
+                    else
+                        ctx%state%nebem_line(:, i, j, k) = log10(lines(:, k, j, i) + NEBULAR_FLOOR)
+                    end if
+                end do
+            end do
+        end do
+        ctx%state%nebem_age = log10(ctx%state%nebem_age)
+
+    end subroutine load_nebular_grid
+
+    !> @brief Raw nebular tables from the legacy text files (`data/nebular/ZAU_*`).
+    !>
+    !> @details Sets nebem_logz, nebem_age (yr) and nebem_logu from the continuum labels and
+    !> nebem_line_pos from the line file; the line labels must equal the continuum labels.
+    subroutine read_nebular_legacy(ctx, isoc_type, use_cloudy, is_xray, raw_lam, cont, lines)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: isoc_type
+        logical, intent(in) :: use_cloudy, is_xray
+        real(WP), allocatable, intent(out) :: raw_lam(:), cont(:, :, :, :), lines(:, :, :, :)
+
+        integer :: u_file, io_stat, i, j, k
+        character(len=1024) :: file_path_cont, file_path_lines
+        character(len=32) :: tag
+        real(WP) :: val_logz, val_age, val_logu
+
+        ! "WD" = With Dust, "ND" = No Dust; "WX_" = X-ray binaries in the ionizing spectrum
+        if (use_cloudy) then
+            tag = '_WD_'
+        else
+            tag = '_ND_'
+        end if
+        if (is_xray) tag = '_WX' // trim(tag)
+
+        file_path_cont = trim(ctx%sps_home) // '/data/nebular/ZAU' // trim(tag) // &
+                         trim(isoc_type) // '.cont'
+        file_path_lines = trim(ctx%sps_home) // '/data/nebular/ZAU' // trim(tag) // &
+                          trim(isoc_type) // '.lines'
+
+        allocate(raw_lam(NLAM_NEBCONT), cont(NLAM_NEBCONT, NEBNIP, NEBNAGE, NEBNZ))
+        allocate(lines(NEMLINE, NEBNIP, NEBNAGE, NEBNZ))
+
+        ! Continuum (.cont): header, wavelengths, then a label line and a spectrum per (Z, age, U)
+        if (VERBOSE > 1) print *, 'Reading Nebular Cont: ', trim(file_path_cont)
+        open(newunit=u_file, file=trim(file_path_cont), status='old', &
+             action='read', iostat=io_stat)
+        if (io_stat /= 0) call handle_read_error(file_path_cont, 0)
+        read(u_file, *)
+        read(u_file, *) raw_lam
+        do i = 1, NEBNZ
+            do j = 1, NEBNAGE
+                do k = 1, NEBNIP
                     read(u_file, *, iostat=io_stat) val_logz, val_age, val_logu
                     if (io_stat /= 0) call handle_read_error(file_path_cont, i)
-                    
-                    read(u_file, *, iostat=io_stat) raw_spec
+                    read(u_file, *, iostat=io_stat) cont(:, k, j, i)
                     if (io_stat /= 0) call handle_read_error(file_path_cont, i)
-
-                    ! Store Metadata
                     ctx%state%nebem_logz(i) = val_logz
-                    ctx%state%nebem_age(j)  = val_age  ! Will be logged later if needed
+                    ctx%state%nebem_age(j)  = val_age
                     ctx%state%nebem_logu(k) = val_logu
-
-                    ! INTERPOLATION
-                    ! Legacy logic: raw_spec can be 0.0, set floor 1e-95, log10, interpolate.
-                    raw_spec_log = log10(raw_spec + NEBULAR_FLOOR)
-                    do i_spec = 1, ctx%state%nspec
-                        ctx%state%nebem_cont(i_spec, i, j, k) = interpolate_linear( &
-                            raw_lam, &
-                            raw_spec_log, &
-                            ctx%state%spec_lambda(i_spec))
-                    end do
-
                 end do
             end do
         end do
         close(u_file)
-        
-        if (env_flag_true('FSPS_DEBUG_IO')) then
-            call debug_stats_1d('[DEBUG_IO] nebem_logz', ctx%state%nebem_logz)
-            call debug_stats_1d('[DEBUG_IO] nebem_logu', ctx%state%nebem_logu)
-            call debug_stats_1d('[DEBUG_IO] nebem_age(log)', ctx%state%nebem_age)
-            write(*,'(A,1x,ES13.5)') '[DEBUG_IO] nebem_cont(1,1,1,1)=', ctx%state%nebem_cont(1,1,1,1)
-            write(*,'(A,1x,ES13.5)') '[DEBUG_IO] nebem_line(1,1,1,1)=', ctx%state%nebem_line(1,1,1,1)
-        end if
 
-        deallocate(raw_lam, raw_spec, raw_spec_log)
-
-
-        ! 3. Read Lines (.lines)
-        ! ----------------------
-        ! Only available for certain isochrones in legacy code check, 
-        ! but we assume caller handles that logic.
+        ! Lines (.lines)
         if (VERBOSE > 1) print *, 'Reading Nebular Lines: ', trim(file_path_lines)
-
         open(newunit=u_file, file=trim(file_path_lines), status='old', &
              action='read', iostat=io_stat)
         if (io_stat /= 0) call handle_read_error(file_path_lines, 0)
-
-        read(u_file, *) ! Header
-        
-        ! Read Line Wavelengths
+        read(u_file, *)
         read(u_file, *) ctx%state%nebem_line_pos
-
-        ! Nested Loops
         do i = 1, NEBNZ
             do j = 1, NEBNAGE
                 do k = 1, NEBNIP
@@ -862,21 +894,38 @@ contains
                             '  continuum: ', ctx%state%nebem_logz(i), ctx%state%nebem_age(j), ctx%state%nebem_logu(k)
                         error stop 1
                     end if
-                    
-                    ! Read Line Luminosities directly into state
-                    read(u_file, *) ctx%state%nebem_line(:, i, j, k)
+                    read(u_file, *) lines(:, k, j, i)
                 end do
             end do
         end do
         close(u_file)
+    end subroutine read_nebular_legacy
 
-        ! Post-processing (matches legacy setup)
-        ! Convert Age array to Log10
-        ctx%state%nebem_age = log10(ctx%state%nebem_age)
-        ! Convert Line Luminosities to Log10
-        ctx%state%nebem_line = log10(ctx%state%nebem_line + NEBULAR_FLOOR)
+    !> @brief Raw nebular tables from a standard-format library (kind 'nebular').
+    subroutine read_nebular_standard(ctx, name, raw_lam, cont, lines)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: name
+        real(WP), allocatable, intent(out) :: raw_lam(:), cont(:, :, :, :), lines(:, :, :, :)
 
-    end subroutine load_nebular_grid
+        type(datalib_t) :: lib
+        integer(int64) :: off
+        integer :: nlam
+
+        call datalib_open(lib, ctx%sps_home, 'nebular', name)
+        call standard_axis(ctx, 'nebular', name, 'logZ', ctx%state%nebem_logz)
+        call standard_axis(ctx, 'nebular', name, 'age', ctx%state%nebem_age)
+        call standard_axis(ctx, 'nebular', name, 'logU', ctx%state%nebem_logu)
+        call standard_axis(ctx, 'nebular', name, 'line_wavelength', ctx%state%nebem_line_pos)
+        call datalib_axis_values(lib, 'wavelength', raw_lam)
+        nlam = size(raw_lam)
+        allocate(cont(nlam, NEBNIP, NEBNAGE, NEBNZ), lines(NEMLINE, NEBNIP, NEBNAGE, NEBNZ))
+        call datalib_check_array(lib, 'continuum', [character(len=10) :: 'logZ', 'age', 'logU', 'wavelength'], &
+                                 [NEBNZ, NEBNAGE, NEBNIP, nlam], off)
+        call datalib_read_real(lib, 'continuum', size(cont, kind=int64), cont, off)
+        call datalib_check_array(lib, 'lines', [character(len=15) :: 'logZ', 'age', 'logU', 'line_wavelength'], &
+                                 [NEBNZ, NEBNAGE, NEBNIP, NEMLINE], off)
+        call datalib_read_real(lib, 'lines', size(lines, kind=int64), lines, off)
+    end subroutine read_nebular_standard
 
     !> @brief Loads Draine & Li (2007) or THEMIS dust emission templates.
     !>
@@ -908,6 +957,9 @@ contains
         real(WP), allocatable :: raw_lam(:), raw_spec(:,:)
         integer :: ndim_dust, numin_dust, nqpah
         integer :: start_idx
+        logical :: std
+        type(datalib_t) :: lib
+        integer(int64) :: off
 
         ! Setup dimensions based on type (logic moved to fsps_initialization)
         if (trim(dust_type) == 'THEMIS') then
@@ -924,13 +976,36 @@ contains
             ctx%state%uminarr = UMIN_ARR_DL07
         end if
 
+        std = use_standard_library(ctx, 'dust_emission', dust_type)
+        if (std) then
+            ! Grids from the library: q_PAH, U_min (two spectra per U_min), wavelength in A
+            call datalib_open(lib, ctx%sps_home, 'dust_emission', dust_type)
+            nqpah = datalib_axis_len(lib, 'qpah')
+            numin_dust = datalib_axis_len(lib, 'umin')
+            ndim_dust = datalib_axis_len(lib, 'wavelength')
+            if (nqpah /= size(ctx%state%qpaharr) .or. numin_dust /= size(ctx%state%uminarr)) then
+                write(error_unit, '(A)') '[FSPS_IO] Error: dust_emission/' // trim(dust_type) // &
+                    ' grid differs from the dimensions set at setup'
+                error stop 1
+            end if
+            call standard_axis(ctx, 'dust_emission', dust_type, 'qpah', ctx%state%qpaharr)
+            call standard_axis(ctx, 'dust_emission', dust_type, 'umin', ctx%state%uminarr)
+            call datalib_check_array(lib, 'spectra', [character(len=10) :: 'qpah', 'umin', 'component', 'wavelength'], &
+                                     [nqpah, numin_dust, 2, ndim_dust], off)
+        end if
+
         allocate(raw_lam(ndim_dust))
         allocate(raw_spec(ndim_dust, numin_dust * 2)) ! *2 because file has multiple cols per Umin
+        if (std) call standard_axis(ctx, 'dust_emission', dust_type, 'wavelength', raw_lam)
 
         ! Loop over PAH fractions (qpah)
         ! The files are numbered 0..N-1 in the filename char
         do k = 1, nqpah
             
+            if (std) then
+                call datalib_read_real(lib, 'spectra', size(raw_spec, kind=int64), raw_spec, &
+                                       off + int(k - 1, int64) * size(raw_spec, kind=int64))
+            else
             ! Construct Filename "MW3.1_X0.dat"
             if (k - 1 == 10) then
                 file_path = trim(ctx%sps_home) // '/data/dust/dustem/' // &
@@ -960,6 +1035,7 @@ contains
 
             ! Conversion: microns -> Angstroms
             raw_lam = raw_lam * 1.0e4_wp
+            end if
             ! Interpolate every U_min column for this Q_PAH in linear space.
             ! Match legacy behavior: only populate wavelengths >= 1 micron
             ! and allow linear extrapolation beyond the native dust table range.
@@ -1016,9 +1092,23 @@ contains
         
         integer :: u_file, io_stat, i, i1, i2
         character(len=1024) :: file_path
-        real(WP), dimension(NAGNDUST_SPEC) :: agn_lam
-        real(WP), dimension(NAGNDUST_SPEC, NAGNDUST) :: agn_raw
-        
+        real(WP), allocatable :: agn_lam(:)
+        real(WP), allocatable :: agn_raw(:, :)
+        type(datalib_t) :: lib
+        integer(int64) :: off
+        integer :: nlam
+
+        if (use_standard_library(ctx, 'agn_torus', 'clumpy')) then
+            call datalib_open(lib, ctx%sps_home, 'agn_torus', 'clumpy')
+            call standard_axis(ctx, 'agn_torus', 'clumpy', 'tau', ctx%state%agndust_tau)
+            call datalib_axis_values(lib, 'wavelength', agn_lam)
+            nlam = size(agn_lam)
+            allocate(agn_raw(nlam, NAGNDUST))
+            call datalib_check_array(lib, 'spectra', [character(len=10) :: 'tau', 'wavelength'], [NAGNDUST, nlam], off)
+            call datalib_read_real(lib, 'spectra', size(agn_raw, kind=int64), agn_raw, off)
+        else
+        nlam = NAGNDUST_SPEC
+        allocate(agn_lam(nlam), agn_raw(nlam, NAGNDUST))
         file_path = trim(ctx%sps_home) // '/data/dust/Nenkova08_y010_torusg_n10_q2.0.dat'
         
         if (VERBOSE > 1) print *, 'Reading AGN Dust: ', trim(file_path)
@@ -1039,11 +1129,12 @@ contains
             read(u_file, *) agn_lam(i), agn_raw(i, :)
         end do
         close(u_file)
+        end if
 
         ! Interpolate onto master grid
         ! Models are usually defined over a subset of the FSPS range
         i1 = max(find_interval(ctx%state%spec_lambda, agn_lam(1)), 1)
-        i2 = max(find_interval(ctx%state%spec_lambda, agn_lam(NAGNDUST_SPEC)), 1)
+        i2 = max(find_interval(ctx%state%spec_lambda, agn_lam(nlam)), 1)
 
         ctx%state%agndust_spec = 0.0_wp
 
@@ -1083,87 +1174,43 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         character(len=*), intent(in), optional :: alt_filename
 
-        integer :: u_file, io_stat, i_filt, i_point, i_grid, n_points, start_idx, end_idx
-        character(len=256) :: line_buf
-        character(len=1024) :: file_path
-        real(WP), allocatable :: raw_lam(:), raw_trans(:)
-        real(WP) :: val_lam, val_trans, norm_fac
-        
-        ! 1. Determine File Path
-        if (present(alt_filename) .and. len_trim(alt_filename) > 0) then
-            file_path = trim(ctx%sps_home) // '/data/' // trim(alt_filename)
+        integer :: i_filt, i_point, i_grid, n_points, start_idx, end_idx, first
+        real(WP), allocatable :: all_lam(:), all_trans(:), raw_lam(:), raw_trans(:)
+        integer, allocatable :: npts(:)
+        real(WP) :: val_lam, norm_fac
+        logical :: use_alt
+
+        ! 1. Raw curves: (wavelength, transmission) points of every filter, as tabulated
+        ! ------------------------------------------------------------------------------
+        use_alt = .false.
+        if (present(alt_filename)) use_alt = (len_trim(alt_filename) > 0)
+        if (use_alt) then
+            call read_filters_legacy(ctx, trim(ctx%sps_home) // '/data/' // trim(alt_filename), &
+                                     all_lam, all_trans, npts)
+        else if (use_standard_library(ctx, 'filters', 'allfilters')) then
+            call read_filters_standard(ctx, all_lam, all_trans, npts)
         else
-            file_path = trim(ctx%sps_home) // '/data/allfilters.dat'
+            call read_filters_legacy(ctx, trim(ctx%sps_home) // '/data/allfilters.dat', all_lam, all_trans, npts)
         end if
 
-        if (VERBOSE > 1) print *, 'Reading Filters: ', trim(file_path)
-
-        open(newunit=u_file, file=trim(file_path), status='old', &
-             action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-
-        ! Header Skip
-        read(u_file, *) 
-
-        ! Allocate temporary buffers for raw filter shapes
-        allocate(raw_lam(MAX_POINTS))
-        allocate(raw_trans(MAX_POINTS))
+        allocate(raw_lam(maxval(npts)), raw_trans(maxval(npts)))
 
         ! 2. Filter Loop
         ! --------------
-        ! Iterate over the number of bands defined in the context (nbands)
+        first = 0
         do i_filt = 1, ctx%state%nbands
-            
+
+            ! Repeated wavelengths are dropped and negative transmissions clamped
             n_points = 0
-
-            block_read: do i_point = 1, MAX_POINTS
-                ! Read line as text first
-                read(u_file, '(A)', iostat=io_stat) line_buf
-                
-                ! Check EOF
-                if (io_stat < 0) then
-                    if (n_points > 0 .and. i_filt == ctx%state%nbands) exit block_read
-                    call handle_read_error(file_path, 0)
-                end if
-
-                ! Handle indented comments/headers
-                line_buf = adjustl(line_buf)
-
-                ! Skip blank lines (matches list-directed read behavior)
-                if (len_trim(line_buf) == 0) cycle block_read
-                
-                ! Check for Comment/Header (Legacy filters start with #)
-                if (line_buf(1:1) == '#') then
-                    if (n_points > 0) then
-                        ! We finished a block and hit the header of the next one
-                        ! Backspace so the next i_filt loop can read this header/comment if needed
-                        ! (Or essentially, we are just done with this filter)
-                        backspace(u_file)
-                        exit block_read
-                    else
-                        ! We are likely sitting on the header of the current filter
-                        cycle block_read
-                    end if
-                end if
-
-                ! Parse data from string
-                read(line_buf, *, iostat=io_stat) val_lam, val_trans
-                if (io_stat /= 0) then
-                    ! If we fail to parse numbers here, it's a true error
-                    call handle_read_error(file_path, i_point)
-                end if
-
+            do i_point = first + 1, first + npts(i_filt)
                 if (n_points > 0) then
-                    if (abs(val_lam - raw_lam(n_points)) < SAFE_FLOOR) then
-                        ! Duplicate point, skip
-                        cycle block_read
-                    end if
+                    if (abs(all_lam(i_point) - raw_lam(n_points)) < SAFE_FLOOR) cycle
                 end if
-
                 n_points = n_points + 1
-                raw_lam(n_points)   = val_lam
-                raw_trans(n_points) = max(val_trans, 0.0_wp)
-            end do block_read
+                raw_lam(n_points) = all_lam(i_point)
+                raw_trans(n_points) = max(all_trans(i_point), 0.0_wp)
+            end do
+            first = first + npts(i_filt)
 
             ! 3. Interpolate onto Master Grid
             ! -------------------------------
@@ -1211,7 +1258,6 @@ contains
 
         end do
 
-        close(u_file)
         deallocate(raw_lam, raw_trans)
 
         ! ! 4b. IR Filter Renormalization (Legacy Compatibility)
@@ -1244,6 +1290,99 @@ contains
         end do
 
     end subroutine load_filter_definitions
+
+    !> @brief Filter curves from a legacy filter file: one header line, then per filter a `#`
+    !> line and (wavelength, transmission) rows. Returns the points as tabulated.
+    subroutine read_filters_legacy(ctx, file_path, all_lam, all_trans, npts)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: file_path
+        real(WP), allocatable, intent(out) :: all_lam(:), all_trans(:)
+        integer, allocatable, intent(out) :: npts(:)
+
+        integer :: u_file, io_stat, i_filt, i_point, n_points, ntot
+        character(len=256) :: line_buf
+        real(WP) :: val_lam, val_trans
+        real(WP), allocatable :: tmp(:)
+
+        if (VERBOSE > 1) print *, 'Reading Filters: ', trim(file_path)
+
+        open(newunit=u_file, file=trim(file_path), status='old', &
+             action='read', iostat=io_stat)
+        if (io_stat /= 0) call handle_read_error(file_path, 0)
+
+        ! Header Skip
+        read(u_file, *) 
+
+        allocate(npts(ctx%state%nbands), all_lam(MAX_POINTS), all_trans(MAX_POINTS))
+        ntot = 0
+        do i_filt = 1, ctx%state%nbands
+            n_points = 0
+            block_read: do i_point = 1, MAX_POINTS
+                read(u_file, '(A)', iostat=io_stat) line_buf
+                if (io_stat < 0) then
+                    if (n_points > 0 .and. i_filt == ctx%state%nbands) exit block_read
+                    call handle_read_error(file_path, 0)
+                end if
+
+                ! Handle indented comments/headers; skip blank lines
+                line_buf = adjustl(line_buf)
+                if (len_trim(line_buf) == 0) cycle block_read
+
+                ! A '#' line ends the current filter (backspace: it heads the next one) or, before
+                ! any point, is the current filter's header
+                if (line_buf(1:1) == '#') then
+                    if (n_points > 0) then
+                        backspace(u_file)
+                        exit block_read
+                    else
+                        cycle block_read
+                    end if
+                end if
+
+                read(line_buf, *, iostat=io_stat) val_lam, val_trans
+                if (io_stat /= 0) call handle_read_error(file_path, i_point)
+
+                if (ntot == size(all_lam)) then
+                    allocate(tmp(2 * size(all_lam)))
+                    tmp(1:ntot) = all_lam(1:ntot)
+                    call move_alloc(tmp, all_lam)
+                    allocate(tmp(2 * size(all_trans)))
+                    tmp(1:ntot) = all_trans(1:ntot)
+                    call move_alloc(tmp, all_trans)
+                end if
+                n_points = n_points + 1
+                ntot = ntot + 1
+                all_lam(ntot) = val_lam
+                all_trans(ntot) = val_trans
+            end do block_read
+            npts(i_filt) = n_points
+        end do
+        close(u_file)
+    end subroutine read_filters_legacy
+
+    !> @brief Filter curves from the standard library filters/allfilters.
+    subroutine read_filters_standard(ctx, all_lam, all_trans, npts)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), allocatable, intent(out) :: all_lam(:), all_trans(:)
+        integer, allocatable, intent(out) :: npts(:)
+        type(datalib_t) :: lib
+        integer(int64) :: off, ntot
+
+        call datalib_open(lib, ctx%sps_home, 'filters', 'allfilters')
+        allocate(npts(ctx%state%nbands))
+        call datalib_check_array(lib, 'npoints', ['filter'], [ctx%state%nbands], off)
+        call datalib_read_int(lib, 'npoints', int(ctx%state%nbands, int64), npts, off)
+        ntot = sum(int(npts, int64))
+        if (any(npts < 0) .or. datalib_array_len(lib, 'wavelength') /= ntot .or. &
+            datalib_array_len(lib, 'transmission') /= ntot) then
+            write(error_unit, '(A)') '[FSPS_IO] Error: filters/allfilters: wavelength and transmission ' // &
+                'must have sum(npoints) values'
+            error stop 1
+        end if
+        allocate(all_lam(ntot), all_trans(ntot))
+        call datalib_read_real(lib, 'wavelength', ntot, all_lam)
+        call datalib_read_real(lib, 'transmission', ntot, all_trans)
+    end subroutine read_filters_standard
 
     !> @brief Applies frequency-dependent normalization to Infrared (IR) filter transmission curves.
     !>
@@ -1278,6 +1417,11 @@ contains
         integer :: j, i_filt
         real(WP) :: d
 
+        if (use_standard_library(ctx, 'filters', 'allfilters')) then
+            call apply_standard_filter_calibration(ctx)
+            return
+        end if
+
         ! 1. Normalize nu*fnu = const (IRAC, PACS, SPIRE, IRAS)
         do j = 1, 14
             i_filt = FILTER_IND_IR(j)
@@ -1310,6 +1454,55 @@ contains
 
     end subroutine apply_legacy_filter_norm
 
+    !> @brief The calibration of a standard filter library: each filter whose entry in
+    !> metadata "filters" has a "calibration" {lambda_ref, exponent} is divided by
+    !> integral (lambda/lambda_ref)^exponent T/lambda dlambda (exponent -1: flat nu f_nu,
+    !> -2: beta = 2 blackbody), as apply_legacy_filter_norm does for the legacy list.
+    subroutine apply_standard_filter_calibration(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+        integer :: flist, entry, cal, i_filt
+        real(WP) :: lam0, expo, d
+        logical :: ok1, ok2
+
+        call datalib_open(lib, ctx%sps_home, 'filters', 'allfilters')
+        flist = datalib_meta_node(lib, 'filters')
+        if (flist == 0) return
+        if (json_len(lib%doc, flist) /= ctx%state%nbands) then
+            write(error_unit, '(A)') '[FSPS_IO] Error: filters/allfilters: metadata "filters" must have one entry per filter'
+            error stop 1
+        end if
+        do i_filt = 1, ctx%state%nbands
+            entry = json_item(lib%doc, flist, i_filt)
+            cal = json_child(lib%doc, entry, 'calibration')
+            if (cal == 0) cycle
+            lam0 = json_real(lib%doc, json_child(lib%doc, cal, 'lambda_ref'), ok1)
+            expo = json_real(lib%doc, json_child(lib%doc, cal, 'exponent'), ok2)
+            if (.not. (ok1 .and. ok2) .or. lam0 <= 0.0_wp) then
+                write(error_unit, '(A,I0)') '[FSPS_IO] Error: filters/allfilters: bad calibration of filter ', i_filt
+                error stop 1
+            end if
+            ! The exponents of the legacy list are written as the same literals as in
+            ! apply_legacy_filter_norm, so that both layouts give identical bands
+            if (expo == -1.0_wp) then
+                d = integrate_trapezoid_array(ctx%state%spec_lambda, &
+                    (ctx%state%spec_lambda / lam0)**(-1.0_wp) * &
+                    ctx%state%bands(:, i_filt) / (ctx%state%spec_lambda + SAFE_FLOOR))
+            else if (expo == -2.0_wp) then
+                d = integrate_trapezoid_array(ctx%state%spec_lambda, &
+                    (ctx%state%spec_lambda / lam0)**(-2.0_wp) * &
+                    ctx%state%bands(:, i_filt) / (ctx%state%spec_lambda + SAFE_FLOOR))
+            else
+                d = integrate_trapezoid_array(ctx%state%spec_lambda, &
+                    (ctx%state%spec_lambda / lam0)**expo * &
+                    ctx%state%bands(:, i_filt) / (ctx%state%spec_lambda + SAFE_FLOOR))
+            end if
+            if (d > SAFE_FLOOR) then
+                ctx%state%bands(:, i_filt) = ctx%state%bands(:, i_filt) / d
+            end if
+        end do
+    end subroutine apply_standard_filter_calibration
+
     !> @brief Loads standard SEDs (Vega, Sun) for photometric calibration.
     !>
     !> @details
@@ -1332,12 +1525,9 @@ contains
     subroutine load_standard_sed(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: u_file, io_stat, i
-        character(len=1024) :: file_path
+        integer :: i
         real(WP), allocatable :: raw_lam(:), raw_flux(:)
-
-        allocate(raw_lam(N_SED_POINTS))
-        allocate(raw_flux(N_SED_POINTS))
+        logical :: is_flambda
 
         ! ! Add defensive check
         ! if (all(ctx%state%filter_leff < tiny(0.0_wp))) then
@@ -1348,24 +1538,13 @@ contains
         ! --------------------------------------------------------------------
         ! 1. VEGA (Kurucz Model)
         ! --------------------------------------------------------------------
-        file_path = trim(ctx%sps_home) // '/data/spectra/A0V_KURUCZ_92.SED'
-        if (VERBOSE > 1) print *, 'Reading Vega SED: ', trim(file_path)
+        call read_reference_sed(ctx, 'vega', 'A0V_KURUCZ_92.SED', 1, .true., raw_lam, raw_flux, is_flambda)
 
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        read(u_file, *) ! Header
-
-        do i = 1, N_SED_POINTS
-            read(u_file, *) raw_lam(i), raw_flux(i)
-        end do
-        close(u_file)
-        
         ctx%state%vega_spec = 10.0_wp**interpolate_linear( &
              log10(raw_lam), log10(raw_flux + SAFE_FLOOR), log10(ctx%state%spec_lambda) )
         
         ! Apply F_lambda -> F_nu scaling factor (lambda^2)
-        ctx%state%vega_spec = ctx%state%vega_spec * (ctx%state%spec_lambda**2)
+        if (is_flambda) ctx%state%vega_spec = ctx%state%vega_spec * (ctx%state%spec_lambda**2)
 
         ! Only clamp the upper tail (> maxval).
         ! Legacy code allows interpolation to extrapolate blueward (lower indices).
@@ -1376,19 +1555,11 @@ contains
         ! --------------------------------------------------------------------
         ! 2. SUN (STScI)
         ! --------------------------------------------------------------------
-        file_path = trim(ctx%sps_home) // '/data/spectra/SUN_STScI.SED'
-        if (VERBOSE > 1) print *, 'Reading Sun SED: ', trim(file_path)
+        call read_reference_sed(ctx, 'sun', 'SUN_STScI.SED', 0, .false., raw_lam, raw_flux, is_flambda)
 
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-
-        do i = 1, N_SED_POINTS
-            read(u_file, *) raw_lam(i), raw_flux(i)
-        end do
-        close(u_file)
-        
         ctx%state%sun_spec = 10.0_wp**interpolate_linear( &
              log10(raw_lam), log10(raw_flux + SAFE_FLOOR), log10(ctx%state%spec_lambda) )
+        if (is_flambda) ctx%state%sun_spec = ctx%state%sun_spec * (ctx%state%spec_lambda**2)
 
         ! ! Apply F_lambda -> F_nu scaling factor (lambda^2) to Sun spectrum
         ! ctx%state%sun_spec = ctx%state%sun_spec * (ctx%state%spec_lambda**2)
@@ -1441,6 +1612,54 @@ contains
         deallocate(raw_lam, raw_flux)
 
     end subroutine load_standard_sed
+
+    !> @brief A reference spectrum (wavelength in A, flux) from the standard library
+    !> reference_spectra/<name> or the legacy file data/spectra/<legacy_file> (N_SED_POINTS rows
+    !> after `nskip` header lines). `is_flambda` says whether the flux is per unit wavelength.
+    subroutine read_reference_sed(ctx, name, legacy_file, nskip, legacy_flambda, raw_lam, raw_flux, is_flambda)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: name, legacy_file
+        integer, intent(in) :: nskip
+        logical, intent(in) :: legacy_flambda
+        real(WP), allocatable, intent(out) :: raw_lam(:), raw_flux(:)
+        logical, intent(out) :: is_flambda
+
+        type(datalib_t) :: lib
+        integer(int64) :: off
+        integer :: u_file, io_stat, i
+        character(len=1024) :: file_path
+        character(len=:), allocatable :: fd
+
+        if (use_standard_library(ctx, 'reference_spectra', name)) then
+            call datalib_open(lib, ctx%sps_home, 'reference_spectra', name)
+            fd = datalib_meta_string(lib, 'flux_density')
+            if (fd /= 'f_lambda' .and. fd /= 'f_nu') then
+                write(error_unit, '(A)') '[FSPS_IO] Error: reference_spectra/' // name // &
+                    ': flux_density must be "f_lambda" or "f_nu"'
+                error stop 1
+            end if
+            is_flambda = (fd == 'f_lambda')
+            call datalib_axis_values(lib, 'wavelength', raw_lam)
+            allocate(raw_flux(size(raw_lam)))
+            call datalib_check_array(lib, 'flux', ['wavelength'], [size(raw_lam)], off)
+            call datalib_read_real(lib, 'flux', size(raw_flux, kind=int64), raw_flux, off)
+            return
+        end if
+
+        is_flambda = legacy_flambda
+        file_path = trim(ctx%sps_home) // '/data/spectra/' // legacy_file
+        if (VERBOSE > 1) print *, 'Reading SED: ', trim(file_path)
+        allocate(raw_lam(N_SED_POINTS), raw_flux(N_SED_POINTS))
+        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+        if (io_stat /= 0) call handle_read_error(file_path, 0)
+        do i = 1, nskip
+            read(u_file, *)
+        end do
+        do i = 1, N_SED_POINTS
+            read(u_file, *) raw_lam(i), raw_flux(i)
+        end do
+        close(u_file)
+    end subroutine read_reference_sed
 
     !> @brief Loads spectral index definitions from disk.
     !>
@@ -1512,49 +1731,17 @@ contains
     subroutine load_wr_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: u_file, io_stat, i, j, i1
-        character(len=1024) :: file_path
-        real(WP) :: d1, dz
+        integer :: i, j, i1
+        real(WP) :: dz
         
-        ! Raw data buffers (Hardcoded sizes from legacy)
+        ! Raw data: wavelength grid, the 5 metallicities and the spectra (lambda, T, Z)
         real(WP), dimension(5) :: twrzmet
-        real(WP), dimension(NLAMWR) :: tlamwr
-        real(WP), dimension(NLAMWR) :: tspecwr
-        ! Heap allocation for large array
+        real(WP), allocatable :: tlamwr(:), tspecwr(:)
         real(WP), allocatable :: twr_raw(:,:,:)
-        
-        allocate(twr_raw(NLAMWR, NDIM_WR, 5))
 
-        ! 1. Load Teff Arrays
-        ! -------------------
-        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_WN.teff'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        read(u_file, *) ctx%state%wrn_logt
-        close(u_file)
-
-        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_WC.teff'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        read(u_file, *) ctx%state%wrc_logt
-        close(u_file)
-
-        ! 2. Load and Process WN Spectra
-        ! ------------------------------
-        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_WN_Zall.spec'
-        if (VERBOSE > 1) print *, 'Reading/Aligning WR-N: ', trim(file_path)
-        
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        read(u_file, *) tlamwr
-        do j = 1, 5
-            do i = 1, NDIM_WR
-                read(u_file, *) d1, twrzmet(j)
-                read(u_file, *) twr_raw(:, i, j)
-            end do
-        end do
-        close(u_file)
+        ! 1. WN spectra (and Teff grid)
+        call read_wr_raw(ctx, 'WN', ctx%state%wrn_logt, tlamwr, twrzmet, twr_raw)
+        allocate(tspecwr(size(tlamwr)))
 
         ! Convert raw Z to log10(Z/Zsol) for interpolation
         twrzmet = log10(twrzmet / ctx%state%zsol_spec)
@@ -1579,20 +1766,7 @@ contains
 
         ! 3. Load and Process WC Spectra (Identical Logic)
         ! ------------------------------------------------
-        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_WC_Zall.spec'
-        if (VERBOSE > 1) print *, 'Reading/Aligning WR-C: ', trim(file_path)
-        
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        read(u_file, *) tlamwr
-        do j = 1, 5
-            do i = 1, NDIM_WR
-                read(u_file, *) d1, twrzmet(j)
-                read(u_file, *) twr_raw(:, i, j)
-            end do
-        end do
-        close(u_file)
+        call read_wr_raw(ctx, 'WC', ctx%state%wrc_logt, tlamwr, twrzmet, twr_raw)
 
         twrzmet = log10(twrzmet / ctx%state%zsol_spec)
 
@@ -1613,6 +1787,55 @@ contains
         deallocate(twr_raw)
 
     end subroutine load_wr_spectra
+
+    !> @brief Raw CMFGEN Wolf-Rayet spectra of one type ('WN' or 'WC'): log Teff grid,
+    !> wavelengths, the 5 metallicities (Z) and the spectra (lambda, Teff, Z).
+    subroutine read_wr_raw(ctx, wtype, logt, lam, zmet, spec)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=2), intent(in) :: wtype
+        real(WP), intent(out) :: logt(NDIM_WR), zmet(5)
+        real(WP), allocatable, intent(out) :: lam(:), spec(:, :, :)
+
+        type(datalib_t) :: lib
+        integer(int64) :: off
+        integer :: u_file, io_stat, i, j
+        character(len=1024) :: file_path
+        character(len=:), allocatable :: name
+        real(WP) :: d1
+
+        name = 'cmfgen_' // achar(iachar(wtype(1:1)) + 32) // achar(iachar(wtype(2:2)) + 32)
+        if (use_standard_library(ctx, 'hot_star_spectra', name)) then
+            call datalib_open(lib, ctx%sps_home, 'hot_star_spectra', name)
+            call standard_axis(ctx, 'hot_star_spectra', name, 'logT', logt)
+            call standard_axis(ctx, 'hot_star_spectra', name, 'Z', zmet)
+            call datalib_axis_values(lib, 'wavelength', lam)
+            allocate(spec(size(lam), NDIM_WR, 5))
+            call datalib_check_array(lib, 'flux', [character(len=10) :: 'Z', 'logT', 'wavelength'], &
+                                     [5, NDIM_WR, size(lam)], off)
+            call datalib_read_real(lib, 'flux', size(spec, kind=int64), spec, off)
+            return
+        end if
+
+        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_' // wtype // '.teff'
+        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+        if (io_stat /= 0) call handle_read_error(file_path, 0)
+        read(u_file, *) logt
+        close(u_file)
+
+        file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/CMFGEN_' // wtype // '_Zall.spec'
+        if (VERBOSE > 1) print *, 'Reading WR spectra: ', trim(file_path)
+        allocate(lam(NLAMWR), spec(NLAMWR, NDIM_WR, 5))
+        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+        if (io_stat /= 0) call handle_read_error(file_path, 0)
+        read(u_file, *) lam
+        do j = 1, 5
+            do i = 1, NDIM_WR
+                read(u_file, *) d1, zmet(j)
+                read(u_file, *) spec(:, i, j)
+            end do
+        end do
+        close(u_file)
+    end subroutine read_wr_raw
 
     !> @brief Loads AGB (Asymptotic Giant Branch) spectral libraries.
     !>
@@ -1644,121 +1867,135 @@ contains
         integer, parameter :: NSPEC_AGB = 6146
         integer, parameter :: NSPEC_ARINGER = 9032
         
-        ! Allocatable buffers for large arrays
-        real(WP), allocatable :: agb_lam(:)
-        real(WP), allocatable :: temp_row_o(:), temp_row_c(:)
-        real(WP), allocatable :: raw_spec_o(:,:), raw_spec_c(:,:)
-        
-        real(WP), allocatable :: aringer_lam(:)
-        real(WP), allocatable :: temp_row_car(:)
-        real(WP), allocatable :: raw_spec_car(:,:)
+        ! Raw spectra (lambda, type) on each family's own wavelength grid
+        real(WP), allocatable :: lam_o(:), lam_c(:), lam_car(:)
+        real(WP), allocatable :: raw_spec_o(:,:), raw_spec_c(:,:), raw_spec_car(:,:)
+        real(WP), allocatable :: temp_row(:)
         
         real(WP), dimension(22, N_AGB_O) :: tagb_logt_o_raw
         real(WP), dimension(22) :: tagb_logz_o
 
-        ! Allocate heap memory
-        allocate(agb_lam(NSPEC_AGB), aringer_lam(NSPEC_ARINGER))
-        allocate(temp_row_o(N_AGB_O), temp_row_c(N_AGB_C), temp_row_car(N_AGB_CAR))
-        allocate(raw_spec_o(NSPEC_AGB, N_AGB_O))
-        allocate(raw_spec_c(NSPEC_AGB, N_AGB_C))
-        allocate(raw_spec_car(NSPEC_ARINGER, N_AGB_CAR))
+        if (use_standard_library(ctx, 'agb_spectra', 'orich')) then
+            ! Standard format: Teff in K and spectra (type, wavelength) per family
+            call read_agb_standard('orich', N_AGB_O, lam_o, raw_spec_o)
+            call standard_axis(ctx, 'agb_spectra', 'orich', 'logZ', tagb_logz_o)
+            call read_teff('orich', N_AGB_O, 22, tagb_logt_o_raw)
+            call read_agb_standard('crich', N_AGB_C, lam_c, raw_spec_c)
+            call read_teff('crich', N_AGB_C, 1, ctx%state%agb_logt_c)
+            call read_agb_standard('crich_aringer', N_AGB_CAR, lam_car, raw_spec_car)
+            call read_teff('crich_aringer', N_AGB_CAR, 1, ctx%state%agb_logt_car)
+        else
+            ! 1. O-rich Teff Grid
+            file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Orich.teff'
+            open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+            if (io_stat /= 0) call handle_read_error(file_path, 0)
+            read(u_file, *) char_dummy
+            read(u_file, *) dumr1, tagb_logz_o
+            do i = 1, N_AGB_O
+                read(u_file, *) dumr1, tagb_logt_o_raw(:, i)
+            end do
+            close(u_file)
 
-        ! 1. O-rich Teff Grid
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Orich.teff'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        read(u_file, *) char_dummy
-        read(u_file, *) dumr1, tagb_logz_o
-        do i = 1, N_AGB_O
-            read(u_file, *) dumr1, tagb_logt_o_raw(:, i)
-        end do
-        close(u_file)
+            ! 2. C-rich Teff Grid
+            file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich.teff'
+            open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+            if (io_stat /= 0) call handle_read_error(file_path, 0)
+            read(u_file, *) char_dummy
+            do i = 1, N_AGB_C
+                read(u_file, *) dumr1, ctx%state%agb_logt_c(i)
+            end do
+            close(u_file)
 
+            ! 3-4. O-rich and C-rich spectra: rows of (lambda, one value per type)
+            call read_agb_legacy('Orich.spec', NSPEC_AGB, N_AGB_O, lam_o, raw_spec_o)
+            call read_agb_legacy('Crich.spec', NSPEC_AGB, N_AGB_C, lam_c, raw_spec_c)
+
+            ! 5. Aringer C-rich
+            file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich_Aringer.teff'
+            open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+            if (io_stat /= 0) call handle_read_error(file_path, 0)
+            read(u_file, *) ctx%state%agb_logt_car
+            close(u_file)
+            call read_agb_legacy('Crich_Aringer.spec', NSPEC_ARINGER, N_AGB_CAR, lam_car, raw_spec_car)
+        end if
+
+        ! O-rich Teff at the isochrone metallicities, then logged
         do i = 1, ctx%state%nz
             i1 = min(max(find_interval(tagb_logz_o, log10(ctx%state%zlegend(i)/ctx%state%zsol_spec)), 1), 21)
             dz = (log10(ctx%state%zlegend(i)/ctx%state%zsol_spec) - tagb_logz_o(i1)) / (tagb_logz_o(i1+1) - tagb_logz_o(i1))
             ctx%state%agb_logt_o(i, :) = (1.0_wp - dz) * tagb_logt_o_raw(i1, :) + dz * tagb_logt_o_raw(i1+1, :)
         end do
         ctx%state%agb_logt_o = log10(ctx%state%agb_logt_o)
-
-        ! 2. C-rich Teff Grid
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich.teff'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        read(u_file, *) char_dummy
-        do i = 1, N_AGB_C
-            read(u_file, *) dumr1, ctx%state%agb_logt_c(i)
-        end do
-        close(u_file)
         ctx%state%agb_logt_c = log10(ctx%state%agb_logt_c)
-
-        ! 3. O-rich Spectra (Read & Interpolate)
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Orich.spec'
-        if (VERBOSE > 1) print *, 'Reading AGB Orich: ', trim(file_path)
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        do i = 1, NSPEC_AGB
-            read(u_file, *) agb_lam(i), temp_row_o
-            raw_spec_o(i, :) = temp_row_o
-        end do
-        close(u_file)
-        
-        do i = 1, N_AGB_O
-            do i_spec = 1, ctx%state%nspec
-                ctx%state%agb_spec_o(i_spec, i) = max(interpolate_linear(agb_lam, raw_spec_o(:, i), &
-                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
-            end do
-        end do
-
-        ! 4. C-rich Spectra (Read & Interpolate)
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich.spec'
-        if (VERBOSE > 1) print *, 'Reading AGB Crich: ', trim(file_path)
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        do i = 1, NSPEC_AGB
-            read(u_file, *) agb_lam(i), temp_row_c
-            raw_spec_c(i, :) = temp_row_c
-        end do
-        close(u_file)
-        
-        do i = 1, N_AGB_C
-            do i_spec = 1, ctx%state%nspec
-                ctx%state%agb_spec_c(i_spec, i) = max(interpolate_linear(agb_lam, raw_spec_c(:, i), &
-                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
-            end do
-        end do
-
-        ! 5. Aringer C-rich (Read & Interpolate)
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich_Aringer.teff'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        read(u_file, *) ctx%state%agb_logt_car
-        close(u_file)
         ctx%state%agb_logt_car = log10(ctx%state%agb_logt_car)
 
-        file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/Crich_Aringer.spec'
-        open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
-        if (io_stat /= 0) call handle_read_error(file_path, 0)
-        
-        do i = 1, NSPEC_ARINGER
-            read(u_file, *) aringer_lam(i), temp_row_car
-            raw_spec_car(i, :) = temp_row_car
+        ! Spectra onto the master grid
+        do i = 1, N_AGB_O
+            do i_spec = 1, ctx%state%nspec
+                ctx%state%agb_spec_o(i_spec, i) = max(interpolate_linear(lam_o, raw_spec_o(:, i), &
+                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+            end do
         end do
-        close(u_file)
-        
+        do i = 1, N_AGB_C
+            do i_spec = 1, ctx%state%nspec
+                ctx%state%agb_spec_c(i_spec, i) = max(interpolate_linear(lam_c, raw_spec_c(:, i), &
+                                                   ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
+            end do
+        end do
         do i = 1, N_AGB_CAR
             do i_spec = 1, ctx%state%nspec
-                ctx%state%agb_spec_car(i_spec, i) = max(interpolate_linear(aringer_lam, raw_spec_car(:, i), &
+                ctx%state%agb_spec_car(i_spec, i) = max(interpolate_linear(lam_car, raw_spec_car(:, i), &
                                                      ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
             end do
         end do
 
-        ! Deallocate temporary buffers
-        deallocate(agb_lam, aringer_lam)
-        deallocate(temp_row_o, temp_row_c, temp_row_car)
-        deallocate(raw_spec_o, raw_spec_c, raw_spec_car)
+    contains
+
+        subroutine read_agb_legacy(fname, nlam, ntype, lam, spec)
+            character(len=*), intent(in) :: fname
+            integer, intent(in) :: nlam, ntype
+            real(WP), allocatable, intent(out) :: lam(:), spec(:, :)
+            file_path = trim(ctx%sps_home) // '/data/spectra/AGB_spectra/' // fname
+            if (VERBOSE > 1) print *, 'Reading AGB spectra: ', trim(file_path)
+            allocate(lam(nlam), spec(nlam, ntype), temp_row(ntype))
+            open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
+            if (io_stat /= 0) call handle_read_error(file_path, 0)
+            do i = 1, nlam
+                read(u_file, *) lam(i), temp_row
+                spec(i, :) = temp_row
+            end do
+            close(u_file)
+            deallocate(temp_row)
+        end subroutine read_agb_legacy
+
+        subroutine read_agb_standard(name, ntype, lam, spec)
+            character(len=*), intent(in) :: name
+            integer, intent(in) :: ntype
+            real(WP), allocatable, intent(out) :: lam(:), spec(:, :)
+            type(datalib_t) :: lib
+            integer(int64) :: off
+            call datalib_open(lib, ctx%sps_home, 'agb_spectra', name)
+            call datalib_axis_values(lib, 'wavelength', lam)
+            allocate(spec(size(lam), ntype))
+            call datalib_check_array(lib, 'flux', [character(len=10) :: 'type', 'wavelength'], [ntype, size(lam)], off)
+            call datalib_read_real(lib, 'flux', size(spec, kind=int64), spec, off)
+        end subroutine read_agb_standard
+
+        !> Teff (K) of each type, [type] or [type, logZ] (then stored as (logZ, type))
+        subroutine read_teff(name, ntype, nz_teff, dest)
+            character(len=*), intent(in) :: name
+            integer, intent(in) :: ntype, nz_teff
+            real(WP), intent(out) :: dest(nz_teff * ntype)
+            type(datalib_t) :: lib
+            integer(int64) :: off
+            call datalib_open(lib, ctx%sps_home, 'agb_spectra', name)
+            if (nz_teff > 1) then
+                call datalib_check_array(lib, 'teff', [character(len=4) :: 'type', 'logZ'], [ntype, nz_teff], off)
+            else
+                call datalib_check_array(lib, 'teff', ['type'], [ntype], off)
+            end if
+            call datalib_read_real(lib, 'teff', int(nz_teff * ntype, int64), dest, off)
+        end subroutine read_teff
 
     end subroutine load_agb_spectra
 
@@ -1791,6 +2028,19 @@ contains
         real(WP), allocatable :: pagb_lam(:)
         real(WP), allocatable :: pagb_raw(:,:,:) ! 1=Halo, 2=Solar
 
+        if (use_standard_library(ctx, 'hot_star_spectra', 'post_agb')) then
+            block
+                type(datalib_t) :: lib
+                integer(int64) :: off
+                call datalib_open(lib, ctx%sps_home, 'hot_star_spectra', 'post_agb')
+                call standard_axis(ctx, 'hot_star_spectra', 'post_agb', 'teff', ctx%state%pagb_logt)
+                call datalib_axis_values(lib, 'wavelength', pagb_lam)
+                allocate(pagb_raw(size(pagb_lam), NDIM_PAGB, 2))
+                call datalib_check_array(lib, 'flux', [character(len=11) :: 'composition', 'teff', 'wavelength'], &
+                                         [2, NDIM_PAGB, size(pagb_lam)], off)
+                call datalib_read_real(lib, 'flux', size(pagb_raw, kind=int64), pagb_raw, off)
+            end block
+        else
         allocate(pagb_lam(NSPEC_PAGB))
         allocate(pagb_raw(NSPEC_PAGB, NDIM_PAGB, 2))
         
@@ -1802,7 +2052,6 @@ contains
             read(u_file, *) ctx%state%pagb_logt(i)
         end do
         close(u_file)
-        ctx%state%pagb_logt = log10(ctx%state%pagb_logt)
 
         ! 2. Solar Spec
         file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/ipagb_solar.spec'
@@ -1821,6 +2070,8 @@ contains
             read(u_file, *) pagb_lam(i), pagb_raw(i, :, 1)
         end do
         close(u_file)
+        end if
+        ctx%state%pagb_logt = log10(ctx%state%pagb_logt)
 
         ! 4. Interpolate
         do j = 1, 2
@@ -1875,8 +2126,32 @@ contains
         ! Raw: (Lambda, Geom, Type[H/C], Tau)
         real(WP), dimension(NWG_LAM, NWG_GEOM, 2, NWG_TAU) :: wgtmp
         
-        real(WP), dimension(NSMC_LAM) :: g03lam, g03smc
+        real(WP), allocatable :: g03lam(:), g03smc(:)
+        integer :: nsmc
 
+        if (use_standard_library(ctx, 'attenuation', 'dirty')) then
+            block
+                type(datalib_t) :: lib
+                integer(int64) :: off
+                real(WP), allocatable :: lam(:), curves(:, :, :, :)   ! (lambda, model, tau_V, structure)
+                call datalib_open(lib, ctx%sps_home, 'attenuation', 'dirty')
+                call datalib_axis_values(lib, 'wavelength', lam)
+                if (size(lam) /= NWG_LAM) call wg_size_error()
+                allocate(curves(NWG_LAM, NWG_TAU, NWG_GEOM, 2))
+                call datalib_check_array(lib, 'attenuation', &
+                                         [character(len=10) :: 'structure', 'tau_v', 'model', 'wavelength'], &
+                                         [2, NWG_GEOM, NWG_TAU, NWG_LAM], off)
+                call datalib_read_real(lib, 'attenuation', size(curves, kind=int64), curves, off)
+                wglam = lam
+                do k = 1, 2
+                    do i = 1, NWG_GEOM
+                        do j = 1, NWG_TAU
+                            wgtmp(:, i, k, j) = curves(:, j, i, k)
+                        end do
+                    end do
+                end do
+            end block
+        else
         ! --------------------------------------------------------------------
         ! 1. Witt & Gordon (2000) - Shell (H)
         ! --------------------------------------------------------------------
@@ -1915,6 +2190,7 @@ contains
             end do
         end do
         close(u_file)
+        end if
 
         ! --------------------------------------------------------------------
         ! 3. Interpolate WG00 to Master Grid
@@ -1943,6 +2219,18 @@ contains
         ! --------------------------------------------------------------------
         ! 4. Gordon et al. (2003) SMC Bar
         ! --------------------------------------------------------------------
+        if (use_standard_library(ctx, 'attenuation', 'smc_bar')) then
+            block
+                type(datalib_t) :: lib
+                integer(int64) :: off
+                call datalib_open(lib, ctx%sps_home, 'attenuation', 'smc_bar')
+                call datalib_axis_values(lib, 'wavelength', g03lam)
+                allocate(g03smc(size(g03lam)))
+                call datalib_check_array(lib, 'extinction', ['wavelength'], [size(g03lam)], off)
+                call datalib_read_real(lib, 'extinction', size(g03smc, kind=int64), g03smc, off)
+            end block
+        else
+        allocate(g03lam(NSMC_LAM), g03smc(NSMC_LAM))
         file_path = trim(ctx%sps_home) // '/data/dust/Gordon03_table4.dat'
         open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
         if (io_stat /= 0) call handle_read_error(file_path, 0)
@@ -1955,10 +2243,12 @@ contains
 
         ! Convert microns to Angstroms
         g03lam = g03lam * 1.0e4_wp
+        end if
+        nsmc = size(g03lam)
 
         ! Interpolate SMC
         do n = 1, ctx%state%nspec
-            if (ctx%state%spec_lambda(n) > g03lam(NSMC_LAM)) then
+            if (ctx%state%spec_lambda(n) > g03lam(nsmc)) then
                 ctx%state%g03smcextn(n) = 0.0_wp
             else if (ctx%state%spec_lambda(n) < g03lam(1)) then
                 ctx%state%g03smcextn(n) = g03smc(1)
@@ -1968,6 +2258,11 @@ contains
             end if
         end do
 
+    contains
+        subroutine wg_size_error()
+            write(error_unit, '(A,I0,A)') '[FSPS_IO] Error: attenuation/dirty must have ', NWG_LAM, ' wavelengths'
+            error stop 1
+        end subroutine wg_size_error
     end subroutine load_attenuation_curves
 
     !> @brief Loads the WMBasic spectral library for hot O-stars.
@@ -1998,15 +2293,31 @@ contains
         real(WP) :: dz, log_spec_val
         
         real(WP), dimension(NZWMB) :: zwmb
+        logical :: std
+        type(datalib_t) :: lib
+        integer(int64) :: off
         
         ! Allocatable buffers for raw data handling
         real(WP), allocatable :: wmb_lam(:)
         real(WP), allocatable :: wmb_spec_raw(:,:,:) ! (nspec, logt, logg)
         real(WP), allocatable :: wmbsi(:,:,:,:)      ! (nspec_master, nz, logt, logg)
 
-        allocate(wmb_lam(NSPEC_WMB))
-        allocate(wmb_spec_raw(NSPEC_WMB, NDIM_WMB_LOGT, NDIM_WMB_LOGG))
+        std = use_standard_library(ctx, 'hot_star_spectra', 'wmbasic')
+        if (std) then
+            call datalib_open(lib, ctx%sps_home, 'hot_star_spectra', 'wmbasic')
+            call datalib_axis_values(lib, 'wavelength', wmb_lam)
+            call standard_axis(ctx, 'hot_star_spectra', 'wmbasic', 'logT', ctx%state%wmb_logt)
+            call standard_axis(ctx, 'hot_star_spectra', 'wmbasic', 'logg', ctx%state%wmb_logg)
+            call standard_axis(ctx, 'hot_star_spectra', 'wmbasic', 'Z', zwmb)
+            call datalib_check_array(lib, 'flux', [character(len=10) :: 'Z', 'logg', 'logT', 'wavelength'], &
+                                     [NZWMB, NDIM_WMB_LOGG, NDIM_WMB_LOGT, size(wmb_lam)], off)
+        else
+            allocate(wmb_lam(NSPEC_WMB))
+        end if
+        allocate(wmb_spec_raw(size(wmb_lam), NDIM_WMB_LOGT, NDIM_WMB_LOGG))
         allocate(wmbsi(ctx%state%nspec, NZWMB, NDIM_WMB_LOGT, NDIM_WMB_LOGG))
+
+        if (.not. std) then
 
         ! 1. Read Teff
         file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/WMBASIC.teff'
@@ -2020,17 +2331,25 @@ contains
         ! Hardcoded Logg grid from legacy
         ctx%state%wmb_logg = [3.5_wp, 4.0_wp, 4.5_wp]
 
-        ! 2. Read Z-Legend and Spectra
+        ! 2. Read Z-Legend
         file_path = trim(ctx%sps_home) // '/data/spectra/Hot_spectra/WMBASIC_zlegend.dat'
         open(newunit=u_file, file=trim(file_path), status='old', action='read', iostat=io_stat)
         if (io_stat /= 0) call handle_read_error(file_path, 0)
-
         do z = 1, NZWMB
             read(u_file, *) zwmb(z)
-            write(zstype, '(F6.4)') zwmb(z)
-            
-            ! Read raw file for this Z
-            call load_wmb_raw_z(ctx, zstype, wmb_lam, wmb_spec_raw)
+        end do
+        close(u_file)
+        end if
+
+        ! 3. Spectra, one metallicity at a time
+        do z = 1, NZWMB
+            if (std) then
+                call datalib_read_real(lib, 'flux', size(wmb_spec_raw, kind=int64), wmb_spec_raw, &
+                                       off + int(z - 1, int64) * size(wmb_spec_raw, kind=int64))
+            else
+                write(zstype, '(F6.4)') zwmb(z)
+                call load_wmb_raw_z(ctx, zstype, wmb_lam, wmb_spec_raw)
+            end if
             
             ! Interpolate onto master wavelength grid immediately
             do j = 1, NDIM_WMB_LOGG
@@ -2042,9 +2361,8 @@ contains
                 end do
             end do
         end do
-        close(u_file)
 
-        ! 3. Interpolate to Isochrone Z grid
+        ! 4. Interpolate to Isochrone Z grid
         do z = 1, ctx%state%nz
             i1 = min(max(find_interval(log10(zwmb/ctx%state%zsol_spec), &
                                        log10(ctx%state%zlegend(z)/ctx%state%zsol)), 1), NZWMB-1)
