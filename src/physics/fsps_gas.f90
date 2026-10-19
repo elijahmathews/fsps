@@ -114,9 +114,13 @@ contains
         ! ----------------------------------------------
 
         ! On the device, where the CLOUDY grids are (on the host this was ~60000 interpolations
-        ! and a 0.5 MB upload per call, about a quarter of a full-physics compute_csp_scenario call)
+        ! and a 0.5 MB upload per call, about a quarter of a full-physics compute_csp_scenario call).
+        ! OpenACC multicore keeps the host loop: there the parallel loop segfaulted reading the
+        ! grids through ctx (the same multicore problem as compute_igm_transmission's loop)
         if (calc_cont) then
+#ifndef ACC_MULTICORE
             !$acc parallel loop collapse(2) present(ctx)
+#endif
             do k = 1, NEBNAGE
                 do t = 1, nspec
                     if (use_xrb_grid) then
@@ -131,7 +135,9 @@ contains
         end if
 
         if (calc_lines) then
+#ifndef ACC_MULTICORE
             !$acc parallel loop collapse(2) present(ctx)
+#endif
             do k = 1, NEBNAGE
                 do t = 1, NEMLINE
                     if (use_xrb_grid) then
