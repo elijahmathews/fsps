@@ -19,6 +19,9 @@ program test_standard_library
     use fsps_context_types, only: fsps_context_t
     use fsps_ssp, only: generate_ssp_grid
     use fsps_csp, only: compute_csp_scenario
+    use fsps_json, only: json_doc_t, json_parse_string, json_child, json_item, json_len, json_string, json_real, &
+                         json_int, json_is_integer
+    use, intrinsic :: iso_fortran_env, only: int64
     use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
     implicit none
 
@@ -45,6 +48,7 @@ program test_standard_library
     if (c_setenv('SPS_HOME'//c_null_char, ''//c_null_char, 1_c_int) /= 0) stop 3
     if (c_setenv('FSPS_DATA_FORMAT'//c_null_char, 'standard'//c_null_char, 1_c_int) /= 0) stop 3
 
+    call test_json_parser()
     call test_end_to_end()
     if (len_trim(afe_root) > 0) call test_afe_selection()
 
@@ -58,6 +62,36 @@ contains
         character(len=*), intent(in) :: root
         if (c_setenv('FSPS_DATA_HOME'//c_null_char, trim(root)//c_null_char, 1_c_int) /= 0) stop 3
     end subroutine use_root
+
+    subroutine test_json_parser()
+        type(json_doc_t) :: doc
+        logical :: ok
+        character(len=256) :: msg
+        character(len=*), parameter :: BS = achar(92)
+        character(len=:), allocatable :: text
+        integer :: arr
+
+        call print_group('JSON reader (manifests)')
+        text = '{"s": "a' // BS // '"b' // BS // BS // 'c' // BS // 'u00e9' // BS // 'n", ' // &
+               '"x": [0.1, -2.5e-3, 1E2, 42, -0], "o": {"k": true, "n": null}}'
+        call json_parse_string(doc, text, ok, msg)
+        call assert_true(ok, 'a valid document parses', total_tests, total_failures)
+        call assert_true(json_string(doc, json_child(doc, 1, 's')) == 'a"b' // BS // 'c' // achar(195) // achar(169) // &
+                         achar(10), 'string escapes decoded (quote, backslash, \u00e9 as UTF-8, newline)', &
+                         total_tests, total_failures)
+        arr = json_child(doc, 1, 'x')
+        call assert_true(json_len(doc, arr) == 5 .and. json_real(doc, json_item(doc, arr, 1)) == 0.1_wp .and. &
+                         json_real(doc, json_item(doc, arr, 2)) == -2.5e-3_wp .and. &
+                         json_real(doc, json_item(doc, arr, 3)) == 100.0_wp, &
+                         'numbers read exactly (correctly rounded)', total_tests, total_failures)
+        call assert_true(json_is_integer(doc, json_item(doc, arr, 4)) .and. json_int(doc, json_item(doc, arr, 4)) == 42_int64 &
+                         .and. .not. json_is_integer(doc, json_item(doc, arr, 1)), 'integers told from reals', &
+                         total_tests, total_failures)
+        call json_parse_string(doc, '{"a": [1, 2,]}', ok, msg)
+        call assert_true(.not. ok, 'a trailing comma is rejected', total_tests, total_failures)
+        call json_parse_string(doc, '{"a": 01}', ok, msg)
+        call assert_true(.not. ok, 'a leading zero is rejected', total_tests, total_failures)
+    end subroutine test_json_parser
 
     subroutine test_end_to_end()
         type(fsps_context_t) :: ctx

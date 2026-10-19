@@ -25,6 +25,8 @@ module fsps_json
     integer, parameter :: JSON_K_NULL = 0, JSON_K_FALSE = 1, JSON_K_TRUE = 2, JSON_K_NUMBER = 3, &
                           JSON_K_STRING = 4, JSON_K_ARRAY = 5, JSON_K_OBJECT = 6
     integer, parameter :: MAX_DEPTH = 64
+    !> Backslash as achar(92): some compilers (nvfortran) treat it as an escape in literals
+    character(len=1), parameter :: BSLASH = achar(92)
 
     type :: json_node_t
         integer :: kind = JSON_K_NULL
@@ -520,7 +522,7 @@ contains
             if (c == '"') then
                 p%pos = p%pos + 1
                 exit
-            else if (c == '\') then
+            else if (c == BSLASH) then
                 if (p%pos + 1 > len(p%text)) then
                     call fail(p, 'unterminated string')
                     return
@@ -528,8 +530,8 @@ contains
                 select case (p%text(p%pos + 1:p%pos + 1))
                 case ('"')
                     call pool_append(doc, '"')
-                case ('\')
-                    call pool_append(doc, '\')
+                case (BSLASH)
+                    call pool_append(doc, BSLASH)
                 case ('/')
                     call pool_append(doc, '/')
                 case ('b')
@@ -544,12 +546,12 @@ contains
                     call pool_append(doc, achar(9))
                 case ('u')
                     if (p%pos + 5 > len(p%text)) then
-                        call fail(p, 'bad \u escape')
+                        call fail(p, 'bad unicode escape')
                         return
                     end if
                     read(p%text(p%pos + 2:p%pos + 5), '(Z4)', iostat=ios) code
                     if (ios /= 0) then
-                        call fail(p, 'bad \u escape')
+                        call fail(p, 'bad unicode escape')
                         return
                     end if
                     p%pos = p%pos + 4
@@ -559,7 +561,7 @@ contains
                             call fail(p, 'bad surrogate pair')
                             return
                         end if
-                        if (p%text(p%pos + 2:p%pos + 3) /= '\u') then
+                        if (p%text(p%pos + 2:p%pos + 3) /= BSLASH // 'u') then
                             call fail(p, 'bad surrogate pair')
                             return
                         end if
