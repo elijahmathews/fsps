@@ -28,7 +28,7 @@ module fsps_c_api
     use fsps_photometry, only: compute_magnitudes
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
                             is_ssp_sensitive_float_param
-    use fsps_csp_batch, only: compute_csp_batch
+    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
     use fsps_context_types, only: fsps_context_t
 
     implicit none
@@ -609,6 +609,55 @@ contains
         status = st
         end associate
     end subroutine fsps_context_compute_csp_batch_handle
+
+    !> Where the last batch's spectra are (see batch_spectra_device): the device address, nspec,
+    !> the number of models and the bytes per value (4 or 8); status 1 for a bad handle.
+    subroutine fsps_context_batch_spec_device_handle(handle, ptr, nspec, n, bytes, status) &
+        bind(C, name="fsps_context_batch_spec_device")
+        integer(c_int), value :: handle
+        type(c_ptr), intent(OUT) :: ptr
+        integer(c_int), intent(OUT) :: nspec, n, bytes, status
+        integer :: ns, nm, nb
+
+        ptr = c_null_ptr
+        nspec = 0; n = 0; bytes = 0
+        status = 0
+        if (handle < 1 .or. .not. ALLOCATED(ctx_pool) .or. handle > SIZE(ctx_pool)) then
+            status = 1
+            return
+        end if
+        if (.not. ctx_inuse(handle)) then
+            status = 1
+            return
+        end if
+        call batch_spectra_device(ctx_pool(handle), ptr, ns, nm, nb)
+        nspec = ns; n = nm; bytes = nb
+    end subroutine fsps_context_batch_spec_device_handle
+
+    !> The last batch's spectra on the host at kernel precision (see batch_spectra_host): the
+    !> page-locked host buffer's address, nspec, the number of models and the bytes per value;
+    !> status 1 for a bad handle.
+    subroutine fsps_context_batch_spec_host_handle(handle, ptr, nspec, n, bytes, status) &
+        bind(C, name="fsps_context_batch_spec_host")
+        integer(c_int), value :: handle
+        type(c_ptr), intent(OUT) :: ptr
+        integer(c_int), intent(OUT) :: nspec, n, bytes, status
+        integer :: ns, nm, nb
+
+        ptr = c_null_ptr
+        nspec = 0; n = 0; bytes = 0
+        status = 0
+        if (handle < 1 .or. .not. ALLOCATED(ctx_pool) .or. handle > SIZE(ctx_pool)) then
+            status = 1
+            return
+        end if
+        if (.not. ctx_inuse(handle)) then
+            status = 1
+            return
+        end if
+        call batch_spectra_host(ctx_pool(handle), ptr, ns, nm, nb)
+        nspec = ns; n = nm; bytes = nb
+    end subroutine fsps_context_batch_spec_host_handle
 
     !> The context's SSP basis for compute_csp_batch: on the device in OpenACC builds, for the
     !> current SSP parameters, one metallicity (zmet) or, with zmode, all of them.

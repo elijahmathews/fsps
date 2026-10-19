@@ -13,6 +13,7 @@ module fsps_context_types
         NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT, TLSF, OBSDAT
     use fsps_cache, only: fsps_setup_cache_t
+    use, intrinsic :: iso_c_binding, only: c_int, c_size_t, c_loc, c_ptr
 
     implicit none
     private
@@ -22,6 +23,7 @@ module fsps_context_types
     public :: fsps_context_state_destroy
     public :: fsps_context_sync_device_settings
     public :: batch_grid_t, batch_grid_release
+    public :: batch_out_t, batch_out_reserve, batch_out_release
 
     ! ---------------------------------------------------------------------
     ! Module constants
@@ -46,6 +48,31 @@ module fsps_context_types
         integer,  allocatable :: sm_lo(:), sm_hi(:), sm_off(:)
         real(WP), allocatable :: sm_coef(:)
     end type batch_grid_t
+
+    !> Spectra of the last batched CSP (kernel precision, nspec x models), kept on the device
+    !> between calls: the batch's working array, so it is allocated (and its host copy page-locked
+    !> in NVIDIA GPU builds) only when a batch outgrows it, and callers working on the device can
+    !> use the spectra there (batch_spectra_device) without copying them back.
+#ifdef FSPS_PINNED
+    !> Page-locking of host buffers (src/core/fsps_pinned.c)
+    interface
+        integer(c_int) function fsps_host_register(ptr, bytes) bind(C, name="fsps_host_register")
+            import :: c_int, c_ptr, c_size_t
+            type(c_ptr), value :: ptr
+            integer(c_size_t), value :: bytes
+        end function fsps_host_register
+        integer(c_int) function fsps_host_unregister(ptr) bind(C, name="fsps_host_unregister")
+            import :: c_int, c_ptr
+            type(c_ptr), value :: ptr
+        end function fsps_host_unregister
+    end interface
+#endif
+
+    type :: batch_out_t
+        real(KP), allocatable :: spec(:,:)
+        integer :: n = 0             !< models of the last batch in spec
+        logical :: pinned = .false.  !< host copy page-locked (fsps_host_register)
+    end type batch_out_t
 
     type :: fsps_context_state_t
         real(WP) :: zsol = 0.0_wp
@@ -225,6 +252,7 @@ module fsps_context_types
         real(WP), allocatable :: out_mass_csp(:)       ! (n_outputs)
         real(WP), allocatable :: out_lbol_csp(:)       ! (n_outputs)
         type(batch_grid_t) :: batch
+        type(batch_out_t) :: batch_out
     end type fsps_context_state_t
 
     type :: fsps_context_t
@@ -347,12 +375,67 @@ contains
         g%sm_ready = .false.
     end subroutine batch_grid_release
 
+    !> Room for n_mod spectra of nspec pixels in the batch output (o%spec, on the device when
+    !> on_device); grows by at least half to avoid repeated reallocation and pinning.
+    subroutine batch_out_reserve(o, nspec, n_mod, on_device)
+        type(batch_out_t), intent(inout), target :: o
+        integer, intent(in) :: nspec, n_mod
+        logical, intent(in) :: on_device
+        integer :: cap
+
+        o%n = 0
+        if (allocated(o%spec)) then
+            if (size(o%spec, 1) == nspec .and. size(o%spec, 2) >= n_mod) return
+            cap = max(n_mod, size(o%spec, 2) + size(o%spec, 2) / 2)
+            if (size(o%spec, 1) /= nspec) cap = n_mod
+        else
+            cap = n_mod
+        end if
+        call batch_out_release(o, on_device)
+        allocate(o%spec(nspec, cap))
+#ifdef FSPS_PINNED
+        ! Page-locked host copy: the copy-back runs at the PCIe rate instead of through the
+        ! driver's staging buffers (~2.4 GB/s on the A100 node)
+        o%pinned = fsps_host_register(c_loc(o%spec), int(storage_size(o%spec) / 8, c_size_t) * &
+                                      int(size(o%spec), c_size_t)) == 0
+#endif
+        if (on_device) then
+            !$acc enter data create(o%spec)
+#ifdef OMP_TARGET
+            !$omp target enter data map(alloc: o%spec)
+#endif
+        end if
+    end subroutine batch_out_reserve
+
+    !> Release the batch output (its device copy too if on_device).
+    subroutine batch_out_release(o, on_device)
+        type(batch_out_t), intent(inout), target :: o
+        logical, intent(in) :: on_device
+
+        if (.not. allocated(o%spec)) return
+        if (on_device) then
+            !$acc exit data delete(o%spec)
+#ifdef OMP_TARGET
+            !$omp target exit data map(delete: o%spec)
+#endif
+        end if
+#ifdef FSPS_PINNED
+        if (o%pinned) then
+            if (fsps_host_unregister(c_loc(o%spec)) /= 0) continue
+        end if
+#endif
+        o%pinned = .false.
+        o%n = 0
+        deallocate(o%spec)
+    end subroutine batch_out_release
+
     !> @brief Release pointer members in a context state object.
     !> @param[inout] state State to detach from shared cache arrays.
     subroutine fsps_context_state_destroy(state)
         type(fsps_context_state_t), intent(inout) :: state
 
         call batch_grid_release(state%batch)
+        call batch_out_release(state%batch_out, .false.)
 
         if (associated(state%indexdefined)) nullify (state%indexdefined)
         if (associated(state%wgdust)) nullify (state%wgdust)

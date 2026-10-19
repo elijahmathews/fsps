@@ -7,13 +7,15 @@ program benchmark_csp_batch
     !> IGM at zred = 0.5, AGN with fagn = 0.1, spectral indices; tau, age, U_min and gas_logu vary);
     !> "full_smooth": the same with velocity smoothing, sigma_smooth = 150 km/s; "full_z" and
     !> "full_smooth_z": with the bases of all metallicities resident and logzsol varying per model.
-    !> Prints one line per metric: name, value.
+    !> Prints one line per metric: name, value. Per batch size: magnitudes only; with spectra
+    !> copied back to a host array (reused, as in a fitting loop); with spectra left on the device.
 
     use fsps_precision, only: WP
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_csp_batch, only: compute_csp_batch
+    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
+    use, intrinsic :: iso_c_binding, only: c_ptr, c_associated
     use fsps_ssp, only: generate_ssp_grid
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
@@ -35,6 +37,8 @@ program benchmark_csp_batch
     integer :: n_max = 10000, n_single = 200, status, nspec, ntfull, i, n, rep, n_rep, k
     integer, parameter :: sizes(4) = [1, 100, 1000, 10000]
     real(WP) :: dt, total
+    type(c_ptr) :: dptr
+    integer :: k_nspec, k_n, k_bytes
 
     call get_command_argument(1, arg)
     if (len_trim(arg) > 0) read(arg, *) n_max
@@ -137,6 +141,7 @@ program benchmark_csp_batch
         total = total + mags(1, 1)
 
         allocate(spec(nspec, n))
+        call batch(n, .true.)   ! warm-up: first touch of spec (a fitting loop reuses its array)
         call system_clock(t0)
         do rep = 1, n_rep
             call batch(n, .true.)
@@ -146,6 +151,29 @@ program benchmark_csp_batch
         write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_us_per_model ', 1.0e6_wp * dt / n
         total = total + spec(1000, 1)
         deallocate(spec)
+
+        ! Spectra left on the device (callers working there): the batch without spec, then the
+        ! device address of its spectra
+        call system_clock(t0)
+        do rep = 1, n_rep
+            call batch(n, .false.)
+            call batch_spectra_device(ctx, dptr, k_nspec, k_n, k_bytes)
+        end do
+        call system_clock(t1)
+        dt = real(t1 - t0, WP) / rate / n_rep
+        if (.not. c_associated(dptr) .or. k_n /= n) stop 3
+        write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_on_device_us_per_model ', 1.0e6_wp * dt / n
+
+        ! Spectra on the host at kernel precision (page-locked buffer, no conversion)
+        call system_clock(t0)
+        do rep = 1, n_rep
+            call batch(n, .false.)
+            call batch_spectra_host(ctx, dptr, k_nspec, k_n, k_bytes)
+        end do
+        call system_clock(t1)
+        dt = real(t1 - t0, WP) / rate / n_rep
+        if (.not. c_associated(dptr) .or. k_n /= n) stop 4
+        write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_host_kp_us_per_model ', 1.0e6_wp * dt / n
     end do
     if (total /= total) write(*, *) total   ! keep the results live
 
