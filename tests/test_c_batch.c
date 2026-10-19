@@ -75,6 +75,36 @@ int main(void) {
         return 1;
     }
 
+    /* Where the batch left its spectra (device address in GPU builds): shape and precision */
+    {
+        void *dptr = NULL;
+        int dn = 0, dnspec = 0, dbytes = 0, dst = 0;
+        fsps_context_batch_spec_device(h, &dptr, &dnspec, &dn, &dbytes, &dst);
+        printf("batch spectra: %d x %d, %d bytes per value, status %d\n", dnspec, dn, dbytes, dst);
+        if (dst != 0 || dptr == NULL || dnspec != nspec || dn != N_MOD || (dbytes != 4 && dbytes != 8)) {
+            printf("FAIL: fsps_context_batch_spec_device\n");
+            failures++;
+        }
+        fsps_context_batch_spec_device(-7, &dptr, &dnspec, &dn, &dbytes, &dst);
+        if (dst != 1) {
+            printf("FAIL: fsps_context_batch_spec_device, bad handle gave status %d (expected 1)\n", dst);
+            failures++;
+        }
+
+        /* The same spectra on the host at kernel precision: equal to the double ones */
+        void *hptr = NULL;
+        fsps_context_batch_spec_host(h, &hptr, &dnspec, &dn, &dbytes, &dst);
+        int same = dst == 0 && hptr != NULL && dnspec == nspec && dn == N_MOD;
+        for (size_t i = 0; same && i < (size_t)nspec * N_MOD; i++) {
+            double v = dbytes == 4 ? (double)((const float *)hptr)[i] : ((const double *)hptr)[i];
+            same = v == spec[i];
+        }
+        if (!same) {
+            printf("FAIL: fsps_context_batch_spec_host\n");
+            failures++;
+        }
+    }
+
     double d_mag = 0.0, d_spec = 0.0, d_scal = 0.0;
     for (int m = 0; m < N_MOD; m++) {
         /* The same model, its parameters set on the context (logzsol through the arrays, so the

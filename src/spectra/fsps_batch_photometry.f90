@@ -58,7 +58,10 @@ contains
 
         integer  :: nspec, nbands, b, m
         integer, allocatable  :: do_band(:)
-        real(WP), allocatable :: fband(:,:), mags_l(:,:), zc(:), dist(:)
+        real(WP), allocatable :: fband(:,:), mags_l(:,:)
+        ! Redshift and distance term per column: one array, one upload
+        real(WP), allocatable, target :: zd(:)
+        real(WP), pointer, contiguous :: zc(:), dist(:)
         logical  :: zvar
         real(KP), allocatable :: fobs(:,:)
         real(WP) :: flux
@@ -78,7 +81,9 @@ contains
         else
             call prepare_batch_grid(ctx, zred, igm_factor)
         end if
-        allocate(zc(n_col), dist(n_col))
+        allocate(zd(2 * n_col))
+        zc => zd(1:n_col)
+        dist => zd(n_col + 1:2 * n_col)
         if (zvar) then
             zc = zred_col(1:n_col)
             do m = 1, n_col
@@ -105,7 +110,7 @@ contains
         if (n_col >= GEMM_MIN_COLS) then
             npad = BAND_BLOCK * ((nspec + BAND_BLOCK - 1) / BAND_BLOCK)
             allocate(fobs(npad, n_col))
-            !$acc data present(spec) copyin(do_band, zc, dist) create(fobs, fband) copyout(mags_l)
+            !$acc data present(spec) copyin(do_band, zd) create(fobs, fband) copyout(mags_l)
             if (zvar) then
                 call observed_frame_z(ctx, n_col, nspec, npad, .false., zc, g%wl, spec, fobs)
             else
@@ -119,9 +124,9 @@ contains
 #endif
         if (.not. done) then
             allocate(fobs(n_col, nspec))
-            !$acc data present(spec) copyin(do_band, zc, dist) create(fobs, fband) copyout(mags_l)
+            !$acc data present(spec) copyin(do_band, zd) create(fobs, fband) copyout(mags_l)
 #ifdef OMP_TARGET
-            !$omp target data map(to: do_band, zc, dist) map(alloc: fobs, fband) map(from: mags_l)
+            !$omp target data map(to: do_band, zd) map(alloc: fobs, fband) map(from: mags_l)
 #endif
             if (zvar) then
                 call observed_frame_z(ctx, n_col, nspec, nspec, .true., zc, g%wl, spec, fobs)
@@ -155,15 +160,14 @@ contains
         real(WP), intent(out)            :: mags_l(:,:)
 
         integer  :: m, b
-        real(WP) :: qnan, v, vv, vega(nbands)
+        real(WP) :: qnan, v, vv
         logical  :: vega_on
 
         qnan = ieee_value(1.0_wp, ieee_quiet_nan)
         vega_on = ctx%compute_vega_mags_val == 1
-        vega = 0.0_wp
-        if (vega_on) vega = ctx%state%magvega(1:nbands)
 
-        !$acc parallel loop gang vector collapse(2) present(fband, do_band, dist, mags_l) copyin(vega) private(v, vv)
+        ! (Vega magnitudes from the context's resident copy: no upload per call)
+        !$acc parallel loop gang vector collapse(2) present(ctx, fband, do_band, dist, mags_l) private(v, vv)
 #ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(v, vv)
 #endif
@@ -176,7 +180,7 @@ contains
                     if (do_band(IDX_V_BAND) /= 0) &
                         vv = mag_from_flux(fband(IDX_V_BAND, m)) - AB_ZEROPOINT - 2.5_wp * ABS_MAG_ZEROPOINT_LOG + dist(m)
                     if (vv == vv) then
-                        v = v - vega(b) + vega(IDX_V_BAND)
+                        v = v - ctx%state%magvega(b) + ctx%state%magvega(IDX_V_BAND)
                     else
                         v = qnan
                     end if

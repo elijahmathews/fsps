@@ -243,3 +243,25 @@ doc/GPU_RESULTS.md's Status. In order:
    device-resident output for callers that keep working on the device.
 4. Batched SSP generation (IMF parameters varied across a batch) for SSP+CSP fitting.
 
+
+## Next: after A100 session 2 (2026-10-19; read doc/GPU_RESULTS.md, "Status (A100 session 2)")
+
+1. AMD 780M fault (PR #13): run `test_c_batch` / `test_csp_batch` there with
+   `FSPS_OMP_CHECK_PRE=1 OMP_TARGET_OFFLOAD=MANDATORY LIBOMPTARGET_INFO=-1`; the check names an
+   unmapped or unattached array, or the last launch names the faulting kernel. A100-side
+   reproduction needs an LLVM build with the NVPTX backend and offload runtime (none on the
+   cluster; AOMP ships AMDGPU only).
+2. Batched SSP generation with IMF parameters per model (roadmap on `docs/batching-roadmap`,
+   section 3). First step: for one metallicity, build the sparse template x star matrix S per
+   age once (the weights `accumulate_by_templates` gives each star's templates, without the
+   IMF factor), then per model the IMF weights of all isochrone points on the device (closed
+   forms, `integrate_imf_interval_analytic` is already a device routine) and W = S . w_IMF;
+   check W against `generate_ssp_grid` for a few IMF settings before folding it into the batch.
+3. Unify the single call with the batch (design note in doc/GPU_RESULTS.md): start with the
+   wrapper for `tage > 0` and no redshift colours, light ages, MDF or non-fast smoothing.
+4. Per-call overhead, the rest: the batch's per-call scratch arrays (9 descriptor uploads) as
+   context-owned device arrays; the single call's ~40 small transfers; the async kernel queue
+   (race found in session 1, still open).
+5. Copy-back, the rest: the host conversion to double (single thread) is now the WP path's
+   cost in FP32; host threads (`-mp` beside `-acc`) or handing callers kernel-precision spectra
+   (`batch_spectra_host`) are the options.
