@@ -68,7 +68,7 @@ module fsps_csp_batch
     use openacc, only: acc_get_cuda_stream
 #endif
     use fsps_context, only: fsps_context_move_to_device
-    use fsps_csp, only: sfh_weights_core
+    use fsps_sfh, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
