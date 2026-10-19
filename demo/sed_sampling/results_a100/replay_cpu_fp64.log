@@ -1,0 +1,8 @@
+replay of 24 vectors with ../../build_cpu/libfsps.so: worst differences vs the saved run
+  mags_abs         4.83e-07
+  indx_abs         1.29e-05
+  emlines_rel      3.64e-07
+  mfrac_rel        6.82e-16
+  lbol_abs_dex     3.55e-15
+  mdust_rel        1.40e-07
+  spec_rel         6.07e-07

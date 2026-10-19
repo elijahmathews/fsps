@@ -1,0 +1,96 @@
+FIXED FOR THE WHOLE BATCH (shared by every parameter vector)
+  isochrones                 MIST
+  stellar spectra            MILES (+ BaSeL-type extension outside MILES)
+  dust emission templates    Draine & Li 2007 (DL07)
+  imf_type                   1
+  dust_type                  4
+  add_dust_emission          1
+  add_neb_emission           1
+  add_neb_continuum          1
+  nebemlineinspec            1
+  add_agn_dust               1
+  add_igm_absorption         1
+  add_stellar_remnants       1
+  compute_indices            1
+  compute_vega_mags          0
+  vactoair_flag              0
+  H0                         70.0
+  om0                        0.3
+  ol0                        0.7
+  dust_tesc                  7.0
+  frac_nodust                0.0
+  frac_obrun                 0.0
+  igm_factor                 1.0
+  SSP basis                  12 metallicities x 107 ages x 5994 wavelengths, built once and kept on the GPU
+  filters                    all 159 FSPS filters (FILTER_LIST), observed frame
+VARIED PER VECTOR (independent draws, no two vectors share a value)
+  logmass        uniform    [8, 12]  log10 stellar mass formed [Msun] (scales the outputs)
+  logzsol        uniform    [-1.98, 0.19]  stellar log(Z/Zsun); SSP basis interpolated per vector
+  dust2          uniform    [0, 4]  diffuse dust optical depth at 5500 A
+  dust_ratio     uniform    [0, 2]  dust1 / dust2 (birth-cloud dust), dust1 passed per vector
+  dust_index     uniform    [-1, 0.4]  attenuation slope offset (Kriek & Conroy)
+  fagn           loguniform [1e-05, 3]  AGN torus luminosity / stellar L_bol
+  agn_tau        loguniform [5, 150]  AGN torus optical depth
+  gas_logz       uniform    [-2, 0.5]  gas-phase log(Z/Zsun)
+  gas_logu       uniform    [-4, -1]  log ionization parameter
+  duste_umin     uniform    [0.1, 25]  DL07 minimum radiation field
+  duste_gamma    loguniform [0.001, 0.15]  DL07 fraction of dust in high radiation field
+  duste_qpah     uniform    [0.5, 7]  DL07 PAH mass fraction [%]
+  zred           uniform    [0.05, 5]  redshift (observed frame, IGM, distance, SFH age limit)
+  logsfr_ratios  student_t  [2, 0.3]  6 log SFR ratios of adjacent bins (continuity prior, Student-t df=2, scale 0.3)
+RETURNED TO HOST MEMORY PER VECTOR (inside the timing)
+  mags     159 AB magnitudes (redshifted, IGM, distance modulus, filter integrals)
+  indx     30 spectral indices;  emlines 166 line luminosities
+  mfrac    surviving stellar mass (incl. remnants) per mass formed;  lbol, mdust
+  spec     (with --spec) 5994-pixel rest-frame spectrum
+
+GPU: NVIDIA A100-PCIE-40GB, 580.178.04;  host: p-gc-3003;  library: ../../build_gpu32cb/libfsps.so
+
+One-time: setup 20.6 s; first call (12 SSP bases, context to GPU) 1.4 s
+
+Timing (wall clock in Python, per call: SFH weights + FSPS batch + mass scaling; outputs in numpy arrays)
+      N       output  us/vector median      min   SFH weights  FSPS call  scaling  (us/vector, median)
+      1   phot+props           7737.20  7663.72        151.31    7548.47    36.15
+      2   phot+props           1021.70   998.78         82.15     922.49    17.57
+      5   phot+props            439.40   429.61         37.33     393.70     7.24
+     10   phot+props            232.39   229.25         20.41     208.39     3.75
+     20   phot+props            153.20   144.31         19.51     131.59     2.08
+     50   phot+props             65.78    64.87          8.29      56.74     0.78
+    100   phot+props             38.61    35.60          4.52      33.60     0.51
+    200   phot+props             23.01    22.55          2.73      19.83     0.36
+    500   phot+props             15.49    15.38          1.63      13.58     0.27
+   1000   phot+props             13.36    13.01          1.23      11.90     0.24
+   2000   phot+props             10.94    10.84          1.05       9.63     0.25
+   5000   phot+props             10.78    10.68          0.98       9.50     0.28
+  10000   phot+props             11.39    11.36          0.98      10.11     0.30
+  20000   phot+props             11.26    11.21          0.98       9.95     0.32
+  50000   phot+props             11.65    11.50          0.97      10.29     0.33
+ 100000   phot+props             11.74    11.73          1.11      10.30     0.33
+      1     +spectra           7471.57  7428.39        149.25    7288.36    32.08
+      2     +spectra            908.47   870.39         86.29     798.30    23.89
+      5     +spectra            388.97   381.81         38.93     339.21    11.19
+     10     +spectra            211.85   206.25         21.22     184.26     6.50
+     20     +spectra            141.42   138.49         19.56     116.48     5.27
+     50     +spectra             69.91    68.69          8.47      57.39     4.15
+    100     +spectra             45.68    44.36          4.62      36.92     3.98
+    200     +spectra             32.67    31.99          2.81      25.93     3.88
+    500     +spectra             28.58    27.80          1.82      22.34     4.45
+   1000     +spectra             28.99    28.08          1.31      22.15     5.42
+   2000     +spectra             28.61    28.18          1.11      21.95     5.54
+   5000     +spectra             32.18    31.35          1.03      25.44     5.69
+  10000     +spectra             31.15    30.31          1.00      24.40     5.75
+  20000     +spectra             31.19    30.85          0.99      24.44     5.74
+  50000     +spectra             31.41    31.03          0.97      24.71     5.73
+ 100000     +spectra             34.14    34.07          1.10      26.91     6.08
+
+Check: 24 vectors of the N = 10000 batch vs the same vectors one per call, parameters set as context scalars (worst differences):
+  mags_abs         5.95e-07
+  indx_rel         0.00e+00
+  emlines_rel      3.63e-16
+  mfrac_rel        0.00e+00
+  lbol_abs_dex     0.00e+00
+  mdust_rel        2.35e-16
+  spec_rel         4.18e-16
+  (outputs differ between vectors as they should: e.g. SDSS r 18.5 ... 53.0 mag, WISE W3 13.4 ... 27.5 mag)
+
+Figures in results_a100/

@@ -1,0 +1,457 @@
+{
+ "gpu": "NVIDIA A100-PCIE-40GB, 580.178.04",
+ "lib": "../../build_gpu32cb/libfsps.so",
+ "smooth_kms": 0.0,
+ "dims": {
+  "nspec": 5994,
+  "ntfull": 107,
+  "nbands": 159,
+  "nindx": 30,
+  "nz": 12,
+  "nemline": 166
+ },
+ "setup_s": 20.576711427420378,
+ "timing": [
+  {
+   "n": 1,
+   "spec": false,
+   "reps": 20,
+   "us_median": 7840.469945222139,
+   "us_min": 7774.720899760723,
+   "parts_us_median": {
+    "sfh_weights": 152.61024236679077,
+    "fsps_call": 7651.712279766798,
+    "mass_scaling": 37.26594150066376
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 2,
+   "spec": false,
+   "reps": 20,
+   "us_median": 1070.6174653023481,
+   "us_min": 1053.6015033721924,
+   "parts_us_median": {
+    "sfh_weights": 80.92843927443027,
+    "fsps_call": 971.3487233966589,
+    "mass_scaling": 17.898157238960266
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 5,
+   "spec": false,
+   "reps": 20,
+   "us_median": 460.5613648891449,
+   "us_min": 453.0973732471466,
+   "parts_us_median": {
+    "sfh_weights": 37.498027086257935,
+    "fsps_call": 415.3401590883732,
+    "mass_scaling": 7.393676787614822
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 10,
+   "spec": false,
+   "reps": 20,
+   "us_median": 246.63982912898064,
+   "us_min": 242.3933707177639,
+   "parts_us_median": {
+    "sfh_weights": 20.823953673243523,
+    "fsps_call": 221.8151930719614,
+    "mass_scaling": 3.8212165236473083
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 20,
+   "spec": false,
+   "reps": 20,
+   "us_median": 161.4332664757967,
+   "us_min": 156.22065402567387,
+   "parts_us_median": {
+    "sfh_weights": 19.70499288290739,
+    "fsps_call": 139.99890070408583,
+    "mass_scaling": 2.0577339455485344
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 50,
+   "spec": false,
+   "reps": 20,
+   "us_median": 68.9640361815691,
+   "us_min": 67.78953596949577,
+   "parts_us_median": {
+    "sfh_weights": 8.180728182196617,
+    "fsps_call": 60.14029495418072,
+    "mass_scaling": 0.8156150579452515
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 100,
+   "spec": false,
+   "reps": 20,
+   "us_median": 40.52605014294386,
+   "us_min": 39.73950631916523,
+   "parts_us_median": {
+    "sfh_weights": 4.487861879169941,
+    "fsps_call": 35.48267763108015,
+    "mass_scaling": 0.5027325823903084
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 200,
+   "spec": false,
+   "reps": 20,
+   "us_median": 23.17591104656458,
+   "us_min": 22.885696962475777,
+   "parts_us_median": {
+    "sfh_weights": 2.731112763285637,
+    "fsps_call": 20.08888404816389,
+    "mass_scaling": 0.3551528789103031
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 500,
+   "spec": false,
+   "reps": 20,
+   "us_median": 15.3786800801754,
+   "us_min": 15.052827075123787,
+   "parts_us_median": {
+    "sfh_weights": 1.6323765739798546,
+    "fsps_call": 13.463713228702545,
+    "mass_scaling": 0.26818830519914627
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 1000,
+   "spec": false,
+   "reps": 20,
+   "us_median": 13.251462485641241,
+   "us_min": 13.056657277047634,
+   "parts_us_median": {
+    "sfh_weights": 1.242774073034525,
+    "fsps_call": 11.748821940273046,
+    "mass_scaling": 0.24951621890068054
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 2000,
+   "spec": false,
+   "reps": 20,
+   "us_median": 10.818452574312687,
+   "us_min": 10.785489343106747,
+   "parts_us_median": {
+    "sfh_weights": 1.0458319447934628,
+    "fsps_call": 9.538808837532997,
+    "mass_scaling": 0.24103489704430103
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 5000,
+   "spec": false,
+   "reps": 20,
+   "us_median": 10.714564938098192,
+   "us_min": 10.64464058727026,
+   "parts_us_median": {
+    "sfh_weights": 0.967066828161478,
+    "fsps_call": 9.472343884408474,
+    "mass_scaling": 0.2762685529887676
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 10000,
+   "spec": false,
+   "reps": 20,
+   "us_median": 11.356672318652272,
+   "us_min": 11.28335976973176,
+   "parts_us_median": {
+    "sfh_weights": 1.0049918666481972,
+    "fsps_call": 10.045230388641357,
+    "mass_scaling": 0.30423905700445175
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 20000,
+   "spec": false,
+   "reps": 15,
+   "us_median": 10.783237405121326,
+   "us_min": 10.706905275583267,
+   "parts_us_median": {
+    "sfh_weights": 0.9742270689457655,
+    "fsps_call": 9.482674952596426,
+    "mass_scaling": 0.3235594369471073
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 50000,
+   "spec": false,
+   "reps": 6,
+   "us_median": 11.514590652659535,
+   "us_min": 11.36145843192935,
+   "parts_us_median": {
+    "sfh_weights": 0.9781420789659023,
+    "fsps_call": 10.207408471032977,
+    "mass_scaling": 0.3255909029394388
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 100000,
+   "spec": false,
+   "reps": 3,
+   "us_median": 11.771888127550483,
+   "us_min": 11.736159194260836,
+   "parts_us_median": {
+    "sfh_weights": 1.0748654883354902,
+    "fsps_call": 10.370271876454353,
+    "mass_scaling": 0.3239217959344387
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 1,
+   "spec": true,
+   "reps": 20,
+   "us_median": 7508.933544158936,
+   "us_min": 7422.063499689102,
+   "parts_us_median": {
+    "sfh_weights": 154.45007011294365,
+    "fsps_call": 7324.983365833759,
+    "mass_scaling": 33.02888944745064
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 2,
+   "spec": true,
+   "reps": 20,
+   "us_median": 892.1991102397442,
+   "us_min": 867.6010183990002,
+   "parts_us_median": {
+    "sfh_weights": 84.90984328091145,
+    "fsps_call": 784.826697781682,
+    "mass_scaling": 23.256754502654076
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 5,
+   "spec": true,
+   "reps": 20,
+   "us_median": 395.1354883611202,
+   "us_min": 380.24168461561203,
+   "parts_us_median": {
+    "sfh_weights": 38.84090110659599,
+    "fsps_call": 343.99181604385376,
+    "mass_scaling": 11.562183499336243
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 10,
+   "spec": true,
+   "reps": 20,
+   "us_median": 214.15865048766136,
+   "us_min": 207.2530798614025,
+   "parts_us_median": {
+    "sfh_weights": 21.78950235247612,
+    "fsps_call": 184.89127978682518,
+    "mass_scaling": 6.809644401073456
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 20,
+   "spec": true,
+   "reps": 20,
+   "us_median": 140.77136293053627,
+   "us_min": 136.68225146830082,
+   "parts_us_median": {
+    "sfh_weights": 19.900081679224968,
+    "fsps_call": 115.98665732890368,
+    "mass_scaling": 5.1650917157530785
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 50,
+   "spec": true,
+   "reps": 20,
+   "us_median": 69.86602209508419,
+   "us_min": 68.953987210989,
+   "parts_us_median": {
+    "sfh_weights": 8.36244784295559,
+    "fsps_call": 57.50606767833233,
+    "mass_scaling": 4.0854886174201965
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 100,
+   "spec": true,
+   "reps": 20,
+   "us_median": 44.50310952961445,
+   "us_min": 43.96158270537853,
+   "parts_us_median": {
+    "sfh_weights": 4.7180429100990295,
+    "fsps_call": 35.83107143640518,
+    "mass_scaling": 3.9736460894346237
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 200,
+   "spec": true,
+   "reps": 20,
+   "us_median": 32.092800829559565,
+   "us_min": 31.578587368130684,
+   "parts_us_median": {
+    "sfh_weights": 2.783436793833971,
+    "fsps_call": 25.542229413986206,
+    "mass_scaling": 3.8278265856206417
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 500,
+   "spec": true,
+   "reps": 20,
+   "us_median": 28.06021273136139,
+   "us_min": 27.428679168224335,
+   "parts_us_median": {
+    "sfh_weights": 1.785355620086193,
+    "fsps_call": 21.918457001447678,
+    "mass_scaling": 4.310397431254387
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 1000,
+   "spec": true,
+   "reps": 20,
+   "us_median": 28.22221629321575,
+   "us_min": 27.674236334860325,
+   "parts_us_median": {
+    "sfh_weights": 1.289930660277605,
+    "fsps_call": 21.511062048375607,
+    "mass_scaling": 5.371265113353729
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 2000,
+   "spec": true,
+   "reps": 20,
+   "us_median": 28.58743700198829,
+   "us_min": 27.919182553887367,
+   "parts_us_median": {
+    "sfh_weights": 1.140769338235259,
+    "fsps_call": 21.87678008340299,
+    "mass_scaling": 5.5543710477650166
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 5000,
+   "spec": true,
+   "reps": 20,
+   "us_median": 27.81495451927185,
+   "us_min": 27.07843743264675,
+   "parts_us_median": {
+    "sfh_weights": 1.0026810690760612,
+    "fsps_call": 21.119185909628868,
+    "mass_scaling": 5.683328676968813
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 10000,
+   "spec": true,
+   "reps": 20,
+   "us_median": 31.095714960247278,
+   "us_min": 30.493369977921247,
+   "parts_us_median": {
+    "sfh_weights": 0.9808395057916641,
+    "fsps_call": 24.319956311956048,
+    "mass_scaling": 5.758825549855828
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 20000,
+   "spec": true,
+   "reps": 15,
+   "us_median": 30.953498976305127,
+   "us_min": 30.579033959656954,
+   "parts_us_median": {
+    "sfh_weights": 0.9762031957507133,
+    "fsps_call": 24.183296412229538,
+    "mass_scaling": 5.758751695975661
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 50000,
+   "spec": true,
+   "reps": 6,
+   "us_median": 31.69860382564366,
+   "us_min": 31.27683499827981,
+   "parts_us_median": {
+    "sfh_weights": 1.0643438529223204,
+    "fsps_call": 24.92270573042333,
+    "mass_scaling": 5.721312314271927
+   },
+   "other_gpu_processes": []
+  },
+  {
+   "n": 100000,
+   "spec": true,
+   "reps": 3,
+   "us_median": 34.291764637455344,
+   "us_min": 33.79141147248447,
+   "parts_us_median": {
+    "sfh_weights": 1.0702901054173708,
+    "fsps_call": 27.015577042475343,
+    "mass_scaling": 6.135717509314418
+   },
+   "other_gpu_processes": []
+  }
+ ],
+ "first_call_s": 1.395924273878336,
+ "n_unique": {
+  "logmass": 10000,
+  "logzsol": 10000,
+  "dust2": 10000,
+  "dust_ratio": 10000,
+  "dust_index": 10000,
+  "fagn": 10000,
+  "agn_tau": 10000,
+  "gas_logz": 10000,
+  "gas_logu": 10000,
+  "duste_umin": 10000,
+  "duste_gamma": 10000,
+  "duste_qpah": 10000,
+  "zred": 10000
+ },
+ "check_batch_vs_single": {
+  "mags_abs": 5.945928833739345e-07,
+  "indx_abs": 0.0,
+  "emlines_rel": 3.630031661687444e-16,
+  "mfrac_rel": 0.0,
+  "lbol_abs_dex": 0.0,
+  "mdust_rel": 2.353722975124183e-16,
+  "spec_rel": 4.1827354450245674e-16
+ }
+}

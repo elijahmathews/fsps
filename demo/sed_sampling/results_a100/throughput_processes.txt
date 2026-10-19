@@ -1,0 +1,2 @@
+1 process(es), N = 10000 per call: 10.99 us per vector aggregate (100000 vectors in 1.10 s)
+2 process(es), N = 10000 per call: 9.37 us per vector aggregate (200000 vectors in 1.87 s)
