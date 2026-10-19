@@ -73,6 +73,9 @@ void fsps_context_get_nindx(int handle, int *n_indices, int *status);
 void fsps_context_get_nz(int handle, int *n_z, int *status);
 void fsps_context_get_nemline(int handle, int *n_line, int *status);
 void fsps_context_get_zsol(int handle, double *z_sol, int *status);
+void fsps_context_get_timefull(int handle, double *log_age_yr, int *status);   // ntfull
+void fsps_context_get_lambda(int handle, double *lambda, int *status);        // nspec, Angstrom
+void fsps_context_get_filter_leff(int handle, double *lambda_eff, int *status); // nbands, Angstrom
 
 // Path Queries
 void fsps_context_get_paths(int handle, char *sps_home, int sps_len,

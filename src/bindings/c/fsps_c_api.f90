@@ -27,6 +27,7 @@ module fsps_c_api
     use fsps_spectral_indices, only: compute_spectral_indices
     use fsps_photometry, only: compute_magnitudes
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
+                            pset_float_field_id, pset_set_float_field, &
                             is_ssp_sensitive_float_param
     use fsps_csp_batch, only: compute_csp_batch
     use fsps_context_types, only: fsps_context_t
@@ -475,6 +476,7 @@ contains
         type(PARAMS) :: base
         type(PARAMS), allocatable :: psets(:)
         integer :: i, m, st, nspec, nt, nbands
+        integer, allocatable :: ids(:)
         logical :: zmode, dirty
         real(WP), allocatable :: mass_l(:), lbol_l(:), mdust_l(:), sfr_l(:), eml_l(:, :)
         character(LEN=10), parameter :: NEB_PARAMS(3) = [character(LEN=10) :: 'gas_logu', 'gas_logz', 'frac_obrun']
@@ -520,25 +522,42 @@ contains
         ! The setters mark the SSP basis dirty for the nebular parameters; per-model values in a
         ! batch do not change it
         dirty = ctx%state%ssp_basis_is_dirty
-        allocate(psets(n))
-        do m = 1, n
-            ctx%pset = base
+        allocate(psets(n), source=base)
+        ! Names that are PARAMS components are looked up once and set on all n parameter sets
+        ! (a setter call per model and name cost ~0.7 us on the A100 node's Xeon 6248R host, nvfortran
+        ! 25.1: 9 of 18 us per model with 12 names, N = 10000)
+        allocate(ids(max(0, n_params)))
+        do i = 1, n_params
+            ids(i) = pset_float_field_id(trim(names(i)))
+        end do
+        if (all(ids > 0)) then
             do i = 1, n_params
                 call c_f_pointer(value_ptrs(i), v, [n])
-                call fsps_set_param_float(ctx, trim(names(i)), real(v(m), WP), st)
-                if (st /= 0 .and. trim(names(i)) == 'sfh') then
-                    call fsps_set_param_int(ctx, 'sfh', nint(v(m)), st)
-                end if
-                if (st /= 0) then
-                    ctx%pset = base
-                    ctx%state%ssp_basis_is_dirty = dirty
-                    status = 3
-                    call fsps_set_error(3, 'compute_csp_batch: unknown parameter '//trim(names(i)))
-                    return
-                end if
+                do m = 1, n
+                    call pset_set_float_field(psets(m), ids(i), real(v(m), WP))
+                end do
             end do
-            psets(m) = ctx%pset
-        end do
+        else
+            ! Otherwise (sfh as an integer, unknown names) per model through the setters
+            do m = 1, n
+                ctx%pset = base
+                do i = 1, n_params
+                    call c_f_pointer(value_ptrs(i), v, [n])
+                    call fsps_set_param_float(ctx, trim(names(i)), real(v(m), WP), st)
+                    if (st /= 0 .and. trim(names(i)) == 'sfh') then
+                        call fsps_set_param_int(ctx, 'sfh', nint(v(m)), st)
+                    end if
+                    if (st /= 0) then
+                        ctx%pset = base
+                        ctx%state%ssp_basis_is_dirty = dirty
+                        status = 3
+                        call fsps_set_error(3, 'compute_csp_batch: unknown parameter '//trim(names(i)))
+                        return
+                    end if
+                end do
+                psets(m) = ctx%pset
+            end do
+        end if
         ctx%pset = base
         ctx%state%ssp_basis_is_dirty = dirty
 
@@ -877,6 +896,60 @@ contains
 
         z_sol = ctx_pool(handle)%state%zsol
     end subroutine fsps_context_get_zsol_handle
+
+    !> A context's SSP age grid (log10 yr, ntfull), wavelengths (Angstrom, nspec, vacuum or air as
+    !> vactoair_flag) and filter effective wavelengths (Angstrom, nbands): what a caller needs to
+    !> build ssp_weights for compute_csp_batch and to label its outputs.
+    subroutine fsps_context_get_timefull_handle(handle, c_out, status) bind(C, name="fsps_context_get_timefull")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_out
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: out(:)
+
+        status = 1
+        if (.not. handle_ok(handle)) return
+        call c_f_pointer(c_out, out, [ctx_pool(handle)%state%ntfull])
+        out = ctx_pool(handle)%state%time_full
+        status = 0
+    end subroutine fsps_context_get_timefull_handle
+
+    subroutine fsps_context_get_lambda_handle(handle, c_out, status) bind(C, name="fsps_context_get_lambda")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_out
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: out(:)
+
+        status = 1
+        if (.not. handle_ok(handle)) return
+        call c_f_pointer(c_out, out, [ctx_pool(handle)%state%nspec])
+        if (ctx_pool(handle)%vactoair_flag_val == 1) then
+            out = vacuum_to_air(ctx_pool(handle)%state%spec_lambda)
+        else
+            out = ctx_pool(handle)%state%spec_lambda
+        end if
+        status = 0
+    end subroutine fsps_context_get_lambda_handle
+
+    subroutine fsps_context_get_filter_leff_handle(handle, c_out, status) bind(C, name="fsps_context_get_filter_leff")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_out
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: out(:)
+
+        status = 1
+        if (.not. handle_ok(handle)) return
+        call c_f_pointer(c_out, out, [ctx_pool(handle)%state%nbands])
+        out = ctx_pool(handle)%state%filter_leff
+        status = 0
+    end subroutine fsps_context_get_filter_leff_handle
+
+    logical function handle_ok(handle)
+        integer(c_int), intent(in) :: handle
+        handle_ok = .false.
+        if (handle < 1 .or. .not. ALLOCATED(ctx_pool)) return
+        if (handle > SIZE(ctx_pool)) return
+        handle_ok = ctx_inuse(handle)
+    end function handle_ok
 
 #ifdef FSPS_ENABLE_LEGACY
 

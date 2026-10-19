@@ -34,6 +34,7 @@ module fsps_context
     public :: fsps_context_get_paths
     public :: fsps_context_prepare_pset
     public :: is_ssp_sensitive_float_param
+    public :: pset_float_field_id, pset_set_float_field
     public :: fsps_context_compute_ssp
     public :: fsps_context_compute_csp
     public :: fsps_context_update_ssp_basis
@@ -48,6 +49,18 @@ module fsps_context
     integer, parameter :: FSPS_ERR_UNKNOWN_INT_PARAM = 101
     integer, parameter :: FSPS_ERR_UNKNOWN_FLOAT_PARAM = 102
     integer, parameter :: FSPS_ERR_UNKNOWN_STRING_PARAM = 103
+
+    !> Float parameters that are components of PARAMS (ids of pset_set_float_field)
+    character(len=16), parameter :: PSET_FLOAT_KEYS(49) = [character(len=16) :: &
+        'imf1', 'imf2', 'imf3', 'vdmc', 'mdave', 'dell', &
+        'delt', 'sbss', 'fbhb', 'pagb', 'agb_dust', 'redgb', &
+        'agb', 'masscut', 'fcstar', 'frac_xrb', 'logzsol', 'tau', &
+        'const', 'tage', 'fburst', 'tburst', 'dust1', 'dust2', &
+        'dust3', 'zred', 'pmetals', 'dust_clumps', 'frac_nodust', 'dust_index', &
+        'dust_tesc', 'frac_obrun', 'uvb', 'mwr', 'dust1_index', 'sf_start', &
+        'sf_trunc', 'sf_slope', 'duste_gamma', 'duste_umin', 'duste_qpah', 'sigma_smooth', &
+        'min_wave_smooth', 'max_wave_smooth', 'gas_logu', 'gas_logz', 'igm_factor', 'fagn', &
+        'agn_tau']
 
 contains
 
@@ -366,9 +379,16 @@ contains
         real(WP), intent(in) :: value
         integer, intent(out) :: status
         character(len=64) :: key_norm
+        integer :: id
 
         status = 0
         key_norm = trim(key)
+        id = pset_float_field_id(key_norm)
+        if (id > 0) then
+            call pset_set_float_field(ctx%pset, id, value)
+            if (is_ssp_sensitive_float_param(key_norm)) ctx%state%ssp_basis_is_dirty = .true.
+            return
+        end if
         select case (key_norm)
         case ('om0')
             ctx%om0_val = value
@@ -394,104 +414,6 @@ contains
         case ('nebular_smooth_init')
             ctx%nebular_smooth_init_val = value
             ctx%settings_dirty = .true.
-        case ('imf1')
-            ctx%pset%imf1 = value
-        case ('imf2')
-            ctx%pset%imf2 = value
-        case ('imf3')
-            ctx%pset%imf3 = value
-        case ('vdmc')
-            ctx%pset%vdmc = value
-        case ('mdave')
-            ctx%pset%mdave = value
-        case ('dell')
-            ctx%pset%dell = value
-        case ('delt')
-            ctx%pset%delt = value
-        case ('sbss')
-            ctx%pset%sbss = value
-        case ('fbhb')
-            ctx%pset%fbhb = value
-        case ('pagb')
-            ctx%pset%pagb = value
-        case ('agb_dust')
-            ctx%pset%agb_dust = value
-        case ('redgb')
-            ctx%pset%redgb = value
-        case ('agb')
-            ctx%pset%agb = value
-        case ('masscut')
-            ctx%pset%masscut = value
-        case ('fcstar')
-            ctx%pset%fcstar = value
-        case ('frac_xrb')
-            ctx%pset%frac_xrb = value
-        case ('logzsol')
-            ctx%pset%logzsol = value
-        case ('tau')
-            ctx%pset%tau = value
-        case ('const')
-            ctx%pset%const = value
-        case ('tage')
-            ctx%pset%tage = value
-        case ('fburst')
-            ctx%pset%fburst = value
-        case ('tburst')
-            ctx%pset%tburst = value
-        case ('dust1')
-            ctx%pset%dust1 = value
-        case ('dust2')
-            ctx%pset%dust2 = value
-        case ('dust3')
-            ctx%pset%dust3 = value
-        case ('zred')
-            ctx%pset%zred = value
-        case ('pmetals')
-            ctx%pset%pmetals = value
-        case ('dust_clumps')
-            ctx%pset%dust_clumps = value
-        case ('frac_nodust')
-            ctx%pset%frac_nodust = value
-        case ('dust_index')
-            ctx%pset%dust_index = value
-        case ('dust_tesc')
-            ctx%pset%dust_tesc = value
-        case ('frac_obrun')
-            ctx%pset%frac_obrun = value
-        case ('uvb')
-            ctx%pset%uvb = value
-        case ('mwr')
-            ctx%pset%mwr = value
-        case ('dust1_index')
-            ctx%pset%dust1_index = value
-        case ('sf_start')
-            ctx%pset%sf_start = value
-        case ('sf_trunc')
-            ctx%pset%sf_trunc = value
-        case ('sf_slope')
-            ctx%pset%sf_slope = value
-        case ('duste_gamma')
-            ctx%pset%duste_gamma = value
-        case ('duste_umin')
-            ctx%pset%duste_umin = value
-        case ('duste_qpah')
-            ctx%pset%duste_qpah = value
-        case ('sigma_smooth')
-            ctx%pset%sigma_smooth = value
-        case ('min_wave_smooth')
-            ctx%pset%min_wave_smooth = value
-        case ('max_wave_smooth')
-            ctx%pset%max_wave_smooth = value
-        case ('gas_logu')
-            ctx%pset%gas_logu = value
-        case ('gas_logz')
-            ctx%pset%gas_logz = value
-        case ('igm_factor')
-            ctx%pset%igm_factor = value
-        case ('fagn')
-            ctx%pset%fagn = value
-        case ('agn_tau')
-            ctx%pset%agn_tau = value
         case default
             status = FSPS_ERR_UNKNOWN_FLOAT_PARAM
         end select
@@ -714,6 +636,126 @@ contains
             is_sensitive = .true.
         end select
     end function is_ssp_sensitive_int_param
+
+    !> @brief Index of a float parameter that is a component of PARAMS (0 if it is not one).
+    !> @details With pset_set_float_field, lets a caller that sets the same parameter on many
+    !> parameter sets (compute_csp_batch's C API) look the name up once.
+    integer function pset_float_field_id(key) result(id)
+        character(len=*), intent(in) :: key
+
+        do id = 1, size(PSET_FLOAT_KEYS)
+            if (PSET_FLOAT_KEYS(id) == key) return
+        end do
+        id = 0
+    end function pset_float_field_id
+
+    !> @brief Set the PARAMS component pset_float_field_id returned id for.
+    subroutine pset_set_float_field(p, id, value)
+        type(PARAMS), intent(inout) :: p
+        integer, intent(in) :: id
+        real(WP), intent(in) :: value
+
+        select case (id)
+        case (1)
+            p%imf1 = value
+        case (2)
+            p%imf2 = value
+        case (3)
+            p%imf3 = value
+        case (4)
+            p%vdmc = value
+        case (5)
+            p%mdave = value
+        case (6)
+            p%dell = value
+        case (7)
+            p%delt = value
+        case (8)
+            p%sbss = value
+        case (9)
+            p%fbhb = value
+        case (10)
+            p%pagb = value
+        case (11)
+            p%agb_dust = value
+        case (12)
+            p%redgb = value
+        case (13)
+            p%agb = value
+        case (14)
+            p%masscut = value
+        case (15)
+            p%fcstar = value
+        case (16)
+            p%frac_xrb = value
+        case (17)
+            p%logzsol = value
+        case (18)
+            p%tau = value
+        case (19)
+            p%const = value
+        case (20)
+            p%tage = value
+        case (21)
+            p%fburst = value
+        case (22)
+            p%tburst = value
+        case (23)
+            p%dust1 = value
+        case (24)
+            p%dust2 = value
+        case (25)
+            p%dust3 = value
+        case (26)
+            p%zred = value
+        case (27)
+            p%pmetals = value
+        case (28)
+            p%dust_clumps = value
+        case (29)
+            p%frac_nodust = value
+        case (30)
+            p%dust_index = value
+        case (31)
+            p%dust_tesc = value
+        case (32)
+            p%frac_obrun = value
+        case (33)
+            p%uvb = value
+        case (34)
+            p%mwr = value
+        case (35)
+            p%dust1_index = value
+        case (36)
+            p%sf_start = value
+        case (37)
+            p%sf_trunc = value
+        case (38)
+            p%sf_slope = value
+        case (39)
+            p%duste_gamma = value
+        case (40)
+            p%duste_umin = value
+        case (41)
+            p%duste_qpah = value
+        case (42)
+            p%sigma_smooth = value
+        case (43)
+            p%min_wave_smooth = value
+        case (44)
+            p%max_wave_smooth = value
+        case (45)
+            p%gas_logu = value
+        case (46)
+            p%gas_logz = value
+        case (47)
+            p%igm_factor = value
+        case (48)
+            p%fagn = value
+        case (49)
+            p%agn_tau = value
+        end select
+    end subroutine pset_set_float_field
 
     logical function is_ssp_sensitive_float_param(key) result(is_sensitive)
         character(len=*), intent(in) :: key
