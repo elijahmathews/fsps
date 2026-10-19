@@ -92,6 +92,14 @@ void fsps_context_compute_csp_batch(int handle, int n, int n_params, const char 
                                     double *mdust, double *sfr, double *emlines, double *indx,
                                     int *status);
 
+// The last batch's spectra where they were computed, for callers that keep working on the GPU
+// (pass spec = NULL to the batch to skip the copy to the host): *ptr is a device address (host
+// address in CPU builds) of nspec x n values, column-major, *bytes per value (4 in FP32-kernel
+// builds, 8 in FP64), L_sun/Hz per solar mass formed. Valid until the next batch call on the
+// handle; *ptr is NULL and *n 0 before the first. status 1 for a bad handle.
+void fsps_context_batch_spec_device(int handle, void **ptr, int *nspec, int *n, int *bytes,
+                                    int *status);
+
 // ----------------------------------------------------------------------------
 // Legacy Global State API (Backward Compatibility)
 // ----------------------------------------------------------------------------

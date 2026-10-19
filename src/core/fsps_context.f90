@@ -9,7 +9,8 @@ module fsps_context
     use fsps_precision, only: WP
     use fsps_constants, only: NEMLINE, NEBNAGE, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT
-    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy, batch_grid_release
+    use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy, batch_grid_release, &
+                                  batch_out_release
     use fsps_environment, only: fsps_cleanup
     use fsps_initialization, only: fsps_initialize_data
     use fsps_ssp, only: generate_ssp_grid
@@ -850,6 +851,7 @@ contains
 
         ! A second call refreshes the device copies rather than stacking reference counts
         if (ctx%on_device) call fsps_context_remove_from_device(ctx)
+        call batch_out_release(ctx%state%batch_out, .false.)   ! host-only output from before
         ctx%on_device = .true.
         ctx%settings_dirty = .false.   ! copied with ctx below
 
@@ -2281,6 +2283,7 @@ contains
         end if
 
         call batch_grid_release(ctx%state%batch)
+        call batch_out_release(ctx%state%batch_out, .true.)
         !$acc exit data delete(ctx%state)
 #ifdef OMP_TARGET
         !$omp target exit data map(delete: ctx%state)
