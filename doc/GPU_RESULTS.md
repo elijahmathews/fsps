@@ -125,7 +125,11 @@ on the 780M:
   attached (`omp_check_context`); after `fsps_destroy`, that ctx is gone. The groups change
   redshift, IGM, nebular emission, lines in the spectrum, smoothing, per-model redshift and
   then rebuild the SSP bases for all metallicities, so the caches are released and recreated
-  between checks. 158/158 in the OpenMP FP32 build (12 new checks).
+  between checks. 158/158 in the OpenMP builds (12 new checks, skipped in host-only runs:
+  `OMP_TARGET_OFFLOAD=DISABLED` gives 146/146).
+- Validation (A100): unit + regression 33/33 in gfortran FP64 / FP32, gfortran `-fopenmp`,
+  OpenACC multicore FP32, OpenACC GPU FP32 / FP64, OpenMP target FP32 / FP64 (MANDATORY); flang
+  22 (AOMP, gfx1103) builds the project.
 - To run on the 780M (text console): `FSPS_OMP_CHECK_PRE=1 OMP_TARGET_OFFLOAD=MANDATORY
   LIBOMPTARGET_INFO=-1 ./test_c_batch` (and `test_csp_batch`). A check failure names the
   unmapped / unattached array; if the checks pass and it still faults, the fault is inside one

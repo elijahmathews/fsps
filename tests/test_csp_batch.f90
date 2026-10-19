@@ -22,7 +22,7 @@ program test_csp_batch
     use fsps_interpolation, only: find_interval
     use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
 #ifdef OMP_TARGET
-    use omp_lib, only: omp_target_is_present, omp_get_default_device
+    use omp_lib, only: omp_target_is_present, omp_get_default_device, omp_get_initial_device, omp_get_num_devices
     use fsps_omp_check, only: omp_check_context
     use, intrinsic :: iso_c_binding, only: c_null_ptr
 #endif
@@ -83,8 +83,8 @@ program test_csp_batch
 
     call fsps_destroy(ctx)
 #ifdef OMP_TARGET
-    call assert_true(.not. mapped(loc(ctx)), "OpenMP maps: context released by fsps_destroy", &
-                     total_tests, total_failures)
+    if (offloading()) call assert_true(.not. mapped(loc(ctx)), "OpenMP maps: context released by fsps_destroy", &
+                                       total_tests, total_failures)
 #endif
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
     call tap_finish()
@@ -374,10 +374,17 @@ contains
     subroutine check_omp_maps(psets)
         type(PARAMS), intent(in) :: psets(:)
 
+        ! Host-only runs (OMP_TARGET_OFFLOAD=DISABLED, no device): everything is "present"
+        if (.not. offloading()) return
         call omp_check_context(ctx, 'test_csp_batch')
         call assert_true(.not. mapped(loc(psets)) .and. mapped(loc(ctx)), &
                          "OpenMP maps: per-call data released, context kept", total_tests, total_failures)
     end subroutine check_omp_maps
+
+    !> True if kernels run on an offload device (not the host fallback)
+    logical function offloading()
+        offloading = omp_get_num_devices() > 0 .and. omp_get_default_device() /= omp_get_initial_device()
+    end function offloading
 
     logical function mapped(addr)
         integer(8), intent(in) :: addr
