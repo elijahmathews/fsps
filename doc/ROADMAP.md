@@ -141,7 +141,26 @@ Alongside, two input generalisations that reuse the same machinery:
 - **Age x metallicity weight matrices:** extend the SSP-weight input from (ages x N) to (ages x
   metallicities x N), so metallicity can vary with age within a model (chemical-enrichment
   histories) and MDF sums become a special case (one of the blockers of priority 2).
-- **[alpha/Fe] as a grid axis**, read through the priority-1 format.
+- **[alpha/Fe] as a grid axis** (see priority 3b).
+
+### 3b. [alpha/Fe] as an SSP axis (near term)
+
+Alpha-enhanced isochrones and spectral libraries (MIST with an [Fe/H] x [alpha/Fe] layout, C3K
+per [alpha/Fe]) make [alpha/Fe] a fit parameter. The priority-1 format carries it as a named
+axis from the start (a library without it is [alpha/Fe] = 0), and its converter reads the
+alpha-enhanced layouts. Then:
+
+- SSP generation over (metallicity, [alpha/Fe]): the context's library and isochrone arrays
+  and the metallicity legend gain an [alpha/Fe] dimension (the list of what changes is in
+  `doc/DATA_FORMAT.md`);
+- the batch interpolates per model in ([Fe/H], [alpha/Fe]) between resident bases, as it does
+  in metallicity today (bilinear: four bases instead of two);
+- nebular emission: no alpha-enhanced photoionization grids exist yet, so alpha-enhanced fits
+  either use the solar-scaled nebular grids at the model's [Fe/H] (documented approximation)
+  or omit nebular emission, until such grids are computed;
+- gradients (priority 4) treat [alpha/Fe] like `logzsol` (kinked at grid values).
+
+This can go before or alongside priority 3; it needs only priority 1.
 
 ### 4. Gradients
 
