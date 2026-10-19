@@ -236,7 +236,7 @@ contains
         end do
         !$acc parallel loop gang vector collapse(2) present(ctx, lam, specw, ind)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2)
+        !$omp target teams distribute parallel do collapse(2) map(alloc: ctx)
 #endif
         do m = 1, n_col
             do j = 1, n_idx

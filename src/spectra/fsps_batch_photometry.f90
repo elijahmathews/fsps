@@ -457,7 +457,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(ctx, zc, wl, total, fobs) private(il, v, target, t, f)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(il, v, target, t, f)
+        !$omp target teams distribute parallel do collapse(2) private(il, v, target, t, f) map(alloc: ctx)
 #endif
         do m = 1, n_col
             do j = 1, npad

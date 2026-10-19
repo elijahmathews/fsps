@@ -381,7 +381,7 @@ contains
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
         !$acc zlo, zhi, dz, wext, bmass, blbol) private(k, w)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do private(k, w)
+        !$omp target teams distribute parallel do private(k, w) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             if (given_w .or. host_w) then
@@ -860,7 +860,7 @@ contains
         !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
         !$acc parallel loop gang collapse(2) present(ctx, basis, nb_q0) private(s, c)
 #ifdef OMP_TARGET
-        !$omp target teams distribute collapse(2) private(s, c)
+        !$omp target teams distribute collapse(2) private(s, c) map(alloc: ctx)
 #endif
         do iz = 1, nzb
         do t = 1, nt_neb
@@ -964,7 +964,7 @@ contains
             !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
 #ifdef OMP_TARGET
             !$omp target teams distribute parallel do collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
-            !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11)
+            !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11) map(alloc: ctx)
 #endif
             do m = 1, n_mod
                 do j = 1, nspec
@@ -1043,7 +1043,7 @@ contains
         !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb_ia, nb_wa, nb_q0, nb_iz, nb_wz, &
         !$acc nb_iu, nb_wu, nb_fabs, nb_lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
+        !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             do i = 1, NEMLINE
@@ -1084,7 +1084,7 @@ contains
         if (nb_lines_in_spec) then
             !$acc parallel loop gang vector collapse(2) present(ctx, nb_lptr, nb_lid, nb_lum, yo) private(s, p, i)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2) private(s, p, i)
+            !$omp target teams distribute parallel do collapse(2) private(s, p, i) map(alloc: ctx)
 #endif
             do m = 1, 2 * n_mod
                 do j = 1, nspec
@@ -1121,7 +1121,7 @@ contains
 
         !$acc parallel loop gang present(ctx, psets, nb_lum, nb_llo, eml, s_line) private(si, sa, fob, fnd)
 #ifdef OMP_TARGET
-        !$omp target teams distribute private(si, sa, fob, fnd)
+        !$omp target teams distribute private(si, sa, fob, fnd) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             si = 0.0_wp
@@ -1203,7 +1203,7 @@ contains
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, tdiff, total) &
         !$acc private(lagn, tmpl, lb)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(lagn, tmpl, lb)
+        !$omp target teams distribute parallel do collapse(2) private(lagn, tmpl, lb) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             do i = 1, nspec
@@ -1304,7 +1304,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, tau)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2)
+        !$omp target teams distribute parallel do collapse(2) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             do j = 1, nspec
@@ -1484,7 +1484,7 @@ contains
 #ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2) private(young, old, curve, tau_b, tau_o, &
         !$omp& tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust, one_m_tb, one_m_to, &
-        !$omp& one_m_td, a_young, spec_sum)
+        !$omp& one_m_td, a_young, spec_sum) map(alloc: ctx)
 #endif
         do m = 1, n_mod
             do i = 1, nspec
