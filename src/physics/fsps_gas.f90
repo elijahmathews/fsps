@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_gas
     !> @brief
     !> Handles nebular emission physics (gas phase).
@@ -19,6 +20,7 @@ module fsps_gas
     use fsps_constants, only: NEMLINE, NEBNAGE, NEBNZ, NEBNIP, C_LIGHT, &
                               H_PLANCK, L_SOL, SAFE_FLOOR, PI
     use fsps_types, only: params
+    use fsps_omp_data, only: omp_data_update_to
     use fsps_context_types, only: fsps_context_t
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: find_interval
@@ -230,7 +232,7 @@ contains
                 call compute_line_gaussians(ctx, pset)
                 !$acc update device(ctx%state%gaussnebarr(:,:))
 #ifdef OMP_TARGET
-                !$omp target update if(ctx%on_device) to(ctx%state%gaussnebarr)
+                if (ctx%on_device) call omp_data_update_to(loc(ctx%state%gaussnebarr), OMP_BYTES(ctx%state%gaussnebarr))
 #endif
                 ctx%state%gauss_built_sigma = pset%sigma_smooth
                 ctx%state%gauss_built_velocity = ctx%smooth_velocity_val

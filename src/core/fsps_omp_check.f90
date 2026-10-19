@@ -11,7 +11,9 @@ module fsps_omp_check
     !> target routines, where no per-kernel map refreshes it) points there to the component's
     !> mapped device copy, i.e. the descriptor was attached; a failure stops with the name of the
     !> array instead of a memory fault. The component list is the set of ctx%state components
-    !> referenced in device code (update it with new device code). No-ops without OMP_TARGET.
+    !> referenced in device code through ctx (update it with new device code), except the SSP
+    !> bases, which are mapped as plain data (fsps_omp_data) and reach kernels as arguments: their
+    !> presence is checked instead. No-ops without OMP_TARGET.
 
     use fsps_context_types, only: fsps_context_t
     use, intrinsic :: iso_c_binding, only: c_ptr, c_loc, c_associated, c_intptr_t
@@ -150,9 +152,6 @@ contains
         if (associated(ctx%state%spec_nu)) call check_attached(21, 'spec_nu', c_loc(ctx%state%spec_nu), where, dbase)
         if (associated(ctx%state%speclib)) call check_attached(22, 'speclib', c_loc(ctx%state%speclib), where, dbase)
         if (associated(ctx%state%speclib_agb_smooth)) call check_attached(23, 'speclib_agb_smooth', c_loc(ctx%state%speclib_agb_smooth), where, dbase)
-        if (allocated(ctx%state%ssp_basis_lbol)) call check_attached(24, 'ssp_basis_lbol', c_loc(ctx%state%ssp_basis_lbol), where, dbase)
-        if (allocated(ctx%state%ssp_basis_mass)) call check_attached(25, 'ssp_basis_mass', c_loc(ctx%state%ssp_basis_mass), where, dbase)
-        if (allocated(ctx%state%ssp_basis_spec)) call check_attached(26, 'ssp_basis_spec', c_loc(ctx%state%ssp_basis_spec), where, dbase)
         if (associated(ctx%state%time_full)) call check_attached(27, 'time_full', c_loc(ctx%state%time_full), where, dbase)
         if (associated(ctx%state%wgdust)) call check_attached(28, 'wgdust', c_loc(ctx%state%wgdust), where, dbase)
         if (associated(ctx%state%wmb_spec)) call check_attached(29, 'wmb_spec', c_loc(ctx%state%wmb_spec), where, dbase)

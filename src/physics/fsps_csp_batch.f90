@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_csp_batch
     !> @brief Batched CSP evaluation: many parameter sets against resident SSP bases.
     !>
@@ -69,6 +70,7 @@ module fsps_csp_batch
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: igm_tau
+    use fsps_omp_data, only: omp_data_to, omp_data_alloc, omp_data_delete
     use fsps_omp_check, only: omp_check_enabled, omp_check_present, omp_check_context
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
@@ -125,7 +127,7 @@ contains
     !> @param[out]   indx    Optional spectral indices (nindx, N), as compspout%indx.
     !> @param[in]    ssp_weights Optional SSP weights (ntfull, N) instead of the SFH parameters.
     subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx, ssp_weights)
-        type(fsps_context_t), intent(inout) :: ctx
+        type(fsps_context_t), intent(inout), target :: ctx
         type(params), intent(in)            :: psets(:)
         real(WP), intent(out)               :: mags(:,:)
         integer, intent(out)                :: status
@@ -163,6 +165,10 @@ contains
         real(WP), allocatable :: wta(:)
         logical,  allocatable :: agn_on(:)
         real(KP), allocatable :: eml(:,:)
+
+        ! The SSP bases' mass and L_bol, for the kernel below as arrays (with OpenMP they are mapped
+        ! as plain data, not attached to the device copy of ctx; see fsps_omp_data)
+        real(WP), pointer, contiguous :: bmass(:,:), blbol(:,:)
 
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
@@ -336,15 +342,26 @@ contains
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+        bmass => ctx%state%ssp_basis_mass
+        blbol => ctx%state%ssp_basis_lbol
 #ifdef OMP_TARGET
-        !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
+        ! psets and the nebular arrays by address (fsps_omp_data): LLVM flang left psets' data
+        ! mapped after a target data region naming it (a derived type with allocatable
+        ! components), and named components would be released with their parent structure
+        call omp_data_to(loc(psets), OMP_BYTES(psets))
+        call omp_data_to(loc(nb%ia), OMP_BYTES(nb%ia)); call omp_data_to(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_to(loc(nb%dwa), OMP_BYTES(nb%dwa)); call omp_data_to(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_to(loc(nb%iz), OMP_BYTES(nb%iz)); call omp_data_to(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_to(loc(nb%iu), OMP_BYTES(nb%iu)); call omp_data_to(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_to(loc(nb%fesc), OMP_BYTES(nb%fesc)); call omp_data_to(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_to(loc(nb%lptr), OMP_BYTES(nb%lptr)); call omp_data_to(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_to(loc(nb%llo), OMP_BYTES(nb%llo))
+        call omp_data_alloc(loc(nb%q0), OMP_BYTES(nb%q0)); call omp_data_alloc(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_alloc(loc(nb%cy), OMP_BYTES(nb%cy)); call omp_data_alloc(loc(nb%co), OMP_BYTES(nb%co))
+        !$omp target data map(to: iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$omp map(to: zlo, zhi, dz, wext, zcol) &
         !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
         !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
-#endif
-#ifdef OMP_TARGET
-        !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
-        !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
 #endif
 
 #ifdef OMP_TARGET
@@ -354,7 +371,7 @@ contains
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
-        !$acc zlo, zhi, dz, wext) private(k, w)
+        !$acc zlo, zhi, dz, wext, bmass, blbol) private(k, w)
 #ifdef OMP_TARGET
         !$omp target teams distribute parallel do private(k, w)
 #endif
@@ -375,12 +392,12 @@ contains
                 if (w > SAFE_FLOOR) then
                     if (zmode) then
                         ! The interpolated SSP's mass and L_bol (compute_interpolated_ssp)
-                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * ctx%state%ssp_basis_mass(k, zlo(m)) + &
-                                                 dz(m) * ctx%state%ssp_basis_mass(k, zhi(m)))
-                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * ctx%state%ssp_basis_lbol(k, zlo(m)) + &
-                                                          dz(m) * ctx%state%ssp_basis_lbol(k, zhi(m)))
+                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * bmass(k, zlo(m)) + &
+                                                 dz(m) * bmass(k, zhi(m)))
+                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * blbol(k, zlo(m)) + &
+                                                          dz(m) * blbol(k, zhi(m)))
                     else
-                        msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
+                        msum(m) = msum(m) + w * bmass(k, 1)
                         lsum(m) = lsum(m) + w * lum_linear(k)
                     end if
                 else
@@ -453,13 +470,16 @@ contains
         end if
 #ifdef OMP_TARGET
         !$omp end target data
-#endif
-#ifdef OMP_TARGET
-        !$omp end target data
-        ! LLVM flang (22) leaves the data of psets (derived type with allocatable components)
-        ! mapped after the region; a later host allocation at the same address would then be
-        ! taken as present and not copied. Delete the stale entry (no-op where it is gone).
-        !$omp target exit data map(delete: psets)
+        call omp_data_delete(loc(psets), OMP_BYTES(psets))
+        call omp_data_delete(loc(nb%ia), OMP_BYTES(nb%ia)); call omp_data_delete(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_delete(loc(nb%dwa), OMP_BYTES(nb%dwa)); call omp_data_delete(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_delete(loc(nb%iz), OMP_BYTES(nb%iz)); call omp_data_delete(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_delete(loc(nb%iu), OMP_BYTES(nb%iu)); call omp_data_delete(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_delete(loc(nb%fesc), OMP_BYTES(nb%fesc)); call omp_data_delete(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_delete(loc(nb%lptr), OMP_BYTES(nb%lptr)); call omp_data_delete(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_delete(loc(nb%llo), OMP_BYTES(nb%llo))
+        call omp_data_delete(loc(nb%q0), OMP_BYTES(nb%q0)); call omp_data_delete(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_delete(loc(nb%cy), OMP_BYTES(nb%cy)); call omp_data_delete(loc(nb%co), OMP_BYTES(nb%co))
 #endif
         !$acc end data
 
@@ -528,6 +548,8 @@ contains
                 call omp_check_present(loc(nb%co), 'nb%co', W, size(nb%co))
             end if
             call omp_check_present(loc(ctx%state%ssp_basis_spec), 'ctx%state%ssp_basis_spec', W, size(ctx%state%ssp_basis_spec))
+            call omp_check_present(loc(ctx%state%ssp_basis_mass), 'ctx%state%ssp_basis_mass', W, size(ctx%state%ssp_basis_mass))
+            call omp_check_present(loc(ctx%state%ssp_basis_lbol), 'ctx%state%ssp_basis_lbol', W, size(ctx%state%ssp_basis_lbol))
             if (allocated(ctx%state%batch%wt)) then
                 call omp_check_present(loc(ctx%state%batch%wt), 'ctx%state%batch%wt', W, size(ctx%state%batch%wt))
                 call omp_check_present(loc(ctx%state%batch%igm_t), 'ctx%state%batch%igm_t', W, size(ctx%state%batch%igm_t))

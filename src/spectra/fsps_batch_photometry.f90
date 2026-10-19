@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_batch_photometry
     !> @brief Magnitudes of many spectra at once on the device (batched CSP, compute_csp_scenario).
     !>
@@ -13,6 +14,7 @@ module fsps_batch_photometry
     use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, C_LIGHT, ABS_MAG_ZEROPOINT_LOG
     use fsps_context_types, only: fsps_context_t, batch_grid_release
+    use fsps_omp_data, only: omp_data_to, omp_data_delete, omp_data_update_to
     use fsps_cosmology, only: compute_igm_transmission
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_special_functions, only: mag_from_flux
@@ -263,12 +265,20 @@ contains
         g%igm_t = 1.0_KP
         !$acc enter data copyin(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+        call omp_data_to(loc(g%i_lo), OMP_BYTES(g%i_lo))
+        call omp_data_to(loc(g%j_lo), OMP_BYTES(g%j_lo))
+        call omp_data_to(loc(g%j_hi), OMP_BYTES(g%j_hi))
+        call omp_data_to(loc(g%t_obs), OMP_BYTES(g%t_obs))
+        call omp_data_to(loc(g%wt), OMP_BYTES(g%wt))
+        call omp_data_to(loc(g%wtl), OMP_BYTES(g%wtl))
+        call omp_data_to(loc(g%wl), OMP_BYTES(g%wl))
+        call omp_data_to(loc(g%bands_t), OMP_BYTES(g%bands_t))
+        call omp_data_to(loc(g%igm_t), OMP_BYTES(g%igm_t))
 #endif
         if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, igm_factor, g%igm_t)
         ! (with OpenMP target offload compute_igm_transmission runs on the host)
 #ifdef OMP_TARGET
-        !$omp target update to(g%igm_t)
+        call omp_data_update_to(loc(g%igm_t), OMP_BYTES(g%igm_t))
 #endif
 
 #ifdef FSPS_CUBLAS
@@ -288,7 +298,7 @@ contains
         end do
         !$acc enter data copyin(g%cmat)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%cmat)
+        call omp_data_to(loc(g%cmat), OMP_BYTES(g%cmat))
 #endif
 #endif
         g%ready = .true.
@@ -317,7 +327,10 @@ contains
             if (g%sm_sigma == sigma .and. g%sm_minl == minl .and. g%sm_maxl == maxl) return
             !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
 #ifdef OMP_TARGET
-            !$omp target exit data map(delete: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            call omp_data_delete(loc(g%sm_lo), OMP_BYTES(g%sm_lo))
+            call omp_data_delete(loc(g%sm_hi), OMP_BYTES(g%sm_hi))
+            call omp_data_delete(loc(g%sm_off), OMP_BYTES(g%sm_off))
+            call omp_data_delete(loc(g%sm_coef), OMP_BYTES(g%sm_coef))
 #endif
             deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
             g%sm_ready = .false.
@@ -333,7 +346,10 @@ contains
         end if
         !$acc enter data copyin(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+        call omp_data_to(loc(g%sm_lo), OMP_BYTES(g%sm_lo))
+        call omp_data_to(loc(g%sm_hi), OMP_BYTES(g%sm_hi))
+        call omp_data_to(loc(g%sm_off), OMP_BYTES(g%sm_off))
+        call omp_data_to(loc(g%sm_coef), OMP_BYTES(g%sm_coef))
 #endif
         g%sm_sigma = sigma
         g%sm_minl = minl

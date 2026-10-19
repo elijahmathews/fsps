@@ -21,6 +21,11 @@ program test_csp_batch
     use fsps_context_types, only: fsps_context_t
     use fsps_interpolation, only: find_interval
     use test_utils_mod, only: tap_finish, print_major_header, print_group, print_summary_line, assert_true
+#ifdef OMP_TARGET
+    use omp_lib, only: omp_target_is_present, omp_get_default_device
+    use fsps_omp_check, only: omp_check_context
+    use, intrinsic :: iso_c_binding, only: c_null_ptr
+#endif
     implicit none
 
     integer, parameter :: N_MOD = 12
@@ -77,6 +82,10 @@ program test_csp_batch
     call check_batch_z()
 
     call fsps_destroy(ctx)
+#ifdef OMP_TARGET
+    call assert_true(.not. mapped(loc(ctx)), "OpenMP maps: context released by fsps_destroy", &
+                     total_tests, total_failures)
+#endif
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
     call tap_finish()
     if (total_failures > 0) stop 1
@@ -197,6 +206,9 @@ contains
 
         call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, mdust=mdust, sfr=sfr, &
                                emlines=eml, indx=indx)
+#ifdef OMP_TARGET
+        call check_omp_maps(psets)
+#endif
         call assert_true(status == 0, "status 0", total_tests, total_failures)
         if (status /= 0) return
 
@@ -336,6 +348,9 @@ contains
         ctx%state%ssp_basis_is_dirty = .true.
         call fsps_context_update_ssp_basis(ctx, spec_z, mass_z, lbol_z, nz)
         call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, emlines=eml, indx=indx)
+#ifdef OMP_TARGET
+        call check_omp_maps(psets)
+#endif
         call assert_true(status == 0, "status 0", total_tests, total_failures)
         if (status /= 0) return
         call max_differences(spec, mags, ref_spec, ref_mags, d_spec, d_mag)
@@ -350,6 +365,26 @@ contains
         call assert_true(d_line <= SPEC_RTOL, "emission lines", total_tests, total_failures)
         call assert_true(d_indx <= INDX_TOL, "spectral indices", total_tests, total_failures)
     end subroutine check_batch_z
+
+#ifdef OMP_TARGET
+    !> OpenMP map lifetimes after a batch call: its per-call data (psets) is released, the context
+    !> stays mapped and every component device code reads through it is attached (fsps_omp_check
+    !> stops naming the component otherwise). Each group changes settings that release and
+    !> rebuild the batch caches (redshift, IGM, smoothing) or the SSP bases (metallicities).
+    subroutine check_omp_maps(psets)
+        type(PARAMS), intent(in) :: psets(:)
+
+        call omp_check_context(ctx, 'test_csp_batch')
+        call assert_true(.not. mapped(loc(psets)) .and. mapped(loc(ctx)), &
+                         "OpenMP maps: per-call data released, context kept", total_tests, total_failures)
+    end subroutine check_omp_maps
+
+    logical function mapped(addr)
+        integer(8), intent(in) :: addr
+
+        mapped = omp_target_is_present(transfer(addr, c_null_ptr), omp_get_default_device()) /= 0
+    end function mapped
+#endif
 
     subroutine set_int(key, value)
         character(len=*), intent(in) :: key
