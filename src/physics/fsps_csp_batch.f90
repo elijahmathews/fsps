@@ -420,7 +420,7 @@ contains
         end do
 
         if (zmode) then
-            call age_sums_z(nspec, nt, n_mod, ctx%state%ssp_basis_spec, w2, it_tesc, zlo, zhi, dz, yo)
+            call age_sums_z(nspec, nt, n_mod, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, zlo, zhi, dz, yo)
         else
             call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
         end if
@@ -791,7 +791,10 @@ contains
     subroutine add_nebular_batch(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, nb, yo, eml)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         type(nebular_setup_t), intent(inout) :: nb
         real(KP), intent(inout)          :: yo(:,:)
@@ -803,25 +806,30 @@ contains
         call nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
                              nb%nt_neb, nb%whlylim, nb%cont, nb%lines_in_spec, nb%xrb, nb%ia, nb%wa, nb%dwa, &
                              nb%newr, nb%q0, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%cy, nb%co, nb%lum, &
-                             nb%lptr, nb%lid, yo, eml)
+                             nb%lptr, nb%lid, size(nb%ia), size(nb%lid), size(nb%lum, 1), size(nb%lum, 2), yo, eml)
     end subroutine add_nebular_batch
 
     !> The kernels of add_nebular_batch, on the components of its nebular_setup_t.
     subroutine nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
                                nb_nt_neb, nb_whlylim, nb_cont, nb_lines_in_spec, nb_xrb, nb_ia, nb_wa, nb_dwa, &
                                nb_newr, nb_q0, nb_iz, nb_wz, nb_iu, nb_wu, nb_fesc, nb_fabs, nb_cy, nb_co, nb_lum, &
-                               nb_lptr, nb_lid, yo, eml)
+                               nb_lptr, nb_lid, n_age, n_lid, n_lum1, n_lum2, yo, eml)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        integer, intent(in)              :: n_age, n_lid, n_lum1, n_lum2   ! extents of the nb arrays
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         integer, intent(in)              :: nb_nt_neb, nb_whlylim
         logical, intent(in)              :: nb_cont, nb_lines_in_spec, nb_xrb
-        integer, intent(in), contiguous  :: nb_ia(:), nb_iz(:), nb_iu(:), nb_lptr(:), nb_lid(:)
-        real(WP), intent(in), contiguous :: nb_wa(:), nb_dwa(:), nb_wz(:), nb_wu(:), nb_fesc(:), nb_fabs(:)
-        logical, intent(in), contiguous  :: nb_newr(:)
-        real(WP), intent(inout), contiguous :: nb_q0(:,:), nb_cy(:,:), nb_co(:,:)
-        real(KP), intent(inout), contiguous :: nb_lum(:,:)
+        integer, intent(in)              :: nb_ia(n_age), nb_iz(n_mod), nb_iu(n_mod), nb_lptr(nspec + 1), nb_lid(n_lid)
+        real(WP), intent(in)             :: nb_wa(n_age), nb_dwa(n_age), nb_wz(n_mod), nb_wu(n_mod)
+        real(WP), intent(in)             :: nb_fesc(n_mod), nb_fabs(n_mod)
+        logical, intent(in)              :: nb_newr(n_age)
+        real(WP), intent(inout)          :: nb_q0(n_age, nzb), nb_cy(n_age, n_mod), nb_co(n_age, n_mod)
+        real(KP), intent(inout)          :: nb_lum(n_lum1, n_lum2)
         real(KP), intent(inout)          :: yo(:,:)
         real(KP), intent(out)            :: eml(:,:)
 
@@ -1098,10 +1106,12 @@ contains
     !> intrinsic - attenuated, per model.
     subroutine attenuate_lines(ctx, psets, n_mod, nb_lum, nb_llo, eml, s_line)
         type(fsps_context_t), intent(in)  :: ctx
-        type(params), intent(in)          :: psets(:)
         integer, intent(in)               :: n_mod
-        real(KP), intent(in), contiguous  :: nb_lum(:,:)   ! line luminosities (nebular_setup_t)
-        integer, intent(in), contiguous   :: nb_llo(:)     ! line pixel intervals
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        type(params), intent(in)          :: psets(n_mod)
+        real(KP), intent(in)              :: nb_lum(NEMLINE, 2 * n_mod)   ! line luminosities (nebular_setup_t)
+        integer, intent(in)               :: nb_llo(NEMLINE)              ! line pixel intervals
         real(KP), intent(out)             :: eml(:,:)
         real(WP), intent(out)             :: s_line(:)
 
@@ -1180,8 +1190,8 @@ contains
     !> attenuated by the model's diffuse dust; after the IGM transmission, as there.
     subroutine add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, ita(:)
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         logical, intent(in)              :: agn_on(:)
         real(WP), intent(in)             :: wta(:), lsum(:)
         real(KP), intent(in)             :: tdiff(:,:)   ! the diffuse transmission (attenuate_batch)
@@ -1234,9 +1244,12 @@ contains
     !> Age sums with per-model metallicity: each model's basis is (1 - dz) basis(:, :, zlo) +
     !> dz basis(:, :, zhi), formed at kernel precision term by term (portable kernel; also used in
     !> cuBLAS builds). One pass over the ages (young or old per model), 4 models per thread.
-    subroutine age_sums_z(nspec, nt, n_mod, basis, w2, it_tesc, zlo, zhi, dz, yo)
-        integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+    subroutine age_sums_z(nspec, nt, n_mod, nzb, basis, w2, it_tesc, zlo, zhi, dz, yo)
+        integer, intent(in)              :: nspec, nt, n_mod, nzb, it_tesc(:), zlo(:), zhi(:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         real(KP), intent(out)            :: yo(:,:)
         integer, parameter :: MT = 4
@@ -1283,8 +1296,8 @@ contains
     !> tau is work space (pixels x models).
     subroutine apply_igm_z(ctx, psets, n_mod, nspec, tau, total)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         real(KP), intent(inout)          :: tau(:,:), total(:,:)
         integer  :: m, j, jmax
         real(WP) :: tmax
@@ -1337,7 +1350,7 @@ contains
     !> Common IGM transmission.
     subroutine apply_igm(n_mod, nspec, igm_t, total)
         integer, intent(in)     :: n_mod, nspec
-        real(KP), intent(in)    :: igm_t(:)
+        real(KP), intent(in)    :: igm_t(nspec)   ! (explicit shape: mapped by address)
         real(KP), intent(inout) :: total(:,:)
         integer :: m, i
 
@@ -1356,7 +1369,10 @@ contains
     !> at kernel precision as in compute_csp_scenario.
     subroutine age_sums(nspec, nt, n_mod, basis, w2, it_tesc, yo)
         integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:)
-        real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(KP), intent(out)            :: yo(:,:)
 #ifdef FSPS_CUBLAS
         integer :: istat
@@ -1448,8 +1464,8 @@ contains
     !> (stored at KP, as fsps_dust stores it), yo(:, N + m) = Draine & Li template.
     subroutine attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         real(WP), intent(in)             :: wq(:), wu(:), gam(:)
         logical, intent(in)              :: emis(:), agn_on(:)
         real(KP), intent(inout)          :: yo(:,:)   ! in: young (1:N), old (N+1:2N)
@@ -1525,7 +1541,8 @@ contains
     subroutine dust_emission_reductions(n_mod, nspec, emis, wt, yo, absorbed, s_abs, s_norm, s_esc)
         integer, intent(in)              :: n_mod, nspec
         logical, intent(in)              :: emis(:)
-        real(KP), intent(in)             :: wt(:), yo(:,:), absorbed(:,:)
+        real(KP), intent(in)             :: wt(nspec)   ! (explicit shape: mapped by address)
+        real(KP), intent(in)             :: yo(:,:), absorbed(:,:)
         real(WP), intent(out)            :: s_abs(:), s_norm(:), s_esc(:)
 
         integer  :: m, i
