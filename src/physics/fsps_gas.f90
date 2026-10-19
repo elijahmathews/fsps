@@ -113,9 +113,10 @@ contains
         ! 2. Dimensionality Reduction
         ! ----------------------------------------------
 
+        ! On the device, where the CLOUDY grids are (on the host this was ~60000 interpolations
+        ! and a 0.5 MB upload per call, about a quarter of a full-physics compute_csp_scenario call)
         if (calc_cont) then
-            ctx%state%gas_neb_cont_reduced = 0.0_wp
-
+            !$acc parallel loop collapse(2) present(ctx)
             do k = 1, NEBNAGE
                 do t = 1, nspec
                     if (use_xrb_grid) then
@@ -127,12 +128,10 @@ contains
                     end if
                 end do
             end do
-            !$acc update device(ctx%state%gas_neb_cont_reduced)
         end if
 
         if (calc_lines) then
-            ctx%state%gas_neb_line_reduced = 0.0_wp
-
+            !$acc parallel loop collapse(2) present(ctx)
             do k = 1, NEBNAGE
                 do t = 1, NEMLINE
                     if (use_xrb_grid) then
@@ -144,7 +143,6 @@ contains
                     end if
                 end do
             end do
-            !$acc update device(ctx%state%gas_neb_line_reduced)
         end if
         
         ! 3. Main Time Loop
