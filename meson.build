@@ -141,6 +141,8 @@ lib_sources = files(
 
     # IO Module
     'src/io/fsps_io.f90',
+    'src/io/fsps_json.f90',
+    'src/io/fsps_datalib.f90',
 
     # Math Modules
     'src/math/fsps_integration.f90',
@@ -414,6 +416,25 @@ test('regression_bpass',
         env : regression_env,
         suite : 'regression',
         timeout : 300
+)
+
+# Bit-for-bit parity of the legacy layout and the standard data format (doc/DATA_FORMAT.md).
+# Needs a converted data root: -Dstandard_data_home=<root> (tools/fsps_data/convert_legacy.py);
+# skipped (exit 77) when the root has no fsps-data.json.
+data_parity_exe = executable('test_data_parity', 'tests/test_data_parity.f90',
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
+standard_data_home = get_option('standard_data_home')
+if standard_data_home == ''
+    standard_data_home = join_paths(meson.project_source_root(), 'fsps-data')
+endif
+test('data_parity', data_parity_exe,
+    protocol : 'tap',
+    args : [meson.project_source_root(), standard_data_home] + (c3k_available ? [] : ['--skip-spec', 'c3k_afe+0.0']),
+    env : regression_env,
+    suite : 'data_parity',
+    timeout : 1800
 )
 
 # 4. C Tests

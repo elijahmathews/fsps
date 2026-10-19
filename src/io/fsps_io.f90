@@ -51,7 +51,11 @@ module fsps_io
     use fsps_cosmology, only: vacuum_to_air
     use fsps_integration, only: integrate_trapezoid_array
     use fsps_interpolation, only: find_interval, interpolate_linear
-    use, intrinsic :: iso_fortran_env, only: real32, iostat_end, error_unit, file_storage_size
+    use fsps_datalib, only: datalib_t, datalib_available, datalib_open, datalib_axis_values, &
+                            datalib_axis_len, datalib_has_array, datalib_check_array, datalib_read_real, &
+                            datalib_read_int, datalib_array_len, datalib_meta_real, datalib_meta_string, &
+                            datalib_meta_node, datalib_has_meta
+    use, intrinsic :: iso_fortran_env, only: real32, int64, iostat_end, error_unit, file_storage_size
 
     implicit none
     private
@@ -76,6 +80,9 @@ module fsps_io
     public :: load_attenuation_curves
     public :: load_wmbasic_spectra
     public :: load_lsf_data
+    public :: load_spectral_grid_axes
+    public :: isochrone_kind
+    public :: use_standard_library
     
     ! --- Public API: Input (Runtime) ---
     public :: load_tabular_sfh
@@ -174,6 +181,11 @@ contains
         ! Temporary variables for reading
         real(WP) :: r_logage, r_mini, r_mact, r_logl, r_logt, r_logg
         real(WP) :: r_ffco, r_phase, r_lmdot
+
+        if (use_standard_library(ctx, 'isochrones', isoc_type)) then
+            call read_isochrones_standard(ctx, isoc_type, z_idx)
+            return
+        end if
 
         ! 1. Setup
         call get_isochrone_filename(ctx, isoc_type, z_idx, file_path)
@@ -330,6 +342,11 @@ contains
         ! Temporary buffer matching the LEGACY DISK FORMAT (32-bit reals)
         real(real32), allocatable, dimension(:,:,:) :: buffer_32
 
+        if (use_standard_library(ctx, 'stellar_spectra', spec_type)) then
+            call read_spectra_standard(ctx, spec_type, z_idx, array_out)
+            return
+        end if
+
         ! 1. Setup
         ! --------
         call get_spectral_filename(ctx, spec_type, z_idx, file_path)
@@ -401,6 +418,11 @@ contains
         character(len=1024) :: file_path
 
         if (VERBOSE > 0) print *, 'Loading BPASS Data...'
+
+        if (use_standard_library(ctx, 'ssp', 'bpss')) then
+            call read_bpass_standard(ctx)
+            return
+        end if
 
         file_path = trim(ctx%sps_home) // '/data/isochrones/BPASS/bpass.lambda'
         
@@ -503,6 +525,16 @@ contains
             n_max = ctx%state%nz
         end if
 
+        if (is_spec) then
+            if (use_standard_library(ctx, 'stellar_spectra', lib_type)) then
+                call standard_axis(ctx, 'stellar_spectra', lib_type, 'Z', ctx%state%zlegendinit)
+                return
+            end if
+        else if (use_standard_library(ctx, isochrone_kind(lib_type), lib_type)) then
+            call standard_axis(ctx, isochrone_kind(lib_type), lib_type, 'Z', ctx%state%zlegend)
+            return
+        end if
+
         ! 1. Construct Path
         call get_zlegend_filename(ctx, lib_type, is_spec, file_path)
         
@@ -584,6 +616,9 @@ contains
         integer :: u_file, io_stat, i
         character(len=1024) :: file_path
         
+        if (use_standard_library(ctx, 'stellar_spectra', spec_type)) then
+            call standard_axis(ctx, 'stellar_spectra', spec_type, 'wavelength', ctx%state%spec_lambda)
+        else
         call get_lambda_filename(ctx, spec_type, file_path)
         
         if (VERBOSE > 1) print *, 'Reading Wavelengths: ', trim(file_path)
@@ -602,6 +637,7 @@ contains
         end do
 
         close(u_file)
+        end if
 
         if (env_flag_true('FSPS_DEBUG_IO')) then
             call debug_stats_1d('[DEBUG_IO] spec_lambda', ctx%state%spec_lambda)
@@ -637,6 +673,17 @@ contains
         integer :: u_file, io_stat, i
         character(len=1024) :: file_path
         
+        if (use_standard_library(ctx, 'stellar_spectra', spec_type)) then
+            block
+                type(datalib_t) :: lib
+                integer(int64) :: off
+                call datalib_open(lib, ctx%sps_home, 'stellar_spectra', spec_type)
+                call datalib_check_array(lib, 'resolution', ['wavelength'], [ctx%state%nspec], off)
+                call datalib_read_real(lib, 'resolution', int(ctx%state%nspec, int64), ctx%state%spec_res, off)
+            end block
+            return
+        end if
+
         call get_res_filename(ctx, spec_type, file_path)
         
         if (VERBOSE > 1) print *, 'Reading Resolution: ', trim(file_path)
@@ -2587,6 +2634,208 @@ contains
         deallocate(spec_cube_32)
 
     end subroutine write_binary_spectral_lib
+
+    ! ------------------------------------------------------------------------
+    ! STANDARD-FORMAT READERS (doc/DATA_FORMAT.md)
+    ! ------------------------------------------------------------------------
+    ! Each fills exactly the arrays its legacy counterpart fills, with the same values: the
+    ! processing that follows the read is shared by both formats.
+
+    !> @brief Whether library (kind, name) is read in the standard format for this context.
+    logical function use_standard_library(ctx, kind, name)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: kind, name
+        use_standard_library = datalib_available(ctx%sps_home, kind, name, ctx%data_format)
+    end function use_standard_library
+
+    !> @brief Library kind holding the "isochrones" of an isochrone set ('ssp' for BPASS).
+    function isochrone_kind(isoc_type) result(kind)
+        character(len=*), intent(in) :: isoc_type
+        character(len=:), allocatable :: kind
+        if (trim(isoc_type) == 'bpss') then
+            kind = 'ssp'
+        else
+            kind = 'isochrones'
+        end if
+    end function isochrone_kind
+
+    !> @brief Copies the coordinates of a numeric axis into `dest`, which must have its length.
+    subroutine standard_axis(ctx, kind, name, axis, dest)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: kind, name, axis
+        real(WP), intent(out) :: dest(:)
+        type(datalib_t) :: lib
+        real(WP), allocatable :: vals(:)
+
+        call datalib_open(lib, ctx%sps_home, kind, name)
+        call datalib_axis_values(lib, axis, vals)
+        if (size(vals) /= size(dest)) then
+            write(error_unit, '(A,I0,A,I0)') '[FSPS_IO] Error: axis ' // axis // ' of ' // trim(kind) // '/' // &
+                trim(name) // ' has ', size(vals), ' values, expected ', size(dest)
+            error stop 1
+        end if
+        dest = vals
+    end subroutine standard_axis
+
+    !> @brief The (log T, log g) grid of the main spectral library.
+    !>
+    !> @details Legacy layout: every library is on the BaSeL grid (`basel_logt.dat`,
+    !> `basel_logg.dat`); standard format: the library's own `logT` and `logg` axes.
+    subroutine load_spectral_grid_axes(ctx, spec_type)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: spec_type
+        integer :: u_file, i
+
+        if (use_standard_library(ctx, 'stellar_spectra', spec_type)) then
+            call standard_axis(ctx, 'stellar_spectra', spec_type, 'logT', ctx%state%speclib_logt)
+            call standard_axis(ctx, 'stellar_spectra', spec_type, 'logg', ctx%state%speclib_logg)
+            return
+        end if
+
+        open (newunit=u_file, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logt.dat', status='old', action='read')
+        do i = 1, NDIM_LOGT
+            read (u_file, *) ctx%state%speclib_logt(i)
+        end do
+        close (u_file)
+
+        open (newunit=u_file, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logg.dat', status='old', action='read')
+        do i = 1, NDIM_LOGG
+            read (u_file, *) ctx%state%speclib_logg(i)
+        end do
+        close (u_file)
+    end subroutine load_spectral_grid_axes
+
+    !> @brief One metallicity of a standard-format spectral library: flux(nspec, logT, logg).
+    subroutine read_spectra_standard(ctx, spec_type, z_idx, array_out)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: spec_type
+        integer, intent(in) :: z_idx
+        real(WP), dimension(:,:,:), intent(out), contiguous :: array_out
+        type(datalib_t) :: lib
+        integer(int64) :: off, nblock
+
+        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', spec_type)
+        call datalib_check_array(lib, 'flux', [character(len=10) :: 'Z', 'logg', 'logT', 'wavelength'], &
+                                 [ctx%state%nzinit, NDIM_LOGG, NDIM_LOGT, ctx%state%nspec], off)
+        nblock = int(ctx%state%nspec, int64) * NDIM_LOGT * NDIM_LOGG
+        if (size(array_out, kind=int64) /= nblock) then
+            write(error_unit, '(A)') '[FSPS_IO] Error: spectral slab of the wrong size for ' // trim(spec_type)
+            error stop 1
+        end if
+        call datalib_read_real(lib, 'flux', nblock, array_out, off + int(z_idx - 1, int64) * nblock)
+    end subroutine read_spectra_standard
+
+    !> @brief One metallicity of a standard-format isochrone library.
+    subroutine read_isochrones_standard(ctx, isoc_type, z_idx)
+        type(fsps_context_t), intent(inout) :: ctx
+        character(len=*), intent(in) :: isoc_type
+        integer, intent(in) :: z_idx
+
+        type(datalib_t) :: lib
+        integer :: nt, nz, it, np, k
+        integer(int64) :: off, row0, nrows, total
+        integer, allocatable :: npts(:, :)
+        real(WP), allocatable :: logage(:, :), col(:)
+        character(len=12), parameter :: COLS(7) = [character(len=12) :: 'mini', 'mact', 'logl', 'logt', &
+                                                    'logg', 'composition', 'phase']
+
+        nt = ctx%state%nt
+        nz = ctx%state%nz
+        call datalib_open(lib, ctx%sps_home, 'isochrones', isoc_type)
+        allocate(npts(nt, nz), logage(nt, nz))
+        call datalib_check_array(lib, 'npoints', ['Z        ', 'age_index'], [nz, nt], off)
+        call datalib_read_int(lib, 'npoints', int(nt * nz, int64), npts, off)
+        call datalib_check_array(lib, 'log_age', ['Z        ', 'age_index'], [nz, nt], off)
+        call datalib_read_real(lib, 'log_age', int(nt * nz, int64), logage, off)
+        if (any(npts < 0) .or. any(npts > NM)) then
+            write(error_unit, '(A,I0,A)') '[FSPS_IO] Error: isochrones/' // trim(isoc_type) // &
+                ': npoints must be between 0 and ', NM, ' (points per isochrone)'
+            error stop 1
+        end if
+        total = sum(int(npts, int64))
+        row0 = sum(int(npts(:, 1:z_idx - 1), int64))
+        nrows = sum(int(npts(:, z_idx), int64))
+
+        allocate(col(nrows))
+        do k = 1, size(COLS) + 1
+            if (k <= size(COLS)) then
+                if (datalib_array_len(lib, trim(COLS(k))) /= total) call column_error(trim(COLS(k)))
+                call datalib_read_real(lib, trim(COLS(k)), nrows, col, row0)
+            else if (datalib_has_array(lib, 'log_mdot')) then
+                if (datalib_array_len(lib, 'log_mdot') /= total) call column_error('log_mdot')
+                call datalib_read_real(lib, 'log_mdot', nrows, col, row0)
+            else
+                col = -99.0_wp
+            end if
+            off = 0
+            do it = 1, nt
+                np = npts(it, z_idx)
+                if (np == 0) cycle
+                select case (k)
+                case (1)
+                    ctx%state%mini_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (2)
+                    ctx%state%mact_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (3)
+                    ctx%state%logl_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (4)
+                    ctx%state%logt_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (5)
+                    ctx%state%logg_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (6)
+                    ctx%state%ffco_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case (7)
+                    ctx%state%phase_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                case default
+                    ctx%state%lmdot_isoc(z_idx, it, 1:np) = col(off + 1:off + np)
+                end select
+                off = off + np
+            end do
+        end do
+
+        do it = 1, nt
+            if (npts(it, z_idx) == 0) cycle
+            ctx%state%timestep_isoc(z_idx, it) = logage(it, z_idx)
+            ctx%state%nmass_isoc(z_idx, it) = npts(it, z_idx)
+        end do
+        if (count(npts(:, z_idx) > 0) /= nt) then
+            write(error_unit, '("[FSPS_IO] Warning: Expected ", I0, " tracks, found ", I0, " in ", A)') &
+                nt, count(npts(:, z_idx) > 0), 'isochrones/' // trim(isoc_type)
+        end if
+    contains
+        subroutine column_error(cname)
+            character(len=*), intent(in) :: cname
+            write(error_unit, '(A)') '[FSPS_IO] Error: isochrones/' // trim(isoc_type) // ': column ' // cname // &
+                ' must have sum(npoints) values'
+            error stop 1
+        end subroutine column_error
+    end subroutine read_isochrones_standard
+
+    !> @brief The BPASS SSP library in the standard format (kind 'ssp', name 'bpss').
+    subroutine read_bpass_standard(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+        integer(int64) :: off
+        real(WP), allocatable :: ages(:)
+        integer :: nt, nz, nspec
+
+        nt = ctx%state%nt
+        nz = ctx%state%nz
+        nspec = ctx%state%nspec
+        call datalib_open(lib, ctx%sps_home, 'ssp', 'bpss')
+        call standard_axis(ctx, 'ssp', 'bpss', 'wavelength', ctx%state%spec_lambda)
+        where (ctx%state%spec_lambda > SAFE_FLOOR)
+            ctx%state%spec_nu = C_LIGHT / ctx%state%spec_lambda
+        elsewhere
+            ctx%state%spec_nu = 0.0_wp
+        end where
+        call datalib_axis_values(lib, 'log_age', ages)
+        ctx%state%time_full(1:nt) = ages
+        call datalib_check_array(lib, 'stellar_mass', ['Z      ', 'log_age'], [nz, nt], off)
+        call datalib_read_real(lib, 'stellar_mass', int(nt * nz, int64), ctx%state%bpass_mass_ssp, off)
+        call datalib_check_array(lib, 'spectra', ['Z         ', 'log_age   ', 'wavelength'], [nz, nt, nspec], off)
+        call datalib_read_real(lib, 'spectra', int(nspec, int64) * nt * nz, ctx%state%bpass_spec_ssp, off)
+    end subroutine read_bpass_standard
 
     ! ------------------------------------------------------------------------
     ! PRIVATE HELPERS

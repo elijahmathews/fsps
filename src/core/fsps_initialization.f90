@@ -32,7 +32,8 @@ module fsps_initialization
                        load_standard_sed, load_index_definitions, load_wr_spectra, &
                        load_agb_spectra, load_post_agb_spectra, load_attenuation_curves, &
                        load_wmbasic_spectra, load_lsf_data, load_agn_dust_models, &
-                       apply_legacy_filter_norm
+                       apply_legacy_filter_norm, isochrone_kind, load_spectral_grid_axes
+    use fsps_datalib, only: datalib_t, datalib_available, datalib_open, datalib_meta_real, datalib_axis_len
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
@@ -223,6 +224,9 @@ contains
         ctx%state%spec_type = trim(spec_name)
         ctx%state%str_dustem = trim(dust_name)
 
+        ! Paths first: with standard-format libraries the dimensions come from their manifests
+        call fsps_resolve_paths(ctx)
+
         call set_simulation_dimensions(ctx)
         call configure_dust_model(ctx)
 
@@ -230,8 +234,6 @@ contains
             write (error_unit, '(A,1x,I0,1x,I0)') '[FSPS_INIT] Error: zin > nz', zin, ctx%state%nz
             error stop 1
         end if
-
-        call fsps_resolve_paths(ctx)
 
         call build_cache_key(ctx, zin, cache_key)
         call fsps_cache_get_setup(cache_key, ctx%setup_cache, cache_is_new)
@@ -301,6 +303,9 @@ contains
         iso_str = trim(ctx%state%isoc_type)
         spec_str = trim(ctx%state%spec_type)
 
+        if (uses_standard_isochrones(ctx)) then
+            call isochrone_dimensions_from_manifest(ctx)
+        else
         select case (iso_str)
         case ('mist')
             ctx%state%zsol = 0.0142_wp
@@ -330,7 +335,11 @@ contains
             write (error_unit, '(A,1x,A)') '[FSPS_INIT] Error: Unknown isoc_type', trim(iso_str)
             error stop 1
         end select
+        end if
 
+        if (iso_str /= 'bpss' .and. datalib_available(ctx%sps_home, 'stellar_spectra', spec_str, ctx%data_format)) then
+            call spectral_dimensions_from_manifest(ctx)
+        else
         select case (spec_str)
         case ('miles')
             ctx%state%zsol_spec = 0.019_wp
@@ -354,6 +363,7 @@ contains
                 error stop 1
             end if
         end select
+        end if
 
         ctx%state%nbands = 159
         ctx%state%nindx = 30
@@ -369,6 +379,49 @@ contains
         end if
 
     end subroutine set_simulation_dimensions
+
+    !> @brief True if the isochrones (or, for BPASS, the SSP library) are read in the standard format.
+    logical function uses_standard_isochrones(ctx)
+        type(fsps_context_t), intent(in) :: ctx
+        uses_standard_isochrones = datalib_available(ctx%sps_home, isochrone_kind(ctx%state%isoc_type), &
+                                                     ctx%state%isoc_type, ctx%data_format)
+    end function uses_standard_isochrones
+
+    !> @brief nt, nz and the solar metallicity of a standard-format isochrone (or SSP) library.
+    subroutine isochrone_dimensions_from_manifest(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+
+        call datalib_open(lib, ctx%sps_home, isochrone_kind(ctx%state%isoc_type), ctx%state%isoc_type)
+        ctx%state%zsol = datalib_meta_real(lib, 'solar_metallicity')
+        ctx%state%nz = datalib_axis_len(lib, 'Z')
+        if (ctx%state%isoc_type == 'bpss') then
+            ctx%state%nt = datalib_axis_len(lib, 'log_age')
+            ! The SSP library is also the spectral library
+            ctx%state%zsol_spec = ctx%state%zsol
+            ctx%state%nzinit = 1
+            ctx%state%nspec = datalib_axis_len(lib, 'wavelength')
+        else
+            ctx%state%nt = datalib_axis_len(lib, 'age_index')
+        end if
+    end subroutine isochrone_dimensions_from_manifest
+
+    !> @brief nspec, nzinit and the solar metallicity of a standard-format spectral library.
+    subroutine spectral_dimensions_from_manifest(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+
+        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', ctx%state%spec_type)
+        ctx%state%zsol_spec = datalib_meta_real(lib, 'solar_metallicity')
+        ctx%state%nzinit = datalib_axis_len(lib, 'Z')
+        ctx%state%nspec = datalib_axis_len(lib, 'wavelength')
+        ! The (log T, log g) grid sizes are fixed by the context's lookup tables
+        if (datalib_axis_len(lib, 'logT') /= NDIM_LOGT .or. datalib_axis_len(lib, 'logg') /= NDIM_LOGG) then
+            write (error_unit, '(A,I0,A,I0,A)') '[FSPS_INIT] Error: spectral library ' // trim(ctx%state%spec_type) // &
+                ' must be on the ', NDIM_LOGT, ' x ', NDIM_LOGG, ' (log T, log g) grid of this version'
+            error stop 1
+        end if
+    end subroutine spectral_dimensions_from_manifest
 
     !> @brief Allocates the massive shared arrays within the cache object.
     !>
@@ -491,17 +544,7 @@ contains
         call load_spectral_resolution(ctx, ctx%state%spec_type)
         call load_zlegend_file(ctx, ctx%state%spec_type, .true.)
 
-        open (91, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logt.dat', status='old', action='read')
-        do i = 1, NDIM_LOGT
-            read (91, *) ctx%state%speclib_logt(i)
-        end do
-        close (91)
-
-        open (91, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logg.dat', status='old', action='read')
-        do i = 1, NDIM_LOGG
-            read (91, *) ctx%state%speclib_logg(i)
-        end do
-        close (91)
+        call load_spectral_grid_axes(ctx, ctx%state%spec_type)
 
         nzinit = ctx%state%nzinit
         allocate (speclibinit(ctx%state%nspec, nzinit, NDIM_LOGT, NDIM_LOGG))
@@ -1159,9 +1202,10 @@ contains
         !   - cloudy_dust selects the nebular grid files (ZAU_WD_* vs ZAU_ND_*);
         !   - compute_vega_mags converts the shared magsun to the Vega system;
         !   - zin selects the isochrones loaded and the reference time grid.
-        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
+        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
                            &"|",ES24.16,"|",I0,"|",I0)') &
-            trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
+            trim(ctx%sps_home), trim(ctx%data_format), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), &
+            trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
             ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &

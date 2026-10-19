@@ -272,6 +272,8 @@ module fsps_context_types
         character(len=250) :: sps_home = ''
         character(len=250) :: data_home = ''
         character(len=250) :: output_home = ''
+        !> Data format of the libraries (FSPS_DATA_FORMAT): 'auto', 'legacy' or 'standard'
+        character(len=8) :: data_format = 'auto'
         type(fsps_setup_cache_t), pointer :: setup_cache => null()
         type(fsps_context_state_t) :: state
         real(WP) :: om0_val = 0.0_wp
