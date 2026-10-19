@@ -69,6 +69,7 @@ module fsps_csp_batch
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: igm_tau
+    use fsps_omp_check, only: omp_check_enabled, omp_check_present, omp_check_context
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
     use fsps_spectral_indices, only: compute_spectral_indices_columns
@@ -346,6 +347,10 @@ contains
         !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
 #endif
 
+#ifdef OMP_TARGET
+        if (omp_check_enabled()) call check_batch_maps()
+#endif
+
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
@@ -480,6 +485,64 @@ contains
                 end if
             end if
         end do
+
+#ifdef OMP_TARGET
+    contains
+
+        !> FSPS_OMP_CHECK_PRE: every array the batch kernels use is on the device, and the
+        !> context components read in device routines are attached there (fsps_omp_check)
+        subroutine check_batch_maps()
+            character(len=*), parameter :: W = 'compute_csp_batch'
+
+            call omp_check_context(ctx, W)
+            call omp_check_present(loc(psets), 'psets', W, size(psets))
+            call omp_check_present(loc(iq), 'iq', W, size(iq)); call omp_check_present(loc(iu), 'iu', W, size(iu))
+            call omp_check_present(loc(wq), 'wq', W, size(wq)); call omp_check_present(loc(wu), 'wu', W, size(wu))
+            call omp_check_present(loc(gam), 'gam', W, size(gam)); call omp_check_present(loc(emis), 'emis', W, size(emis))
+            call omp_check_present(loc(it_tesc), 'it_tesc', W, size(it_tesc)); call omp_check_present(loc(lum_linear), 'lum_linear', W, size(lum_linear))
+            call omp_check_present(loc(ita), 'ita', W, size(ita)); call omp_check_present(loc(wta), 'wta', W, size(wta))
+            call omp_check_present(loc(agn_on), 'agn_on', W, size(agn_on))
+            call omp_check_present(loc(zlo), 'zlo', W, size(zlo)); call omp_check_present(loc(zhi), 'zhi', W, size(zhi))
+            call omp_check_present(loc(dz), 'dz', W, size(dz)); call omp_check_present(loc(wext), 'wext', W, size(wext))
+            call omp_check_present(loc(zcol), 'zcol', W, size(zcol)); call omp_check_present(loc(w2), 'w2', W, size(w2))
+            call omp_check_present(loc(weights), 'weights', W, size(weights)); call omp_check_present(loc(tmp1), 'tmp1', W, size(tmp1))
+            call omp_check_present(loc(tmp2), 'tmp2', W, size(tmp2)); call omp_check_present(loc(yo), 'yo', W, size(yo))
+            call omp_check_present(loc(total), 'total', W, size(total)); call omp_check_present(loc(absorbed), 'absorbed', W, size(absorbed))
+            call omp_check_present(loc(s_line), 's_line', W, size(s_line)); call omp_check_present(loc(tdiff), 'tdiff', W, size(tdiff))
+            call omp_check_present(loc(s_abs), 's_abs', W, size(s_abs)); call omp_check_present(loc(s_norm), 's_norm', W, size(s_norm))
+            call omp_check_present(loc(s_esc), 's_esc', W, size(s_esc)); call omp_check_present(loc(msum), 'msum', W, size(msum))
+            call omp_check_present(loc(lsum), 'lsum', W, size(lsum)); call omp_check_present(loc(eml), 'eml', W, size(eml))
+            if (allocated(nb%ia)) then
+                call omp_check_present(loc(nb%ia), 'nb%ia', W, size(nb%ia)); call omp_check_present(loc(nb%wa), 'nb%wa', W, size(nb%wa))
+                call omp_check_present(loc(nb%dwa), 'nb%dwa', W, size(nb%dwa)); call omp_check_present(loc(nb%newr), 'nb%newr', W, size(nb%newr))
+                call omp_check_present(loc(nb%iz), 'nb%iz', W, size(nb%iz)); call omp_check_present(loc(nb%wz), 'nb%wz', W, size(nb%wz))
+                call omp_check_present(loc(nb%iu), 'nb%iu', W, size(nb%iu)); call omp_check_present(loc(nb%wu), 'nb%wu', W, size(nb%wu))
+                call omp_check_present(loc(nb%fesc), 'nb%fesc', W, size(nb%fesc)); call omp_check_present(loc(nb%fabs), 'nb%fabs', W, size(nb%fabs))
+                call omp_check_present(loc(nb%lptr), 'nb%lptr', W, size(nb%lptr)); call omp_check_present(loc(nb%lid), 'nb%lid', W, size(nb%lid))
+                call omp_check_present(loc(nb%llo), 'nb%llo', W, size(nb%llo)); call omp_check_present(loc(nb%q0), 'nb%q0', W, size(nb%q0))
+                call omp_check_present(loc(nb%lum), 'nb%lum', W, size(nb%lum)); call omp_check_present(loc(nb%cy), 'nb%cy', W, size(nb%cy))
+                call omp_check_present(loc(nb%co), 'nb%co', W, size(nb%co))
+            end if
+            call omp_check_present(loc(ctx%state%ssp_basis_spec), 'ctx%state%ssp_basis_spec', W, size(ctx%state%ssp_basis_spec))
+            if (allocated(ctx%state%batch%wt)) then
+                call omp_check_present(loc(ctx%state%batch%wt), 'ctx%state%batch%wt', W, size(ctx%state%batch%wt))
+                call omp_check_present(loc(ctx%state%batch%igm_t), 'ctx%state%batch%igm_t', W, size(ctx%state%batch%igm_t))
+                call omp_check_present(loc(ctx%state%batch%i_lo), 'ctx%state%batch%i_lo', W, size(ctx%state%batch%i_lo))
+                call omp_check_present(loc(ctx%state%batch%t_obs), 'ctx%state%batch%t_obs', W, size(ctx%state%batch%t_obs))
+                call omp_check_present(loc(ctx%state%batch%wl), 'ctx%state%batch%wl', W, size(ctx%state%batch%wl))
+                call omp_check_present(loc(ctx%state%batch%wtl), 'ctx%state%batch%wtl', W, size(ctx%state%batch%wtl))
+                call omp_check_present(loc(ctx%state%batch%bands_t), 'ctx%state%batch%bands_t', W, size(ctx%state%batch%bands_t))
+                call omp_check_present(loc(ctx%state%batch%j_lo), 'ctx%state%batch%j_lo', W, size(ctx%state%batch%j_lo))
+                call omp_check_present(loc(ctx%state%batch%j_hi), 'ctx%state%batch%j_hi', W, size(ctx%state%batch%j_hi))
+            end if
+            if (smooth) then
+                call omp_check_present(loc(ctx%state%batch%sm_lo), 'ctx%state%batch%sm_lo', W, size(ctx%state%batch%sm_lo))
+                call omp_check_present(loc(ctx%state%batch%sm_hi), 'ctx%state%batch%sm_hi', W, size(ctx%state%batch%sm_hi))
+                call omp_check_present(loc(ctx%state%batch%sm_off), 'ctx%state%batch%sm_off', W, size(ctx%state%batch%sm_off))
+                call omp_check_present(loc(ctx%state%batch%sm_coef), 'ctx%state%batch%sm_coef', W, size(ctx%state%batch%sm_coef))
+            end if
+        end subroutine check_batch_maps
+#endif
     end subroutine compute_csp_batch
 
     !> Host-side nebular data of a batch: young ages and their grid interval, per-model grid

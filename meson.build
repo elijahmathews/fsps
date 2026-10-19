@@ -123,6 +123,7 @@ lib_sources = files(
     'src/core/fsps_constants.f90',
     'src/core/fsps_context_types.f90',
     'src/core/fsps_context.f90',
+    'src/core/fsps_omp_check.f90',
     'src/core/fsps_environment.f90',
     'src/core/fsps_initialization.f90',
     'src/core/fsps_strings.f90',

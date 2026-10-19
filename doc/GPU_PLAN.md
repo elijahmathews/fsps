@@ -155,6 +155,17 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
     rejects overlapping maps that nvfortran tolerates;
   - (nvfortran 25.1, OpenMP) do not pass an assumed-shape dummy of the host routine to a device
     function inside a target region; use a local copy.
+  - a clean A100 run does not prove the maps: nvfortran and LLVM flang map differently. flang
+    refreshes (and attaches) only the `ctx` components a kernel names directly; components read
+    inside `declare target` callees rely on the attach done when they were mapped (at
+    `fsps_context_move_to_device` or wherever they are (re)allocated). New device code that
+    reads a `ctx%state` component in a callee goes into `src/core/fsps_omp_check.f90`'s list,
+    and new kernel arrays into the batch's check (`check_batch_maps`); on a new GPU or
+    compiler, run the batch tests once with `FSPS_OMP_CHECK_PRE=1` (stops naming the array that
+    is unmapped or not attached instead of faulting).
+  - module variables read in device code need `!$omp declare target` and an update after host
+    assignments (flang emits a separate device copy of a module variable, which host
+    assignments never reach); module constants are fine. None is read on the device today.
 
 ## Recording results
 
