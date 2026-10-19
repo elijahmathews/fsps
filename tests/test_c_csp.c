@@ -171,6 +171,30 @@ int main(void) {
     check(status == 309, "mags in fast mode: 309");
 
     fsps_context_destroy(h, &status);
+
+    /* A handle reused after destroy starts from the default parameters, like a new one */
+    {
+        int h1 = 0, h2 = 0, h3 = 0, n1 = 0;
+        double m_reused = 0.0, m_new = 0.0;
+        fsps_context_create(&h1, &status);
+        fsps_context_setup(-1, "mist", "miles", "DL07", h1, &status);
+        fsps_context_create(&h3, &status);  /* keeps h1's slot from being the only one */
+        fsps_context_setup(-1, "mist", "miles", "DL07", h3, &status);
+        fsps_context_set_float(h1, "tau", 0.3, &status);
+        fsps_context_set_int(h1, "sfh", 1, &status);
+        fsps_context_destroy(h1, &status);
+        fsps_context_create(&h2, &status);
+        fsps_context_setup(-1, "mist", "miles", "DL07", h2, &status);
+        fsps_context_set_float(h2, "tage", 3.0, &status);
+        fsps_context_set_float(h3, "tage", 3.0, &status);
+        fsps_context_compute_csp(h2, 0, &n1, &status);
+        fsps_context_get_csp(h2, NULL, &m_reused, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &status);
+        fsps_context_compute_csp(h3, 0, &n1, &status);
+        fsps_context_get_csp(h3, NULL, &m_new, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &status);
+        check(h2 == h1 && m_reused == m_new, "reused handle starts from the default parameters");
+        fsps_context_destroy(h2, &status);
+        fsps_context_destroy(h3, &status);
+    }
     printf(failures ? "FAILED\n" : "PASSED\n");
     return failures ? 1 : 0;
 }
