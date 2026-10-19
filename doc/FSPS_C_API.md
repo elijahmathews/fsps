@@ -12,6 +12,11 @@ meson compile -C build
 
 The C header is located at `include/fsps.h`.
 
+Language bindings that build the library as a Meson subproject use
+`dependency('fsps')` (or the `fsps_dep` variable) and usually pass `-Dtests=false` (skip the
+test programs) and `-Dinstall_data=false` (do not install the 1.3 GB data tree). Installed, the
+library is found through pkg-config (`fsps.pc`).
+
 ## Architecture
 
 The driver exposes two distinct APIs:
@@ -60,9 +65,63 @@ void fsps_context_set_str(int handle, const char *key, const char *value, int *s
 
 ```
 
-### Computation
+### API version
 
-Currently, the Context API supports generating Simple Stellar Populations (SSPs).
+`FSPS_API_VERSION_MAJOR`, `_MINOR` and `_PATCH` in `fsps.h` equal what
+`fsps_get_driver_version` returns at run time, so a binding can check that the header it was
+built against matches the library it loads. The minor number grows when entry points are added
+(1.1: the grid getters, the tabular SFH and the single CSP below).
+
+### Grids and filter data
+
+```c
+void fsps_context_get_lambda(int handle, double *lambda, int *status);      // nspec, A
+void fsps_context_get_ages(int handle, double *log_age, int *status);       // ntfull, log10(yr)
+void fsps_context_get_zlegend(int handle, double *z, int *status);          // nz, Z
+void fsps_context_get_emlambda(int handle, double *emlambda, int *status);  // nemline, A
+void fsps_context_get_filter_data(int handle, double *wave_eff, double *mag_vega,
+                                  double *mag_sun, int *status);            // nbands each
+```
+
+Wavelengths are in air with `vactoair_flag = 1`, in vacuum otherwise. `mag_vega` is the AB
+magnitude of Vega (AB - Vega offset per band); `mag_sun` the absolute AB magnitude of the Sun.
+Any of the three filter pointers may be `NULL`. Status 1 for a bad handle, 301 before setup.
+
+### Single CSP
+
+```c
+void fsps_context_set_sfh_tab(int handle, int ntab, const double *age, const double *sfr,
+                              const double *met, int *status);
+void fsps_context_compute_csp(int handle, int zcontinuous, int *n_out, int *status);
+void fsps_context_get_csp(int handle, double *age, double *mass, double *lbol, double *sfr,
+                          double *mdust, double *mformed, double *spec, double *mags,
+                          double *emlines, double *indx, int *status);
+```
+
+`fsps_context_compute_csp` runs `compute_csp_scenario` (the reference single-model path) for the
+context's parameters. `zcontinuous` selects the SSPs: 0 the grid at `zmet`; 1 the grids
+interpolated linearly in log Z at `logzsol`; 2 a metallicity distribution (`pmetals`); 3 all
+metallicities, with the metallicity column of a tabular SFH. SSP grids are computed per
+metallicity when first needed and kept with the handle until an SSP parameter is set (the
+nebular parameters count only with `add_neb_emission = 2`), so a sequence of calls that changes
+only SFH, dust or redshift parameters does not rebuild them. `*n_out` is 1 for `tage > 0` and
+`ntfull` (one output per SSP age) otherwise.
+
+`fsps_context_get_csp` copies the outputs out; any pointer may be `NULL`. Arrays are
+column-major (`spec` is `nspec x n_out`, `mags` `nbands x n_out`, `emlines` `nemline x n_out`,
+`indx` `nindx x n_out`); ages in log10(yr), masses in M_sun, L_bol in log10(L_sun), spectra in
+L_sun/Hz, lines in L_sun, all per solar mass formed except for tabular SFHs (`sfh = 2, 3`),
+whose SFRs are absolute (M_sun/yr).
+
+The tabular SFH takes ages in Gyr since the start of star formation and SFRs in M_sun/yr; `met`
+may be `NULL`.
+
+Status codes: 301 not set up, 302 no CSP computed yet, 304 `zmet` out of range, 306 bad
+`zcontinuous`, 309 magnitudes or indices requested but not computed (fast mode), 311 the
+computation failed (or `sfh = 3` without a table); 3 from `fsps_context_set_sfh_tab` for `ntab`
+outside 1 to `NTABMAX`.
+
+### SSP grid
 
 ```c
 void fsps_context_compute_ssp(int handle, double *spec, double *mass, double *lbol, int *status);
