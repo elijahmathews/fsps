@@ -2,10 +2,12 @@
  * the context grid getters and the tabular SFH, as language bindings use them:
  *  - the API version macros equal fsps_get_driver_version;
  *  - grids: sizes, increasing wavelengths and ages, filter data;
- *  - an SSP (sfh = 0, tage = 0) gives the fsps_context_compute_ssp mass and L_bol exactly;
+ *  - an SSP (sfh = 0, tage = 0) gives the fsps_context_compute_ssp ages, mass and L_bol to
+ *    1e-12 (see the comment at that check);
  *  - a tau model at tage > 0 equals the batch of one with the same parameters (to the batch
  *    test's tolerance), at zmet (zcontinuous = 0) and at logzsol (zcontinuous = 1);
- *  - the stored SSP grids are invalidated by an SSP parameter and reused otherwise;
+ *  - the stored SSP grids are invalidated by an SSP parameter (and recomputed when it is
+ *    restored);
  *  - a tabular SFH (sfh = 3) of constant SFR reproduces sfh = 1 with const = 1;
  *  - error statuses (no CSP yet, no magnitudes in fast mode, bad zcontinuous, sfh = 3 without a table, bad handle).
  * Requires the FSPS data tree (SPS_HOME), like the regression tests. */
@@ -88,14 +90,21 @@ int main(void) {
     double *cmass = malloc(sizeof(double) * ntfull), *clbol = malloc(sizeof(double) * ntfull);
     double *cage = malloc(sizeof(double) * ntfull);
     fsps_context_get_csp(h, cage, cmass, clbol, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &status);
+    /* Not bit-identical: the CSP path rebuilds each age as log10(1e9 * 10**(t - 9)) and the
+     * SSP weight as a burst at that age (compute_ssp_weights), so the libm of the compiler
+     * (log10, **) enters; with nvfortran the ages, masses and L_bol differ from compute_ssp by
+     * about 1 ulp. All are WP (FP64) quantities, also in FP32-kernel builds: 1e-12. */
     int same = status == 0;
+    double d_age = 0.0, d_mass = 0.0, d_lbol = 0.0;
     for (int i = 0; i < ntfull; i++) {
-        if (!(cmass[i] == smass[i] && fabs(clbol[i] - slbol[i]) < 1e-13 && cage[i] == ages[i]))
-            printf("# age %d: %.17g %.17g, mass %.17g %.17g, lbol %.17g %.17g\n", i, cage[i], ages[i], cmass[i],
-                   smass[i], clbol[i], slbol[i]);
-        same &= cmass[i] == smass[i] && fabs(clbol[i] - slbol[i]) < 1e-13 && cage[i] == ages[i];
+        d_age = fmax(d_age, fabs(cage[i] - ages[i]));
+        d_mass = fmax(d_mass, fabs(cmass[i] / smass[i] - 1.0));
+        d_lbol = fmax(d_lbol, fabs(clbol[i] - slbol[i]));
     }
-    check(same, "SSP mass and ages = compute_ssp exactly, L_bol to 1e-13 dex");
+    printf("# SSP via the CSP path vs compute_ssp: age %.2e dex, mass %.2e, L_bol %.2e dex\n", d_age, d_mass,
+           d_lbol);
+    same &= d_age <= 1e-12 && d_mass <= 1e-12 && d_lbol <= 1e-12;
+    check(same, "SSP ages, mass and L_bol = compute_ssp (1e-12)");
 
     /* A tau model at tage = 5 Gyr with dust and nebular emission vs the batch of one */
     fsps_context_set_int(h, "sfh", 1, &status);
@@ -138,7 +147,10 @@ int main(void) {
     fsps_context_set_float(h, "imf1", 1.3, &status);
     fsps_context_compute_csp(h, 1, &n_out, &status);
     fsps_context_get_csp(h, NULL, NULL, NULL, NULL, NULL, NULL, spec2, NULL, NULL, NULL, &status);
-    check(spec_diff(spec2, spec, nspec) == 0.0, "imf1 restored: identical CSP");
+    /* Recomputed SSPs (the cache was invalidated twice): equal up to the run-to-run differences
+     * of parallel reductions (OpenACC / GPU builds, FP32 kernels), far below the 1e-4 change */
+    printf("# imf1 restored: max relative difference %.2e\n", spec_diff(spec2, spec, nspec));
+    check(spec_diff(spec2, spec, nspec) < 1e-5, "imf1 restored: same CSP");
 
     /* sfh = 3 without a table: error; constant SFR table = sfh 1 with const = 1 */
     fsps_context_set_int(h, "sfh", 3, &status);
