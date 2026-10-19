@@ -77,7 +77,7 @@ contains
         call json_parse_string(doc, text, ok, msg)
         call assert_true(ok, 'a valid document parses', total_tests, total_failures)
         call assert_true(json_string(doc, json_child(doc, 1, 's')) == 'a"b' // BS // 'c' // achar(195) // achar(169) // &
-                         achar(10), 'string escapes decoded (quote, backslash, \u00e9 as UTF-8, newline)', &
+                         achar(10), 'string escapes decoded (quote, backslash, U+00E9 as UTF-8, newline)', &
                          total_tests, total_failures)
         arr = json_child(doc, 1, 'x')
         call assert_true(json_len(doc, arr) == 5 .and. json_real(doc, json_item(doc, arr, 1)) == 0.1_wp .and. &
