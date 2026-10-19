@@ -25,7 +25,10 @@ class FspsError(RuntimeError):
 class Context:
     """One FSPS context (its own settings, libraries and device copy)."""
 
-    def __init__(self, lib_path, isoc="mist", spec="miles", dust="DL07"):
+    def __init__(self, lib_path, isoc="mist", spec="miles", dust="DL07", ints=None, floats=None):
+        """ints / floats: settings applied before fsps_context_setup (and again after it). The
+        cosmology must be set before setup: the redshift / distance table is built there, and
+        H0, om0, ol0 set afterwards do not reach it."""
         self.lib = lib = ct.CDLL(os.path.abspath(lib_path))
         lib.fsps_context_create.argtypes = [_int_p, _int_p]
         lib.fsps_context_destroy.argtypes = [ct.c_int, _int_p]
@@ -46,8 +49,16 @@ class Context:
         lib.fsps_context_create(ct.byref(h), ct.byref(self._st))
         self._check("create")
         self.handle = h.value
+        for k, v in (ints or {}).items():
+            self.set_int(k, v)
+        for k, v in (floats or {}).items():
+            self.set_float(k, v)
         lib.fsps_context_setup(-1, isoc.encode(), spec.encode(), dust.encode(), self.handle, ct.byref(self._st))
         self._check("setup")
+        for k, v in (ints or {}).items():
+            self.set_int(k, v)
+        for k, v in (floats or {}).items():
+            self.set_float(k, v)
 
     def _check(self, what):
         if self._st.value != 0:

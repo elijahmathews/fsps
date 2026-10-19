@@ -1,2 +1,5 @@
 results_*/vectors.npz
+results_*/legacy/*.npz
+results_*/legacy/*.bin
+results_*/legacy/work/
 __pycache__/

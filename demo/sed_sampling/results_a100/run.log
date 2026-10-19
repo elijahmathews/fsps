@@ -1,6 +1,6 @@
 FIXED FOR THE WHOLE BATCH (shared by every parameter vector)
   isochrones                 MIST
-  stellar spectra            MILES (+ BaSeL-type extension outside MILES)
+  stellar spectra            MILES (FSPS 'miles' spectral library)
   dust emission templates    Draine & Li 2007 (DL07)
   imf_type                   1
   dust_type                  4
@@ -14,6 +14,7 @@ FIXED FOR THE WHOLE BATCH (shared by every parameter vector)
   compute_indices            1
   compute_vega_mags          0
   vactoair_flag              0
+  smooth_velocity            1
   H0                         70.0
   om0                        0.3
   ol0                        0.7
@@ -21,6 +22,9 @@ FIXED FOR THE WHOLE BATCH (shared by every parameter vector)
   frac_nodust                0.0
   frac_obrun                 0.0
   igm_factor                 1.0
+  sigma_smooth               150.0
+  min_wave_smooth            1000.0
+  max_wave_smooth            10000.0
   SSP basis                  12 metallicities x 107 ages x 5994 wavelengths, built once and kept on the GPU
   filters                    all 159 FSPS filters (FILTER_LIST), observed frame
 VARIED PER VECTOR (independent draws, no two vectors share a value)
@@ -46,42 +50,42 @@ RETURNED TO HOST MEMORY PER VECTOR (inside the timing)
 
 GPU: NVIDIA A100-PCIE-40GB, 580.178.04;  host: p-gc-3003;  library: ../../build_gpu32cb/libfsps.so
 
-One-time: setup 20.6 s; first call (12 SSP bases, context to GPU) 1.4 s
+One-time: setup 20.8 s; first call (12 SSP bases, context to GPU) 1.4 s
 
 Timing (wall clock in Python, per call: SFH weights + FSPS batch + mass scaling; outputs in numpy arrays)
       N       output  us/vector median      min   SFH weights  FSPS call  scaling  (us/vector, median)
-      1   phot+props           7840.47  7774.72        152.61    7651.71    37.27
-      2   phot+props           1070.62  1053.60         80.93     971.35    17.90
-      5   phot+props            460.56   453.10         37.50     415.34     7.39
-     10   phot+props            246.64   242.39         20.82     221.82     3.82
-     20   phot+props            161.43   156.22         19.70     140.00     2.06
-     50   phot+props             68.96    67.79          8.18      60.14     0.82
-    100   phot+props             40.53    39.74          4.49      35.48     0.50
-    200   phot+props             23.18    22.89          2.73      20.09     0.36
-    500   phot+props             15.38    15.05          1.63      13.46     0.27
-   1000   phot+props             13.25    13.06          1.24      11.75     0.25
-   2000   phot+props             10.82    10.79          1.05       9.54     0.24
-   5000   phot+props             10.71    10.64          0.97       9.47     0.28
-  10000   phot+props             11.36    11.28          1.00      10.05     0.30
-  20000   phot+props             10.78    10.71          0.97       9.48     0.32
-  50000   phot+props             11.51    11.36          0.98      10.21     0.33
- 100000   phot+props             11.77    11.74          1.07      10.37     0.32
-      1     +spectra           7508.93  7422.06        154.45    7324.98    33.03
-      2     +spectra            892.20   867.60         84.91     784.83    23.26
-      5     +spectra            395.14   380.24         38.84     343.99    11.56
-     10     +spectra            214.16   207.25         21.79     184.89     6.81
-     20     +spectra            140.77   136.68         19.90     115.99     5.17
-     50     +spectra             69.87    68.95          8.36      57.51     4.09
-    100     +spectra             44.50    43.96          4.72      35.83     3.97
-    200     +spectra             32.09    31.58          2.78      25.54     3.83
-    500     +spectra             28.06    27.43          1.79      21.92     4.31
-   1000     +spectra             28.22    27.67          1.29      21.51     5.37
-   2000     +spectra             28.59    27.92          1.14      21.88     5.55
-   5000     +spectra             27.81    27.08          1.00      21.12     5.68
-  10000     +spectra             31.10    30.49          0.98      24.32     5.76
-  20000     +spectra             30.95    30.58          0.98      24.18     5.76
-  50000     +spectra             31.70    31.28          1.06      24.92     5.72
- 100000     +spectra             34.29    33.79          1.07      27.02     6.14
+      1   phot+props           9010.49  8895.94        158.20    8812.39    38.85
+      2   phot+props           1080.41  1057.20         82.22     978.24    17.65
+      5   phot+props            462.51   451.59         37.66     416.45     7.35
+     10   phot+props            246.01   243.41         20.50     221.86     3.75
+     20   phot+props            154.07   151.70         19.77     132.11     2.07
+     50   phot+props             69.48    68.55          8.24      60.19     0.77
+    100   phot+props             40.27    39.53          4.48      35.28     0.50
+    200   phot+props             25.97    22.51          2.74      22.86     0.36
+    500   phot+props             16.29    15.78          1.64      14.35     0.27
+   1000   phot+props             13.17    12.90          1.24      11.69     0.25
+   2000   phot+props             11.40    11.31          1.06      10.08     0.25
+   5000   phot+props             11.17    11.11          0.97       9.92     0.29
+  10000   phot+props             11.63    11.51          0.96      10.35     0.30
+  20000   phot+props             11.77    11.69          0.99      10.45     0.32
+  50000   phot+props             12.10    12.01          1.12      10.65     0.32
+ 100000   phot+props             12.20    12.17          1.08      10.80     0.33
+      1     +spectra           8776.23  8605.89        156.90    8575.07    37.66
+      2     +spectra            920.52   889.45         84.79     810.90    23.40
+      5     +spectra            405.04   391.20         39.32     352.04    11.62
+     10     +spectra            216.25   213.04         21.31     188.40     6.70
+     20     +spectra            142.79   139.65         19.61     117.90     5.10
+     50     +spectra             70.81    69.87          8.14      58.37     4.11
+    100     +spectra             45.71    44.97          4.61      37.20     3.79
+    200     +spectra             33.31    32.30          2.89      26.63     3.79
+    500     +spectra             28.78    28.05          1.82      22.67     4.31
+   1000     +spectra             29.58    28.73          1.32      22.85     5.35
+   2000     +spectra             33.14    32.31          1.16      26.37     5.56
+   5000     +spectra             32.73    31.95          1.03      26.00     5.67
+  10000     +spectra             31.41    30.89          1.00      24.68     5.74
+  20000     +spectra             31.95    31.46          0.99      25.18     5.74
+  50000     +spectra             32.19    31.82          0.96      25.50     5.74
+ 100000     +spectra             34.85    34.49          1.14      27.62     6.08
 
 Check: 24 vectors of the N = 10000 batch vs the same vectors one per call, parameters set as context scalars (worst differences):
   mags_abs         5.95e-07
@@ -90,7 +94,7 @@ Check: 24 vectors of the N = 10000 batch vs the same vectors one per call, param
   mfrac_rel        0.00e+00
   lbol_abs_dex     0.00e+00
   mdust_rel        2.35e-16
-  spec_rel         4.18e-16
-  (outputs differ between vectors as they should: e.g. SDSS r 18.5 ... 53.0 mag, WISE W3 13.4 ... 27.5 mag)
+  spec_rel         4.14e-16
+  (outputs differ between vectors as they should: e.g. SDSS r 18.5 ... 53.0 mag, WISE W3 13.5 ... 27.5 mag)
 
 Figures in results_a100/

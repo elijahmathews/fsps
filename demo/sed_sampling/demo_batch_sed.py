@@ -52,11 +52,14 @@ INT_SETTINGS = {
     "compute_indices": 1,      # Lick / other spectral indices
     "compute_vega_mags": 0,    # AB magnitudes
     "vactoair_flag": 0,        # vacuum wavelengths
+    "smooth_velocity": 1,      # sigma_smooth in km/s (velocity dispersion)
 }
 FLOAT_SETTINGS = {
     "H0": 70.0, "om0": 0.3, "ol0": 0.7,   # flat LambdaCDM: distances, t_univ(z)
     "dust_tesc": 7.0,          # log age (yr) below which stars sit in birth clouds (dust1)
     "frac_nodust": 0.0, "frac_obrun": 0.0, "igm_factor": 1.0,
+    # Velocity smoothing of the spectra (FSPS's window, 1000 - 10000 A), shared by the batch
+    "sigma_smooth": 150.0, "min_wave_smooth": 1.0e3, "max_wave_smooth": 1.0e4,
 }
 COSMO = (FLOAT_SETTINGS["H0"], FLOAT_SETTINGS["om0"])
 
@@ -169,15 +172,12 @@ class SfhWeights:
 # ---------------------------------------------------------------------------------------------
 
 class BatchModel:
-    def __init__(self, lib, smooth=0.0):
+    def __init__(self, lib, smooth=None, extra_ints=None, extra_floats=None):
         t0 = time.perf_counter()
-        self.ctx = fsps_batch.Context(lib, "mist", "miles", "DL07")
-        for k, v in INT_SETTINGS.items():
-            self.ctx.set_int(k, v)
-        for k, v in FLOAT_SETTINGS.items():
-            self.ctx.set_float(k, v)
-        if smooth > 0:
-            self.ctx.set_int("smooth_velocity", 1)
+        # Settings before setup too: the cosmology only takes effect there (see fsps_batch.Context)
+        self.ctx = fsps_batch.Context(lib, "mist", "miles", "DL07", ints={**INT_SETTINGS, **(extra_ints or {})},
+                                      floats={**FLOAT_SETTINGS, **(extra_floats or {})})
+        if smooth is not None:
             self.ctx.set_float("sigma_smooth", smooth)
         self.setup_s = time.perf_counter() - t0
         self.dims = {k: self.ctx.dim(k) for k in ("nspec", "ntfull", "nbands", "nindx", "nz", "nemline")}
@@ -325,7 +325,8 @@ def main():
                     help="batch sizes to time")
     ap.add_argument("--reps", type=int, default=20, help="timed calls per size (fresh draws each)")
     ap.add_argument("--spec", action="store_true", help="also time with spectra copied to the host")
-    ap.add_argument("--smooth", type=float, default=0.0, help="velocity dispersion [km/s] (0: none)")
+    ap.add_argument("--smooth", type=float, default=None,
+                    help="velocity dispersion [km/s] instead of FLOAT_SETTINGS' 150 (0: none)")
     ap.add_argument("--check", type=int, default=24, help="vectors recomputed one at a time")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", default="out")
@@ -357,7 +358,8 @@ def main():
     print(f"\nGPU: {gpu_name()};  host: {platform.node()};  library: {args.lib}")
     rng = np.random.default_rng(args.seed)
     sizes = [int(s) for s in args.sizes.split(",")]
-    result = {"gpu": gpu_name(), "lib": args.lib, "smooth_kms": args.smooth, "dims": model.dims,
+    smooth = FLOAT_SETTINGS["sigma_smooth"] if args.smooth is None else args.smooth
+    result = {"gpu": gpu_name(), "lib": args.lib, "smooth_kms": smooth, "dims": model.dims,
               "setup_s": model.setup_s, "timing": []}
 
     # One-time cost: the first call builds the SSP bases of all metallicities and moves the

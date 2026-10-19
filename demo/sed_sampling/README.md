@@ -13,18 +13,22 @@ Results here: `results_a100/` (A100-PCIE-40GB, nvhpc 25.1, OpenACC FP32 kernels 
 
 | Wall time per parameter vector (median, N = 2,000 ... 100,000) | µs |
 |---|---|
-| End to end in Python: SFH weights + FSPS batch call + mass scaling, photometry and properties to numpy | **10.7 - 11.8** |
-| ... of which the FSPS batch call | 9.5 - 10.4 |
-| ... of which GPU kernels and transfers (Nsight Systems, N = 10,000) | ~7.4 - 7.6 |
-| 2 processes sharing the GPU (two sampler workers), aggregate, N = 10,000 each | **9.4** |
-| End to end, also copying the 5,994-pixel spectra to numpy | 28 - 34 |
+| End to end in Python: SFH weights + FSPS batch call + mass scaling, photometry and properties to numpy | **11.2 - 12.2** |
+| ... of which the FSPS batch call | 9.9 - 10.8 |
+| ... of which GPU kernels and transfers (Nsight Systems, N = 10,000) | 7.85 |
+| 2 processes sharing the GPU (two sampler workers), aggregate, N = 10,000 each | **10.5** |
+| End to end, also copying the 5,994-pixel spectra to numpy | 29 - 35 |
+| Legacy (upstream) FSPS, one vector per call, one CPU core (see below) | 55,600 |
 
 ![time per vector vs batch size](results_a100/timing_vs_batch_size.png)
+
+Velocity smoothing (σ = 150 km/s) is on in these numbers; it costs ~0.5 µs/vector (the
+smoothing kernel is 0.46 µs/vector of GPU time).
 
 Batches of ~2,000 or more reach the asymptote; at N = 100 it is ~40 µs and at N = 10 ~250 µs
 (per-call launch and set-up overhead).
 
-**N = 1 costs 7.7 ms.** With one vector, the batch uses its "shared redshift" path, which
+**N = 1 costs 9 ms.** With one vector, the batch uses its "shared redshift" path, which
 rebuilds the redshift grid (filter transposes, IGM) whenever z changes, as it does for every
 draw here. From N = 2 the per-vector-redshift path is used. This is not tuned.
 
@@ -35,8 +39,8 @@ draw here. From N = 2 the per-vector-redshift path is used. This is not tuned.
 shared by the whole batch, and tau, age, U_min and gas_logu varying. Here every parameter
 varies, including z (per-vector IGM, observed-frame resampling and distance) and logzsol
 (per-vector interpolation between the 12 resident SSP bases). The time is also measured from
-Python and includes the host work. The GPU part alone is still 7.4-7.6 µs/vector; the
-remaining ~3 µs is host time:
+Python and includes the host work, and smoothing is on. The GPU part alone is 7.85 µs/vector
+(7.4 without smoothing); the remaining ~3.5 µs is host time:
 
 | Host time per vector at N = 10,000 | µs |
 |---|---|
@@ -47,7 +51,7 @@ remaining ~3 µs is host time:
 | Batch: device allocation and copy-in of the working arrays (~1.2 GB at N = 10k) | 0.4 |
 | Output copies and conversions | 0.4 |
 
-A second process hides part of this (9.4 µs aggregate); a third does not help further, since
+A second process hides part of this (10.5 µs aggregate; 9.4 without smoothing); a third does not help further, since
 the GPU is then nearly saturated. Two threads in one process do not work: concurrent batches on
 two contexts crash, so the library is not thread-safe for concurrent batches yet.
 
@@ -70,11 +74,17 @@ simplifications made for the batch; a non-batched FSPS fit fixes them in the sam
   spectrum), `frac_obrun = 0`.
 - Dust emission on (energy balance, DL07). AGN torus emission on (Nenkova et al. 2008
   templates). IGM on (Madau 1995, `igm_factor = 1`).
-- Cosmology: flat ΛCDM, H0 = 70, Ωm = 0.3 (distances and the t_univ(z) limit of the SFH).
+- Cosmology: flat ΛCDM, H0 = 70, Ωm = 0.3 (distances and the t_univ(z) limit of the SFH). It
+  has to be set **before** `fsps_context_setup`, which builds the distance table; setting it
+  afterwards is silently ignored for distances (the demo sets every setting before and after
+  setup). See "Questions" below.
 - Filters: **all 159** FSPS filters are integrated for every vector (GALEX ... JWST ... Herschel,
   LSST, Euclid, Roman). A typical fit uses 10-30, so this overstates the photometry cost.
-- AB magnitudes, vacuum wavelengths, stellar remnants counted in the mass, no velocity
-  smoothing (`--smooth SIGMA` turns it on; then σ is shared by the batch).
+- Velocity smoothing: σ = 150 km/s (`smooth_velocity = 1`) over FSPS's default window,
+  1,000-10,000 Å; σ is shared by the batch (the batch requires it), `--smooth SIGMA` changes it
+  and `--smooth 0` turns it off.
+- AB magnitudes, vacuum wavelengths, stellar remnants counted in the mass, AGB circumstellar
+  dust on, Wolf-Rayet spectra on (FSPS defaults, set explicitly).
 
 ## Varied per vector (independent draws; no two vectors share a value)
 
@@ -119,7 +129,7 @@ On the GPU, per vector (`src/physics/fsps_csp_batch.f90`):
    tracked.
 5. Dust emission: energy balance, DL07 template interpolated at U_min, γ, q_PAH.
 6. IGM transmission at the vector's z; AGN torus emission (fagn, agn_tau), attenuated by the
-   diffuse dust.
+   diffuse dust; velocity smoothing of the spectrum.
 7. Observed frame at the vector's z: resampled spectrum, (1 + z) and luminosity-distance
    terms, then all 159 filter integrals → apparent AB magnitudes.
 8. 30 spectral indices (Lick, D_n4000, near-IR) on the rest-frame spectrum.
@@ -137,15 +147,117 @@ and the first call (1.4 s, builds the 12 SSP bases and moves the context to the 
   recomputed one per call, with their parameters set as ordinary context settings (the
   non-batched way): magnitudes 6e-7 mag, spectra 4e-16, lines 4e-16, indices, mass and L_bol
   identical (`run.log`).
-- **Against an independent CPU FP64 build** (gfortran 13.4, `--replay`): magnitudes 4.8e-7 mag,
-  spectra 6.1e-7, lines 3.6e-7, dust mass 1.4e-7, mfrac 7e-16, L_bol 4e-15 dex; indices 1.3e-5
+- **Against an independent CPU FP64 build** (gfortran 13.4, `--replay`): magnitudes 5.2e-7 mag,
+  spectra 6.1e-7, lines 3.6e-7, dust mass 1.3e-7, mfrac 7e-16, L_bol 4e-15 dex; indices 1.3e-5
   absolute (Å or mag; the worst relative case is a 0.035 Å equivalent width). This is FP32
   kernels vs FP64 (`replay_cpu_fp64.log`).
 - The repository's `test_csp_batch` compares the batch with `compute_csp_scenario` (the
   classic one-model-at-a-time FSPS path) for these physics groups; unit + regression pass
   33/33 in the builds used here.
+- **Against legacy (upstream) FSPS** on the same vectors: next section.
 
 ![example SEDs](results_a100/example_seds.png)
+
+## Comparison with legacy (upstream) FSPS
+
+`legacy/run_legacy_compare.sh` puts 1,000 of these vectors (fresh draws, per 1 M☉ formed)
+through legacy FSPS and through this fork, apples to apples:
+
+- **Code:** legacy's own Fortran, from the checkout `SPS_HOME` points to (here
+  `/storage/work/epm62/fsps`, upstream 82a8735: the last revision on the isochrone layout of
+  the fork's data; with a newer checkout such as `../fsps-legacy` the script builds 82a8735
+  from its git history). Built with legacy's Makefile flags (`-O3 -cpp -fPIC`, gfortran 13.4)
+  in its default double precision.
+- **Data:** a legacy-layout `SPS_HOME` of links to the fork's `data/`, checked file by file
+  against the legacy revision's own files (`results_a100/legacy/data_provenance.txt`): 197 of
+  204 identical; the 6 nebular line tables are upstream's later corrected ones (fc7db5a, the
+  tables `../fsps-legacy` master ships), and the 7th file is a README.
+- **Physics and settings:** one settings table for both codes (`settings.txt`, the demo's
+  `INT_SETTINGS` / `FLOAT_SETTINGS` plus the SSP defaults, set explicitly), applied before
+  legacy's `SPS_SETUP` and the fork's setup.
+- **Per vector, the way python-fsps runs legacy with `zcontinuous = 1`:** the SSPs of all 12
+  metallicities computed once, then `ZTINTERP` to the vector's logzsol (linear in spectra,
+  mass and log L_bol, like the fork's batch) and `COMPSP` on that single-metallicity set
+  (nebular emission, SSP sum, dust and dust emission, smoothing, IGM, AGN, magnitudes at the
+  vector's z), then `GETINDX`.
+- **The SSP weights:** legacy computes them only from its SFH parameterizations, so a
+  7-line patch of `csp_gen` (`legacy/weights_csp_gen.sed`) replaces its computed weights with
+  the vector's (the same matrix the fork gets); the SSP sum, the birth-cloud split and
+  everything downstream are legacy's code.
+- **Outputs compared:** 159 magnitudes, spectra, 30 indices, 166 lines, mfrac, L_bol, dust mass.
+
+Three legacy builds separate code from constants: **stock** (upstream as is), **aligned** (the
+parity patches of `tools/legacy_parity`: the fork's physical constants and upstream's later
+AGN fix, d9a387a), and **aligned + R_V** (also Calzetti R_V = 4.05 exactly,
+`legacy/calzetti_rv.sed`).
+
+### Speed (1,000 vectors, all outputs including spectra)
+
+| Code | µs per vector | vs legacy |
+|---|---|---|
+| Legacy FSPS (one vector per call, one core) | 55,600 | 1× |
+| Fork, CPU FP64 batch (gfortran, one core) | 8,100 | 7× |
+| Fork, GPU FP32 batch (one call of 1,000) | 27 | 2,000× |
+| Fork, GPU, N ≥ 2,000, from Python, spectra not copied (above) | 11.2 - 12.2 | ~4,700× |
+
+Legacy's per-vector time is almost all `COMPSP` (54.6 ms: nebular emission added to every young
+SSP, the SSP sum, dust, filters); `ZTINTERP` 0.9 ms, `GETINDX` 0.1 ms. One-time costs: legacy
+setup 12 s plus 216 s for the SSPs of all metallicities; the fork 21 s setup plus 1.5 s for its
+first call (GPU) or 10 s (CPU).
+
+### Numerical differences (fork GPU vs legacy; median / max over vectors, bands, pixels)
+
+| Quantity | vs stock | vs aligned | vs aligned + R_V | fork GPU FP32 vs CPU FP64 |
+|---|---|---|---|---|
+| Magnitudes, all 159 bands [mag] | 0.024 / 23 | 2.6e-3 / 0.012 | 3.2e-4 / 4.9e-3 | 3.7e-8 / 9.5e-7 |
+| Spectrum 912 Å - 2.5 µm | 1.9e-2 / 2.4 | 2.2e-3 / 9.6e-3 | 1.1e-5 / 1.2e-2 | 3.2e-8 / 9.0e-7 |
+| Spectrum 2.5 - 1000 µm (dust, AGN) | 8.9e-3 / 0.17 | 5.0e-4 / 8.0e-3 | 1.8e-4 / 3.0e-3 | 4.7e-8 / 4.7e-7 |
+| Spectrum < 912 Å | 0.27 / 30 | 8.1e-5 / 6.3e-4 | 2.8e-5 / 9.5e-5 | 2.7e-8 / 3.5e-7 |
+| Spectral indices [Å or mag] | 1.0e-3 / 28 | 3.4e-5 / 6.4e-3 | 2.6e-5 / 6.4e-3 | 1.9e-7 / 4.5e-5 |
+| Emission lines | 6.5e-3 / 0.028 | 1.0e-3 / 8.2e-3 | 1.0e-5 / 4.1e-4 | 6.0e-8 / 4.5e-7 |
+| mfrac | 1.3e-6 / 4.6e-6 | same | same | 2e-16 / 1e-15 |
+| log L_bol [dex] | 5.5e-7 / 5.9e-7 | same | same | 4e-16 / 6e-14 |
+| Dust mass | 9.8e-3 / 0.017 | 2.6e-4 / 1.6e-3 | 4.4e-6 / 3.2e-5 | 4.2e-8 / 2.0e-7 |
+
+![spectra vs legacy](results_a100/legacy/legacy_differences.png)
+
+Where each difference comes from (the first five are in the fork's documented list of
+intentional differences, `tools/legacy_parity/README.md`):
+
+- **Stock → aligned, constants:** legacy's rounded constants, mainly `gsig4pi = 1/4.13e10`
+  (1.77% too bright main-library spectra); the < 912 Å differences are WR winds and the
+  constants.
+- **Stock → aligned, AGN (the 7-23 mag outliers):** stock 82a8735 attenuates the AGN torus with
+  τ_V = 1 whatever dust2 is (fixed upstream in d9a387a). Every vector has AGN on (fagn ≥ 1e-5),
+  so for dusty vectors the torus's UV tail outshines the stellar UV, attenuated by e^-(10-40),
+  in 618 of 1,000 vectors.
+- **Aligned → aligned + R_V:** legacy's Calzetti curve is R_V = 4.0455; the fork uses 4.05.
+  With `dust_type = 4` this scales the optical depth by 1.11e-3, so the residual is exactly
+  linear in dust2 (correlation +1.00; -0.11% per unit dust2 at 5500 Å).
+- **Spectra, at most 1.2% in 91 pixels:** at the MILES grid-spacing jumps (3,590 / 3,602 /
+  7,402 / 7,410 Å), the velocity-smoothing kernel, which is exact in the fork and not in legacy.
+- **Bessell M (4.9e-3 mag):** filter transmissions clamped at 0 before normalization.
+- **Far-IR magnitudes (median 1.9e-4, max 2.9e-3 mag) and the spectrum beyond 2.5 µm:**
+  consistent with the analytic dust self-absorption (cconroy20/fsps#82); no single parameter
+  drives them (|correlation| ≤ 0.3).
+- **A grey magnitude offset of +2.3e-4 (low z) to ~5e-4 mag (high z), not in the documented
+  list:** legacy's `GET_LUMDIST` integrates from z/10,000 instead of 0, which makes its
+  distances 1e-4 short: 2.2e-4 mag, the measured low-z value. The rest of the trend with z
+  (up to ~2e-4 mag) is not fully attributed; both codes interpolate a 500-point distance table.
+- **Not visible at this level:** smoothing order. Legacy smooths before IGM and AGN; the fork
+  applies them first and smooths after. The region it can affect (912-1,216 Å, inside the
+  smoothing window) agrees to 7e-5 median, 1.7e-4 max at σ = 150 km/s.
+
+Full report: `results_a100/legacy/report.md`; machine-readable `summary.json`.
+
+Running it (on this cluster nvhpc and gcc cannot be loaded together, hence the per-step
+environments):
+
+```sh
+export GPU_ENV="source /etc/profile.d/modules.sh; module load nvhpc/25.1"
+export CPU_ENV="source /etc/profile.d/modules.sh; module load gcc/13.4.0" LEGACY_ENV="$CPU_ENV"
+SPS_HOME=/path/to/legacy/fsps demo/sed_sampling/legacy/run_legacy_compare.sh 1000   # ~15 min
+```
 
 ## Running it
 
@@ -185,3 +297,18 @@ Requires numpy and matplotlib; numexpr is optional (the SFH weights fall back to
   `GPU_RESULTS.md`).
 - Thread-safe concurrent batches on separate contexts, so one process can overlap host and
   GPU work (instead of two processes).
+
+## Questions for Elijah
+
+1. **Cosmology set after setup is silently ignored for distances.** `H0`, `om0`, `ol0` are
+   read when `fsps_context_setup` builds the distance table (`cosmospl`); setting them later
+   changes nothing in the magnitudes (legacy behaves the same way). The demo now sets them
+   before setup; the first version of this demo set them after, so its magnitudes used H0 = 72,
+   Ωm = 0.27, up to 0.06 mag off (caught by the legacy comparison). Should the setters rebuild
+   the table, or refuse after setup?
+2. **Smoothing order.** Legacy smooths the spectrum before IGM and AGN; the fork (scalar path
+   and batch) after. Legacy's order is arguably the physical one (IGM absorption happens after
+   the galaxy's internal broadening). The effect is below 2e-4 here, but it is not in the list
+   of intentional differences: keep, change, or document?
+3. **Legacy's luminosity distance** starts its integral at z/10,000 (2.2e-4 mag). Add it to
+   `tools/legacy_parity/README.md`'s list of intentional differences?
