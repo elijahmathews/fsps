@@ -62,7 +62,8 @@ module fsps_csp_batch
     use fsps_precision, only: WP, KP, kahan_add
     use fsps_constants, only: SAFE_FLOOR, PI, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, H_PLANCK, L_SOL
     use fsps_types, only: params
-    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings
+    use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings, batch_out_reserve
+    use, intrinsic :: iso_c_binding, only: c_ptr, c_null_ptr, c_loc
     use fsps_context, only: fsps_context_move_to_device
     use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
@@ -82,7 +83,7 @@ module fsps_csp_batch
     implicit none
     private
 
-    public :: compute_csp_batch
+    public :: compute_csp_batch, batch_spectra_device
 
 
     real(WP), parameter :: V_BAND_ANGSTROMS = 5500.0_wp   ! as in fsps_dust
@@ -164,7 +165,7 @@ contains
         real(KP), allocatable :: eml(:,:)
 
         ! Work arrays (pixels x models) at kernel precision
-        real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
+        real(KP), allocatable :: yo(:,:), absorbed(:,:), tdiff(:,:)
 
         ! Device builds: the batch runs on the device, so a context not yet there is moved
 #if (defined(_OPENACC) && !defined(ACC_MULTICORE)) || defined(OMP_TARGET)
@@ -320,7 +321,9 @@ contains
         ! ------------------------------------------------------------------
         ! 2-7. Device: age sums, nebular emission, attenuation, dust emission, IGM, AGN, smoothing
         ! ------------------------------------------------------------------
-        allocate(yo(nspec, 2 * n_mod), total(nspec, n_mod), absorbed(nspec, n_mod))
+        allocate(yo(nspec, 2 * n_mod), absorbed(nspec, n_mod))
+        ! The spectra: the context's persistent batch output (on the device; columns 1:n_mod)
+        call batch_out_reserve(ctx%state%batch_out, nspec, n_mod, ctx%on_device)
         ! Diffuse-dust transmission kept from the attenuation for the AGN emission
         if (agn) then
             allocate(tdiff(nspec, n_mod))
@@ -332,13 +335,13 @@ contains
         !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$acc      copyin(zlo, zhi, dz, wext, zcol) &
         !$acc      copyin(nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
-        !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
+        !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
 #ifdef OMP_TARGET
         !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$omp map(to: zlo, zhi, dz, wext, zcol) &
-        !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
+        !$omp map(alloc: w2, weights, tmp1, tmp2, yo, absorbed, s_line, tdiff) &
         !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
 #endif
 #ifdef OMP_TARGET
@@ -397,6 +400,7 @@ contains
         if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb%lum, nb%llo, eml, s_line)
+        associate(total => ctx%state%batch_out%spec)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         if (any_emis) then
             call dust_emission_reductions(n_mod, nspec, emis, ctx%state%batch%wt, yo, absorbed, s_abs, s_norm, s_esc)
@@ -437,15 +441,9 @@ contains
         end if
         if (present(indx)) call compute_spectral_indices_columns(ctx, ctx%state%spec_lambda, total, n_mod, indx)
 
-        if (present(spec)) then
-            !$acc update self(total)
-#ifdef OMP_TARGET
-            !$omp target update from(total)
-#endif
-            do m = 1, n_mod
-                spec(1:nspec, m) = real(total(:, m), WP)
-            end do
-        end if
+        end associate
+        ctx%state%batch_out%n = n_mod
+        if (present(spec)) call spectra_to_host(ctx%state%batch_out%spec, nspec, n_mod, spec)
 #ifdef OMP_TARGET
         !$omp end target data
 #endif
@@ -481,6 +479,84 @@ contains
             end if
         end do
     end subroutine compute_csp_batch
+
+    !> Copies the batch's spectra (sp = the batch output, columns 1:n_mod, on the device) to spec
+    !> at WP.
+    !> OpenACC GPU builds: in chunks of columns on two async queues, each chunk converted on the
+    !> host while the next one is in flight; sp's host copy is page-locked (batch_out_reserve),
+    !> so each chunk moves at the PCIe rate.
+    subroutine spectra_to_host(sp, nspec, n_mod, spec)
+        integer, intent(in)              :: nspec, n_mod
+        real(KP), intent(inout)          :: sp(nspec, n_mod)
+        real(WP), intent(inout)          :: spec(:,:)
+        integer :: m
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        !> Bytes per chunk (hardware note: ~16 MB measured best on the A100 node, PCIe 3 host;
+        !> large enough to reach the DMA rate, small enough to overlap most of the conversion)
+        integer, parameter :: CHUNK_BYTES = 16 * 1024 * 1024
+        integer :: cw, nch, c, q
+
+        cw = max(1, CHUNK_BYTES / (nspec * (storage_size(sp) / 8)))
+        nch = (n_mod + cw - 1) / cw
+        call chunk_to_host(sp, nspec, n_mod, 1, min(cw, n_mod), 1)
+        do c = 1, nch
+            if (c < nch) call chunk_to_host(sp, nspec, n_mod, c * cw + 1, min((c + 1) * cw, n_mod), 1 + mod(c, 2))
+            q = 1 + mod(c - 1, 2)
+            !$acc wait(q)
+            do m = (c - 1) * cw + 1, min(c * cw, n_mod)
+                spec(1:nspec, m) = real(sp(:, m), WP)
+            end do
+        end do
+#else
+#ifdef OMP_TARGET
+        !$omp target update from(sp(:, 1:n_mod))
+#endif
+        do m = 1, n_mod
+            spec(1:nspec, m) = real(sp(:, m), WP)
+        end do
+#endif
+    end subroutine spectra_to_host
+
+    !> Starts the copy of columns c1:c2 of sp to the host on async queue q. (A separate routine:
+    !> with the bounds as locals of spectra_to_host, nvfortran 25.1 -O2 issued the first update
+    !> with an empty section.)
+    subroutine chunk_to_host(sp, nspec, n_mod, c1, c2, q)
+        integer, intent(in)     :: nspec, n_mod, c1, c2, q
+        real(KP), intent(inout) :: sp(nspec, n_mod)
+
+        !$acc update self(sp(:, c1:c2)) async(q)
+    end subroutine chunk_to_host
+
+    !> Where the last batch's spectra are, for callers that keep working on the device: ptr is
+    !> the device address of o%spec (kernel precision, column-major, leading dimension nspec;
+    !> the host address in CPU and multicore builds), n the batch's models and kp_bytes the
+    !> bytes per value (4 in FP32 builds, 8 in FP64). Valid until the next batch call or
+    !> fsps_context_remove_from_device; ptr is null (n = 0) before the first batch.
+    subroutine batch_spectra_device(ctx, ptr, nspec, n, kp_bytes)
+        type(fsps_context_t), intent(inout), target :: ctx
+        type(c_ptr), intent(out) :: ptr
+        integer, intent(out)     :: nspec, n, kp_bytes
+        real(KP), pointer, contiguous :: sp(:,:)
+
+        ptr = c_null_ptr
+        nspec = ctx%state%nspec
+        n = 0
+        kp_bytes = storage_size(1.0_KP) / 8
+        if (.not. allocated(ctx%state%batch_out%spec) .or. ctx%state%batch_out%n == 0) return
+        n = ctx%state%batch_out%n
+        sp => ctx%state%batch_out%spec
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        !$acc host_data use_device(sp)
+        ptr = c_loc(sp)
+        !$acc end host_data
+#elif defined(OMP_TARGET)
+        !$omp target data use_device_addr(sp)
+        ptr = c_loc(sp)
+        !$omp end target data
+#else
+        ptr = c_loc(sp)
+#endif
+    end subroutine batch_spectra_device
 
     !> Host-side nebular data of a batch: young ages and their grid interval, per-model grid
     !> indices and escape fractions, and per-pixel lists of the lines whose profile reaches it.

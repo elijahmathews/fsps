@@ -58,17 +58,26 @@ elif accel_target != 'none'
             # (single CSP calls, the other SSP stages) runs on the host. Run with
             # OMP_TARGET_OFFLOAD=MANDATORY to catch a silent host fallback.
             accel_args = ['-mp=gpu', '-gpu=' + get_option('gpu_arch')]
-            accel_defs = ['-DOMP_TARGET']
+            accel_defs = ['-DOMP_TARGET', '-DFSPS_PINNED']
         elif accel_target == 'gpu'
             # Fat binary targeting Volta, Ampere, Hopper, plus PTX fallback
             accel_args = ['-acc=gpu', '-gpu=' + get_option('gpu_arch')]
-            accel_defs = ['-DACC_GPU']
+            accel_defs = ['-DACC_GPU', '-DFSPS_PINNED']
             if get_option('cublas')
                 accel_args += ['-cudalib=cublas']
                 accel_defs += ['-DFSPS_CUBLAS']
             endif
         endif
     endif
+endif
+
+# NVIDIA GPU builds: page-locked staging for the batch's spectra copy-back (src/core/fsps_pinned.c,
+# the CUDA driver resolved at run time)
+pinned_sources = []
+dl_dep = []
+if accel_defs.contains('-DFSPS_PINNED')
+    pinned_sources = files('src/core/fsps_pinned.c')
+    dl_dep = meson.get_compiler('c').find_library('dl', required : false)
 endif
 
 # Create a dependency object that explicitly propagates these flags
@@ -163,12 +172,12 @@ lib_sources = files(
 
 # This builds libfsps.so (and handles .mod generation automatically)
 libfsps = library('fsps',
-    lib_sources,
+    lib_sources + pinned_sources,
     version : meson.project_version(),
     soversion : '3',
     install : true,
-    dependencies : [omp_dep, accel_dep, threads_dep],
-    # The library has one C source (setup-cache lock); link with the Fortran compiler so its
+    dependencies : [omp_dep, accel_dep, threads_dep, dl_dep],
+    # The library's C sources (setup-cache lock, pinning); link with the Fortran compiler so its
     # runtime (libgfortran, flang runtime, ...) is always included
     link_language : 'fortran',
 )
