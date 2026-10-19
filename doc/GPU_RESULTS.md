@@ -21,6 +21,69 @@ questions of the A100 session were answered on 2026-10-16:
 4. TF32 stays off by default (it is only reachable through `FSPS_CUBLAS_MATH=tf32`).
 5. Order of the late requests: accepted.
 
+## Status (A100 session 2, 2026-10-19)
+
+Node `p-gc-3003`, A100-PCIE-40GB (addressing mode None: no HMM / ATS), nvhpc 25.1, gcc 13.4.
+Branches from `gpu/a100-final` (PR #10); PRs open, nothing merged.
+
+**Done**
+- Nightly ASan leak (branch `fix/asan-csp-batch-leak`, PR #11 into `gpu/a100-final`):
+  `test_csp_batch` never deallocated its allocatable context after `fsps_destroy` (2,556,536
+  bytes in 3 allocations at exit, as in the nightly runs). Fix: `deallocate(ctx)` (also in two
+  benchmarks). The nightly job reproduced locally (gfortran 13.4,
+  `-Denable_stress_testing=true -Db_sanitize=address,undefined`): leak without the fix; with
+  it unit + regression 33/33 and the stress suite (all phases, `FSPS_STRESS_ITERS=10`) clean.
+  Local runs need `SPS_HOME` unset (it overrides `FSPS_DATA_HOME`).
+
+**OpenMP offload memory fault on the AMD 780M** (branch `fix/omp-maps-llvm`, on
+`fix/omp-device-no-malloc`). Cause not yet found; what was ruled out, and a check to find it
+on the 780M:
+- The A100 does not mask it. Addressing mode None (no HMM: the GPU cannot read unmapped host
+  memory). `compute-sanitizer --tool memcheck` on the OpenMP FP32 build (`OMP_TARGET_OFFLOAD=
+  MANDATORY`): `test_csp_batch` 146/146 and `test_c_batch` PASSED, 0 errors; same with
+  `-gpu=mem:separate`. `-Minfo=mp` lists no implicit maps beyond the explicit ones. The
+  runtime trace (`NVCOMPILER_ACC_NOTIFY=2`) shows nvfortran mapping `ctx` as one 2.5 MB struct
+  plus each component explicitly, and implicitly only two statics (a 5.5 KB `fsps_types`
+  default-initialization template and `ieee_arithmetic` constants), neither read by batch code.
+  A deliberately removed map (`ctx%state%spec_nu`) makes the nvfortran build crash too: no
+  deep copy hides missing maps.
+- LLVM flang on the A100 was not possible: no LLVM module on the cluster; the LLVM 22.1.8
+  release tarball has no offload runtime; AMD's AOMP 22.0-2 (RHEL 8 rpm, LLVM flang 22, the 780M's
+  front end) runs here but is built without the NVPTX backend; a source build of flang +
+  offload exceeds the time budget; flang 22 crashes offloading to the x86_64 host plugin
+  ("No grid value available for this architecture").
+- AOMP flang 22 builds the project for `gfx1103` here (`-Daccel=omp_gpu`), so the 780M's
+  device code could be inspected: device code of every module calls only declare-target
+  procedures (no Fortran runtime, no `malloc`; remaining heap allocations are converted to
+  stack), references no external globals, and has no automatic arrays. The host map tables
+  show flang implicitly re-mapping, per kernel, only the `ctx` components a kernel names
+  directly (descriptor `to always` + data + attach, as members of `ctx`); components read inside
+  declare-target callees (`compute_attenuation_curve_point`: `wgdust`, `g03smcextn`;
+  `dl07_shape`: `dustem2_dustem`; `spectral_index_value`: `indexdefined`; `sfh_weights_core`:
+  `time_full`, `zlegend`; ...) depend on the attach done when they were mapped.
+- Static audit of every target region reached by the batch, the photometry, the indices and
+  the SSP kernel (80 device routines, 32 kernels; scripts in the session scratch directory): every
+  `ctx%state` component that device code reads (33; all but the SSP bases and SFH scratch are
+  pointers into the setup cache) is mapped in `fsps_context_move_to_device`, the SSP bases in
+  `fsps_context_update_ssp_basis`; all other kernel data are dummies inside the batch's
+  `target data` regions or the batch caches (mapped where allocated). Scalars of `ctx` travel
+  with the whole-struct map and the settings sync updates scalars only. Nothing missing was
+  found. The SSP-path tests that pass on the 780M already read pointer components through
+  callees, so attach of components mapped at `move_to_device` works in flang 22: the cause is
+  more likely in data only the batch maps (per-call `target data`, batch caches, the SSP bases
+  remapped by `update_ssp_basis`).
+- New check (`src/core/fsps_omp_check.f90`, OpenMP target builds only): with
+  `FSPS_OMP_CHECK_PRE=1`, `compute_csp_batch` checks before its first kernel that every array it
+  passes to kernels is present (`omp_target_is_present`), and that each of the 33 components,
+  read through the device copy of `ctx` inside a declare-target routine (as callees read it),
+  equals the mapped device address (`omp_get_mapped_ptr`). It stops naming the array instead of
+  faulting. On the A100 both tests pass with it on; with the `spec_nu` map removed it stops with
+  "ctx%state%spec_nu is not mapped to the device before the kernels of compute_csp_batch".
+- To run on the 780M (text console): `FSPS_OMP_CHECK_PRE=1 OMP_TARGET_OFFLOAD=MANDATORY
+  LIBOMPTARGET_INFO=-1 ./test_c_batch` (and `test_csp_batch`). A check failure names the
+  unmapped / unattached array; if the checks pass and it still faults, the fault is inside one
+  kernel and `LIBOMPTARGET_INFO`'s last launch names it.
+
 ## Summary: P100 and A100
 
 Nodes: P100-PCIE-12GB with 2x Xeon E5-2680 v4 (Broadwell), nvhpc 25.1; A100-PCIE-40GB with 2x
