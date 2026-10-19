@@ -1,9 +1,415 @@
-# GPU results (P100 session)
+# GPU results (P100 and A100 sessions)
 
-Running log of the first GPU session (plan: `doc/GPU_PLAN.md`, "On a P100 node"). Newest
-status at the top; dated entries below.
+Running log of the GPU sessions (plan: `doc/GPU_PLAN.md`). Newest status at the top; dated
+entries below. The A100 session (2026-10-16) is first; the P100 session's status and entries follow.
 
-## Status
+## Questions for Elijah
+
+(Decisions that are yours; the agent took the conservative option and kept working.) All five
+questions of the A100 session were answered on 2026-10-16:
+
+1. Legacy C API `compute_interpolated_ssp` calls: fix them. Done (argument order and keywords;
+   the clashing `fsps_compute_ssp` / `fsps_compute_csp` imports renamed). The legacy layer
+   (`FSPS_ENABLE_LEGACY`, not built by meson) still does not compile: it refers to globals that
+   no longer exist (`om0`, `ol0`, `h0`, `tiny_logt`, ..., `ntabmax`) and has a shape error at
+   `fsps_c_api.f90` ~1900; left as an open problem.
+2. Fitting parameters: logmass, logzsol, dust2, dust_ratio, dust_index, the non-parametric SFH
+   (logsfr_ratio_i via the SSP-weight matrix), fagn, agn_tau, gas_logz, gas_logu, duste_umin,
+   duste_gamma, duste_qpah, zred. `c_batch` now varies exactly these (dust1 = dust_ratio * dust2
+   and logmass formed by the caller).
+3. `compute_csp_batch` moves the context to the device itself when needed: done.
+4. TF32 stays off by default (it is only reachable through `FSPS_CUBLAS_MATH=tf32`).
+5. Order of the late requests: accepted.
+
+## Summary: P100 and A100
+
+Nodes: P100-PCIE-12GB with 2x Xeon E5-2680 v4 (Broadwell), nvhpc 25.1; A100-PCIE-40GB with 2x
+Xeon Gold 6248R (Cascade Lake), nvhpc 25.1 (the newest installed; CUDA 12.6 runtime on a CUDA
+13.0 driver). The P100 numbers are from the P100 session's code (branch `gpu/p100-pset-resident`
+plus the merged `develop` items it had); the A100 numbers from this session's branch tip
+(`gpu/a100-tf32`), which also includes the A100 session's kernel and feature work, so the
+columns compare hardware and software together. CPU references run one core of each node.
+
+**Validation.** All configurations pass the unit + regression suites (33 tests) and the case
+matrix against an nvfortran CPU build on the A100: OpenACC FP64 / FP32, cuBLAS FP64 / FP32,
+OpenMP target FP64 / FP32 (first device run; `OMP_TARGET_OFFLOAD=MANDATORY`), nvfortran and
+gfortran CPU FP64 / FP32. FP64 GPU = CPU to 1.6e-11 per pixel; FP32 GPU vs FP64 CPU 4.2e-7 per
+pixel, 5e-7 mag.
+
+**`benchmark_phases 5 200`** (MIST + MILES + DL07; seconds per SSP grid, ms per CSP call):
+
+| | P100 FP64 | P100 FP32 | A100 FP64 | A100 FP32 | A100 OpenMP tgt FP64 / FP32 | CPU core, P100 node | CPU core, A100 node |
+|---|---|---|---|---|---|---|---|
+| SSP grid (s) | 0.270 | 0.270 | 0.072 | 0.069 | 0.135 / 0.115 | 0.45 | 0.145 |
+| CSP call (ms) | 0.67 | 0.67 | 0.69 | 0.59 | 3.2 / 6.8 | 4.8 | 3.2 |
+| CSP call, nebular (ms) | 2.7 | 2.4 | 1.75 | 1.59 | 13.0 / 16.6 | 46 | 13.0 |
+
+(SSP grid: the A100 gain over the P100 is mostly the exact IMF integrals merged into `develop`
+since, which took the Romberg host time out, and the faster host core; the single CSP call is
+host- and launch-bound on both GPUs. The OpenMP-target build offloads only the template
+product and the batch's two products, so its CSP call runs on the host.)
+
+**Batched CSP, `benchmark_csp_batch 10000 200`** (us per model, magnitudes only; basic
+configuration: tau model, dust1/dust2, DL07 dust emission; P100 FP64 rows are from the first
+version of the batch, before the kernel work):
+
+| N | P100 FP32 OpenACC | P100 FP32 cuBLAS | A100 FP32 OpenACC | A100 FP32 cuBLAS | A100 FP64 OpenACC | A100 FP64 cuBLAS |
+|---|---|---|---|---|---|---|
+| one `compute_csp_scenario` call | 660 | 660 | 634 | 568 | 648 | 586 |
+| 1 | 1688 | 1076 | 1128 | 1006 | 1230 | 983 |
+| 100 | 31 | 24 | 19.0 | 17.0 | 20.6 | 16.5 |
+| 1000 | 16 | 9.4 | 4.1 | 3.6 | 4.5 | 3.8 |
+| 10000 | 14.6 | 8.1 | **2.9** | **2.2** | 4.1 | 2.3 |
+| 10000, spectra copied back | | 31.4 | 19.4 | 18.7 | 29.1 | 28.0 |
+
+**Full physics** (`benchmark_csp_batch 10000 200 full_smooth`: dust1 0.5, dust2 0.3, DL07,
+nebular emission, IGM at z = 0.5, AGN fagn 0.1, spectral indices, sigma_smooth 150 km/s; A100
+only, the P100 batch did not support these):
+
+| N | A100 FP32 OpenACC | A100 FP32 cuBLAS | A100 FP64 OpenACC | A100 FP64 cuBLAS |
+|---|---|---|---|---|
+| one `compute_csp_scenario` call | 2179 | 2315 | 2268 | 2241 |
+| 1 | 1538 | 1521 | 1505 | 1416 |
+| 100 | 27.5 | 25.4 | 29.1 | 25.1 |
+| 1000 | 8.4 | 8.0 | 9.2 | 8.6 |
+| 10000 | **7.2** | **6.5** | 8.7 | 7.1 |
+| 10000, spectra copied back | 23.9 | 23.1 | 34.6 | 33.0 |
+
+**OpenMP target offload** (end of the session, branch `gpu/a100-omp-batch`): the whole batch on
+the device with the same loops as OpenACC; N = 10000, us per model, OpenMP / OpenACC: FP32
+basic 3.6 / 2.9, FP32 full physics 7.8 / 7.0, FP64 basic 4.7 / 4.2, FP64 full physics 9.5 / 8.9
+(0.3-1 ms more per call at small N). Before: 833 / 3788 us (host fallback).
+
+**Against the forecasts** (A100): SSP grid ~0.1 s -> 0.07 s; single CSP call with full physics
+~2.5 ms -> 2.2-2.3 ms; batched CSP per model ~8.5 us FP32 / ~13 us FP64 -> 7.2 / 8.7 us
+(OpenACC; 6.5 / 7.1 with cuBLAS); the plan's ~4 us (FP32, basic configuration) -> 2.9 us.
+Batched SSP+CSP per model was not measured (no batched SSP generation yet). FP64 is close to
+FP32 on the A100 (FP64 at half the FP32 rate, and much of the batch is memory- and
+transcendental-bound in FP64 anyway); that will not carry over to consumer GPUs.
+
+**What remains** (also in `doc/GPU_PLAN.md`, "Next"): (1) done later in the session: the whole
+batch now runs with OpenMP target offload (3.6 us per model FP32 basic, 7.8 full physics, vs
+2.9 / 7.0 with OpenACC; Status, branch `gpu/a100-omp-batch`); next there, the single CSP call and
+the SSP stages, and a run on an AMD or Intel GPU; (2) per-call overhead, ~1 ms at N = 1 and the
+single call (launches, small pageable transfers, host set-up); (3) spectra copy-back (pageable
+D2H at ~2.4 GB/s on this node: 16 us per model at N = 10000; pinned or device-resident output);
+(4) on GPUs with slow FP64, the FP64 exponentials of the nebular continuum and attenuation.
+TF32 is not usable for the age sums at this project's tolerances (net 3e-4 mag) and gains only
+3-10%; FP64 tensor cores change nothing, numerically or in speed, at these product sizes.
+
+## Status (A100 session, 2026-10-16)
+
+If restarted: read this section, then `git log` of the newest `gpu/a100-*` branch.
+
+**Branches** (each stacked on the previous one, from `develop` 9dc0c19; merge in this order):
+`gpu/a100-cublas-threshold` -> `gpu/a100-batch-nebular` -> `gpu/a100-batch-smoothing` ->
+`gpu/a100-batch-neb-fast` -> `gpu/a100-batch-metallicity` -> `gpu/a100-fp32-kernels` ->
+`gpu/a100-batch-pipeline` -> `gpu/a100-tf32` -> `gpu/a100-call-overhead` -> `gpu/a100-omp-batch`
+-> `gpu/a100-omp-portability` -> `gpu/a100-final` (tip). Every branch was validated in all ten builds before its commit, except
+`gpu/a100-call-overhead` (dev builds only; its successor `gpu/a100-omp-batch` was validated in
+full).
+
+**Setup**
+- Node `p-gc-3009`, NVIDIA A100-PCIE-40GB, driver 580.178.04 (CUDA 13.0 driver API), 2x Xeon
+  Gold 6248R (Cascade Lake, 3.0 GHz), 12 cores allocated. Slurm job 56476035, 9 h.
+- Compiler: `module load nvhpc/25.1` (nvfortran/nvc 25.1-0, CUDA 12.6). `module avail nvhpc`
+  lists 21.9, 23.1 and 25.1; the driver could run HPC SDK 26.x (CUDA 13), but 25.1 is the newest
+  installed and supports cc80. CPU references: nvfortran 25.1 without accel (`build_a100_nvcpu`,
+  `build_a100_nvcpu32`) and gfortran 13.4 (`module load gcc/13.4.0`; `build_a100_cpu`,
+  `build_a100_cpu32`).
+- Builds (all `--buildtype=release`, GPU ones `-Dgpu_arch=cc80`): `build_a100_gpu` / `gpu32`
+  (OpenACC FP64 / FP32), `build_a100_gpucb` / `gpu32cb` (`-Dcublas=true`), `build_a100_omp` /
+  `omp32` (`-Daccel=omp_gpu`, run with `OMP_TARGET_OFFLOAD=MANDATORY`). The P100 session's
+  `build_*` directories target cc60 and are not used.
+
+**Done**
+- Step 0: the P100 session's uncommitted change (cuBLAS band product only for >= 16 spectra)
+  moved onto branch `gpu/a100-cublas-threshold` from `develop` (9dc0c19). (A stale worktree of
+  `develop` from an earlier session, whose directory no longer existed, was pruned.)
+  `test_csp_batch` now also runs a 24-model batch: the 12-model batch never reached the
+  many-spectra band kernels (OpenACC `band_fluxes` switches at 16 spectra too) nor, with the
+  threshold, the cuBLAS product.
+- Item 1 (all configurations validated on the A100, branch `gpu/a100-cublas-threshold`):
+  unit + regression 32/32 in all ten builds (OpenMP ones with `OMP_TARGET_OFFLOAD=MANDATORY`:
+  the first device run of the OpenMP target code); `test_csp_batch` 32/32 everywhere. Case
+  matrix (35 cases) against `build_a100_nvcpu`, worst case:
+
+  | Build | spec (912 A-2.5 um) | spec (all) | mag | indx | lines | result |
+  |---|---|---|---|---|---|---|
+  | OpenACC FP64 (`--rtol 1e-10`) | 1.6e-11 | 3.4e-11 | 1.3e-11 | 8.5e-12 | 3.3e-16 | PASS |
+  | cuBLAS FP64 (`--rtol 1e-10`) | 1.6e-11 | 3.4e-11 | 1.3e-11 | 8.5e-12 | 3.3e-16 | PASS |
+  | OpenMP target FP64 (`--rtol 1e-10`) | 2.2e-16 | 7.1e-15 | 1.4e-14 | 2.4e-16 | 0 | PASS |
+  | OpenACC FP32 | 4.2e-7 | 4.2e-7 | 5.1e-7 | 3.0e-6 | 3.5e-7 | PASS |
+  | cuBLAS FP32 | 4.2e-7 | 4.2e-7 | 5.1e-7 | 3.0e-6 | 3.5e-7 | PASS |
+  | OpenMP target FP32 | 4.2e-7 | 4.4e-7 | 1.7e-7 | 3.4e-6 | 3.5e-7 | PASS |
+
+  (OpenMP FP64 is near bit-identical to the CPU because in that mode only the template product
+  and the batch kernels are offloaded; the OpenACC FP64 builds run the per-star SSP kernel and
+  device dust and nebular kernels.)
+
+- Nebular emission, AGN dust emission, spectral indices and emission-line luminosities in
+  `compute_csp_batch` (branch `gpu/a100-batch-nebular`, stacked on `gpu/a100-cublas-threshold`):
+  per model, as `compute_csp_scenario` does to each young SSP (EUV escape, continuum and lines
+  from the CLOUDY grid in gas_logz / gas_logu, FP64 log space), summed over ages; line
+  luminosities attenuated as in `fsps_dust` (birth cloud, diffuse dust at the line wavelength),
+  their absorbed part added to the energy balance when lines are not in the spectrum; AGN
+  after the IGM. `test_csp_batch` 80/80 in all ten builds (new groups: nebular; IGM + nebular
+  + AGN; AGN; lines not in the spectrum). Worst differences against `compute_csp_scenario`,
+  FP32 GPU: spectra 5.4e-7, magnitudes 5.3e-7, indices 4.3e-6, lines 0 (identical); FP64 GPU:
+  spectra 8.6e-11, magnitudes 4.1e-12, indices 6.8e-11, lines 3.3e-11. Suites 32/32 everywhere.
+  Also fixed: `compute_spectral_indices_columns` crashed ("partially present") when the output
+  array had more columns than spectra.
+- First full real-world benchmark (`benchmark_csp_batch 10000 200 full`: dust1 0.5, dust2 0.3,
+  DL07, nebular, IGM at z = 0.5, fagn 0.1, indices; us per model, magnitudes + indices):
+
+  | N | OpenACC FP32 | cuBLAS FP32 | OpenACC FP64 | cuBLAS FP64 |
+  |---|---|---|---|---|
+  | one `compute_csp_scenario` call | 2230 | 2221 | 2123 | 2339 |
+  | 1 | 1423 | 1332 | 1387 | 1327 |
+  | 100 | 33.6 | 30.9 | 35.2 | 30.7 |
+  | 10000 | 14.4 | 13.0 | 16.2 | 14.0 |
+  | 10000, spectra copied back | 31.0 | 29.6 | 42.7 | 40.0 |
+
+- Velocity smoothing (branch `gpu/a100-batch-smoothing`, stacked): `build_velocity_kernel`'s
+  sparse operator (the default `smoothspec_fast = 1` path of `apply_smoothing`) cached with the
+  redshift grid data and applied on the device to all columns (`smooth_columns`): in
+  `compute_csp_batch` (sigma_smooth shared by the batch, after AGN, before magnitudes and
+  indices) and in `compute_csp_scenario`, where it replaces the per-output host loop (so
+  magnitudes stay on the device with smoothing). Case `csp_smooth`, GPU vs nvfortran CPU (host
+  smoothing): FP64 1.1e-15 per pixel, 1.4e-14 mag; FP32 1.7e-7, 2.5e-7 mag. `test_csp_batch`
+  (new group: z = 0.5, IGM, nebular, AGN, sigma_smooth = 150 km/s) 90/90, suites 32/32, case
+  matrix PASS, all builds.
+
+- Nebular continuum speed-up (branch `gpu/a100-batch-neb-fast`, stacked): the kernel did one
+  FP64 `10**x` per (pixel, model, age), 47 nebular ages. Now per (pixel, model) and CLOUDY age
+  interval: the grid's (Z, U) interpolation written out (a device call with the 4-d grid per
+  interval cost 53 -> 41 ms), the upper endpoint reused as the next lower one, and 10**lg as a
+  geometric progression in age (the log-age grid is uniform, so wa steps by a constant inside an
+  interval): two FP64 exponentials per interval, one multiply-add per age against precomputed
+  C = SFH weight * Q, interval sums in FP64. Full configuration, FP32, N = 10000: kernel
+  81 -> 21 ms; 14.4 -> 9.1 us per model. Accuracy unchanged (FP32 spectra vs
+  `compute_csp_scenario` 6.5e-7, FP64 1.0e-11). Tests 90/90, suites 32/32, all builds. Nsight
+  Compute confirmed unavailable (`ERR_NVGPUCTRPERM`); kernels were tuned from Nsight Systems
+  timings and experiments.
+
+- Per-model metallicity (branch `gpu/a100-batch-metallicity`, stacked): with the SSP bases of
+  all metallicities resident (`fsps_context_update_ssp_basis(..., nz)`), each model is
+  interpolated in log Z at its logzsol between the bracketing bases (`compute_interpolated_ssp`'s
+  simple Z interpolation: linear in spectra, mass and log L_bol, not clamped): age sums with
+  per-model bases (`age_sums_z`, portable kernel, also used in cuBLAS builds), mass and L_bol
+  from the interpolated SSPs, and nebular emission from them (Q interpolated, being linear in
+  the spectrum; EUV rows from the interpolated basis). New test group against
+  `compute_csp_scenario` on each model's interpolated SSP (z = 0.5, IGM, nebular, AGN): FP32
+  spectra 4.5e-7, mags 2.6e-7, lines 2.6e-7, indices 2.3e-6; FP64 1e-11. 96/96 and suites 32/32
+  in all builds. Cost: none measurable (full configuration, FP32, N = 10000: 8.3 us per model
+  with 12 resident bases vs 8.5 with one).
+- Full configuration with smoothing (`benchmark_csp_batch 10000 50 full_smooth[_z]`, FP32
+  OpenACC, A100): 8.9 us per model (8.6 with per-model metallicity); N = 100: 29 us; N = 1:
+  1.7 ms; one `compute_csp_scenario` call 2.4 ms.
+
+- FP32 kernels (branch `gpu/a100-fp32-kernels`, stacked), full configuration with smoothing,
+  FP32 OpenACC, N = 10000: magnitudes assembled on the device (`magnitudes_from_fluxes`; the
+  host loop was ~20 ms per call); age sums register-tiled (4 pixels x 8 models per thread, one
+  running sum per (pixel, model) restarted at it_tesc: same order, identical results), 10 -> 4 ms;
+  the AGN kernel reuses the diffuse transmission of the attenuation pass, 4.7 -> 0.6 ms.
+  8.9 -> 7.1 us per model; GPU kernels 57 ms per call of ~71. Tests 96/96, suites 32/32.
+
+- Fitting-pipeline batch (branch `gpu/a100-batch-pipeline`, stacked):
+  - `ssp_weights(ntfull, N)`: a precomputed SSP-weight matrix instead of SFH parameters
+    (non-parametric SFHs; tage not used, SFR NaN). Tested in every batch group with the
+    scenario's own weights fed back: FP32 spectra <= 6.5e-7, FP64 <= 4.7e-13, mass/L_bol 1e-16.
+  - Per-model zred and igm_factor: IGM per model on the device (`igm_tau`, factored out of
+    `compute_igm_transmission`, which now calls it: same results), observed-frame resampling per
+    (pixel, model) on the device, distance term per model, shared filters. New test group
+    (z = 0 ... 3, IGM, nebular, AGN): FP32 spectra 6.5e-7, mags 2.5e-7; FP64 1e-11.
+  - C API `fsps_context_compute_csp_batch(handle, n, n_params, names, values, ssp_weights, mags,
+    spec, mass, lbol, mdust, sfr, emlines, indx, status)` (`include/fsps.h`): one array of n
+    doubles per named parameter on top of the context's parameters; builds the SSP basis on
+    demand (all metallicities if logzsol is among the names); SSP parameters give status 2,
+    unknown names status 3 (message via `fsps_get_last_error`). New C test `c_batch`
+    (regression suite): 6 models with tau, tage, dust2, gas_logu, zred, logzsol varied through
+    the arrays = the same models set one at a time (identical), plus the error statuses.
+  - nvfortran 25.1 bug found: with `-acc=gpu`, a disassociated pointer passed to an optional
+    assumed-shape dummy can be reported as present (reproduced in a 20-line program: absent
+    without `-acc`, present with it, for the fourth of four optional arguments). The C entry
+    point branches explicitly instead.
+  - Bug found (AddressSanitizer, gfortran `-Db_sanitize=address` build of the C test): the batch
+    sized its SFH scratch from the context's CSP workspace, which only exists after a
+    `compute_csp_scenario` call or `move_to_device`; a context used only through the batch (the
+    C path in CPU builds) overflowed the heap. Now sized from the ages. Both batch tests are
+    clean under ASan.
+  - Validation: suites 33/33 (with `c_batch`), batch test 146/146 in all ten builds; case matrix
+    PASS; nvfortran CPU outputs unchanged (`--rtol 1e-14`) by the IGM refactoring.
+  - Also: the parametric batch's FP64 difference to `compute_csp_scenario` (8.6e-11, open problem
+    below) is the device-computed SFH weights: with the scenario's weights as a matrix the
+    batch agrees to 6.7e-16.
+
+- Item 3, TF32 and FP64 tensor cores (branch `gpu/a100-tf32`, stacked): cuBLAS math-mode switch
+  `FSPS_CUBLAS_MATH` (`tf32`: TF32 tensor cores for the FP32 products; `pedantic`: no tensor
+  cores; unset: cuBLAS default, i.e. FP32 units for SGEMM and FP64 tensor cores for DGEMM on
+  the A100), and `generate_opensps_fixtures --batch`, which recomputes every single-age CSP case
+  (25 of the 35) through `compute_csp_batch` on 32 copies of the model (enough for the cuBLAS
+  products) so the case matrix measures the net error of the whole batch pipeline
+  (`FIXTURE_ARGS=--batch tools/compare_builds/run_cases.sh ...`). Net error against the FP64
+  nvfortran CPU matrix (scenario path), worst over all cases:
+
+  | Batch, cuBLAS | spec (912 A-2.5 um) | spec (all) | mag | indx | lines | result |
+  |---|---|---|---|---|---|---|
+  | FP32, default math | 4.2e-7 | 4.2e-7 | 3.3e-7 | 1.1e-5 | 3.5e-7 | PASS |
+  | FP32, TF32 | 6.8e-4 | 6.8e-4 | 3.1e-4 | 6.4e-3 | 3.5e-7 | FAIL (all 25 batch cases) |
+  | FP64, default (FP64 tensor cores) | 1.6e-11 | 1.2e-10 | 1.3e-11 | 2.3e-11 | 1.2e-12 | PASS (`--rtol 1e-10`) |
+  | FP64, pedantic (no tensor cores) | 1.6e-11 | 1.2e-10 | 1.3e-11 | 2.3e-11 | 1.2e-12 | PASS |
+
+  TF32 rounds both inputs to 10-bit mantissas (relative 2^-11 ~ 4.9e-4); in the age sums a few
+  ages dominate each pixel, so the input rounding passes into the spectra almost unchanged
+  (4.8e-4), then into magnitudes (2-3e-4) and indices. The band product alone tolerates it (the
+  all-ages case, where only the magnitudes use TF32: 3.1e-7 mag). TF32 is therefore not usable
+  for the age sums under this project's tolerances (FP32 ~1e-6, 1e-5 mag); 3e-4 mag is below
+  typical photometric errors, but it would have to be an explicit, documented choice.
+  FP64 tensor cores (DMMA) are IEEE FP64 FMAs: identical results to pedantic.
+  With `FSPS_CUBLAS_MATH=tf32` the FP32 cuBLAS build fails `test_csp_batch` (66/146 pass); FP64
+  is unaffected; default and pedantic pass 146/146.
+  Speed (`benchmark_csp_batch 10000 200`, us per model at N = 10000, magnitudes only):
+
+  | cuBLAS build | default | tf32 | pedantic |
+  |---|---|---|---|
+  | FP32, basic | 2.2 | 1.9 | 2.2 |
+  | FP32, full physics + smoothing | 6.5 | 6.3 | 6.4 |
+  | FP64, basic | 2.3 | 2.3 | 2.3 |
+  | FP64, full physics + smoothing | 7.1 | 7.1 | 7.1 |
+
+  The products are a small part of a call after the kernel work (cuBLAS SGEMM age sums ~1 ms of
+  ~22 ms at N = 10000, basic), so TF32 gains 3-10% for 1000x the error, and FP64 tensor cores
+  give no measurable gain.
+
+- Item 4: final benchmarks of every build (`benchmark outputs in the session scratch directory`, numbers in the Summary above) and the
+  write-up (Summary section; `doc/GPU_PLAN.md`, "Next: after the A100 session").
+
+- Per-call overhead, started (branch `gpu/a100-call-overhead`, paused for the OpenMP port): a
+  batch of N = 1 spends ~0.6 ms in kernels of ~1.9 ms per call (full physics); the SFH-weight
+  kernel alone was 314 us (one serial device thread). Below 16 models the SFH weights are now
+  computed on the host (as the single call does): 1720 -> 1500 us per call at N = 1, and
+  small FP64 batches agree with `compute_csp_scenario` to 6.7e-16 (8.6e-11 before). Validated
+  in the dev builds only (batch test 146/146 FP64 and FP32); next there: async kernel queue
+  (~20 synchronous launches per call), fewer small transfers.
+
+- OpenMP target offload of the whole batch (branch `gpu/a100-omp-batch`, stacked; "Next" item 1
+  of `doc/GPU_PLAN.md`):
+  - Device residency: an OpenMP twin of every OpenACC enter / exit / update directive of the
+    context (`fsps_context_move_to_device`, `remove_from_device`, `update_ssp_basis`, the
+    settings sync, the batch caches), `!$omp declare target` beside each `!$acc routine seq`
+    (63 device routines), and `target data` regions beside the OpenACC data regions. nvfortran
+    attaches the pointer components of `ctx%state` correctly (checked in a small program first).
+  - Kernels: the OpenMP directive on the same loop as the OpenACC one (36 kernels in
+    `fsps_csp_batch.f90`, `fsps_batch_photometry.f90` and the indices); the two separate OpenMP
+    copies of the age sums and band fluxes are gone. Gang + inner vector-reduction loops map to
+    `target teams distribute` + inner `parallel do reduction`.
+  - Fixed on the way: (1) the band-flux kernel as `teams distribute` over (band, block) with an
+    inner `parallel do` ran 8x slower than OpenACC (56 vs 6.7 ms); one combined
+    `target teams distribute parallel do collapse(3)` matches OpenACC. (2) nvfortran 25.1 bug:
+    in OpenMP device code, passing an assumed-shape dummy of the enclosing host routine to a
+    device function gives an illegal address (reproduced in a small program; local arrays and
+    their sections work): the index kernel takes a local copy of the wavelengths. (3) The
+    OpenMP mirrors in `update_ssp_basis` and `prepare_line_gaussians` mapped arrays of contexts
+    never moved to the device, which `remove_from_device` never unmapped: stale present-table
+    entries made `unit_csp` fail intermittently; they are now `if(ctx%on_device)`, and
+    `move_to_device` maps an existing basis. (4) `igm_tau` takes local copies of the Lyman
+    parameter arrays (OpenMP device code rejects the module's).
+  - Validation: suites 33/33 and batch test 146/146 in all ten builds (OpenMP with
+    `OMP_TARGET_OFFLOAD=MANDATORY`), case matrix PASS; and the case matrix through the batch
+    (`FIXTURE_ARGS=--batch`, 25 cases) against FP64 CPU: OpenMP FP32 4.2e-7 per pixel, 3.0e-7
+    mag, 1.2e-5 indices; OpenMP FP64 1.0e-11 per pixel (OpenACC: 4.2e-7 / 1.5e-7 / 1.1e-5 and
+    1.6e-11).
+  - Speed (`benchmark_csp_batch 10000 200`, us per model, magnitudes only; OpenMP / OpenACC,
+    same code; the host fallback before this branch: 833 / 3788 at N = 10000, FP32):
+
+    | N | FP32 basic | FP32 full physics | FP64 basic | FP64 full physics |
+    |---|---|---|---|---|
+    | 1 | 1125 / 827 | 1671 / 1311 | 1151 / 904 | 1680 / 1308 |
+    | 100 | 30.0 / 19.0 | 37.9 / 27.7 | 37.0 / 20.9 | 45.5 / 29.8 |
+    | 1000 | 5.2 / 4.1 | 9.4 / 8.5 | 6.4 / 4.6 | 11.2 / 9.3 |
+    | 10000 | 3.6 / 2.9 | 7.8 / 7.0 | 4.7 / 4.2 | 9.5 / 8.9 |
+
+    At large N the OpenMP build is within 10-25% of OpenACC; at small N the difference is in
+    the low-parallelism kernels (Nsight Systems, one model, full physics: kernels 0.54 vs 0.33 ms
+    of ~1.6 ms per call; e.g. age sums 96 vs 41 us, band fluxes 56 vs 13 us), where nvfortran's
+    default OpenMP team and thread sizes differ from the OpenACC mapping. Tuning note:
+    `num_teams` / `thread_limit` per kernel is a per-GPU choice and was not set for the A100. The single CSP call
+    (`compute_csp_scenario`) is not ported and runs on the host in the OpenMP build (7 ms FP32).
+
+- Per-call overhead, second attempt (not committed): the OpenACC batch kernels on one async
+  queue (one wait before the photometry instead of ~20 host synchronizations) crashed the batch
+  test with a corrupted stack (host segfault); reverted. It is a real race: the same build
+  passes 146/146 with `NVCOMPILER_ACC_SYNCHRONOUS=1`. `-Minfo=accel` shows no implicit copies
+  in the kernels (only the batch data region's clauses), so the cause is still open. Expected
+  gain ~0.15 ms per call.
+
+- OpenMP portability fixes from the AMD Radeon 780M test (branch `gpu/a100-omp-portability`,
+  stacked on `gpu/a100-omp-batch`):
+  - Cherry-picked from `test/780m-omp-batch`: f27d2f8 (`-Daccel=omp_gpu` flags for LLVM flang)
+    and ce8f02f (device code without `log_gamma`, without Fortran-runtime copy-in/out in
+    `get_agb_dust_terms`, contiguous index dummies).
+  - The OpenMP mapping conflict LLVM rejected ("explicit extension not allowed", 936 bytes, 16
+    bytes apart): 936 bytes is exactly the batch's `nebular_setup_t` with flang descriptors (13
+    rank-1 and 4 rank-2 allocatable components plus 24 bytes of scalars), which was mapped whole
+    and by component, and referred to through a dummy inside kernels. Now the kernels take its
+    arrays as dummies (`nebular_kernels`, `attenuate_lines`), and it is mapped through its
+    components only, in both programming models. The smoothing kernel likewise takes the
+    operator's arrays instead of reading them through the batch cache (`smooth_kernel`).
+    Kernels now refer only to `ctx` (mapped whole once, components attached at
+    `move_to_device`) and elements of the mapped `psets` array. Not reproducible here (no LLVM
+    offload toolchain on the cluster); to be confirmed on the 780M.
+  - `c_batch` on the OpenMP build here: PASSED in ~20 s. On the 780M its timeout may be the
+    SSP bases of all 12 metallicities it builds (mostly host work in the OpenMP build) rather
+    than a hang; worth timing with a larger test timeout.
+  - Rules for device code from now on: `doc/GPU_PLAN.md`, "Rules learned so far".
+
+  - Validation: suites 33/33 and batch test 146/146 in all ten builds, case matrix PASS; the
+    nvfortran CPU outputs match the pre-cherry-pick ones to `--rtol 1e-14`.
+
+- Final items (branch `gpu/a100-final`, stacked on `gpu/a100-omp-portability`): the legacy
+  `compute_interpolated_ssp` calls fixed; `compute_csp_batch` moves the context to the device
+  when needed; `c_batch` varies exactly the fitting parameters (logzsol, dust2, dust1 =
+  dust_ratio * dust2, dust_index, fagn, agn_tau, gas_logz, gas_logu, duste_umin, duste_gamma,
+  duste_qpah, zred) with a non-parametric SFH as an SSP-weight matrix: identical to setting the
+  models one at a time.
+  Validation: suites 33/33, batch test 146/146 in all ten builds, case matrix PASS.
+
+- CI fixes after PR #10's first run (4 of 15 jobs failed): (1) gfortran `-fopenmp` (CPU
+  threading, ThreadSanitizer job) compiled the OpenMP *target* directives and rejected maps of
+  derived types with allocatable components: every target / declare-target directive and the
+  inner `parallel do` of the kernels are now under `#ifdef OMP_TARGET`; (2) OpenACC multicore
+  (both precisions) failed the IGM tests: `compute_igm_transmission` is back to its own loop
+  (calling `igm_tau` from it gave wrong optical depths under multicore; `igm_tau` stays for the
+  batch's per-model IGM, which passes there); (3) LLVM flang: `test_c_batch` links libm. Checked
+  with targeted runs before the job ended (unit suites, batch test 146/146, `c_batch`) on
+  OpenACC multicore FP32, OpenACC GPU FP32 / FP64, OpenMP target FP32, gfortran, gfortran
+  `-fopenmp`; not the full ten-build validation (no time left on the job). CI on the PR is the
+  check.
+
+**In progress / queue**
+- PR #10 (https://github.com/elijahmathews/fsps/pull/10) from `gpu/a100-final` (the tip of the
+  stack) to `develop`, opened for CI; not merged. Session ended here.
+
+**Open problems**
+- AMD Radeon 780M (LLVM flang 22 + ROCm 7.1.1, `gpu/a100-omp-portability` tip): builds, 31/33
+  pass with `OMP_TARGET_OFFLOAD=MANDATORY`, but `csp_batch` and `c_batch` abort (after 9 s /
+  22 s), and direct reruns hang the GPU (amdgpu resets; it is the display GPU, so testing is
+  paused). Still open after the mapping fix of that branch; to debug from a text console (next:
+  `LIBOMPTARGET_INFO=-1` / `LIBOMPTARGET_DEBUG` to find the failing construct, then a reduced
+  batch, e.g. one model without nebular emission).
+- Legacy C API (`FSPS_ENABLE_LEGACY`): does not compile (see Questions, 1).
+- Nsight Compute cannot run: `RmProfilingAdminOnly: 1` on this node and `ncu` fails with
+  `ERR_NVGPUCTRPERM` (GPU performance counters for admins only). Kernels are tuned from Nsight
+  Systems timings instead.
+- OpenACC FP64 GPU builds: `test_csp_batch` spectra differ from `compute_csp_scenario` by up to
+  8.6e-11 (tolerance 1e-10) and mass / L_bol / SFR by 7.7e-13, against <= 6e-16 and 0 in the
+  CPU and OpenMP builds. The batch computes SFH weights on the device, the single-output
+  scenario on the host (since the P100 session). Confirmed: given the scenario's weights as a
+  matrix, the batch agrees to 6.7e-16; the 8.6e-11 is device vs host arithmetic in
+  `sfh_weights_core` (libm / FMA contraction), within the tolerance but with little margin.
+
+## P100 session status (final)
 
 **Done**
 - Environment checks: GPU visible (`nvidia-smi`: Tesla P100-PCIE-12GB, driver 580.178.04);
