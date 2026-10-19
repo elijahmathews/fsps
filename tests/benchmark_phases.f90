@@ -103,6 +103,7 @@ program benchmark_phases
     if (total < 0.0_wp) write(*, *) total   ! keep the results live
 
     call fsps_destroy(ctx)
+    deallocate(ctx)
 
 contains
 

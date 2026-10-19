@@ -77,6 +77,7 @@ program test_csp_batch
     call check_batch_z()
 
     call fsps_destroy(ctx)
+    deallocate(ctx)
     call print_summary_line("Batched CSP", total_tests - total_failures, total_tests)
     call tap_finish()
     if (total_failures > 0) stop 1

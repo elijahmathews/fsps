@@ -150,6 +150,7 @@ program benchmark_csp_batch
     if (total /= total) write(*, *) total   ! keep the results live
 
     call fsps_destroy(ctx)
+    deallocate(ctx)
 
 contains
 
