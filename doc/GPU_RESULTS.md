@@ -21,6 +21,198 @@ questions of the A100 session were answered on 2026-10-16:
 4. TF32 stays off by default (it is only reachable through `FSPS_CUBLAS_MATH=tf32`).
 5. Order of the late requests: accepted.
 
+Session 2 (2026-10-19), new questions (conservative choice taken, work continued):
+
+6. The batch now keeps its spectra in a context-owned buffer between calls (on the device,
+   host copy page-locked): needed for device-resident output and to avoid re-allocating and
+   re-pinning per call, but it holds nspec x N kernel-precision values (240 MB FP32 / 480 MB
+   FP64 at N = 10000) until `fsps_context_remove_from_device` / destroy. Kept resident; should
+   there be an explicit release call (or a size cap) for callers that run one huge batch?
+7. Page-locking that buffer (`cuMemHostRegister`) is on by default in NVIDIA GPU builds;
+   `FSPS_NO_PIN=1` turns it off. Fine as a default on shared nodes?
+8. Item 5 (batched SSP generation with IMF parameters per model) was not started: see
+   "Next" in `doc/GPU_PLAN.md` for the first step. Keep it next in line?
+
+## Status (A100 session 2, 2026-10-19)
+
+If restarted: read this section, then `git log` of `gpu/a100-call-overhead2` (stack tip).
+
+Node `p-gc-3003` (A100-PCIE-40GB, addressing mode None, 2x Xeon Gold 6248R; nvhpc 25.1, gcc
+13.4). All branches start from `gpu/a100-final` (PR #10), PRs open, none merged:
+
+| Branch | On | PR | Content |
+|---|---|---|---|
+| `fix/asan-csp-batch-leak` | `gpu/a100-final` | #11 | nightly ASan leak in `test_csp_batch` |
+| `fix/omp-maps-llvm` | `fix/omp-device-no-malloc` | #13 | AMD 780M fault: audit + `FSPS_OMP_CHECK_PRE` (status there) |
+| `gpu/a100-copyback` | `fix/asan-csp-batch-leak` | (see PR list) | spectra copy-back, device / host outputs |
+| `gpu/a100-call-overhead2` | `gpu/a100-copyback` | (see PR list) | per-call overhead (batch N = 1, single call) |
+
+Builds of this session: worktrees `../fsps-wt` (`bgpu32`, `bgpu`, `bgpucb32`, `bgpucb`,
+`bomp32`, `bomp`, `bmc32`, `bcpu`, `bcpu32`) and `../fsps-wt3` (`bgpu32`, `bgpu32pg`: gprof);
+main tree `build_a100_nightly_asan` (gfortran ASan + UBSan, nightly configuration).
+Local runs need `SPS_HOME` unset (it overrides `FSPS_DATA_HOME`).
+
+**1. Nightly AddressSanitizer** (PR #11): `test_csp_batch` never deallocated its allocatable
+context after `fsps_destroy` (LeakSanitizer: 2,556,536 bytes in 3 allocations, from `MAIN__`
+and `fsps_context_set_pset`). Fixed with `deallocate(ctx)` (also two benchmarks). The nightly
+job reproduced locally on the PR #10 tip (gfortran 13.4, `-Denable_stress_testing=true
+-Db_sanitize=address,undefined`): leak without the fix; with it unit + regression 33/33
+(`--timeout-multiplier 3`) and the stress suite (all phases, `FSPS_STRESS_ITERS=10`,
+`OMP_NUM_THREADS=4`) clean.
+
+**Interrupt: OpenMP offload fault on the AMD 780M** (PR #13, details in that branch's
+`doc/GPU_RESULTS.md`). Not reproducible on the A100 (no HMM; memcheck, `mem:separate` and
+`-Minfo=mp` clean; a removed map crashes nvfortran too). LLVM flang could not offload to NVIDIA
+here (AOMP 22 has no NVPTX backend; the LLVM release has no offload runtime). A static audit,
+including flang 22's gfx1103 device IR and map tables (AOMP built the project), found no
+missing map. New `FSPS_OMP_CHECK_PRE=1` checks presence and attachment of every array the
+batch kernels use and stops naming the culprit; to run on the 780M.
+
+**2. Spectra copy-back** (`gpu/a100-copyback`). The batch's spectra live in a context-owned
+buffer (`ctx%state%batch_out`): allocated on the device only when a batch outgrows it (x1.5),
+its host copy page-locked through the CUDA driver (`src/core/fsps_pinned.c`, resolved with
+`dlopen` at run time; `FSPS_NO_PIN=1` disables). Findings:
+- registering the buffer alone gained nothing: the OpenACC runtime stages `update self`
+  through its own pinned buffers even for registered memory (~4.6 GB/s effective). The copy now
+  goes straight into the buffer with `cuMemcpyDtoHAsync` on the OpenACC queue's stream
+  (~13.5 GB/s), in ~16 MB column chunks on two queues, the host converting chunk k to WP while
+  chunk k+1 is in flight (falls back to `update self` when not pinned);
+- nvfortran 25.1: `update self(sp(:, c1:c2)) async(q)` with `c2` a reassigned local issued an
+  empty section (`size=5994x0` in the runtime trace); the chunk copy is a separate routine with
+  the bounds as arguments;
+- new outputs for callers working on the device or in single precision:
+  `batch_spectra_device` / `fsps_context_batch_spec_device` (device address, no copy) and
+  `batch_spectra_host` / `fsps_context_batch_spec_host` (the page-locked host buffer at kernel
+  precision, one DMA, no conversion). Tested in `test_csp_batch` (values through the returned
+  addresses equal the copied-back spectra, every group) and `test_c_batch`.
+- `benchmark_csp_batch` now touches `spec` once before timing (a fitting loop reuses its
+  array; before, the first of 3 repetitions at N = 10000 paid 480 MB of page faults) and times
+  the device and host-kernel-precision variants.
+
+  N = 10000, us per model (A100; base = PR #10 code with the same warmed `spec`):
+
+  | | base FP32 | now FP32 | base FP64 | now FP64 |
+  |---|---|---|---|---|
+  | magnitudes only, basic | 2.87 | 2.97 | 4.10 | 4.10 |
+  | + spectra copied back (WP), basic | 17.9 | **9.6** | 27.2 | **11.8** |
+  | + spectra at kernel precision on the host, basic | | **4.7** | | **7.7** |
+  | + spectra left on the device, basic | | 2.95 | | 4.07 |
+  | magnitudes only, full physics + smoothing | 7.10 | FULLMAGS32 | 8.49 | FULLMAGS64 |
+  | + spectra copied back (WP), full physics + smoothing | 21.5 | FULLSPEC32 | 32.7 | FULLSPEC64 |
+
+  Copy-back cost (spectra minus magnitudes-only), basic: FP32 15.1 -> 6.6 us (-56%), FP64
+  23.1 -> 7.7 us (-67%); at kernel precision 1.7 / 3.6 us (the DMA). What remains of the WP
+  path in FP32 is the host conversion to double (single thread, ~3-5 us per model).
+
+**3. Per-call overhead** (`gpu/a100-call-overhead2`). Nsight Systems at N = 1 (full physics):
+per batch call ~67 uploads, ~13 downloads, ~54 stream synchronizations, 22 launches; launches
+cost 3.8 us, but each small pageable transfer ~8 us plus a ~10 us synchronization. The data
+region alone uploaded 28 small arrays and 24 array descriptors. Changes:
+- per-model inputs (15 arrays) and outputs (6) are sections of one array per type (`ipk`,
+  `rpk`, `lpk`, `rout`), the nebular setup's 13 host-filled arrays likewise (`pack_nebular`),
+  and the nebular data region is skipped without nebular emission: ~67 -> 29 uploads, ~13 -> 7
+  downloads per call;
+- the SFH-weight kernel is split, so given or host-computed weights (N < 16) do not pay the
+  device call's six section-descriptor transfers;
+- the indices use the resident wavelengths in OpenACC builds (no 48 kB upload per call); the
+  photometry uploads redshift and distance in one array and reads the Vega magnitudes from the
+  resident copy;
+- `compute_csp_scenario`: gprof (CPU sampling is blocked on the node, `perf_event_paranoid` 2;
+  Nsight Compute too) showed ~0.65 ms of host time per call in `apply_nebular_emission`,
+  interpolating the CLOUDY grids at (gas_logz, gas_logu) for every pixel and nebular age
+  (~60,000 interpolations) and uploading the 0.5 MB result; that loop now runs on the device,
+  where the grids are. What is left of the host time per call is spread thin (one-time setup
+  dominates the profile).
+
+  us per call (A100, FP32 OpenACC; N = 1 is one batch call of one model):
+
+  | | basic, before | basic, now | full physics + smoothing, before | now |
+  |---|---|---|---|---|
+  | batch, N = 1 | 606 | OV_N1_BASIC | 1067 | OV_N1_FULL |
+  | one `compute_csp_scenario` call | 628 | OV_SC_BASIC | 2169 | OV_SC_FULL |
+  | batch, N = 100, per model | 17.7 | OV_N100_BASIC | 26.1 | OV_N100_FULL |
+
+  Not done: the scratch arrays created per call (9 descriptor uploads) could also live in the
+  context; the single call still makes ~40 small transfers; and the async kernel queue of the
+  first session (crashed with a race) was not retried.
+
+**4. Design note: the single call as a batch of one** (below; no code).
+
+**5. Batched SSP generation with IMF parameters per model**: not started (the time went to the
+AMD interrupt). First step in `doc/GPU_PLAN.md`, "Next".
+
+**Validation** (stack tip, all nine builds: OpenACC FP32 / FP64, cuBLAS FP32 / FP64, OpenMP
+target FP32 / FP64 with `OMP_TARGET_OFFLOAD=MANDATORY`, OpenACC multicore FP32, gfortran FP64 /
+FP32): VALIDATION_LINE. Case matrix against the nvfortran CPU build: CASES_LINE.
+
+### Design note: `compute_csp_scenario` as a batch of one (no code yet)
+
+Goal: one implementation of the CSP physics. `compute_csp_scenario(ctx, pset, nzin, results,
+status)` becomes a thin wrapper that builds a batch from `pset`, calls `compute_csp_batch`
+and packs the outputs into `results(:)` (`COMPSPOUT`). Today the two paths are separate
+implementations of the same physics. They agree to 6.7e-16 (FP64, same SFH weights) and are
+tested against each other (`test_csp_batch`), but every feature is written twice and the
+single call carries its own per-call costs.
+
+**Mapping**
+- `tage > 0` (one output): a batch of one, `psets = [pset]`. The outputs map directly:
+  `spec`, `mags`, `mass`, `lbol`, `mdust`, `sfr`, `emlines`, `indx`; `mformed = 1`;
+  `age = log10(tage) + 9`.
+- `tage <= 0` (all ages, `n_outputs = ntfull`): a batch of `ntfull` models that share `pset`,
+  with an SSP-weight matrix. Column i holds the SFH weights at age i, normalised per unit mass
+  formed over the full history (as `integrate_csp_step` does). After the batch, scale `mass`,
+  `lbol` and the spectrum by the fraction formed by then (`mass_frac`), as
+  `apply_post_processing` does. `sfr` per output comes from the host
+  (`get_sfh_properties_at_age`), since the batch returns NaN with given weights.
+- `tage = -99` with tabular SFHs (`sfh` 2, 3): one model at `max(sfh_tab age)`. This needs
+  the batch to accept `tage = -99` with `sfh = 2/3`; today it computes weights only for
+  `tage > 0` or a given matrix. Simplest is to give it the matrix from the host.
+- The batch's host SFH path below 16 models already reproduces the single call's weights
+  exactly, so N = 1 keeps today's FP64 agreement.
+
+**What blocks it** (each is a `status = 2` path of the batch today, or a semantic difference):
+1. `redshift_colors = 1`: magnitudes at the redshift of each output's age, with the spectrum
+   and IGM at `pset%zred`. The batch's per-model `zred` also moves IGM and the observed frame,
+   so it would need a "magnitudes-only redshift" per column (`zred_col` without IGM).
+2. `compute_light_ages = 1`: light-weighted ages replace magnitudes and indices. Not in the
+   batch; it needs a second age-weighted sum (one more column per model in the age sums).
+3. Several metallicities summed (`nzin > 1`: the MDF / `pmetals` modes of `zcontinuous`
+   2 and 3). The batch interpolates between two bases per model (`zcontinuous = 1`) but does
+   not sum all `nz` bases with MDF weights. Possible as a per-model weight over metallicities
+   in `age_sums_z` (nz instead of 2 terms). Nebular emission with `nzin > 1` is rejected by
+   both paths today.
+4. Invalid dust settings (`uvb < 0`, `wgp1/wgp2 < 1`): the batch returns status 2, while
+   the single call's attenuation routine silently returns early for them. The wrapper has to
+   keep the old behaviour, or both should report it. Witt & Gordon dust itself is supported
+   on the device (`compute_attenuation_curve_point`, `dust_type = 3`).
+5. Smoothing other than fast velocity smoothing: LSF smoothing (`smooth_lsf`), the exact
+   path (`smoothspec_fast = 0`), and a `sigma_smooth` that differs per model (irrelevant for a
+   batch of one). The single call falls back to the host per output for these.
+6. `fast_mode` (skip magnitudes and indices): easy, it just means the optional outputs are
+   absent.
+7. Outputs per age in all-ages mode (107 columns) are cheap for the batch. The single call's
+   per-output host loop for magnitudes (when `dev_mags` is false) disappears, which removes
+   blockers 1 and 5 only if the batch covers them.
+8. Numerical identity of the regression references: the scenario is the reference of the
+   regression and parameter-matrix fixtures. The batch sums ages in a tiled order (identical
+   to the scenario only up to FP64 rounding, 1e-16..1e-11) and adds nebular emission after
+   the age sums instead of to each SSP. The FP64 CPU fixtures would move by ~1e-11 and need a
+   regenerated reference or a looser `--rtol` on the scenario cases.
+9. Builds without a device: the batch runs on the host in CPU builds. Its N = 1 host cost
+   has not been measured against the single call's (3.2 ms basic, one core). The OpenMP
+   target build would gain the single call on the device, which it does not offload today.
+10. Interfaces: `results(:)` reallocation semantics (callers reuse `results`), the legacy C
+    layer, and the Python bindings expect `COMPSPOUT`. The wrapper keeps them.
+
+**Order** (each step keeps both paths and checks one against the other):
+(a) the wrapper for `tage > 0` with none of 1-6 active; fall back to the old path otherwise;
+(b) all-ages mode via the weight matrix; (c) `redshift_colors`, light ages, the MDF sum; (d)
+LSF / exact smoothing on the device; (e) remove the old path.
+Gains: one physics implementation, and the single call at the batch's N = 1 cost (1.1 ms
+full physics after the packing work, vs 1.2-1.4 ms for the single call after this session's
+nebular change, 2.3 ms before).
+
+
 ## Summary: P100 and A100
 
 Nodes: P100-PCIE-12GB with 2x Xeon E5-2680 v4 (Broadwell), nvhpc 25.1; A100-PCIE-40GB with 2x
