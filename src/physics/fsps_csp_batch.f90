@@ -456,6 +456,10 @@ contains
 #endif
 #ifdef OMP_TARGET
         !$omp end target data
+        ! LLVM flang (22) leaves the data of psets (derived type with allocatable components)
+        ! mapped after the region; a later host allocation at the same address would then be
+        ! taken as present and not copied. Delete the stale entry (no-op where it is gone).
+        !$omp target exit data map(delete: psets)
 #endif
         !$acc end data
 

@@ -58,6 +58,7 @@ contains
         if (omp_target_is_present(p, omp_get_default_device()) == 0) then
             write(0, '(5A)') 'FSPS_OMP_CHECK_PRE: ', name, ' is not mapped to the device before the kernels of ', &
                 where, ' (it would fault there)'
+            write(0, '(A,Z16)') 'FSPS_OMP_CHECK_PRE: host address ', addr
             error stop 'FSPS_OMP_CHECK_PRE: unmapped array'
         end if
 #endif
