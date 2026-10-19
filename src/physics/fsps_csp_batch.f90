@@ -169,6 +169,10 @@ contains
         ! The SSP bases' mass and L_bol, for the kernel below as arrays (with OpenMP they are mapped
         ! as plain data, not attached to the device copy of ctx; see fsps_omp_data)
         real(WP), pointer, contiguous :: bmass(:,:), blbol(:,:)
+        real(KP), pointer, contiguous :: bspec(:,:,:)
+#ifdef OMP_TARGET
+        integer(8) :: host_addr(4)   ! FSPS_OMP_CHECK_PRE: host addresses held by ctx before the kernels
+#endif
 
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
@@ -342,8 +346,11 @@ contains
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+        ! The bases through pointers taken before any kernel (the kernels below get them as
+        ! arguments; see host_ctx_unchanged for why not through ctx after a launch)
         bmass => ctx%state%ssp_basis_mass
         blbol => ctx%state%ssp_basis_lbol
+        bspec => ctx%state%ssp_basis_spec
 #ifdef OMP_TARGET
         ! psets and the nebular arrays by address (fsps_omp_data): LLVM flang left psets' data
         ! mapped after a target data region naming it (a derived type with allocatable
@@ -373,7 +380,10 @@ contains
 #endif
 
 #ifdef OMP_TARGET
-        if (omp_check_enabled()) call check_batch_maps()
+        if (omp_check_enabled()) then
+            call check_batch_maps()
+            host_addr = host_ctx_addresses()
+        end if
 #endif
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
@@ -419,12 +429,15 @@ contains
             end do
         end do
 
+#ifdef OMP_TARGET
+        if (omp_check_enabled()) call host_ctx_unchanged('the SFH-weight kernel')
+#endif
         if (zmode) then
-            call age_sums_z(nspec, nt, n_mod, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, zlo, zhi, dz, yo)
+            call age_sums_z(nspec, nt, n_mod, nzb, bspec, w2, it_tesc, zlo, zhi, dz, yo)
         else
-            call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
+            call age_sums(nspec, nt, n_mod, bspec(:, :, 1), w2, it_tesc, yo)
         end if
-        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
+        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, bspec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb%lum, nb%llo, eml, s_line)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
@@ -452,6 +465,9 @@ contains
         if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         if (smooth) call smooth_columns(ctx, total, n_mod)
 
+#ifdef OMP_TARGET
+        if (omp_check_enabled()) call host_ctx_unchanged('the batch kernels before the photometry')
+#endif
         ! ------------------------------------------------------------------
         ! 8. Magnitudes and indices
         ! ------------------------------------------------------------------
@@ -584,6 +600,37 @@ contains
                 call omp_check_present(loc(ctx%state%batch%sm_coef), 'ctx%state%batch%sm_coef', W, size(ctx%state%batch%sm_coef))
             end if
         end subroutine check_batch_maps
+
+        !> Host addresses that ctx holds for data mapped by address (SSP bases, batch caches)
+        function host_ctx_addresses() result(a)
+            integer(8) :: a(4)
+
+            a = 0
+            a(1) = loc(ctx%state%ssp_basis_spec)
+            a(2) = loc(ctx%state%ssp_basis_mass)
+            if (allocated(ctx%state%batch%wt)) a(3) = loc(ctx%state%batch%wt)
+            if (allocated(ctx%state%batch%wl)) a(4) = loc(ctx%state%batch%wl)
+        end function host_ctx_addresses
+
+        !> FSPS_OMP_CHECK_PRE: the host copy of ctx is unchanged after the kernels of where. A
+        !> kernel's implicit map of ctx copying the device copy back to the host would overwrite
+        !> the host's descriptors with the device's (stale for data mapped by address).
+        subroutine host_ctx_unchanged(where)
+            character(len=*), intent(in) :: where
+            character(len=*), parameter :: NAMES(4) = [character(len=26) :: 'ctx%state%ssp_basis_spec', &
+                'ctx%state%ssp_basis_mass', 'ctx%state%batch%wt', 'ctx%state%batch%wl']
+            integer(8) :: now(4)
+            integer :: i
+
+            now = host_ctx_addresses()
+            do i = 1, 4
+                if (now(i) /= host_addr(i)) then
+                    write(0, '(5A,Z0,A,Z0)') 'FSPS_OMP_CHECK_PRE: the host copy of ', trim(NAMES(i)), &
+                        ' changed during ', where, ' (host copy of ctx overwritten?): 0x', host_addr(i), ' -> 0x', now(i)
+                    error stop 'FSPS_OMP_CHECK_PRE: host ctx changed by a kernel'
+                end if
+            end do
+        end subroutine host_ctx_unchanged
 #endif
     end subroutine compute_csp_batch
 
