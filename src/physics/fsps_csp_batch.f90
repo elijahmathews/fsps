@@ -63,7 +63,10 @@ module fsps_csp_batch
     use fsps_constants, only: SAFE_FLOOR, PI, NEMLINE, NEBNAGE, NEBNZ, NEBNIP, H_PLANCK, L_SOL
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t, fsps_context_sync_device_settings, batch_out_reserve
-    use, intrinsic :: iso_c_binding, only: c_ptr, c_null_ptr, c_loc
+    use, intrinsic :: iso_c_binding, only: c_ptr, c_null_ptr, c_loc, c_int, c_size_t, c_intptr_t
+#if defined(FSPS_PINNED) && defined(_OPENACC) && !defined(ACC_MULTICORE)
+    use openacc, only: acc_get_cuda_stream
+#endif
     use fsps_context, only: fsps_context_move_to_device
     use fsps_csp, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
@@ -83,7 +86,19 @@ module fsps_csp_batch
     implicit none
     private
 
-    public :: compute_csp_batch, batch_spectra_device
+    public :: compute_csp_batch, batch_spectra_device, batch_spectra_host
+
+#if defined(FSPS_PINNED) && defined(_OPENACC) && !defined(ACC_MULTICORE)
+    !> Device-to-host DMA into a page-locked buffer on a given CUDA stream (src/core/fsps_pinned.c)
+    interface
+        integer(c_int) function fsps_memcpy_d2h_async(dst, src, bytes, stream) bind(C, name="fsps_memcpy_d2h_async")
+            import :: c_int, c_ptr, c_size_t, c_intptr_t
+            type(c_ptr), value :: dst, src
+            integer(c_size_t), value :: bytes
+            integer(c_intptr_t), value :: stream
+        end function fsps_memcpy_d2h_async
+    end interface
+#endif
 
 
     real(WP), parameter :: V_BAND_ANGSTROMS = 5500.0_wp   ! as in fsps_dust
@@ -443,7 +458,7 @@ contains
 
         end associate
         ctx%state%batch_out%n = n_mod
-        if (present(spec)) call spectra_to_host(ctx%state%batch_out%spec, nspec, n_mod, spec)
+        if (present(spec)) call spectra_to_host(ctx%state%batch_out%spec, nspec, n_mod, spec, ctx%state%batch_out%pinned)
 #ifdef OMP_TARGET
         !$omp end target data
 #endif
@@ -485,10 +500,11 @@ contains
     !> OpenACC GPU builds: in chunks of columns on two async queues, each chunk converted on the
     !> host while the next one is in flight; sp's host copy is page-locked (batch_out_reserve),
     !> so each chunk moves at the PCIe rate.
-    subroutine spectra_to_host(sp, nspec, n_mod, spec)
+    subroutine spectra_to_host(sp, nspec, n_mod, spec, pinned)
         integer, intent(in)              :: nspec, n_mod
-        real(KP), intent(inout)          :: sp(nspec, n_mod)
+        real(KP), intent(inout), target  :: sp(nspec, n_mod)
         real(WP), intent(inout)          :: spec(:,:)
+        logical, intent(in)              :: pinned   !< sp's host copy is page-locked
         integer :: m
 #if defined(_OPENACC) && !defined(ACC_MULTICORE)
         !> Bytes per chunk (hardware note: ~16 MB measured best on the A100 node, PCIe 3 host;
@@ -498,9 +514,10 @@ contains
 
         cw = max(1, CHUNK_BYTES / (nspec * (storage_size(sp) / 8)))
         nch = (n_mod + cw - 1) / cw
-        call chunk_to_host(sp, nspec, n_mod, 1, min(cw, n_mod), 1)
+        call chunk_to_host(sp, nspec, n_mod, 1, min(cw, n_mod), 1, pinned)
         do c = 1, nch
-            if (c < nch) call chunk_to_host(sp, nspec, n_mod, c * cw + 1, min((c + 1) * cw, n_mod), 1 + mod(c, 2))
+            if (c < nch) call chunk_to_host(sp, nspec, n_mod, c * cw + 1, min((c + 1) * cw, n_mod), 1 + mod(c, 2), &
+                                          pinned)
             q = 1 + mod(c - 1, 2)
             !$acc wait(q)
             do m = (c - 1) * cw + 1, min(c * cw, n_mod)
@@ -520,10 +537,22 @@ contains
     !> Starts the copy of columns c1:c2 of sp to the host on async queue q. (A separate routine:
     !> with the bounds as locals of spectra_to_host, nvfortran 25.1 -O2 issued the first update
     !> with an empty section.)
-    subroutine chunk_to_host(sp, nspec, n_mod, c1, c2, q)
-        integer, intent(in)     :: nspec, n_mod, c1, c2, q
-        real(KP), intent(inout) :: sp(nspec, n_mod)
+    subroutine chunk_to_host(sp, nspec, n_mod, c1, c2, q, pinned)
+        integer, intent(in)             :: nspec, n_mod, c1, c2, q
+        real(KP), intent(inout), target :: sp(nspec, n_mod)
+        logical, intent(in)             :: pinned
+#if defined(FSPS_PINNED) && defined(_OPENACC) && !defined(ACC_MULTICORE)
+        type(c_ptr) :: dsrc
 
+        ! Page-locked host copy: one DMA on the queue's stream (the OpenACC runtime would stage it)
+        if (pinned) then
+            !$acc host_data use_device(sp)
+            dsrc = c_loc(sp(1, c1))
+            !$acc end host_data
+            if (fsps_memcpy_d2h_async(c_loc(sp(1, c1)), dsrc, int(nspec, c_size_t) * int(c2 - c1 + 1, c_size_t) * &
+                                      int(storage_size(sp) / 8, c_size_t), int(acc_get_cuda_stream(q), c_intptr_t)) == 0) return
+        end if
+#endif
         !$acc update self(sp(:, c1:c2)) async(q)
     end subroutine chunk_to_host
 
@@ -557,6 +586,41 @@ contains
         ptr = c_loc(sp)
 #endif
     end subroutine batch_spectra_device
+
+    !> The last batch's spectra on the host at kernel precision, without conversion: copies them
+    !> from the device into the batch output's page-locked host copy (one DMA at the PCIe rate in
+    !> NVIDIA GPU builds) and returns its address (column-major, leading dimension nspec, n
+    !> models, kp_bytes per value: 4 in FP32 builds, 8 in FP64). For callers that can use the
+    !> spectra in kernel precision: it skips compute_csp_batch's conversion to WP into spec.
+    !> Valid until the next batch call; ptr is null (n = 0) before the first batch.
+    subroutine batch_spectra_host(ctx, ptr, nspec, n, kp_bytes)
+        type(fsps_context_t), intent(inout), target :: ctx
+        type(c_ptr), intent(out) :: ptr
+        integer, intent(out)     :: nspec, n, kp_bytes
+
+        ptr = c_null_ptr
+        nspec = ctx%state%nspec
+        n = 0
+        kp_bytes = storage_size(1.0_KP) / 8
+        if (.not. allocated(ctx%state%batch_out%spec) .or. ctx%state%batch_out%n == 0) return
+        n = ctx%state%batch_out%n
+        if (ctx%on_device) call spectra_to_pinned(ctx%state%batch_out%spec, nspec, size(ctx%state%batch_out%spec, 2), n, &
+                                                  ctx%state%batch_out%pinned)
+        ptr = c_loc(ctx%state%batch_out%spec)
+    end subroutine batch_spectra_host
+
+    !> Copies columns 1:n of the batch output sp (nspec x cap) from the device to its host copy.
+    subroutine spectra_to_pinned(sp, nspec, cap, n, pinned)
+        integer, intent(in)             :: nspec, cap, n
+        real(KP), intent(inout), target :: sp(nspec, cap)
+        logical, intent(in)             :: pinned
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        call chunk_to_host(sp, nspec, cap, 1, n, 1, pinned)
+        !$acc wait(1)
+#elif defined(OMP_TARGET)
+        !$omp target update from(sp(:, 1:n))
+#endif
+    end subroutine spectra_to_pinned
 
     !> Host-side nebular data of a batch: young ages and their grid interval, per-model grid
     !> indices and escape fractions, and per-pixel lists of the lines whose profile reaches it.

@@ -16,9 +16,11 @@
 
 typedef int (*register_fn)(void *, size_t, unsigned int);
 typedef int (*unregister_fn)(void *);
+typedef int (*d2h_async_fn)(void *, unsigned long long, size_t, void *);
 
 static register_fn fsps_cu_register;
 static unregister_fn fsps_cu_unregister;
+static d2h_async_fn fsps_cu_d2h_async;
 static pthread_once_t fsps_pinned_once = PTHREAD_ONCE_INIT;
 
 static void fsps_pinned_init(void)
@@ -31,9 +33,11 @@ static void fsps_pinned_init(void)
     if (!lib) return;
     fsps_cu_register = (register_fn)dlsym(lib, "cuMemHostRegister_v2");
     fsps_cu_unregister = (unregister_fn)dlsym(lib, "cuMemHostUnregister");
-    if (!fsps_cu_register || !fsps_cu_unregister) {
+    fsps_cu_d2h_async = (d2h_async_fn)dlsym(lib, "cuMemcpyDtoHAsync_v2");
+    if (!fsps_cu_register || !fsps_cu_unregister || !fsps_cu_d2h_async) {
         fsps_cu_register = NULL;
         fsps_cu_unregister = NULL;
+        fsps_cu_d2h_async = NULL;
     }
 }
 
@@ -51,4 +55,16 @@ int fsps_host_unregister(void *ptr)
     pthread_once(&fsps_pinned_once, fsps_pinned_init);
     if (!fsps_cu_unregister || !ptr) return -1;
     return fsps_cu_unregister(ptr) == 0 ? 0 : -1;
+}
+
+/* Device-to-host copy of bytes bytes from device address src to host address dst (pinned by
+ * fsps_host_register) on CUDA stream stream (an OpenACC queue's, acc_get_cuda_stream), so it
+ * runs as one DMA into the buffer instead of through the OpenACC runtime's staging buffers
+ * (which it uses even for registered memory: ~4.6 instead of ~11 GB/s on the A100 node).
+ * Returns 0 on success; the caller falls back to an OpenACC update otherwise. */
+int fsps_memcpy_d2h_async(void *dst, const void *src, size_t bytes, void *stream)
+{
+    pthread_once(&fsps_pinned_once, fsps_pinned_init);
+    if (!fsps_cu_d2h_async || !dst || !src) return -1;
+    return fsps_cu_d2h_async(dst, (unsigned long long)(size_t)src, bytes, stream) == 0 ? 0 : -1;
 }

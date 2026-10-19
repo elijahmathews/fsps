@@ -13,7 +13,7 @@ program test_csp_batch
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device
+    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
     use, intrinsic :: iso_c_binding, only: c_ptr, c_associated, c_loc, c_size_t, c_f_pointer
 #if defined(OMP_TARGET)
     use omp_lib, only: omp_target_memcpy, omp_get_initial_device, omp_get_default_device
@@ -396,6 +396,17 @@ contains
             ok = ok .and. all(real(buf, WP) == spec(1:ns, 1:n))
         end if
         call assert_true(ok, "spectra on the device (batch_spectra_device)", total_tests, total_failures)
+
+        ! The same spectra on the host at kernel precision (batch_spectra_host)
+        call batch_spectra_host(ctx, dptr, ns, n, nb)
+        ok = c_associated(dptr) .and. ns == size(spec, 1) .and. n == size(spec, 2) .and. &
+             nb == storage_size(1.0_KP) / 8
+        if (ok) then
+            call c_f_pointer(dptr, hp, [ns, n])
+            ok = all(real(hp, WP) == spec(1:ns, 1:n))
+        end if
+        call assert_true(ok, "spectra on the host at kernel precision (batch_spectra_host)", total_tests, &
+                         total_failures)
     end subroutine check_spectra_device
 
     subroutine set_int(key, value)

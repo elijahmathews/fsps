@@ -14,7 +14,7 @@ program benchmark_csp_batch
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device
+    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
     use, intrinsic :: iso_c_binding, only: c_ptr, c_associated
     use fsps_ssp, only: generate_ssp_grid
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
@@ -163,6 +163,17 @@ program benchmark_csp_batch
         dt = real(t1 - t0, WP) / rate / n_rep
         if (.not. c_associated(dptr) .or. k_n /= n) stop 3
         write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_on_device_us_per_model ', 1.0e6_wp * dt / n
+
+        ! Spectra on the host at kernel precision (page-locked buffer, no conversion)
+        call system_clock(t0)
+        do rep = 1, n_rep
+            call batch(n, .false.)
+            call batch_spectra_host(ctx, dptr, k_nspec, k_n, k_bytes)
+        end do
+        call system_clock(t1)
+        dt = real(t1 - t0, WP) / rate / n_rep
+        if (.not. c_associated(dptr) .or. k_n /= n) stop 4
+        write(*, '(A,I0,A,F14.3)') 'batch_', n, '_spec_host_kp_us_per_model ', 1.0e6_wp * dt / n
     end do
     if (total /= total) write(*, *) total   ! keep the results live
 
