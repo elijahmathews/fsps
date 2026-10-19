@@ -124,7 +124,7 @@ contains
 
         call omp_check_present(loc(ctx), 'ctx', where)
         dbase = 0
-        !$omp target map(from: dbase)
+        !$omp target map(alloc: ctx) map(from: dbase)
         do i = 1, N_COMP
             dbase(i) = device_component_address(ctx, i)
         end do

@@ -1594,7 +1594,7 @@ contains
             w_used(k, :) = real(w(used(k), :), KP)
         end do
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(acc1, comp1, wk, term, tsum, k) &
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(acc1, comp1, wk, term, tsum, k) &
         !$omp map(to: lib, w_used, a_used, b_used, has_stars) map(from: t_sum)
 #endif
         do i_time = 1, n_ages
