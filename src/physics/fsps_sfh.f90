@@ -307,7 +307,7 @@ contains
         ! --------------------------------------------------------------------
         ! ANALYTIC SFHs (1=Tau, 4=Delayed, 5=Simha)
         ! --------------------------------------------------------------------
-        if (any([1, 4, 5] == pset%sfh)) then
+        if (pset%sfh == 1 .or. pset%sfh == 4 .or. pset%sfh == 5) then
             
             ! 1. Time Definitions
             ! Tmax: Age of oldest isochrone in the library (Gyr)

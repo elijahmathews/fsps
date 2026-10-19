@@ -377,8 +377,8 @@ contains
             jlo = max(1, min(find_interval(ctx%state%pagb_logt, logt), NDIM_PAGB - 1))
             t = max(0.0_wp, min((logt - ctx%state%pagb_logt(jlo)) / &
                                 (ctx%state%pagb_logt(jlo+1) - ctx%state%pagb_logt(jlo)), 1.0_wp))
-            nterm = 2; i1(1:2) = [jlo, jlo + 1]; i2(1:2) = k_z
-            coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+            nterm = 2; i1(1) = jlo; i1(2) = jlo + 1; i2(1:2) = k_z
+            coef(1) = (1.0_wp - t) * scale_factor; coef(2) = t * scale_factor
         case (SRC_WR)
             if (ctx%state%isoc_type == 'mist') then
                 mdot_cgs = (10.0_wp**lmdot) * M_SOL / YEAR_TO_SECOND
@@ -400,15 +400,15 @@ contains
                 t = max(0.0_wp, min((twr - ctx%state%wrc_logt(jlo)) / &
                                     (ctx%state%wrc_logt(jlo+1) - ctx%state%wrc_logt(jlo)), 1.0_wp))
             end if
-            nterm = 2; i1(1:2) = [jlo, jlo + 1]; i2(1:2) = nz
-            coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+            nterm = 2; i1(1) = jlo; i1(2) = jlo + 1; i2(1:2) = nz
+            coef(1) = (1.0_wp - t) * scale_factor; coef(2) = t * scale_factor
         case (SRC_AGB_O)
             src = SRC_AGB_O
             jlo = max(1, min(find_interval_row_2d(ctx%state%agb_logt_o, nz, N_AGB_O, logt), N_AGB_O - 1))
             t = max(0.0_wp, min((logt - ctx%state%agb_logt_o(nz, jlo)) / &
                                 (ctx%state%agb_logt_o(nz, jlo+1) - ctx%state%agb_logt_o(nz, jlo)), 1.0_wp))
-            nterm = 2; i1(1:2) = [jlo, jlo + 1]
-            coef(1:2) = [(scale_factor / C_LIGHT) * (1.0_wp - t), (scale_factor / C_LIGHT) * t]
+            nterm = 2; i1(1) = jlo; i1(2) = jlo + 1
+            coef(1) = (scale_factor / C_LIGHT) * (1.0_wp - t); coef(2) = (scale_factor / C_LIGHT) * t
         case (SRC_AGB_C)
             if (CSTAR_ARINGER == 1) then
                 src = SRC_AGB_CAR
@@ -416,16 +416,16 @@ contains
                 jlo = max(1, min(find_interval(ctx%state%agb_logt_car, logt), n_grid - 1))
                 t = max(0.0_wp, min((logt - ctx%state%agb_logt_car(jlo)) / &
                                     (ctx%state%agb_logt_car(jlo+1) - ctx%state%agb_logt_car(jlo)), 1.0_wp))
-                coef(1:2) = [(1.0_wp - t) * scale_factor, t * scale_factor]
+                coef(1) = (1.0_wp - t) * scale_factor; coef(2) = t * scale_factor
             else
                 src = SRC_AGB_C
                 n_grid = N_AGB_C
                 jlo = max(1, min(find_interval(ctx%state%agb_logt_c, logt), n_grid - 1))
                 t = max(0.0_wp, min((logt - ctx%state%agb_logt_c(jlo)) / &
                                     (ctx%state%agb_logt_c(jlo+1) - ctx%state%agb_logt_c(jlo)), 1.0_wp))
-                coef(1:2) = [(scale_factor / C_LIGHT) * (1.0_wp - t), (scale_factor / C_LIGHT) * t]
+                coef(1) = (scale_factor / C_LIGHT) * (1.0_wp - t); coef(2) = (scale_factor / C_LIGHT) * t
             end if
-            nterm = 2; i1(1:2) = [jlo, jlo + 1]
+            nterm = 2; i1(1) = jlo; i1(2) = jlo + 1
         case (SRC_WMBASIC)
             src = SRC_WMBASIC
             nt = size(ctx%state%wmb_logt); ng = size(ctx%state%wmb_logg)
@@ -436,9 +436,10 @@ contains
             u = max(0.0_wp, min((logg_calc - ctx%state%wmb_logg(klo)) / &
                                 (ctx%state%wmb_logg(klo+1) - ctx%state%wmb_logg(klo)), 1.0_wp))
             nterm = 4
-            i1 = [jlo, jlo + 1, jlo + 1, jlo]; i2 = [klo, klo, klo + 1, klo + 1]
-            coef = [scale_factor * (1.0_wp - t) * (1.0_wp - u), scale_factor * t * (1.0_wp - u), &
-                    scale_factor * t * u, scale_factor * (1.0_wp - t) * u]
+            i1(1) = jlo; i1(2) = jlo + 1; i1(3) = jlo + 1; i1(4) = jlo
+            i2(1) = klo; i2(2) = klo;     i2(3) = klo + 1; i2(4) = klo + 1
+            coef(1) = scale_factor * (1.0_wp - t) * (1.0_wp - u); coef(2) = scale_factor * t * (1.0_wp - u)
+            coef(3) = scale_factor * t * u;                    coef(4) = scale_factor * (1.0_wp - t) * u
         case default
             src = SRC_MAIN_LIB
             nt = size(ctx%state%speclib_logt); ng = size(ctx%state%speclib_logg)
@@ -453,11 +454,12 @@ contains
             v2 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo+1, klo)   > SAFE_FLOOR)
             v3 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo+1, klo+1) > SAFE_FLOOR)
             v4 = (ctx%state%speclib(ctx%state%whlam5000, nz, jlo,   klo+1) > SAFE_FLOOR)
-            i1 = [jlo, jlo + 1, jlo + 1, jlo]; i2 = [klo, klo, klo + 1, klo + 1]
+            i1(1) = jlo; i1(2) = jlo + 1; i1(3) = jlo + 1; i1(4) = jlo
+            i2(1) = klo; i2(2) = klo;     i2(3) = klo + 1; i2(4) = klo + 1
             if (v1 .and. v2 .and. v3 .and. v4) then
                 nterm = 4
-                coef = [scale_factor * (1.0_wp - t) * (1.0_wp - u), scale_factor * t * (1.0_wp - u), &
-                        scale_factor * t * u, scale_factor * (1.0_wp - t) * u]
+                coef(1) = scale_factor * (1.0_wp - t) * (1.0_wp - u); coef(2) = scale_factor * t * (1.0_wp - u)
+                coef(3) = scale_factor * t * u;                    coef(4) = scale_factor * (1.0_wp - t) * u
             else if (.not. (v1 .or. v2 .or. v3 .or. v4)) then
                 linear = .false.   ! floor spectrum
             else

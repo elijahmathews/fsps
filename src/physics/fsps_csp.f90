@@ -993,7 +993,7 @@ contains
         real(WP) :: start_time
         
         ! 1. Determine Start Time (Offset)
-        if (any([1, 4, 5] == pset%sfh)) then
+        if (pset%sfh == 1 .or. pset%sfh == 4 .or. pset%sfh == 5) then
             start_time = pset%sf_start * 1.0e9_wp
         else
             start_time = 0.0_wp
