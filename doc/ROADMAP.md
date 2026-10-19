@@ -55,12 +55,21 @@ code, small test data and references (megabytes).
 Why first: it is independent of the GPU work, mostly I/O, and it defines the inputs that the
 batched SSP (priority 3) reads.
 
-### 1b. Python bindings (*parallel*)
+### 1b. A stable C API; language bindings in their own repositories (*parallel*)
 
-A pip-installable package over the C API: NumPy arrays in and out, the batch entry point with
-one array per parameter, device-resident outputs where available, and a thin layer compatible
-with python-fsps (`StellarPopulation`) so that Prospector and existing scripts can switch with
-few changes. Without it the speed is available only to Fortran and C callers.
+This repository provides the C API (header, shared library, pkg-config file) as the stable,
+versioned interface: semantic versioning of the library, an API version macro and query
+function, and a changelog of API changes. Language bindings live in separate repositories that
+depend on a pinned version of the C library, each with its own release cycle and packaging.
+
+- **Python first** (`fsps-python`): a pip-installable package (meson-python) that builds the
+  core as a Meson subproject pinned to a tag, or links an installed `libfsps` found through
+  pkg-config; NumPy arrays in and out, the batch entry point with one array per parameter,
+  device-resident outputs where available, and a layer compatible with python-fsps
+  (`StellarPopulation`) so that Prospector and existing scripts can switch with few changes.
+- Julia, R and others later, on the same C API.
+- Anything a binding needs from the core (a getter, a version query) is added here, with C
+  tests, in its own small pull request.
 
 ### 2. One code path
 
