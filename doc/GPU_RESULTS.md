@@ -44,8 +44,9 @@ Node `p-gc-3003` (A100-PCIE-40GB, addressing mode None, 2x Xeon Gold 6248R; nvhp
 |---|---|---|---|
 | `fix/asan-csp-batch-leak` | `gpu/a100-final` | #11 | nightly ASan leak in `test_csp_batch` |
 | `fix/omp-maps-llvm` | `fix/omp-device-no-malloc` | #13 | AMD 780M fault: audit + `FSPS_OMP_CHECK_PRE` (status there) |
-| `gpu/a100-copyback` | `fix/asan-csp-batch-leak` | (see PR list) | spectra copy-back, device / host outputs |
-| `gpu/a100-call-overhead2` | `gpu/a100-copyback` | (see PR list) | per-call overhead (batch N = 1, single call) |
+| `fix/omp-flang-component-maps` | `fix/omp-flang-map-lifetimes` | #16 | OpenMP maps by address (flang root causes) |
+| `gpu/a100-copyback` | `fix/asan-csp-batch-leak` | #14 | spectra copy-back, device / host outputs |
+| `gpu/a100-call-overhead2` | `gpu/a100-copyback` | #17 | per-call overhead (batch N = 1, single call) |
 
 Builds of this session: worktrees `../fsps-wt` (`bgpu32`, `bgpu`, `bgpucb32`, `bgpucb`,
 `bomp32`, `bomp`, `bmc32`, `bcpu`, `bcpu32`) and `../fsps-wt3` (`bgpu32`, `bgpu32pg`: gprof);
