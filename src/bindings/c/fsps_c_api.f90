@@ -27,7 +27,8 @@ module fsps_c_api
     use fsps_spectral_indices, only: compute_spectral_indices
     use fsps_photometry, only: compute_magnitudes
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
-                            is_ssp_sensitive_float_param
+                            is_ssp_sensitive_float_param, is_ssp_sensitive_int_param, &
+                            is_ssp_sensitive_str_param, fsps_context_prepare_csp_workspace
     use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
     use fsps_context_types, only: fsps_context_t
 
@@ -38,7 +39,7 @@ module fsps_c_api
     ! ---------------------------------------------------------------------
 
     integer, parameter :: fsps_driver_version_major = 1
-    integer, parameter :: fsps_driver_version_minor = 0
+    integer, parameter :: fsps_driver_version_minor = 1   ! = FSPS_API_VERSION_MINOR in fsps.h
     integer, parameter :: fsps_driver_version_patch = 0
 
     ! ---------------------------------------------------------------------
@@ -51,6 +52,14 @@ module fsps_c_api
     ! Context pool for handle-based API
     type(fsps_context_t), allocatable :: ctx_pool(:)
     logical, allocatable :: ctx_inuse(:)
+    !> Per handle, for fsps_context_compute_csp: the SSP grids computed so far (one per
+    !> metallicity, kept until an SSP parameter changes) and the last single CSP's outputs
+    type :: ctx_store_t
+        real(WP), allocatable :: spec(:, :, :), mass(:, :), lbol(:, :)
+        logical, allocatable :: have(:)
+        type(COMPSPOUT), allocatable :: results(:)
+    end type ctx_store_t
+    type(ctx_store_t), allocatable :: ctx_store(:)
     ! Driver error state
     integer :: fsps_last_status = 0
     character(LEN=256) :: fsps_last_error = ''
@@ -72,10 +81,12 @@ contains
         integer :: i, n
         type(fsps_context_t), allocatable :: new_pool(:)
         logical, allocatable :: new_inuse(:)
+        type(ctx_store_t), allocatable :: new_store(:)
 
         if (.not. ALLOCATED(ctx_pool)) then
             allocate (ctx_pool(1))
             allocate (ctx_inuse(1))
+            allocate (ctx_store(1))
             ctx_inuse = .false.
         end if
 
@@ -96,6 +107,11 @@ contains
             new_inuse(n + 1) = .false.
             call MOVE_ALLOC(new_pool, ctx_pool)
             call MOVE_ALLOC(new_inuse, ctx_inuse)
+            allocate (new_store(n + 1))
+            do i = 1, n
+                call move_store(ctx_store(i), new_store(i))
+            end do
+            call MOVE_ALLOC(new_store, ctx_store)
             slot = n + 1
         end if
     end subroutine fsps_context_alloc_slot
@@ -287,6 +303,7 @@ contains
         integer :: slot
 
         call fsps_context_alloc_slot(slot)
+        call reset_store(ctx_store(slot))
         call fsps_create(ctx_pool(slot))
         ctx_inuse(slot) = .true.
         handle = slot
@@ -313,6 +330,7 @@ contains
         end if
 
         call fsps_destroy(ctx_pool(handle))
+        call reset_store(ctx_store(handle))
         ctx_inuse(handle) = .false.
     end subroutine fsps_context_destroy_handle
 
@@ -345,6 +363,7 @@ contains
         call c_to_f_string(c_isoc, isoc_type_in)
         call c_to_f_string(c_spec, spec_type_in)
         call c_to_f_string(c_dust, dust_type_in)
+        call reset_store(ctx_store(handle))
 
         if (LEN_TRIM(isoc_type_in) == 0 .and. LEN_TRIM(spec_type_in) == 0 .and. &
             LEN_TRIM(dust_type_in) == 0) then
@@ -378,6 +397,9 @@ contains
 
         call c_to_f_string(c_key, key)
         call fsps_set_param_int(ctx_pool(handle), TRIM(key), value, status)
+        ! zmet only selects among the stored grids
+        if (status == 0 .and. TRIM(key) /= 'zmet' .and. is_ssp_sensitive_int_param(TRIM(key))) &
+            call invalidate_ssps(ctx_store(handle))
     end subroutine fsps_context_set_int_handle
 
     subroutine fsps_context_set_float_handle(handle, c_key, value, status) &
@@ -400,6 +422,13 @@ contains
 
         call c_to_f_string(c_key, key)
         call fsps_set_param_float(ctx_pool(handle), TRIM(key), real(value, WP), status)
+        ! The nebular parameters change the SSPs only with nebular emission in them
+        ! (add_neb_emission = 2), as in fsps_context_compute_csp_batch
+        if (status == 0 .and. is_ssp_sensitive_float_param(TRIM(key))) then
+            if (ctx_pool(handle)%add_neb_emission_val == 2 .or. .not. &
+                any(TRIM(key) == [character(LEN=10) :: 'gas_logu', 'gas_logz', 'frac_obrun'])) &
+                call invalidate_ssps(ctx_store(handle))
+        end if
     end subroutine fsps_context_set_float_handle
 
     subroutine fsps_context_set_str_handle(handle, c_key, c_val, status) &
@@ -424,6 +453,7 @@ contains
         call c_to_f_string(c_key, key)
         call c_to_f_string(c_val, val)
         call fsps_set_param_str(ctx_pool(handle), TRIM(key), TRIM(val), status)
+        if (status == 0 .and. is_ssp_sensitive_str_param(TRIM(key))) call invalidate_ssps(ctx_store(handle))
     end subroutine fsps_context_set_str_handle
 
     subroutine fsps_context_set_fast_mode_handle(handle, fast_mode, status) &
@@ -926,6 +956,434 @@ contains
 
         z_sol = ctx_pool(handle)%state%zsol
     end subroutine fsps_context_get_zsol_handle
+
+    ! -------------------------------------------------------------------------
+    ! Context grids and filter data (for language bindings)
+    ! -------------------------------------------------------------------------
+
+    !> True for a handle of a context in use.
+    logical function handle_ok(handle)
+        integer(c_int), intent(IN) :: handle
+        handle_ok = .false.
+        if (.not. ALLOCATED(ctx_pool)) return
+        if (handle < 1 .or. handle > SIZE(ctx_pool)) return
+        handle_ok = ctx_inuse(handle)
+    end function handle_ok
+
+    !> Wavelengths of the spectra [A], nspec values: vacuum, or air with vactoair_flag = 1.
+    subroutine fsps_context_get_lambda_handle(handle, c_lambda, status) &
+        bind(C, name="fsps_context_get_lambda")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_lambda
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        if (.not. ASSOCIATED(ctx%state%spec_lambda)) then
+            status = 301
+            return
+        end if
+        call c_f_pointer(c_lambda, f, [ctx%state%nspec])
+        if (ctx%vactoair_flag_val == 1) then
+            f = vacuum_to_air(ctx%state%spec_lambda(1:ctx%state%nspec))
+        else
+            f = ctx%state%spec_lambda(1:ctx%state%nspec)
+        end if
+        end associate
+    end subroutine fsps_context_get_lambda_handle
+
+    !> Ages of the SSP grid, log10(age / yr), ntfull values.
+    subroutine fsps_context_get_ages_handle(handle, c_ages, status) &
+        bind(C, name="fsps_context_get_ages")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_ages
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        if (.not. ASSOCIATED(ctx%state%time_full)) then
+            status = 301
+            return
+        end if
+        call c_f_pointer(c_ages, f, [ctx%state%ntfull])
+        f = ctx%state%time_full(1:ctx%state%ntfull)
+        end associate
+    end subroutine fsps_context_get_ages_handle
+
+    !> Metallicities Z (mass fraction) of the isochrone grid, nz values.
+    subroutine fsps_context_get_zlegend_handle(handle, c_z, status) &
+        bind(C, name="fsps_context_get_zlegend")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_z
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        if (.not. ASSOCIATED(ctx%state%zlegend)) then
+            status = 301
+            return
+        end if
+        call c_f_pointer(c_z, f, [ctx%state%nz])
+        f = ctx%state%zlegend(1:ctx%state%nz)
+        end associate
+    end subroutine fsps_context_get_zlegend_handle
+
+    !> Emission-line wavelengths [A], nemline values: vacuum, or air with vactoair_flag = 1.
+    subroutine fsps_context_get_emlambda_handle(handle, c_wave, status) &
+        bind(C, name="fsps_context_get_emlambda")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_wave
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        call c_f_pointer(c_wave, f, [NEMLINE])
+        if (ctx%vactoair_flag_val == 1) then
+            f = vacuum_to_air(ctx%state%nebem_line_pos)
+        else
+            f = ctx%state%nebem_line_pos
+        end if
+        end associate
+    end subroutine fsps_context_get_emlambda_handle
+
+    !> Filter data, nbands values each (any pointer may be NULL): effective wavelength [A], AB
+    !> magnitude of Vega (AB - Vega offset), absolute AB magnitude of the Sun.
+    subroutine fsps_context_get_filter_data_handle(handle, c_wave_eff, c_mag_vega, c_mag_sun, status) &
+        bind(C, name="fsps_context_get_filter_data")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_wave_eff, c_mag_vega, c_mag_sun
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+        integer :: nb
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        nb = ctx%state%nbands
+        if (.not. ASSOCIATED(ctx%state%filter_leff)) then
+            status = 301
+            return
+        end if
+        if (c_associated(c_wave_eff)) then
+            call c_f_pointer(c_wave_eff, f, [nb]); f = ctx%state%filter_leff(1:nb)
+        end if
+        if (c_associated(c_mag_vega)) then
+            call c_f_pointer(c_mag_vega, f, [nb]); f = ctx%state%magvega(1:nb) - ctx%state%magvega(1)
+        end if
+        if (c_associated(c_mag_sun)) then
+            call c_f_pointer(c_mag_sun, f, [nb]); f = ctx%state%magsun(1:nb)
+        end if
+        end associate
+    end subroutine fsps_context_get_filter_data_handle
+
+    !> Tabular SFH for sfh = 3: ntab points of age [Gyr since the start of star formation],
+    !> SFR [M_sun/yr] and, used with zcontinuous = 3, metallicity Z (met may be NULL: zeros).
+    !> status 1 bad handle, 3 ntab out of range (1 to NTABMAX).
+    subroutine fsps_context_set_sfh_tab_handle(handle, ntab, c_age, c_sfr, c_met, status) &
+        bind(C, name="fsps_context_set_sfh_tab")
+        integer(c_int), value :: handle, ntab
+        type(c_ptr), value :: c_age, c_sfr, c_met
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: f(:)
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle))
+        if (ntab < 1 .or. ntab > SIZE(ctx%state%sfh_tab, 2)) then
+            status = 3
+            call fsps_set_error(3, 'fsps_context_set_sfh_tab: ntab out of range')
+            return
+        end if
+        ctx%state%sfh_tab = 0.0_wp
+        ctx%state%ntabsfh = ntab
+        ! Stored in years, as load_tabular_sfh does for sfh = 2
+        call c_f_pointer(c_age, f, [ntab]); ctx%state%sfh_tab(1, 1:ntab) = f * 1.0e9_wp
+        call c_f_pointer(c_sfr, f, [ntab]); ctx%state%sfh_tab(2, 1:ntab) = f
+        if (c_associated(c_met)) then
+            call c_f_pointer(c_met, f, [ntab]); ctx%state%sfh_tab(3, 1:ntab) = f
+        end if
+        end associate
+    end subroutine fsps_context_set_sfh_tab_handle
+
+    ! -------------------------------------------------------------------------
+    ! Single CSP (compute_csp_scenario) on a context
+    ! -------------------------------------------------------------------------
+
+    subroutine reset_store(st)
+        type(ctx_store_t), intent(INOUT) :: st
+        if (ALLOCATED(st%spec)) deallocate (st%spec)
+        if (ALLOCATED(st%mass)) deallocate (st%mass)
+        if (ALLOCATED(st%lbol)) deallocate (st%lbol)
+        if (ALLOCATED(st%have)) deallocate (st%have)
+        if (ALLOCATED(st%results)) deallocate (st%results)
+    end subroutine reset_store
+
+    subroutine move_store(from, to)
+        type(ctx_store_t), intent(INOUT) :: from, to
+        if (ALLOCATED(from%spec)) call MOVE_ALLOC(from%spec, to%spec)
+        if (ALLOCATED(from%mass)) call MOVE_ALLOC(from%mass, to%mass)
+        if (ALLOCATED(from%lbol)) call MOVE_ALLOC(from%lbol, to%lbol)
+        if (ALLOCATED(from%have)) call MOVE_ALLOC(from%have, to%have)
+        if (ALLOCATED(from%results)) call MOVE_ALLOC(from%results, to%results)
+    end subroutine move_store
+
+    !> An SSP parameter changed: the stored SSP grids are stale.
+    subroutine invalidate_ssps(st)
+        type(ctx_store_t), intent(INOUT) :: st
+        if (ALLOCATED(st%have)) st%have = .false.
+    end subroutine invalidate_ssps
+
+    !> The SSP grid of metallicity index z in the handle's store, computed if missing.
+    subroutine ensure_ssp(ctx, st, z)
+        type(fsps_context_t), intent(INOUT) :: ctx
+        type(ctx_store_t), intent(INOUT) :: st
+        integer, intent(IN) :: z
+        type(PARAMS) :: pset
+        integer :: ns, nt, nz
+
+        ns = ctx%state%nspec
+        nt = ctx%state%ntfull
+        nz = ctx%state%nz
+        if (ALLOCATED(st%spec)) then
+            if (any(shape(st%spec) /= [ns, nt, nz])) call reset_store(st)
+        end if
+        if (.not. ALLOCATED(st%spec)) then
+            allocate (st%spec(ns, nt, nz), st%mass(nt, nz), st%lbol(nt, nz), st%have(nz))
+            st%have = .false.
+        end if
+        if (st%have(z)) return
+        pset = ctx%pset
+        pset%zmet = z
+        call generate_ssp_grid(ctx, pset, st%mass(:, z), st%lbol(:, z), st%spec(:, :, z))
+        st%have(z) = .true.
+    end subroutine ensure_ssp
+
+    !> @brief One CSP for the context's current parameters (compute_csp_scenario).
+    !>
+    !> @details
+    !> zcontinuous selects the SSPs as in python-fsps: 0 the grid at zmet; 1 the grids interpolated
+    !> linearly in log Z at logzsol; 2 the grids weighted by a metallicity distribution (pmetals);
+    !> 3 all grids, metallicity from the tabular SFH. SSP grids are computed per metallicity on
+    !> first use and kept until an SSP parameter is set. With tage > 0 one output, otherwise one
+    !> per SSP age (*n_out); fetch them with fsps_context_get_csp. status: 0, 1 bad handle, 301
+    !> context not set up, 304 zmet out of range, 306 bad zcontinuous, 311 compute_csp_scenario
+    !> failed.
+    subroutine fsps_context_compute_csp_handle(handle, zcontinuous, n_out, status) &
+        bind(C, name="fsps_context_compute_csp")
+        integer(c_int), value :: handle, zcontinuous
+        integer(c_int), intent(OUT) :: n_out, status
+        real(WP), allocatable :: spec(:, :, :), mass(:, :), lbol(:, :)
+        integer :: z, nz, nzin, zlo, st
+
+        n_out = 0
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        associate(ctx => ctx_pool(handle), store => ctx_store(handle))
+        if (.not. ctx%initialized .or. ctx%state%check_sps_setup == 0) then
+            status = 301
+            call fsps_set_error(301, 'fsps_context_compute_csp: context not set up')
+            return
+        end if
+        if (ALLOCATED(store%results)) deallocate (store%results)
+        call fsps_prepare_pset(ctx)
+        nz = ctx%state%nz
+        nzin = 1
+        select case (zcontinuous)
+        case (0)
+            z = ctx%pset%zmet
+            if (z < 1 .or. z > nz) then
+                status = 304
+                call fsps_set_error(304, 'fsps_context_compute_csp: zmet out of range')
+                return
+            end if
+            call ensure_ssp(ctx, store, z)
+            allocate (spec, source=store%spec(:, :, z:z))
+            allocate (mass, source=store%mass(:, z:z))
+            allocate (lbol, source=store%lbol(:, z:z))
+        case (1, 2)
+            if (zcontinuous == 1) then
+                zlo = MAX(MIN(find_interval(LOG10(ctx%state%zlegend(1:nz) / ctx%state%zsol), &
+                                            ctx%pset%logzsol), nz - 1), 1)
+                call ensure_ssp(ctx, store, zlo)
+                call ensure_ssp(ctx, store, zlo + 1)
+            else
+                do z = 1, nz
+                    call ensure_ssp(ctx, store, z)
+                end do
+            end if
+            allocate (spec(ctx%state%nspec, ctx%state%ntfull, 1), mass(ctx%state%ntfull, 1), &
+                      lbol(ctx%state%ntfull, 1))
+            ! compute_interpolated_ssp reads the context's spec/mass/lbol_ssp_zz: lend it the
+            ! stored grids (no copy; grids not yet needed are unused)
+            call MOVE_ALLOC(store%spec, ctx%state%spec_ssp_zz)
+            call MOVE_ALLOC(store%mass, ctx%state%mass_ssp_zz)
+            call MOVE_ALLOC(store%lbol, ctx%state%lbol_ssp_zz)
+            if (zcontinuous == 1) then
+                call compute_interpolated_ssp(ctx, ctx%pset%logzsol, mass(:, 1), lbol(:, 1), spec(:, :, 1))
+            else
+                call compute_interpolated_ssp(ctx, ctx%pset%logzsol, mass(:, 1), lbol(:, 1), spec(:, :, 1), &
+                                              z_param=ctx%pset%pmetals)
+            end if
+            call MOVE_ALLOC(ctx%state%spec_ssp_zz, store%spec)
+            call MOVE_ALLOC(ctx%state%mass_ssp_zz, store%mass)
+            call MOVE_ALLOC(ctx%state%lbol_ssp_zz, store%lbol)
+        case (3)
+            do z = 1, nz
+                call ensure_ssp(ctx, store, z)
+            end do
+            nzin = nz
+            allocate (spec, source=store%spec)
+            allocate (mass, source=store%mass)
+            allocate (lbol, source=store%lbol)
+        case default
+            status = 306
+            call fsps_set_error(306, 'fsps_context_compute_csp: zcontinuous must be 0 to 3')
+            return
+        end select
+
+        if (ctx%pset%sfh == 2 .or. ctx%pset%sfh == 3) then
+            if (ctx%pset%sfh == 3 .and. ctx%state%ntabsfh == 0) then
+                status = 311
+                call fsps_set_error(311, 'fsps_context_compute_csp: sfh = 3 without a tabular SFH')
+                return
+            end if
+            call load_tabular_sfh(ctx, ctx%pset, nzin)
+        end if
+        ctx%state%ssp_basis_is_dirty = .true.
+        call fsps_context_update_ssp_basis(ctx, spec, mass, lbol, nzin)
+        call fsps_context_prepare_csp_workspace(ctx)
+        call compute_csp_scenario(ctx, ctx%pset, nzin, store%results, st)
+        ! The basis now holds this call's SSPs, not the batch's: the next batch rebuilds its own
+        ctx%state%ssp_basis_is_dirty = .true.
+        if (st /= 0) then
+            status = 311
+            call fsps_set_error(311, 'fsps_context_compute_csp: compute_csp_scenario failed')
+            if (ALLOCATED(store%results)) deallocate (store%results)
+            return
+        end if
+        n_out = SIZE(store%results)
+        end associate
+    end subroutine fsps_context_compute_csp_handle
+
+    !> @brief Outputs of the last fsps_context_compute_csp on the handle, n_out of each (any
+    !> pointer may be NULL), column-major: age (log10 yr), mass (surviving stellar mass, M_sun),
+    !> lbol (log10 L_sun), sfr (M_sun/yr), mdust (M_sun), mformed (M_sun formed), spec (nspec x
+    !> n_out, L_sun/Hz), mags (nbands x n_out), emlines (nemline x n_out, L_sun), indx (nindx x
+    !> n_out). Masses and luminosities are per solar mass formed, as in FSPS. status 1 bad handle,
+    !> 302 no CSP computed, 309 mags or indx requested but not computed (compute_mags = 0 or
+    !> compute_indices = 0).
+    subroutine fsps_context_get_csp_handle(handle, c_age, c_mass, c_lbol, c_sfr, c_mdust, c_mformed, &
+                                           c_spec, c_mags, c_emlines, c_indx, status) &
+        bind(C, name="fsps_context_get_csp")
+        integer(c_int), value :: handle
+        type(c_ptr), value :: c_age, c_mass, c_lbol, c_sfr, c_mdust, c_mformed
+        type(c_ptr), value :: c_spec, c_mags, c_emlines, c_indx
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: v(:), a(:, :)
+        integer :: i, n, ns, nb, ni
+
+        status = 0
+        if (.not. handle_ok(handle)) then
+            status = 1
+            return
+        end if
+        if (.not. ALLOCATED(ctx_store(handle)%results)) then
+            status = 302
+            call fsps_set_error(302, 'fsps_context_get_csp: no CSP computed')
+            return
+        end if
+        associate(ctx => ctx_pool(handle), r => ctx_store(handle)%results)
+        n = SIZE(r)
+        ns = ctx%state%nspec
+        nb = ctx%state%nbands
+        ni = ctx%state%nindx
+        if (c_associated(c_mags)) then
+            do i = 1, n
+                if (.not. ALLOCATED(r(i)%mags)) status = 309
+            end do
+        end if
+        if (c_associated(c_indx)) then
+            do i = 1, n
+                if (.not. ALLOCATED(r(i)%indx)) status = 309
+            end do
+        end if
+        if (status /= 0) then
+            call fsps_set_error(309, 'fsps_context_get_csp: magnitudes or indices not computed')
+            return
+        end if
+        if (c_associated(c_age)) then
+            call c_f_pointer(c_age, v, [n]); v = r(:)%age
+        end if
+        if (c_associated(c_mass)) then
+            call c_f_pointer(c_mass, v, [n]); v = r(:)%mass_csp
+        end if
+        if (c_associated(c_lbol)) then
+            call c_f_pointer(c_lbol, v, [n]); v = r(:)%lbol_csp
+        end if
+        if (c_associated(c_sfr)) then
+            call c_f_pointer(c_sfr, v, [n]); v = r(:)%sfr
+        end if
+        if (c_associated(c_mdust)) then
+            call c_f_pointer(c_mdust, v, [n]); v = r(:)%mdust
+        end if
+        if (c_associated(c_mformed)) then
+            call c_f_pointer(c_mformed, v, [n]); v = r(:)%mformed
+        end if
+        if (c_associated(c_spec)) then
+            call c_f_pointer(c_spec, a, [ns, n])
+            do i = 1, n
+                a(:, i) = r(i)%spec(1:ns)
+            end do
+        end if
+        if (c_associated(c_mags)) then
+            call c_f_pointer(c_mags, a, [nb, n])
+            do i = 1, n
+                a(:, i) = r(i)%mags(1:nb)
+            end do
+        end if
+        if (c_associated(c_emlines)) then
+            call c_f_pointer(c_emlines, a, [NEMLINE, n])
+            do i = 1, n
+                a(:, i) = r(i)%emlines(1:NEMLINE)
+            end do
+        end if
+        if (c_associated(c_indx)) then
+            call c_f_pointer(c_indx, a, [ni, n])
+            do i = 1, n
+                a(:, i) = r(i)%indx(1:ni)
+            end do
+        end if
+        end associate
+    end subroutine fsps_context_get_csp_handle
 
 #ifdef FSPS_ENABLE_LEGACY
 

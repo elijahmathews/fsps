@@ -6,6 +6,16 @@ extern "C" {
 #endif
 
 // ----------------------------------------------------------------------------
+// API version (also returned by fsps_get_driver_version). The minor number grows when entry
+// points are added; the major number changes only for incompatible changes. 1.1 added the
+// context grids (lambda, ages, zlegend, emlambda, filter data), the tabular SFH and the single
+// CSP (fsps_context_compute_csp / fsps_context_get_csp).
+// ----------------------------------------------------------------------------
+#define FSPS_API_VERSION_MAJOR 1
+#define FSPS_API_VERSION_MINOR 1
+#define FSPS_API_VERSION_PATCH 0
+
+// ----------------------------------------------------------------------------
 // Status Codes
 // ----------------------------------------------------------------------------
 #define FSPS_STATUS_OK 0
@@ -74,12 +84,46 @@ void fsps_context_get_nz(int handle, int *n_z, int *status);
 void fsps_context_get_nemline(int handle, int *n_line, int *status);
 void fsps_context_get_zsol(int handle, double *z_sol, int *status);
 
+// Grids and filter data of a set-up context (status 1 bad handle, 301 not set up)
+// lambda: nspec wavelengths [A] (air with vactoair_flag = 1); log_age: ntfull SSP ages,
+// log10(yr); z: nz metallicities (mass fraction); emlambda: nemline line wavelengths [A];
+// filter data, nbands each, any may be NULL: effective wavelength [A], AB magnitude of Vega,
+// absolute AB magnitude of the Sun.
+void fsps_context_get_lambda(int handle, double *lambda, int *status);
+void fsps_context_get_ages(int handle, double *log_age, int *status);
+void fsps_context_get_zlegend(int handle, double *z, int *status);
+void fsps_context_get_emlambda(int handle, double *emlambda, int *status);
+void fsps_context_get_filter_data(int handle, double *wave_eff, double *mag_vega,
+                                  double *mag_sun, int *status);
+
+// Tabular SFH for sfh = 3: ntab points of age [Gyr], SFR [M_sun/yr] and metallicity Z (used
+// with zcontinuous = 3; met may be NULL). status 3 if ntab is out of range.
+void fsps_context_set_sfh_tab(int handle, int ntab, const double *age, const double *sfr,
+                              const double *met, int *status);
+
 // Path Queries
 void fsps_context_get_paths(int handle, char *sps_home, int sps_len,
                             char *data_home, int data_len, char *output_home, int out_len);
 
 // Context Computation
 void fsps_context_compute_ssp(int handle, double *spec, double *mass, double *lbol, int *status);
+
+// Single CSP for the context's parameters (the reference path, compute_csp_scenario).
+// zcontinuous: 0 SSPs at zmet; 1 interpolated in log Z at logzsol; 2 weighted by a metallicity
+// distribution (pmetals); 3 all metallicities (tabular SFH metallicity). SSP grids are computed
+// per metallicity when first needed and kept until an SSP parameter is set. *n_out is 1 for
+// tage > 0, else ntfull (one output per SSP age). status 301 not set up, 304 zmet out of range,
+// 306 bad zcontinuous, 311 computation failed.
+void fsps_context_compute_csp(int handle, int zcontinuous, int *n_out, int *status);
+
+// Outputs of the last fsps_context_compute_csp (n_out each; any pointer may be NULL),
+// column-major, per solar mass formed: age log10(yr), surviving stellar mass [M_sun], log10
+// L_bol [L_sun], SFR [M_sun/yr], dust mass [M_sun], mass formed [M_sun], spec (nspec x n_out,
+// L_sun/Hz), mags (nbands x n_out), emlines (nemline x n_out, L_sun), indx (nindx x n_out).
+// status 302 nothing computed, 309 mags / indx requested with compute_mags / compute_indices 0.
+void fsps_context_get_csp(int handle, double *age, double *mass, double *lbol, double *sfr,
+                          double *mdust, double *mformed, double *spec, double *mags,
+                          double *emlines, double *indx, int *status);
 
 // Batched CSPs (fitting pipelines): n models of the context's parameters with n_params of them
 // varied per model, names[i] taking the n values values[i][0..n-1]; ssp_weights (ntfull x n) or
