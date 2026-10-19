@@ -47,7 +47,7 @@ module fsps_csp
     private
 
     !> Public API
-    public :: compute_csp_scenario
+    public :: compute_csp_scenario, set_scenario_batch
 
     !> One code path (doc/ROADMAP.md, priority 2): FSPS_SCENARIO_BATCH=1 runs eligible single
     !> calls as a batch of one (scenario_batch_of_one); read once (-1: not yet read)
@@ -364,6 +364,15 @@ contains
         !$acc exit data delete(pset)
 
     end subroutine compute_csp_scenario
+
+    !> Selects the single-call path explicitly, overriding FSPS_SCENARIO_BATCH: tests that inspect
+    !> the old path's internal state (its SFH weights, IGM transmission) or use it as the
+    !> reference for the batch call this with .false.
+    subroutine set_scenario_batch(on)
+        logical, intent(in) :: on
+
+        scenario_batch_mode = merge(1, 0, on)
+    end subroutine set_scenario_batch
 
     !> True if FSPS_SCENARIO_BATCH is set to a value other than 0 (read once).
     logical function scenario_batch_enabled()
