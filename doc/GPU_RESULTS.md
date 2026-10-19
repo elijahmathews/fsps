@@ -79,6 +79,75 @@ on the 780M:
   equals the mapped device address (`omp_get_mapped_ptr`). It stops naming the array instead of
   faulting. On the A100 both tests pass with it on; with the `spec_nu` map removed it stops with
   "ctx%state%spec_nu is not mapped to the device before the kernels of compute_csp_batch".
+- Root causes on the 780M (Elijah, from a text console; commit 9d475ef): two LLVM flang 22
+  mapping semantics, not device code. (1) The end of the batch's `target data map(to: psets,
+  ...)` released psets' descriptor and component buffers but left its data mapped (refcount
+  1); a later host allocation at that address (`a_used` in `main_templates_omp`) was taken as
+  present and not copied: stale indices, MEMVIOL. (2) `target exit data map(delete: g%x)` with
+  g inside the mapped context also deletes the parent, and the runtime removed the whole ctx
+  entry; `map(release:)` instead left stale mappings. Every component `enter data` also raises
+  the parent's reference count (~97 for ctx).
+- Fix (branch `fix/omp-flang-component-maps`, on `fix/omp-flang-map-lifetimes`): no OpenMP
+  `exit data` names a structure component any more, and data that is created and released
+  while the context is on the device is mapped without its parent:
+  - `src/core/fsps_omp_data.f90`: `omp_data_to / alloc / delete / update_to / update_from`
+    take a host address and a byte count (`loc(x)`, `OMP_BYTES(x)`) and put the directive on
+    an explicit-shape `integer(1)` dummy, so only a raw byte range is ever mapped (no parent,
+    no descriptor, any type and rank);
+  - through them: the SSP bases (`fsps_context_update_ssp_basis`, `move_to_device`), the batch
+    grid cache and the smoothing operator (`prepare_batch_grid`, `prepare_smoothing_kernel`,
+    `batch_grid_release`), the line profiles' update, and per call psets and the nebular setup
+    (replacing the target data clauses and the delete workaround of 9d475ef);
+  - `fsps_context_remove_from_device` releases all 105 component data by address, then deletes
+    ctx (no `delete: ctx%state`, and `ctx%state` is no longer mapped separately: it is part of
+    ctx);
+  - `ctx%pset`'s arrays are no longer mapped with OpenMP (no device code reads them, and
+    `fsps_context_set_pset` reallocates them, which left stale mappings);
+  - device code reads the re-created data only through kernel arguments: the batch's
+    SFH / mass kernel takes the bases' mass and L_bol through local pointers (the only place
+    that read them through ctx);
+  - zero-size components are no longer mapped: `move_to_device` mapped e.g. `out_mass_csp`
+    before any scenario call (size 0); its zero-length entry cannot be released by address,
+    outlived `remove_from_device`, and made a later array at the same host address "partially
+    present" (`unit_gas` with `MALLOC_PERTURB_=69`, both OpenMP builds).
+- What still names components: the long-lived library data (setup-cache pointers mapped once
+  in `move_to_device`) keeps `enter data map(to: ctx%state%x)`, because that is the only way
+  nvfortran 25.1 attaches the device copy of ctx's descriptors. Tested on the A100 in small
+  programs: a kernel naming a component does not attach it (illegal address), and pointer
+  assignment in device code is not supported (`pghpf_ptr_assn_assumeshp_i8`). flang attaches
+  correctly at enter data (the SSP tests pass on the 780M) and only `exit data` was harmful.
+  Removing those names too means passing every library array to the kernels as arguments
+  (33 components across the SSP, batch, photometry and index kernels): a larger refactor,
+  not done (next step if the 780M still shows problems with the library arrays).
+- Verification on the A100 (nvfortran; it uses its own runtime, so `LIBOMPTARGET_INFO` has no
+  effect there): `test_csp_batch` now asserts after every group's batch call (OpenMP builds)
+  that psets is no longer mapped, ctx is, and every component device code reads through ctx is
+  attached (`omp_check_context`); after `fsps_destroy`, that ctx is gone. The groups change
+  redshift, IGM, nebular emission, lines in the spectrum, smoothing, per-model redshift and
+  then rebuild the SSP bases for all metallicities, so the caches are released and recreated
+  between checks. 158/158 in the OpenMP builds (12 new checks, skipped in host-only runs:
+  `OMP_TARGET_OFFLOAD=DISABLED` gives 146/146).
+- Validation (A100): unit + regression 33/33 in gfortran FP64 / FP32, gfortran `-fopenmp`,
+  OpenACC multicore FP32, OpenACC GPU FP32 / FP64, OpenMP target FP32 / FP64 (MANDATORY); flang
+  22 (AOMP, gfx1103) builds the project.
+- Second 780M run (Elijah, PR #16): `FSPS_OMP_CHECK_PRE` passed and the SFH kernel ran, then
+  `age_sums_z` failed before launch: the map of its basis argument had a null host address
+  (size = the FP32 bases). Follow-ups on the branch:
+  - 8b1aff4: explicit-shape dummies for every kernel argument mapped by address (bases, psets,
+    nebular arrays, batch caches). flang's host map table for the age-sums launch is identical
+    before and after (it already lowers a `contiguous` assumed-shape dummy to address + length),
+    so this is hygiene rather than the fix;
+  - fa77e40: flang's host code reloads the bases' address from the host ctx right after the SFH
+    kernel (the SFH kernel itself took them through pointers set before the launch and ran), so
+    the host copy of ctx most likely changed during that kernel, e.g. an implicit map of ctx
+    copying the device copy (stale descriptors for data mapped by address) back. The later
+    kernels now get the bases through such pointers too, and `FSPS_OMP_CHECK_PRE` stops naming
+    the field if ctx's host addresses for the bases or batch caches change during the kernels;
+  - 7f28a2d: every OpenMP compute construct with ctx in scope maps it explicitly with
+    `map(alloc: ctx)` (21 constructs): the existing mapping is referenced and never copied in
+    either direction (checked on the A100: host and device values stay independent).
+    `map(present, alloc: ...)` would be stricter, but nvfortran 25.1 does not parse `present`.
+  Each validated in all eight A100 builds (33/33; batch test 158/158 OpenMP, 146/146 others).
 - To run on the 780M (text console): `FSPS_OMP_CHECK_PRE=1 OMP_TARGET_OFFLOAD=MANDATORY
   LIBOMPTARGET_INFO=-1 ./test_c_batch` (and `test_csp_batch`). A check failure names the
   unmapped / unattached array; if the checks pass and it still faults, the fault is inside one

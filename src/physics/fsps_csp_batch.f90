@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_csp_batch
     !> @brief Batched CSP evaluation: many parameter sets against resident SSP bases.
     !>
@@ -69,6 +70,7 @@ module fsps_csp_batch
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: igm_tau
+    use fsps_omp_data, only: omp_data_to, omp_data_alloc, omp_data_delete
     use fsps_omp_check, only: omp_check_enabled, omp_check_present, omp_check_context
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use fsps_gas, only: get_grid_indices_weights, prepare_line_gaussians
@@ -125,7 +127,7 @@ contains
     !> @param[out]   indx    Optional spectral indices (nindx, N), as compspout%indx.
     !> @param[in]    ssp_weights Optional SSP weights (ntfull, N) instead of the SFH parameters.
     subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx, ssp_weights)
-        type(fsps_context_t), intent(inout) :: ctx
+        type(fsps_context_t), intent(inout), target :: ctx
         type(params), intent(in)            :: psets(:)
         real(WP), intent(out)               :: mags(:,:)
         integer, intent(out)                :: status
@@ -163,6 +165,14 @@ contains
         real(WP), allocatable :: wta(:)
         logical,  allocatable :: agn_on(:)
         real(KP), allocatable :: eml(:,:)
+
+        ! The SSP bases' mass and L_bol, for the kernel below as arrays (with OpenMP they are mapped
+        ! as plain data, not attached to the device copy of ctx; see fsps_omp_data)
+        real(WP), pointer, contiguous :: bmass(:,:), blbol(:,:)
+        real(KP), pointer, contiguous :: bspec(:,:,:)
+#ifdef OMP_TARGET
+        integer(8) :: host_addr(4)   ! FSPS_OMP_CHECK_PRE: host addresses held by ctx before the kernels
+#endif
 
         ! Work arrays (pixels x models) at kernel precision
         real(KP), allocatable :: yo(:,:), total(:,:), absorbed(:,:), tdiff(:,:)
@@ -336,27 +346,52 @@ contains
         !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, total, absorbed, nb%q0, nb%lum, s_line) &
         !$acc      create(nb%cy, nb%co, tdiff) &
         !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+        ! The bases through pointers taken before any kernel (the kernels below get them as
+        ! arguments; see host_ctx_unchanged for why not through ctx after a launch)
+        bmass => ctx%state%ssp_basis_mass
+        blbol => ctx%state%ssp_basis_lbol
+        bspec => ctx%state%ssp_basis_spec
 #ifdef OMP_TARGET
-        !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
+        ! psets and the nebular arrays by address (fsps_omp_data): LLVM flang left psets' data
+        ! mapped after a target data region naming it (a derived type with allocatable
+        ! components), and named components would be released with their parent structure
+        call omp_data_to(loc(psets), OMP_BYTES(psets))
+        call omp_data_to(loc(nb%ia), OMP_BYTES(nb%ia))
+        call omp_data_to(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_to(loc(nb%dwa), OMP_BYTES(nb%dwa))
+        call omp_data_to(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_to(loc(nb%iz), OMP_BYTES(nb%iz))
+        call omp_data_to(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_to(loc(nb%iu), OMP_BYTES(nb%iu))
+        call omp_data_to(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_to(loc(nb%fesc), OMP_BYTES(nb%fesc))
+        call omp_data_to(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_to(loc(nb%lptr), OMP_BYTES(nb%lptr))
+        call omp_data_to(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_to(loc(nb%llo), OMP_BYTES(nb%llo))
+        call omp_data_alloc(loc(nb%q0), OMP_BYTES(nb%q0))
+        call omp_data_alloc(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_alloc(loc(nb%cy), OMP_BYTES(nb%cy))
+        call omp_data_alloc(loc(nb%co), OMP_BYTES(nb%co))
+        !$omp target data map(to: iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
         !$omp map(to: zlo, zhi, dz, wext, zcol) &
         !$omp map(alloc: w2, weights, tmp1, tmp2, yo, total, absorbed, s_line, tdiff) &
         !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
 #endif
-#ifdef OMP_TARGET
-        !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
-        !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
-#endif
 
 #ifdef OMP_TARGET
-        if (omp_check_enabled()) call check_batch_maps()
+        if (omp_check_enabled()) then
+            call check_batch_maps()
+            host_addr = host_ctx_addresses()
+        end if
 #endif
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
         !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
-        !$acc zlo, zhi, dz, wext) private(k, w)
+        !$acc zlo, zhi, dz, wext, bmass, blbol) private(k, w)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do private(k, w)
+        !$omp target teams distribute parallel do map(alloc: ctx) private(k, w)
 #endif
         do m = 1, n_mod
             if (given_w .or. host_w) then
@@ -375,12 +410,12 @@ contains
                 if (w > SAFE_FLOOR) then
                     if (zmode) then
                         ! The interpolated SSP's mass and L_bol (compute_interpolated_ssp)
-                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * ctx%state%ssp_basis_mass(k, zlo(m)) + &
-                                                 dz(m) * ctx%state%ssp_basis_mass(k, zhi(m)))
-                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * ctx%state%ssp_basis_lbol(k, zlo(m)) + &
-                                                          dz(m) * ctx%state%ssp_basis_lbol(k, zhi(m)))
+                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * bmass(k, zlo(m)) + &
+                                                 dz(m) * bmass(k, zhi(m)))
+                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * blbol(k, zlo(m)) + &
+                                                          dz(m) * blbol(k, zhi(m)))
                     else
-                        msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
+                        msum(m) = msum(m) + w * bmass(k, 1)
                         lsum(m) = lsum(m) + w * lum_linear(k)
                     end if
                 else
@@ -394,12 +429,15 @@ contains
             end do
         end do
 
+#ifdef OMP_TARGET
+        if (omp_check_enabled()) call host_ctx_unchanged('the SFH-weight kernel')
+#endif
         if (zmode) then
-            call age_sums_z(nspec, nt, n_mod, ctx%state%ssp_basis_spec, w2, it_tesc, zlo, zhi, dz, yo)
+            call age_sums_z(nspec, nt, n_mod, nzb, bspec, w2, it_tesc, zlo, zhi, dz, yo)
         else
-            call age_sums(nspec, nt, n_mod, ctx%state%ssp_basis_spec(:, :, 1), w2, it_tesc, yo)
+            call age_sums(nspec, nt, n_mod, bspec(:, :, 1), w2, it_tesc, yo)
         end if
-        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
+        if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, bspec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb%lum, nb%llo, eml, s_line)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
@@ -410,7 +448,7 @@ contains
             if (neb .and. ctx%nebemlineinspec_val == 0) then
                 !$acc parallel loop present(s_abs, s_line)
 #ifdef OMP_TARGET
-                !$omp target teams distribute parallel do
+                !$omp target teams distribute parallel do map(alloc: ctx)
 #endif
                 do m = 1, n_mod
                     s_abs(m) = s_abs(m) + s_line(m)
@@ -427,6 +465,9 @@ contains
         if (agn) call add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         if (smooth) call smooth_columns(ctx, total, n_mod)
 
+#ifdef OMP_TARGET
+        if (omp_check_enabled()) call host_ctx_unchanged('the batch kernels before the photometry')
+#endif
         ! ------------------------------------------------------------------
         ! 8. Magnitudes and indices
         ! ------------------------------------------------------------------
@@ -453,13 +494,24 @@ contains
         end if
 #ifdef OMP_TARGET
         !$omp end target data
-#endif
-#ifdef OMP_TARGET
-        !$omp end target data
-        ! LLVM flang (22) leaves the data of psets (derived type with allocatable components)
-        ! mapped after the region; a later host allocation at the same address would then be
-        ! taken as present and not copied. Delete the stale entry (no-op where it is gone).
-        !$omp target exit data map(delete: psets)
+        call omp_data_delete(loc(psets), OMP_BYTES(psets))
+        call omp_data_delete(loc(nb%ia), OMP_BYTES(nb%ia))
+        call omp_data_delete(loc(nb%wa), OMP_BYTES(nb%wa))
+        call omp_data_delete(loc(nb%dwa), OMP_BYTES(nb%dwa))
+        call omp_data_delete(loc(nb%newr), OMP_BYTES(nb%newr))
+        call omp_data_delete(loc(nb%iz), OMP_BYTES(nb%iz))
+        call omp_data_delete(loc(nb%wz), OMP_BYTES(nb%wz))
+        call omp_data_delete(loc(nb%iu), OMP_BYTES(nb%iu))
+        call omp_data_delete(loc(nb%wu), OMP_BYTES(nb%wu))
+        call omp_data_delete(loc(nb%fesc), OMP_BYTES(nb%fesc))
+        call omp_data_delete(loc(nb%fabs), OMP_BYTES(nb%fabs))
+        call omp_data_delete(loc(nb%lptr), OMP_BYTES(nb%lptr))
+        call omp_data_delete(loc(nb%lid), OMP_BYTES(nb%lid))
+        call omp_data_delete(loc(nb%llo), OMP_BYTES(nb%llo))
+        call omp_data_delete(loc(nb%q0), OMP_BYTES(nb%q0))
+        call omp_data_delete(loc(nb%lum), OMP_BYTES(nb%lum))
+        call omp_data_delete(loc(nb%cy), OMP_BYTES(nb%cy))
+        call omp_data_delete(loc(nb%co), OMP_BYTES(nb%co))
 #endif
         !$acc end data
 
@@ -528,6 +580,8 @@ contains
                 call omp_check_present(loc(nb%co), 'nb%co', W, size(nb%co))
             end if
             call omp_check_present(loc(ctx%state%ssp_basis_spec), 'ctx%state%ssp_basis_spec', W, size(ctx%state%ssp_basis_spec))
+            call omp_check_present(loc(ctx%state%ssp_basis_mass), 'ctx%state%ssp_basis_mass', W, size(ctx%state%ssp_basis_mass))
+            call omp_check_present(loc(ctx%state%ssp_basis_lbol), 'ctx%state%ssp_basis_lbol', W, size(ctx%state%ssp_basis_lbol))
             if (allocated(ctx%state%batch%wt)) then
                 call omp_check_present(loc(ctx%state%batch%wt), 'ctx%state%batch%wt', W, size(ctx%state%batch%wt))
                 call omp_check_present(loc(ctx%state%batch%igm_t), 'ctx%state%batch%igm_t', W, size(ctx%state%batch%igm_t))
@@ -546,6 +600,37 @@ contains
                 call omp_check_present(loc(ctx%state%batch%sm_coef), 'ctx%state%batch%sm_coef', W, size(ctx%state%batch%sm_coef))
             end if
         end subroutine check_batch_maps
+
+        !> Host addresses that ctx holds for data mapped by address (SSP bases, batch caches)
+        function host_ctx_addresses() result(a)
+            integer(8) :: a(4)
+
+            a = 0
+            a(1) = loc(ctx%state%ssp_basis_spec)
+            a(2) = loc(ctx%state%ssp_basis_mass)
+            if (allocated(ctx%state%batch%wt)) a(3) = loc(ctx%state%batch%wt)
+            if (allocated(ctx%state%batch%wl)) a(4) = loc(ctx%state%batch%wl)
+        end function host_ctx_addresses
+
+        !> FSPS_OMP_CHECK_PRE: the host copy of ctx is unchanged after the kernels of where. A
+        !> kernel's implicit map of ctx copying the device copy back to the host would overwrite
+        !> the host's descriptors with the device's (stale for data mapped by address).
+        subroutine host_ctx_unchanged(where)
+            character(len=*), intent(in) :: where
+            character(len=*), parameter :: NAMES(4) = [character(len=26) :: 'ctx%state%ssp_basis_spec', &
+                'ctx%state%ssp_basis_mass', 'ctx%state%batch%wt', 'ctx%state%batch%wl']
+            integer(8) :: now(4)
+            integer :: i
+
+            now = host_ctx_addresses()
+            do i = 1, 4
+                if (now(i) /= host_addr(i)) then
+                    write(0, '(5A,Z0,A,Z0)') 'FSPS_OMP_CHECK_PRE: the host copy of ', trim(NAMES(i)), &
+                        ' changed during ', where, ' (host copy of ctx overwritten?): 0x', host_addr(i), ' -> 0x', now(i)
+                    error stop 'FSPS_OMP_CHECK_PRE: host ctx changed by a kernel'
+                end if
+            end do
+        end subroutine host_ctx_unchanged
 #endif
     end subroutine compute_csp_batch
 
@@ -753,7 +838,10 @@ contains
     subroutine add_nebular_batch(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, nb, yo, eml)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         type(nebular_setup_t), intent(inout) :: nb
         real(KP), intent(inout)          :: yo(:,:)
@@ -765,25 +853,30 @@ contains
         call nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
                              nb%nt_neb, nb%whlylim, nb%cont, nb%lines_in_spec, nb%xrb, nb%ia, nb%wa, nb%dwa, &
                              nb%newr, nb%q0, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%cy, nb%co, nb%lum, &
-                             nb%lptr, nb%lid, yo, eml)
+                             nb%lptr, nb%lid, size(nb%ia), size(nb%lid), size(nb%lum, 1), size(nb%lum, 2), yo, eml)
     end subroutine add_nebular_batch
 
     !> The kernels of add_nebular_batch, on the components of its nebular_setup_t.
     subroutine nebular_kernels(ctx, n_mod, nspec, nt, nzb, basis, w2, it_tesc, zlo, zhi, dz, &
                                nb_nt_neb, nb_whlylim, nb_cont, nb_lines_in_spec, nb_xrb, nb_ia, nb_wa, nb_dwa, &
                                nb_newr, nb_q0, nb_iz, nb_wz, nb_iu, nb_wu, nb_fesc, nb_fabs, nb_cy, nb_co, nb_lum, &
-                               nb_lptr, nb_lid, yo, eml)
+                               nb_lptr, nb_lid, n_age, n_lid, n_lum1, n_lum2, yo, eml)
         type(fsps_context_t), intent(in) :: ctx
         integer, intent(in)              :: n_mod, nspec, nt, nzb, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+        integer, intent(in)              :: n_age, n_lid, n_lum1, n_lum2   ! extents of the nb arrays
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         integer, intent(in)              :: nb_nt_neb, nb_whlylim
         logical, intent(in)              :: nb_cont, nb_lines_in_spec, nb_xrb
-        integer, intent(in), contiguous  :: nb_ia(:), nb_iz(:), nb_iu(:), nb_lptr(:), nb_lid(:)
-        real(WP), intent(in), contiguous :: nb_wa(:), nb_dwa(:), nb_wz(:), nb_wu(:), nb_fesc(:), nb_fabs(:)
-        logical, intent(in), contiguous  :: nb_newr(:)
-        real(WP), intent(inout), contiguous :: nb_q0(:,:), nb_cy(:,:), nb_co(:,:)
-        real(KP), intent(inout), contiguous :: nb_lum(:,:)
+        integer, intent(in)              :: nb_ia(n_age), nb_iz(n_mod), nb_iu(n_mod), nb_lptr(nspec + 1), nb_lid(n_lid)
+        real(WP), intent(in)             :: nb_wa(n_age), nb_dwa(n_age), nb_wz(n_mod), nb_wu(n_mod)
+        real(WP), intent(in)             :: nb_fesc(n_mod), nb_fabs(n_mod)
+        logical, intent(in)              :: nb_newr(n_age)
+        real(WP), intent(inout)          :: nb_q0(n_age, nzb), nb_cy(n_age, n_mod), nb_co(n_age, n_mod)
+        real(KP), intent(inout)          :: nb_lum(n_lum1, n_lum2)
         real(KP), intent(inout)          :: yo(:,:)
         real(KP), intent(out)            :: eml(:,:)
 
@@ -799,7 +892,7 @@ contains
         if (nt_neb < 1) then
             !$acc parallel loop collapse(2) present(eml)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2)
+            !$omp target teams distribute parallel do map(alloc: ctx) collapse(2)
 #endif
             do m = 1, n_mod
                 do i = 1, NEMLINE
@@ -814,7 +907,7 @@ contains
         !    (linear in the spectrum, so interpolated SSPs take the interpolated Q)
         !$acc parallel loop gang collapse(2) present(ctx, basis, nb_q0) private(s, c)
 #ifdef OMP_TARGET
-        !$omp target teams distribute collapse(2) private(s, c)
+        !$omp target teams distribute map(alloc: ctx) collapse(2) private(s, c)
 #endif
         do iz = 1, nzb
         do t = 1, nt_neb
@@ -851,7 +944,7 @@ contains
             !$acc parallel loop gang vector collapse(2) present(basis, w2, it_tesc, nb_fesc, yo, zlo, zhi, dz) &
             !$acc private(y, o, bk, k, dzk)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2) private(y, o, bk, k, dzk)
+            !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(y, o, bk, k, dzk)
 #endif
             do m = 1, n_mod
                 do i = 1, whlylim
@@ -891,7 +984,7 @@ contains
         if (nb_cont) then
             !$acc parallel loop gang vector collapse(2) present(w2, it_tesc, nb_q0, nb_fabs, nb_cy, nb_co, zlo, zhi, dz)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2)
+            !$omp target teams distribute parallel do map(alloc: ctx) collapse(2)
 #endif
             do m = 1, n_mod
                 do t = 1, nt_neb
@@ -917,7 +1010,7 @@ contains
             !$acc nb_iu, nb_wu, nb_cy, nb_co, yo) &
             !$acc private(y, o, sy, so, ra, rb, dl, f, r, a, a_prev, t, iz, iu, c00, c01, c10, c11)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
+            !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(y, o, sy, so, ra, rb, dl, f, r, &
             !$omp& a, a_prev, t, iz, iu, c00, c01, c10, c11)
 #endif
             do m = 1, n_mod
@@ -997,7 +1090,7 @@ contains
         !$acc parallel loop gang vector collapse(2) present(ctx, w2, it_tesc, nb_ia, nb_wa, nb_q0, nb_iz, nb_wz, &
         !$acc nb_iu, nb_wu, nb_fabs, nb_lum, eml, zlo, zhi, dz) private(y, o, wk, q, lg, ra, rb, a, t)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(y, o, wk, q, lg, ra, rb, a, t)
 #endif
         do m = 1, n_mod
             do i = 1, NEMLINE
@@ -1038,7 +1131,7 @@ contains
         if (nb_lines_in_spec) then
             !$acc parallel loop gang vector collapse(2) present(ctx, nb_lptr, nb_lid, nb_lum, yo) private(s, p, i)
 #ifdef OMP_TARGET
-            !$omp target teams distribute parallel do collapse(2) private(s, p, i)
+            !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(s, p, i)
 #endif
             do m = 1, 2 * n_mod
                 do j = 1, nspec
@@ -1060,10 +1153,12 @@ contains
     !> intrinsic - attenuated, per model.
     subroutine attenuate_lines(ctx, psets, n_mod, nb_lum, nb_llo, eml, s_line)
         type(fsps_context_t), intent(in)  :: ctx
-        type(params), intent(in)          :: psets(:)
         integer, intent(in)               :: n_mod
-        real(KP), intent(in), contiguous  :: nb_lum(:,:)   ! line luminosities (nebular_setup_t)
-        integer, intent(in), contiguous   :: nb_llo(:)     ! line pixel intervals
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        type(params), intent(in)          :: psets(n_mod)
+        real(KP), intent(in)              :: nb_lum(NEMLINE, 2 * n_mod)   ! line luminosities (nebular_setup_t)
+        integer, intent(in)               :: nb_llo(NEMLINE)              ! line pixel intervals
         real(KP), intent(out)             :: eml(:,:)
         real(WP), intent(out)             :: s_line(:)
 
@@ -1073,7 +1168,7 @@ contains
 
         !$acc parallel loop gang present(ctx, psets, nb_lum, nb_llo, eml, s_line) private(si, sa, fob, fnd)
 #ifdef OMP_TARGET
-        !$omp target teams distribute private(si, sa, fob, fnd)
+        !$omp target teams distribute map(alloc: ctx) private(si, sa, fob, fnd)
 #endif
         do m = 1, n_mod
             si = 0.0_wp
@@ -1142,8 +1237,8 @@ contains
     !> attenuated by the model's diffuse dust; after the IGM transmission, as there.
     subroutine add_agn_batch(ctx, psets, n_mod, nspec, agn_on, ita, wta, lsum, tdiff, total)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, ita(:)
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         logical, intent(in)              :: agn_on(:)
         real(WP), intent(in)             :: wta(:), lsum(:)
         real(KP), intent(in)             :: tdiff(:,:)   ! the diffuse transmission (attenuate_batch)
@@ -1155,7 +1250,7 @@ contains
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, agn_on, ita, wta, lsum, tdiff, total) &
         !$acc private(lagn, tmpl, lb)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(lagn, tmpl, lb)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(lagn, tmpl, lb)
 #endif
         do m = 1, n_mod
             do i = 1, nspec
@@ -1196,9 +1291,12 @@ contains
     !> Age sums with per-model metallicity: each model's basis is (1 - dz) basis(:, :, zlo) +
     !> dz basis(:, :, zhi), formed at kernel precision term by term (portable kernel; also used in
     !> cuBLAS builds). One pass over the ages (young or old per model), 4 models per thread.
-    subroutine age_sums_z(nspec, nt, n_mod, basis, w2, it_tesc, zlo, zhi, dz, yo)
-        integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:), zlo(:), zhi(:)
-        real(KP), intent(in), contiguous :: basis(:,:,:), w2(:,:)
+    subroutine age_sums_z(nspec, nt, n_mod, nzb, basis, w2, it_tesc, zlo, zhi, dz, yo)
+        integer, intent(in)              :: nspec, nt, n_mod, nzb, it_tesc(:), zlo(:), zhi(:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt, nzb)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(WP), intent(in)             :: dz(:)
         real(KP), intent(out)            :: yo(:,:)
         integer, parameter :: MT = 4
@@ -1245,15 +1343,15 @@ contains
     !> tau is work space (pixels x models).
     subroutine apply_igm_z(ctx, psets, n_mod, nspec, tau, total)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         real(KP), intent(inout)          :: tau(:,:), total(:,:)
         integer  :: m, j, jmax
         real(WP) :: tmax
 
         !$acc parallel loop gang vector collapse(2) present(ctx, psets, tau)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2)
 #endif
         do m = 1, n_mod
             do j = 1, nspec
@@ -1263,7 +1361,7 @@ contains
         ! The short-wavelength cap, one thread per model
         !$acc parallel loop gang vector present(psets, tau) private(tmax, jmax, j)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do private(tmax, jmax, j)
+        !$omp target teams distribute parallel do map(alloc: ctx) private(tmax, jmax, j)
 #endif
         do m = 1, n_mod
             if (psets(m)%zred > SAFE_FLOOR) then
@@ -1286,7 +1384,7 @@ contains
         end do
         !$acc parallel loop gang vector collapse(2) present(psets, tau, total)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2)
 #endif
         do m = 1, n_mod
             do j = 1, nspec
@@ -1299,7 +1397,7 @@ contains
     !> Common IGM transmission.
     subroutine apply_igm(n_mod, nspec, igm_t, total)
         integer, intent(in)     :: n_mod, nspec
-        real(KP), intent(in)    :: igm_t(:)
+        real(KP), intent(in)    :: igm_t(nspec)   ! (explicit shape: mapped by address)
         real(KP), intent(inout) :: total(:,:)
         integer :: m, i
 
@@ -1318,7 +1416,10 @@ contains
     !> at kernel precision as in compute_csp_scenario.
     subroutine age_sums(nspec, nt, n_mod, basis, w2, it_tesc, yo)
         integer, intent(in)              :: nspec, nt, n_mod, it_tesc(:)
-        real(KP), intent(in), contiguous :: basis(:,:), w2(:,:)
+        ! (Explicit-shape dummies for data mapped by address (fsps_omp_data): LLVM flang's implicit
+        ! map of an assumed-shape dummy of it gave a null base address on the 780M)
+        real(KP), intent(in)             :: basis(nspec, nt)
+        real(KP), intent(in), contiguous :: w2(:,:)
         real(KP), intent(out)            :: yo(:,:)
 #ifdef FSPS_CUBLAS
         integer :: istat
@@ -1410,8 +1511,8 @@ contains
     !> (stored at KP, as fsps_dust stores it), yo(:, N + m) = Draine & Li template.
     subroutine attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         type(fsps_context_t), intent(in) :: ctx
-        type(params), intent(in)         :: psets(:)
         integer, intent(in)              :: n_mod, nspec, iq(:), iu(:)
+        type(params), intent(in)         :: psets(n_mod)   ! (explicit shape: mapped by address)
         real(WP), intent(in)             :: wq(:), wu(:), gam(:)
         logical, intent(in)              :: emis(:), agn_on(:)
         real(KP), intent(inout)          :: yo(:,:)   ! in: young (1:N), old (N+1:2N)
@@ -1428,7 +1529,7 @@ contains
         !$acc private(young, old, curve, tau_b, tau_o, tau_d, trans_birth, trans_old, trans_d, frac_obrun, &
         !$acc         frac_nodust, one_m_tb, one_m_to, one_m_td, a_young, spec_sum)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(young, old, curve, tau_b, tau_o, &
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(young, old, curve, tau_b, tau_o, &
         !$omp& tau_d, trans_birth, trans_old, trans_d, frac_obrun, frac_nodust, one_m_tb, one_m_to, &
         !$omp& one_m_td, a_young, spec_sum)
 #endif
@@ -1487,7 +1588,8 @@ contains
     subroutine dust_emission_reductions(n_mod, nspec, emis, wt, yo, absorbed, s_abs, s_norm, s_esc)
         integer, intent(in)              :: n_mod, nspec
         logical, intent(in)              :: emis(:)
-        real(KP), intent(in)             :: wt(:), yo(:,:), absorbed(:,:)
+        real(KP), intent(in)             :: wt(nspec)   ! (explicit shape: mapped by address)
+        real(KP), intent(in)             :: yo(:,:), absorbed(:,:)
         real(WP), intent(out)            :: s_abs(:), s_norm(:), s_esc(:)
 
         integer  :: m, i

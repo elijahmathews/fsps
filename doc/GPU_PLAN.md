@@ -163,6 +163,20 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
     and new kernel arrays into the batch's check (`check_batch_maps`); on a new GPU or
     compiler, run the batch tests once with `FSPS_OMP_CHECK_PRE=1` (stops naming the array that
     is unmapped or not attached instead of faulting).
+  - (LLVM flang) never name a structure component in OpenMP `enter data` / `exit data` for
+    data that is released while its parent stays mapped: `exit data map(delete: s%x)` also
+    deletes s (with s inside ctx, the whole context mapping went), `map(release:)` leaves stale
+    entries, and a derived-type array named in a `target data` clause left its data mapped.
+    Map such data by address with `src/core/fsps_omp_data.f90` (`omp_data_to/alloc/delete/
+    update_*`, `loc(x)`, `OMP_BYTES(x)`) and give it to kernels as arguments. Only the
+    long-lived library arrays are still entered by component (nvfortran attaches descriptors
+    no other way: a kernel naming a component does not attach it, and pointer assignment in
+    device code is unsupported); they are released by address too. Never map zero-size
+    arrays (their entries cannot be released by address).
+  - OpenMP compute constructs that can see ctx map it explicitly with `map(alloc: ctx)` (never
+    an implicit tofrom of the context); kernels receive data mapped by address as arguments
+    (explicit-shape dummies), through pointers taken before the first launch, not by reading
+    ctx's host descriptors after a launch.
   - module variables read in device code need `!$omp declare target` and an update after host
     assignments (flang emits a separate device copy of a module variable, which host
     assignments never reach); module constants are fine. None is read on the device today.

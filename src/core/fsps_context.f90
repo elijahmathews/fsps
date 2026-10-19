@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_context
     !> @brief
     !> Context lifecycle and parameter management for FSPS.
@@ -11,6 +12,7 @@ module fsps_context
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy, batch_grid_release
     use fsps_environment, only: fsps_cleanup
+    use fsps_omp_data, only: omp_data_to, omp_data_delete, omp_data_update_to
     use fsps_initialization, only: fsps_initialize_data
     use fsps_ssp, only: generate_ssp_grid
     use fsps_csp, only: compute_csp_scenario
@@ -640,8 +642,15 @@ contains
                 if (allocated(ctx%state%ssp_basis_spec)) then
                     !$acc exit data delete(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
 #ifdef OMP_TARGET
-                    !$omp target exit data if(ctx%on_device) &
-                    !$omp& map(delete: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+                    ! (OpenMP: by address, never naming a component; see fsps_omp_data)
+                    if (ctx%on_device) then
+                        call omp_data_delete(loc(ctx%state%ssp_basis_spec), &
+                            OMP_BYTES(ctx%state%ssp_basis_spec))
+                        call omp_data_delete(loc(ctx%state%ssp_basis_mass), &
+                            OMP_BYTES(ctx%state%ssp_basis_mass))
+                        call omp_data_delete(loc(ctx%state%ssp_basis_lbol), &
+                            OMP_BYTES(ctx%state%ssp_basis_lbol))
+                    end if
 #endif
                 end if
                 if (allocated(ctx%state%ssp_basis_spec)) deallocate(ctx%state%ssp_basis_spec)
@@ -660,8 +669,14 @@ contains
         if (mapped_new) then
             !$acc enter data copyin(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
 #ifdef OMP_TARGET
-            !$omp target enter data if(ctx%on_device) &
-            !$omp& map(to: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            if (ctx%on_device) then
+                call omp_data_to(loc(ctx%state%ssp_basis_spec), &
+                                 OMP_BYTES(ctx%state%ssp_basis_spec))
+                call omp_data_to(loc(ctx%state%ssp_basis_mass), &
+                                 OMP_BYTES(ctx%state%ssp_basis_mass))
+                call omp_data_to(loc(ctx%state%ssp_basis_lbol), &
+                                 OMP_BYTES(ctx%state%ssp_basis_lbol))
+            end if
 #endif
             !$acc enter data attach(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
             ctx%state%ssp_basis_is_dirty = .true.
@@ -674,8 +689,14 @@ contains
 
             !$acc update device(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
 #ifdef OMP_TARGET
-            !$omp target update if(ctx%on_device) &
-            !$omp& to(ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
+            if (ctx%on_device) then
+                call omp_data_update_to(loc(ctx%state%ssp_basis_spec), &
+                    OMP_BYTES(ctx%state%ssp_basis_spec))
+                call omp_data_update_to(loc(ctx%state%ssp_basis_mass), &
+                    OMP_BYTES(ctx%state%ssp_basis_mass))
+                call omp_data_update_to(loc(ctx%state%ssp_basis_lbol), &
+                    OMP_BYTES(ctx%state%ssp_basis_lbol))
+            end if
 #endif
             ctx%state%ssp_basis_is_dirty = .false.
         end if
@@ -862,493 +883,629 @@ contains
         !$omp target enter data map(to: ctx)
 #endif
         !$acc enter data copyin(ctx%state)
-#ifdef OMP_TARGET
-        !$omp target enter data map(to: ctx%state)
-#endif
+        ! (OpenMP: ctx%state is part of ctx, mapped above; naming it would make it a separately
+        ! released sub-structure with LLVM flang)
         ! OpenMP: the SSP basis of a context that had one before moving (update_ssp_basis maps it
         ! only for contexts on the device; OpenACC maps it there regardless)
+        ! (device code reads the bases only as kernel arguments, so their data suffices)
         if (allocated(ctx%state%ssp_basis_spec)) then
-#ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
-#endif
+            call omp_data_to(loc(ctx%state%ssp_basis_spec), &
+                             OMP_BYTES(ctx%state%ssp_basis_spec))
+            call omp_data_to(loc(ctx%state%ssp_basis_mass), &
+                             OMP_BYTES(ctx%state%ssp_basis_mass))
+            call omp_data_to(loc(ctx%state%ssp_basis_lbol), &
+                             OMP_BYTES(ctx%state%ssp_basis_lbol))
         end if
         
         ! Copy allocatable parameter arrays in pset
         if (allocated(ctx%pset%mag_compute)) then
+            ! (OpenMP: not mapped; no device code reads ctx%pset's arrays, and fsps_context_set_pset
+            ! reallocates them, which would leave the mapping stale)
             !$acc enter data copyin(ctx%pset%mag_compute)
-#ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%pset%mag_compute)
-#endif
             !$acc enter data attach(ctx%pset%mag_compute)
         end if
         if (allocated(ctx%pset%ssp_gen_age)) then
             !$acc enter data copyin(ctx%pset%ssp_gen_age)
-#ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%pset%ssp_gen_age)
-#endif
             !$acc enter data attach(ctx%pset%ssp_gen_age)
         end if
 
-        ! Copy pointer/allocatable components of state
+        ! Copy pointer/allocatable components of state. OpenMP: these long-lived arrays are the
+        ! only ones still mapped by naming the component, because that is how nvfortran attaches
+        ! the device copy of ctx's descriptors; they are released by address (fsps_omp_data) in
+        ! fsps_context_remove_from_device. Zero-size arrays are not mapped: their zero-length
+        ! entries cannot be released by address and would make a later array at the same host
+        ! address "partially present".
         if (associated(ctx%state%indexdefined)) then
             !$acc enter data copyin(ctx%state%indexdefined)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%indexdefined)
+            if (size(ctx%state%indexdefined) > 0) then
+                !$omp target enter data map(to: ctx%state%indexdefined)
+            end if
 #endif
             !$acc enter data attach(ctx%state%indexdefined)
         end if
         if (associated(ctx%state%wgdust)) then
             !$acc enter data copyin(ctx%state%wgdust)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%wgdust)
+            if (size(ctx%state%wgdust) > 0) then
+                !$omp target enter data map(to: ctx%state%wgdust)
+            end if
 #endif
             !$acc enter data attach(ctx%state%wgdust)
         end if
         if (associated(ctx%state%g03smcextn)) then
             !$acc enter data copyin(ctx%state%g03smcextn)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%g03smcextn)
+            if (size(ctx%state%g03smcextn) > 0) then
+                !$omp target enter data map(to: ctx%state%g03smcextn)
+            end if
 #endif
             !$acc enter data attach(ctx%state%g03smcextn)
         end if
         if (associated(ctx%state%bands)) then
             !$acc enter data copyin(ctx%state%bands)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%bands)
+            if (size(ctx%state%bands) > 0) then
+                !$omp target enter data map(to: ctx%state%bands)
+            end if
 #endif
             !$acc enter data attach(ctx%state%bands)
         end if
         if (associated(ctx%state%magsun)) then
             !$acc enter data copyin(ctx%state%magsun)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%magsun)
+            if (size(ctx%state%magsun) > 0) then
+                !$omp target enter data map(to: ctx%state%magsun)
+            end if
 #endif
             !$acc enter data attach(ctx%state%magsun)
         end if
         if (associated(ctx%state%magvega)) then
             !$acc enter data copyin(ctx%state%magvega)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%magvega)
+            if (size(ctx%state%magvega) > 0) then
+                !$omp target enter data map(to: ctx%state%magvega)
+            end if
 #endif
             !$acc enter data attach(ctx%state%magvega)
         end if
         if (associated(ctx%state%filter_leff)) then
             !$acc enter data copyin(ctx%state%filter_leff)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%filter_leff)
+            if (size(ctx%state%filter_leff) > 0) then
+                !$omp target enter data map(to: ctx%state%filter_leff)
+            end if
 #endif
             !$acc enter data attach(ctx%state%filter_leff)
         end if
         if (associated(ctx%state%vega_spec)) then
             !$acc enter data copyin(ctx%state%vega_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%vega_spec)
+            if (size(ctx%state%vega_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%vega_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%vega_spec)
         end if
         if (associated(ctx%state%sun_spec)) then
             !$acc enter data copyin(ctx%state%sun_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sun_spec)
+            if (size(ctx%state%sun_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%sun_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sun_spec)
         end if
         if (associated(ctx%state%spec_lambda)) then
             !$acc enter data copyin(ctx%state%spec_lambda)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_lambda)
+            if (size(ctx%state%spec_lambda) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_lambda)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_lambda)
         end if
         if (associated(ctx%state%spec_nu)) then
             !$acc enter data copyin(ctx%state%spec_nu)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_nu)
+            if (size(ctx%state%spec_nu) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_nu)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_nu)
         end if
         if (associated(ctx%state%spec_res)) then
             !$acc enter data copyin(ctx%state%spec_res)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_res)
+            if (size(ctx%state%spec_res) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_res)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_res)
         end if
         if (associated(ctx%state%speclib)) then
             !$acc enter data copyin(ctx%state%speclib)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%speclib)
+            if (size(ctx%state%speclib) > 0) then
+                !$omp target enter data map(to: ctx%state%speclib)
+            end if
 #endif
             !$acc enter data attach(ctx%state%speclib)
         end if
         if (associated(ctx%state%wmb_spec)) then
             !$acc enter data copyin(ctx%state%wmb_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%wmb_spec)
+            if (size(ctx%state%wmb_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%wmb_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%wmb_spec)
         end if
         if (associated(ctx%state%agb_spec_o)) then
             !$acc enter data copyin(ctx%state%agb_spec_o)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_o)
+            if (size(ctx%state%agb_spec_o) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_o)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_o)
         end if
         if (associated(ctx%state%agb_logt_o)) then
             !$acc enter data copyin(ctx%state%agb_logt_o)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_logt_o)
+            if (size(ctx%state%agb_logt_o) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_logt_o)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_logt_o)
         end if
         if (associated(ctx%state%agb_spec_c)) then
             !$acc enter data copyin(ctx%state%agb_spec_c)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_c)
+            if (size(ctx%state%agb_spec_c) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_c)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_c)
         end if
         if (associated(ctx%state%agb_logt_c)) then
             !$acc enter data copyin(ctx%state%agb_logt_c)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_logt_c)
+            if (size(ctx%state%agb_logt_c) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_logt_c)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_logt_c)
         end if
         if (associated(ctx%state%agb_spec_car)) then
             !$acc enter data copyin(ctx%state%agb_spec_car)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_car)
+            if (size(ctx%state%agb_spec_car) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_car)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_car)
         end if
         if (associated(ctx%state%speclib_agb_smooth)) then
             !$acc enter data copyin(ctx%state%speclib_agb_smooth)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%speclib_agb_smooth)
+            if (size(ctx%state%speclib_agb_smooth) > 0) then
+                !$omp target enter data map(to: ctx%state%speclib_agb_smooth)
+            end if
 #endif
             !$acc enter data attach(ctx%state%speclib_agb_smooth)
         end if
         if (associated(ctx%state%agb_spec_o_smooth)) then
             !$acc enter data copyin(ctx%state%agb_spec_o_smooth)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_o_smooth)
+            if (size(ctx%state%agb_spec_o_smooth) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_o_smooth)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_o_smooth)
         end if
         if (associated(ctx%state%agb_spec_c_smooth)) then
             !$acc enter data copyin(ctx%state%agb_spec_c_smooth)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_c_smooth)
+            if (size(ctx%state%agb_spec_c_smooth) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_c_smooth)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_c_smooth)
         end if
         if (associated(ctx%state%agb_spec_car_smooth)) then
             !$acc enter data copyin(ctx%state%agb_spec_car_smooth)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agb_spec_car_smooth)
+            if (size(ctx%state%agb_spec_car_smooth) > 0) then
+                !$omp target enter data map(to: ctx%state%agb_spec_car_smooth)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agb_spec_car_smooth)
         end if
         if (associated(ctx%state%pagb_spec)) then
             !$acc enter data copyin(ctx%state%pagb_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%pagb_spec)
+            if (size(ctx%state%pagb_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%pagb_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%pagb_spec)
         end if
         if (associated(ctx%state%wrn_spec)) then
             !$acc enter data copyin(ctx%state%wrn_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%wrn_spec)
+            if (size(ctx%state%wrn_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%wrn_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%wrn_spec)
         end if
         if (associated(ctx%state%wrc_spec)) then
             !$acc enter data copyin(ctx%state%wrc_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%wrc_spec)
+            if (size(ctx%state%wrc_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%wrc_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%wrc_spec)
         end if
         if (associated(ctx%state%qpaharr)) then
             !$acc enter data copyin(ctx%state%qpaharr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%qpaharr)
+            if (size(ctx%state%qpaharr) > 0) then
+                !$omp target enter data map(to: ctx%state%qpaharr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%qpaharr)
         end if
         if (associated(ctx%state%uminarr)) then
             !$acc enter data copyin(ctx%state%uminarr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%uminarr)
+            if (size(ctx%state%uminarr) > 0) then
+                !$omp target enter data map(to: ctx%state%uminarr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%uminarr)
         end if
         if (associated(ctx%state%lambda_dustem)) then
             !$acc enter data copyin(ctx%state%lambda_dustem)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%lambda_dustem)
+            if (size(ctx%state%lambda_dustem) > 0) then
+                !$omp target enter data map(to: ctx%state%lambda_dustem)
+            end if
 #endif
             !$acc enter data attach(ctx%state%lambda_dustem)
         end if
         if (associated(ctx%state%dustem_dustem)) then
             !$acc enter data copyin(ctx%state%dustem_dustem)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dustem_dustem)
+            if (size(ctx%state%dustem_dustem) > 0) then
+                !$omp target enter data map(to: ctx%state%dustem_dustem)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dustem_dustem)
         end if
         if (associated(ctx%state%dustem2_dustem)) then
             !$acc enter data copyin(ctx%state%dustem2_dustem)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dustem2_dustem)
+            if (size(ctx%state%dustem2_dustem) > 0) then
+                !$omp target enter data map(to: ctx%state%dustem2_dustem)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dustem2_dustem)
         end if
         if (associated(ctx%state%flux_dagb)) then
             !$acc enter data copyin(ctx%state%flux_dagb)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%flux_dagb)
+            if (size(ctx%state%flux_dagb) > 0) then
+                !$omp target enter data map(to: ctx%state%flux_dagb)
+            end if
 #endif
             !$acc enter data attach(ctx%state%flux_dagb)
         end if
         if (associated(ctx%state%nebem_cont)) then
             !$acc enter data copyin(ctx%state%nebem_cont)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%nebem_cont)
+            if (size(ctx%state%nebem_cont) > 0) then
+                !$omp target enter data map(to: ctx%state%nebem_cont)
+            end if
 #endif
             !$acc enter data attach(ctx%state%nebem_cont)
         end if
         if (associated(ctx%state%xnebem_cont)) then
             !$acc enter data copyin(ctx%state%xnebem_cont)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%xnebem_cont)
+            if (size(ctx%state%xnebem_cont) > 0) then
+                !$omp target enter data map(to: ctx%state%xnebem_cont)
+            end if
 #endif
             !$acc enter data attach(ctx%state%xnebem_cont)
         end if
         if (associated(ctx%state%neb_res_min)) then
             !$acc enter data copyin(ctx%state%neb_res_min)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%neb_res_min)
+            if (size(ctx%state%neb_res_min) > 0) then
+                !$omp target enter data map(to: ctx%state%neb_res_min)
+            end if
 #endif
             !$acc enter data attach(ctx%state%neb_res_min)
         end if
         if (associated(ctx%state%gaussnebarr)) then
             !$acc enter data copyin(ctx%state%gaussnebarr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%gaussnebarr)
+            if (size(ctx%state%gaussnebarr) > 0) then
+                !$omp target enter data map(to: ctx%state%gaussnebarr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%gaussnebarr)
         end if
         if (associated(ctx%state%agndust_spec)) then
             !$acc enter data copyin(ctx%state%agndust_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%agndust_spec)
+            if (size(ctx%state%agndust_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%agndust_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%agndust_spec)
         end if
         if (associated(ctx%state%mact_isoc)) then
             !$acc enter data copyin(ctx%state%mact_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%mact_isoc)
+            if (size(ctx%state%mact_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%mact_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%mact_isoc)
         end if
         if (associated(ctx%state%logl_isoc)) then
             !$acc enter data copyin(ctx%state%logl_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%logl_isoc)
+            if (size(ctx%state%logl_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%logl_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%logl_isoc)
         end if
         if (associated(ctx%state%logt_isoc)) then
             !$acc enter data copyin(ctx%state%logt_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%logt_isoc)
+            if (size(ctx%state%logt_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%logt_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%logt_isoc)
         end if
         if (associated(ctx%state%logg_isoc)) then
             !$acc enter data copyin(ctx%state%logg_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%logg_isoc)
+            if (size(ctx%state%logg_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%logg_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%logg_isoc)
         end if
         if (associated(ctx%state%ffco_isoc)) then
             !$acc enter data copyin(ctx%state%ffco_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ffco_isoc)
+            if (size(ctx%state%ffco_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%ffco_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%ffco_isoc)
         end if
         if (associated(ctx%state%phase_isoc)) then
             !$acc enter data copyin(ctx%state%phase_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%phase_isoc)
+            if (size(ctx%state%phase_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%phase_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%phase_isoc)
         end if
         if (associated(ctx%state%mini_isoc)) then
             !$acc enter data copyin(ctx%state%mini_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%mini_isoc)
+            if (size(ctx%state%mini_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%mini_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%mini_isoc)
         end if
         if (associated(ctx%state%lmdot_isoc)) then
             !$acc enter data copyin(ctx%state%lmdot_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%lmdot_isoc)
+            if (size(ctx%state%lmdot_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%lmdot_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%lmdot_isoc)
         end if
         if (associated(ctx%state%nmass_isoc)) then
             !$acc enter data copyin(ctx%state%nmass_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%nmass_isoc)
+            if (size(ctx%state%nmass_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%nmass_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%nmass_isoc)
         end if
         if (associated(ctx%state%timestep_isoc)) then
             !$acc enter data copyin(ctx%state%timestep_isoc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%timestep_isoc)
+            if (size(ctx%state%timestep_isoc) > 0) then
+                !$omp target enter data map(to: ctx%state%timestep_isoc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%timestep_isoc)
         end if
         if (associated(ctx%state%zlegend)) then
             !$acc enter data copyin(ctx%state%zlegend)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%zlegend)
+            if (size(ctx%state%zlegend) > 0) then
+                !$omp target enter data map(to: ctx%state%zlegend)
+            end if
 #endif
             !$acc enter data attach(ctx%state%zlegend)
         end if
         if (associated(ctx%state%zlegendinit)) then
             !$acc enter data copyin(ctx%state%zlegendinit)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%zlegendinit)
+            if (size(ctx%state%zlegendinit) > 0) then
+                !$omp target enter data map(to: ctx%state%zlegendinit)
+            end if
 #endif
             !$acc enter data attach(ctx%state%zlegendinit)
         end if
         if (allocated(ctx%state%spec_ssp_zz)) then
             !$acc enter data copyin(ctx%state%spec_ssp_zz)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_ssp_zz)
+            if (size(ctx%state%spec_ssp_zz) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_ssp_zz)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_ssp_zz)
         end if
         if (allocated(ctx%state%mass_ssp_zz)) then
             !$acc enter data copyin(ctx%state%mass_ssp_zz)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%mass_ssp_zz)
+            if (size(ctx%state%mass_ssp_zz) > 0) then
+                !$omp target enter data map(to: ctx%state%mass_ssp_zz)
+            end if
 #endif
             !$acc enter data attach(ctx%state%mass_ssp_zz)
         end if
         if (allocated(ctx%state%lbol_ssp_zz)) then
             !$acc enter data copyin(ctx%state%lbol_ssp_zz)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%lbol_ssp_zz)
+            if (size(ctx%state%lbol_ssp_zz) > 0) then
+                !$omp target enter data map(to: ctx%state%lbol_ssp_zz)
+            end if
 #endif
             !$acc enter data attach(ctx%state%lbol_ssp_zz)
         end if
         if (associated(ctx%state%time_full)) then
             !$acc enter data copyin(ctx%state%time_full)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%time_full)
+            if (size(ctx%state%time_full) > 0) then
+                !$omp target enter data map(to: ctx%state%time_full)
+            end if
 #endif
             !$acc enter data attach(ctx%state%time_full)
         end if
         if (allocated(ctx%state%weight_ssp)) then
             !$acc enter data copyin(ctx%state%weight_ssp)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%weight_ssp)
+            if (size(ctx%state%weight_ssp) > 0) then
+                !$omp target enter data map(to: ctx%state%weight_ssp)
+            end if
 #endif
             !$acc enter data attach(ctx%state%weight_ssp)
         end if
         if (allocated(ctx%state%spec_young)) then
             !$acc enter data copyin(ctx%state%spec_young)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_young)
+            if (size(ctx%state%spec_young) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_young)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_young)
         end if
         if (allocated(ctx%state%spec_old)) then
             !$acc enter data copyin(ctx%state%spec_old)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_old)
+            if (size(ctx%state%spec_old) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_old)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_old)
         end if
         if (allocated(ctx%state%ssp_temp_grid)) then
             !$acc enter data copyin(ctx%state%ssp_temp_grid)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ssp_temp_grid)
+            if (size(ctx%state%ssp_temp_grid) > 0) then
+                !$omp target enter data map(to: ctx%state%ssp_temp_grid)
+            end if
 #endif
             !$acc enter data attach(ctx%state%ssp_temp_grid)
         end if
         if (allocated(ctx%state%ssp_active_idx)) then
             !$acc enter data copyin(ctx%state%ssp_active_idx)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ssp_active_idx)
+            if (size(ctx%state%ssp_active_idx) > 0) then
+                !$omp target enter data map(to: ctx%state%ssp_active_idx)
+            end if
 #endif
             !$acc enter data attach(ctx%state%ssp_active_idx)
         end if
         if (allocated(ctx%state%ssp_active_w)) then
             !$acc enter data copyin(ctx%state%ssp_active_w)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ssp_active_w)
+            if (size(ctx%state%ssp_active_w) > 0) then
+                !$omp target enter data map(to: ctx%state%ssp_active_w)
+            end if
 #endif
             !$acc enter data attach(ctx%state%ssp_active_w)
         end if
         if (associated(ctx%state%bpass_spec_ssp)) then
             !$acc enter data copyin(ctx%state%bpass_spec_ssp)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%bpass_spec_ssp)
+            if (size(ctx%state%bpass_spec_ssp) > 0) then
+                !$omp target enter data map(to: ctx%state%bpass_spec_ssp)
+            end if
 #endif
             !$acc enter data attach(ctx%state%bpass_spec_ssp)
         end if
         if (associated(ctx%state%bpass_mass_ssp)) then
             !$acc enter data copyin(ctx%state%bpass_mass_ssp)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%bpass_mass_ssp)
+            if (size(ctx%state%bpass_mass_ssp) > 0) then
+                !$omp target enter data map(to: ctx%state%bpass_mass_ssp)
+            end if
 #endif
             !$acc enter data attach(ctx%state%bpass_mass_ssp)
         end if
         if (associated(ctx%state%lam_xrb)) then
             !$acc enter data copyin(ctx%state%lam_xrb)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%lam_xrb)
+            if (size(ctx%state%lam_xrb) > 0) then
+                !$omp target enter data map(to: ctx%state%lam_xrb)
+            end if
 #endif
             !$acc enter data attach(ctx%state%lam_xrb)
         end if
         if (associated(ctx%state%spec_xrb)) then
             !$acc enter data copyin(ctx%state%spec_xrb)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%spec_xrb)
+            if (size(ctx%state%spec_xrb) > 0) then
+                !$omp target enter data map(to: ctx%state%spec_xrb)
+            end if
 #endif
             !$acc enter data attach(ctx%state%spec_xrb)
         end if
         if (associated(ctx%state%ages_xrb)) then
             !$acc enter data copyin(ctx%state%ages_xrb)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%ages_xrb)
+            if (size(ctx%state%ages_xrb) > 0) then
+                !$omp target enter data map(to: ctx%state%ages_xrb)
+            end if
 #endif
             !$acc enter data attach(ctx%state%ages_xrb)
         end if
         if (associated(ctx%state%zmet_xrb)) then
             !$acc enter data copyin(ctx%state%zmet_xrb)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%zmet_xrb)
+            if (size(ctx%state%zmet_xrb) > 0) then
+                !$omp target enter data map(to: ctx%state%zmet_xrb)
+            end if
 #endif
             !$acc enter data attach(ctx%state%zmet_xrb)
         end if
         if (allocated(ctx%state%lsfinfo%lsf)) then
             !$acc enter data copyin(ctx%state%lsfinfo%lsf)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%lsfinfo%lsf)
+            if (size(ctx%state%lsfinfo%lsf) > 0) then
+                !$omp target enter data map(to: ctx%state%lsfinfo%lsf)
+            end if
 #endif
             !$acc enter data attach(ctx%state%lsfinfo%lsf)
         end if
@@ -1357,56 +1514,72 @@ contains
         if (allocated(ctx%state%powell_data%mags)) then
             !$acc enter data copyin(ctx%state%powell_data%mags)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%powell_data%mags)
+            if (size(ctx%state%powell_data%mags) > 0) then
+                !$omp target enter data map(to: ctx%state%powell_data%mags)
+            end if
 #endif
             !$acc enter data attach(ctx%state%powell_data%mags)
         end if
         if (allocated(ctx%state%powell_data%magerr)) then
             !$acc enter data copyin(ctx%state%powell_data%magerr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%powell_data%magerr)
+            if (size(ctx%state%powell_data%magerr) > 0) then
+                !$omp target enter data map(to: ctx%state%powell_data%magerr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%powell_data%magerr)
         end if
         if (allocated(ctx%state%powell_data%spec)) then
             !$acc enter data copyin(ctx%state%powell_data%spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%powell_data%spec)
+            if (size(ctx%state%powell_data%spec) > 0) then
+                !$omp target enter data map(to: ctx%state%powell_data%spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%powell_data%spec)
         end if
         if (allocated(ctx%state%powell_data%specerr)) then
             !$acc enter data copyin(ctx%state%powell_data%specerr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%powell_data%specerr)
+            if (size(ctx%state%powell_data%specerr) > 0) then
+                !$omp target enter data map(to: ctx%state%powell_data%specerr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%powell_data%specerr)
         end if
         if (allocated(ctx%state%sedfit_data%mags)) then
             !$acc enter data copyin(ctx%state%sedfit_data%mags)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sedfit_data%mags)
+            if (size(ctx%state%sedfit_data%mags) > 0) then
+                !$omp target enter data map(to: ctx%state%sedfit_data%mags)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sedfit_data%mags)
         end if
         if (allocated(ctx%state%sedfit_data%magerr)) then
             !$acc enter data copyin(ctx%state%sedfit_data%magerr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sedfit_data%magerr)
+            if (size(ctx%state%sedfit_data%magerr) > 0) then
+                !$omp target enter data map(to: ctx%state%sedfit_data%magerr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sedfit_data%magerr)
         end if
         if (allocated(ctx%state%sedfit_data%spec)) then
             !$acc enter data copyin(ctx%state%sedfit_data%spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sedfit_data%spec)
+            if (size(ctx%state%sedfit_data%spec) > 0) then
+                !$omp target enter data map(to: ctx%state%sedfit_data%spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sedfit_data%spec)
         end if
         if (allocated(ctx%state%sedfit_data%specerr)) then
             !$acc enter data copyin(ctx%state%sedfit_data%specerr)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sedfit_data%specerr)
+            if (size(ctx%state%sedfit_data%specerr) > 0) then
+                !$omp target enter data map(to: ctx%state%sedfit_data%specerr)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sedfit_data%specerr)
         end if
@@ -1415,63 +1588,81 @@ contains
         if (allocated(ctx%state%csp_ssp_grid)) then
             !$acc enter data copyin(ctx%state%csp_ssp_grid)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_ssp_grid)
+            if (size(ctx%state%csp_ssp_grid) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_ssp_grid)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_ssp_grid)
         end if
         if (allocated(ctx%state%csp_emlin_grid)) then
             !$acc enter data copyin(ctx%state%csp_emlin_grid)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_emlin_grid)
+            if (size(ctx%state%csp_emlin_grid) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_emlin_grid)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_emlin_grid)
         end if
         if (allocated(ctx%state%csp_ssp_lum_linear)) then
             !$acc enter data copyin(ctx%state%csp_ssp_lum_linear)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_ssp_lum_linear)
+            if (size(ctx%state%csp_ssp_lum_linear) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_ssp_lum_linear)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_ssp_lum_linear)
         end if
         if (allocated(ctx%state%csp_igm_transmission)) then
             !$acc enter data copyin(ctx%state%csp_igm_transmission)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_igm_transmission)
+            if (size(ctx%state%csp_igm_transmission) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_igm_transmission)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_igm_transmission)
         end if
         if (allocated(ctx%state%csp_spec_final)) then
             !$acc enter data copyin(ctx%state%csp_spec_final)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_spec_final)
+            if (size(ctx%state%csp_spec_final) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_spec_final)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_spec_final)
         end if
         if (allocated(ctx%state%csp_emlin_final)) then
             !$acc enter data copyin(ctx%state%csp_emlin_final)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_emlin_final)
+            if (size(ctx%state%csp_emlin_final) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_emlin_final)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_emlin_final)
         end if
         if (allocated(ctx%state%csp_weights)) then
             !$acc enter data copyin(ctx%state%csp_weights)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_weights)
+            if (size(ctx%state%csp_weights) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_weights)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_weights)
         end if
         if (allocated(ctx%state%csp_emlin_young)) then
             !$acc enter data copyin(ctx%state%csp_emlin_young)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_emlin_young)
+            if (size(ctx%state%csp_emlin_young) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_emlin_young)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_emlin_young)
         end if
         if (allocated(ctx%state%csp_emlin_old)) then
             !$acc enter data copyin(ctx%state%csp_emlin_old)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%csp_emlin_old)
+            if (size(ctx%state%csp_emlin_old) > 0) then
+                !$omp target enter data map(to: ctx%state%csp_emlin_old)
+            end if
 #endif
             !$acc enter data attach(ctx%state%csp_emlin_old)
         end if
@@ -1480,105 +1671,135 @@ contains
         if (allocated(ctx%state%dust_transmission_diffuse)) then
             !$acc enter data copyin(ctx%state%dust_transmission_diffuse)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dust_transmission_diffuse)
+            if (size(ctx%state%dust_transmission_diffuse) > 0) then
+                !$omp target enter data map(to: ctx%state%dust_transmission_diffuse)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dust_transmission_diffuse)
         end if
         if (allocated(ctx%state%dust_frequencies)) then
             !$acc enter data copyin(ctx%state%dust_frequencies)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dust_frequencies)
+            if (size(ctx%state%dust_frequencies) > 0) then
+                !$omp target enter data map(to: ctx%state%dust_frequencies)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dust_frequencies)
         end if
         if (allocated(ctx%state%dust_spec_total_work)) then
             !$acc enter data copyin(ctx%state%dust_spec_total_work)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dust_spec_total_work)
+            if (size(ctx%state%dust_spec_total_work) > 0) then
+                !$omp target enter data map(to: ctx%state%dust_spec_total_work)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dust_spec_total_work)
         end if
         if (allocated(ctx%state%dust_emission_shape)) then
             !$acc enter data copyin(ctx%state%dust_emission_shape)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dust_emission_shape)
+            if (size(ctx%state%dust_emission_shape) > 0) then
+                !$omp target enter data map(to: ctx%state%dust_emission_shape)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dust_emission_shape)
         end if
         if (allocated(ctx%state%dust_emission_final)) then
             !$acc enter data copyin(ctx%state%dust_emission_final)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%dust_emission_final)
+            if (size(ctx%state%dust_emission_final) > 0) then
+                !$omp target enter data map(to: ctx%state%dust_emission_final)
+            end if
 #endif
             !$acc enter data attach(ctx%state%dust_emission_final)
         end if
         if (allocated(ctx%state%gas_neb_cont_reduced)) then
             !$acc enter data copyin(ctx%state%gas_neb_cont_reduced)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%gas_neb_cont_reduced)
+            if (size(ctx%state%gas_neb_cont_reduced) > 0) then
+                !$omp target enter data map(to: ctx%state%gas_neb_cont_reduced)
+            end if
 #endif
             !$acc enter data attach(ctx%state%gas_neb_cont_reduced)
         end if
         if (allocated(ctx%state%gas_neb_line_reduced)) then
             !$acc enter data copyin(ctx%state%gas_neb_line_reduced)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%gas_neb_line_reduced)
+            if (size(ctx%state%gas_neb_line_reduced) > 0) then
+                !$omp target enter data map(to: ctx%state%gas_neb_line_reduced)
+            end if
 #endif
             !$acc enter data attach(ctx%state%gas_neb_line_reduced)
         end if
         if (allocated(ctx%state%gas_current_step_cont)) then
             !$acc enter data copyin(ctx%state%gas_current_step_cont)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%gas_current_step_cont)
+            if (size(ctx%state%gas_current_step_cont) > 0) then
+                !$omp target enter data map(to: ctx%state%gas_current_step_cont)
+            end if
 #endif
             !$acc enter data attach(ctx%state%gas_current_step_cont)
         end if
         if (allocated(ctx%state%gas_current_step_lines)) then
             !$acc enter data copyin(ctx%state%gas_current_step_lines)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%gas_current_step_lines)
+            if (size(ctx%state%gas_current_step_lines) > 0) then
+                !$omp target enter data map(to: ctx%state%gas_current_step_lines)
+            end if
 #endif
             !$acc enter data attach(ctx%state%gas_current_step_lines)
         end if
         if (allocated(ctx%state%scalar_reductions)) then
             !$acc enter data copyin(ctx%state%scalar_reductions)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%scalar_reductions)
+            if (size(ctx%state%scalar_reductions) > 0) then
+                !$omp target enter data map(to: ctx%state%scalar_reductions)
+            end if
 #endif
             !$acc enter data attach(ctx%state%scalar_reductions)
         end if
         if (allocated(ctx%state%sfh_t_calc)) then
             !$acc enter data copyin(ctx%state%sfh_t_calc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sfh_t_calc)
+            if (size(ctx%state%sfh_t_calc) > 0) then
+                !$omp target enter data map(to: ctx%state%sfh_t_calc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sfh_t_calc)
         end if
         if (allocated(ctx%state%sfh_sfr_calc)) then
             !$acc enter data copyin(ctx%state%sfh_sfr_calc)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sfh_sfr_calc)
+            if (size(ctx%state%sfh_sfr_calc) > 0) then
+                !$omp target enter data map(to: ctx%state%sfh_sfr_calc)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sfh_sfr_calc)
         end if
         if (allocated(ctx%state%sfh_age_integrand)) then
             !$acc enter data copyin(ctx%state%sfh_age_integrand)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sfh_age_integrand)
+            if (size(ctx%state%sfh_age_integrand) > 0) then
+                !$omp target enter data map(to: ctx%state%sfh_age_integrand)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sfh_age_integrand)
         end if
         if (allocated(ctx%state%sfh_w_tmp1)) then
             !$acc enter data copyin(ctx%state%sfh_w_tmp1)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sfh_w_tmp1)
+            if (size(ctx%state%sfh_w_tmp1) > 0) then
+                !$omp target enter data map(to: ctx%state%sfh_w_tmp1)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sfh_w_tmp1)
         end if
         if (allocated(ctx%state%sfh_w_tmp2)) then
             !$acc enter data copyin(ctx%state%sfh_w_tmp2)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%sfh_w_tmp2)
+            if (size(ctx%state%sfh_w_tmp2) > 0) then
+                !$omp target enter data map(to: ctx%state%sfh_w_tmp2)
+            end if
 #endif
             !$acc enter data attach(ctx%state%sfh_w_tmp2)
         end if
@@ -1587,28 +1808,36 @@ contains
         if (allocated(ctx%state%out_csp_spec)) then
             !$acc enter data copyin(ctx%state%out_csp_spec)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%out_csp_spec)
+            if (size(ctx%state%out_csp_spec) > 0) then
+                !$omp target enter data map(to: ctx%state%out_csp_spec)
+            end if
 #endif
             !$acc enter data attach(ctx%state%out_csp_spec)
         end if
         if (allocated(ctx%state%out_csp_emlin)) then
             !$acc enter data copyin(ctx%state%out_csp_emlin)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%out_csp_emlin)
+            if (size(ctx%state%out_csp_emlin) > 0) then
+                !$omp target enter data map(to: ctx%state%out_csp_emlin)
+            end if
 #endif
             !$acc enter data attach(ctx%state%out_csp_emlin)
         end if
         if (allocated(ctx%state%out_mass_csp)) then
             !$acc enter data copyin(ctx%state%out_mass_csp)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%out_mass_csp)
+            if (size(ctx%state%out_mass_csp) > 0) then
+                !$omp target enter data map(to: ctx%state%out_mass_csp)
+            end if
 #endif
             !$acc enter data attach(ctx%state%out_mass_csp)
         end if
         if (allocated(ctx%state%out_lbol_csp)) then
             !$acc enter data copyin(ctx%state%out_lbol_csp)
 #ifdef OMP_TARGET
-            !$omp target enter data map(to: ctx%state%out_lbol_csp)
+            if (size(ctx%state%out_lbol_csp) > 0) then
+                !$omp target enter data map(to: ctx%state%out_lbol_csp)
+            end if
 #endif
             !$acc enter data attach(ctx%state%out_lbol_csp)
         end if
@@ -1622,455 +1851,469 @@ contains
         ! Nothing mapped (also avoids an exit data before any OpenACC initialization, which
         ! crashes in the HPC SDK 25.1 runtime)
         if (.not. ctx%on_device) return
-        if (allocated(ctx%state%ssp_basis_spec)) then
-#ifdef OMP_TARGET
-            !$omp target exit data map(delete: ctx%state%ssp_basis_spec, ctx%state%ssp_basis_mass, ctx%state%ssp_basis_lbol)
-#endif
-        end if
-
         associate(s => ctx%state)
             if (allocated(s%sedfit_data%specerr)) then
                 !$acc exit data delete(s%sedfit_data%specerr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sedfit_data%specerr)
+                call omp_data_delete(loc(s%sedfit_data%specerr), &
+                                     OMP_BYTES(s%sedfit_data%specerr))
 #endif
             end if
             if (allocated(s%sedfit_data%spec)) then
                 !$acc exit data delete(s%sedfit_data%spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sedfit_data%spec)
+                call omp_data_delete(loc(s%sedfit_data%spec), &
+                                     OMP_BYTES(s%sedfit_data%spec))
 #endif
             end if
             if (allocated(s%sedfit_data%magerr)) then
                 !$acc exit data delete(s%sedfit_data%magerr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sedfit_data%magerr)
+                call omp_data_delete(loc(s%sedfit_data%magerr), &
+                                     OMP_BYTES(s%sedfit_data%magerr))
 #endif
             end if
             if (allocated(s%sedfit_data%mags)) then
                 !$acc exit data delete(s%sedfit_data%mags)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sedfit_data%mags)
+                call omp_data_delete(loc(s%sedfit_data%mags), &
+                                     OMP_BYTES(s%sedfit_data%mags))
 #endif
             end if
             if (allocated(s%powell_data%specerr)) then
                 !$acc exit data delete(s%powell_data%specerr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%powell_data%specerr)
+                call omp_data_delete(loc(s%powell_data%specerr), &
+                                     OMP_BYTES(s%powell_data%specerr))
 #endif
             end if
             if (allocated(s%powell_data%spec)) then
                 !$acc exit data delete(s%powell_data%spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%powell_data%spec)
+                call omp_data_delete(loc(s%powell_data%spec), &
+                                     OMP_BYTES(s%powell_data%spec))
 #endif
             end if
             if (allocated(s%powell_data%magerr)) then
                 !$acc exit data delete(s%powell_data%magerr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%powell_data%magerr)
+                call omp_data_delete(loc(s%powell_data%magerr), &
+                                     OMP_BYTES(s%powell_data%magerr))
 #endif
             end if
             if (allocated(s%powell_data%mags)) then
                 !$acc exit data delete(s%powell_data%mags)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%powell_data%mags)
+                call omp_data_delete(loc(s%powell_data%mags), &
+                                     OMP_BYTES(s%powell_data%mags))
 #endif
             end if
             if (allocated(s%lsfinfo%lsf)) then
                 !$acc exit data delete(s%lsfinfo%lsf)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%lsfinfo%lsf)
+                call omp_data_delete(loc(s%lsfinfo%lsf), OMP_BYTES(s%lsfinfo%lsf))
 #endif
             end if
             if (associated(s%zmet_xrb)) then
                 !$acc exit data delete(s%zmet_xrb)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%zmet_xrb)
+                call omp_data_delete(loc(s%zmet_xrb), OMP_BYTES(s%zmet_xrb))
 #endif
             end if
             if (associated(s%ages_xrb)) then
                 !$acc exit data delete(s%ages_xrb)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ages_xrb)
+                call omp_data_delete(loc(s%ages_xrb), OMP_BYTES(s%ages_xrb))
 #endif
             end if
             if (associated(s%spec_xrb)) then
                 !$acc exit data delete(s%spec_xrb)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_xrb)
+                call omp_data_delete(loc(s%spec_xrb), OMP_BYTES(s%spec_xrb))
 #endif
             end if
             if (associated(s%lam_xrb)) then
                 !$acc exit data delete(s%lam_xrb)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%lam_xrb)
+                call omp_data_delete(loc(s%lam_xrb), OMP_BYTES(s%lam_xrb))
 #endif
             end if
             if (associated(s%bpass_mass_ssp)) then
                 !$acc exit data delete(s%bpass_mass_ssp)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%bpass_mass_ssp)
+                call omp_data_delete(loc(s%bpass_mass_ssp), &
+                                     OMP_BYTES(s%bpass_mass_ssp))
 #endif
             end if
             if (associated(s%bpass_spec_ssp)) then
                 !$acc exit data delete(s%bpass_spec_ssp)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%bpass_spec_ssp)
+                call omp_data_delete(loc(s%bpass_spec_ssp), &
+                                     OMP_BYTES(s%bpass_spec_ssp))
 #endif
             end if
             if (allocated(s%spec_old)) then
                 !$acc exit data delete(s%spec_old)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_old)
+                call omp_data_delete(loc(s%spec_old), OMP_BYTES(s%spec_old))
 #endif
             end if
             if (allocated(s%ssp_temp_grid)) then
                 !$acc exit data delete(s%ssp_temp_grid)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_temp_grid)
+                call omp_data_delete(loc(s%ssp_temp_grid), &
+                                     OMP_BYTES(s%ssp_temp_grid))
 #endif
             end if
             if (allocated(s%ssp_active_idx)) then
                 !$acc exit data delete(s%ssp_active_idx)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_active_idx)
+                call omp_data_delete(loc(s%ssp_active_idx), &
+                                     OMP_BYTES(s%ssp_active_idx))
 #endif
             end if
             if (allocated(s%ssp_active_w)) then
                 !$acc exit data delete(s%ssp_active_w)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_active_w)
+                call omp_data_delete(loc(s%ssp_active_w), OMP_BYTES(s%ssp_active_w))
 #endif
             end if
             if (allocated(s%spec_young)) then
                 !$acc exit data delete(s%spec_young)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_young)
+                call omp_data_delete(loc(s%spec_young), OMP_BYTES(s%spec_young))
 #endif
             end if
             if (allocated(s%weight_ssp)) then
                 !$acc exit data delete(s%weight_ssp)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%weight_ssp)
+                call omp_data_delete(loc(s%weight_ssp), OMP_BYTES(s%weight_ssp))
 #endif
             end if
             if (associated(s%time_full)) then
                 !$acc exit data delete(s%time_full)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%time_full)
+                call omp_data_delete(loc(s%time_full), OMP_BYTES(s%time_full))
 #endif
             end if
             if (allocated(s%lbol_ssp_zz)) then
                 !$acc exit data delete(s%lbol_ssp_zz)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%lbol_ssp_zz)
+                call omp_data_delete(loc(s%lbol_ssp_zz), OMP_BYTES(s%lbol_ssp_zz))
 #endif
             end if
             if (allocated(s%mass_ssp_zz)) then
                 !$acc exit data delete(s%mass_ssp_zz)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%mass_ssp_zz)
+                call omp_data_delete(loc(s%mass_ssp_zz), OMP_BYTES(s%mass_ssp_zz))
 #endif
             end if
             if (allocated(s%spec_ssp_zz)) then
                 !$acc exit data delete(s%spec_ssp_zz)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_ssp_zz)
+                call omp_data_delete(loc(s%spec_ssp_zz), OMP_BYTES(s%spec_ssp_zz))
 #endif
             end if
             if (associated(s%zlegendinit)) then
                 !$acc exit data delete(s%zlegendinit)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%zlegendinit)
+                call omp_data_delete(loc(s%zlegendinit), OMP_BYTES(s%zlegendinit))
 #endif
             end if
             if (associated(s%zlegend)) then
                 !$acc exit data delete(s%zlegend)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%zlegend)
+                call omp_data_delete(loc(s%zlegend), OMP_BYTES(s%zlegend))
 #endif
             end if
             if (associated(s%timestep_isoc)) then
                 !$acc exit data delete(s%timestep_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%timestep_isoc)
+                call omp_data_delete(loc(s%timestep_isoc), &
+                                     OMP_BYTES(s%timestep_isoc))
 #endif
             end if
             if (associated(s%nmass_isoc)) then
                 !$acc exit data delete(s%nmass_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%nmass_isoc)
+                call omp_data_delete(loc(s%nmass_isoc), OMP_BYTES(s%nmass_isoc))
 #endif
             end if
             if (associated(s%lmdot_isoc)) then
                 !$acc exit data delete(s%lmdot_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%lmdot_isoc)
+                call omp_data_delete(loc(s%lmdot_isoc), OMP_BYTES(s%lmdot_isoc))
 #endif
             end if
             if (associated(s%mini_isoc)) then
                 !$acc exit data delete(s%mini_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%mini_isoc)
+                call omp_data_delete(loc(s%mini_isoc), OMP_BYTES(s%mini_isoc))
 #endif
             end if
             if (associated(s%phase_isoc)) then
                 !$acc exit data delete(s%phase_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%phase_isoc)
+                call omp_data_delete(loc(s%phase_isoc), OMP_BYTES(s%phase_isoc))
 #endif
             end if
             if (associated(s%ffco_isoc)) then
                 !$acc exit data delete(s%ffco_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ffco_isoc)
+                call omp_data_delete(loc(s%ffco_isoc), OMP_BYTES(s%ffco_isoc))
 #endif
             end if
             if (associated(s%logg_isoc)) then
                 !$acc exit data delete(s%logg_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%logg_isoc)
+                call omp_data_delete(loc(s%logg_isoc), OMP_BYTES(s%logg_isoc))
 #endif
             end if
             if (associated(s%logt_isoc)) then
                 !$acc exit data delete(s%logt_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%logt_isoc)
+                call omp_data_delete(loc(s%logt_isoc), OMP_BYTES(s%logt_isoc))
 #endif
             end if
             if (associated(s%logl_isoc)) then
                 !$acc exit data delete(s%logl_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%logl_isoc)
+                call omp_data_delete(loc(s%logl_isoc), OMP_BYTES(s%logl_isoc))
 #endif
             end if
             if (associated(s%mact_isoc)) then
                 !$acc exit data delete(s%mact_isoc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%mact_isoc)
+                call omp_data_delete(loc(s%mact_isoc), OMP_BYTES(s%mact_isoc))
 #endif
             end if
             if (associated(s%agndust_spec)) then
                 !$acc exit data delete(s%agndust_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agndust_spec)
+                call omp_data_delete(loc(s%agndust_spec), OMP_BYTES(s%agndust_spec))
 #endif
             end if
             if (associated(s%gaussnebarr)) then
                 !$acc exit data delete(s%gaussnebarr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%gaussnebarr)
+                call omp_data_delete(loc(s%gaussnebarr), OMP_BYTES(s%gaussnebarr))
 #endif
             end if
             if (associated(s%neb_res_min)) then
                 !$acc exit data delete(s%neb_res_min)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%neb_res_min)
+                call omp_data_delete(loc(s%neb_res_min), OMP_BYTES(s%neb_res_min))
 #endif
             end if
             if (associated(s%xnebem_cont)) then
                 !$acc exit data delete(s%xnebem_cont)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%xnebem_cont)
+                call omp_data_delete(loc(s%xnebem_cont), OMP_BYTES(s%xnebem_cont))
 #endif
             end if
             if (associated(s%nebem_cont)) then
                 !$acc exit data delete(s%nebem_cont)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%nebem_cont)
+                call omp_data_delete(loc(s%nebem_cont), OMP_BYTES(s%nebem_cont))
 #endif
             end if
             if (associated(s%flux_dagb)) then
                 !$acc exit data delete(s%flux_dagb)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%flux_dagb)
+                call omp_data_delete(loc(s%flux_dagb), OMP_BYTES(s%flux_dagb))
 #endif
             end if
             if (associated(s%dustem2_dustem)) then
                 !$acc exit data delete(s%dustem2_dustem)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dustem2_dustem)
+                call omp_data_delete(loc(s%dustem2_dustem), &
+                                     OMP_BYTES(s%dustem2_dustem))
 #endif
             end if
             if (associated(s%dustem_dustem)) then
                 !$acc exit data delete(s%dustem_dustem)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dustem_dustem)
+                call omp_data_delete(loc(s%dustem_dustem), &
+                                     OMP_BYTES(s%dustem_dustem))
 #endif
             end if
             if (associated(s%lambda_dustem)) then
                 !$acc exit data delete(s%lambda_dustem)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%lambda_dustem)
+                call omp_data_delete(loc(s%lambda_dustem), &
+                                     OMP_BYTES(s%lambda_dustem))
 #endif
             end if
             if (associated(s%uminarr)) then
                 !$acc exit data delete(s%uminarr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%uminarr)
+                call omp_data_delete(loc(s%uminarr), OMP_BYTES(s%uminarr))
 #endif
             end if
             if (associated(s%qpaharr)) then
                 !$acc exit data delete(s%qpaharr)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%qpaharr)
+                call omp_data_delete(loc(s%qpaharr), OMP_BYTES(s%qpaharr))
 #endif
             end if
             if (associated(s%wrc_spec)) then
                 !$acc exit data delete(s%wrc_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%wrc_spec)
+                call omp_data_delete(loc(s%wrc_spec), OMP_BYTES(s%wrc_spec))
 #endif
             end if
             if (associated(s%wrn_spec)) then
                 !$acc exit data delete(s%wrn_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%wrn_spec)
+                call omp_data_delete(loc(s%wrn_spec), OMP_BYTES(s%wrn_spec))
 #endif
             end if
             if (associated(s%pagb_spec)) then
                 !$acc exit data delete(s%pagb_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%pagb_spec)
+                call omp_data_delete(loc(s%pagb_spec), OMP_BYTES(s%pagb_spec))
 #endif
             end if
             if (associated(s%agb_spec_car)) then
                 !$acc exit data delete(s%agb_spec_car)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_car)
+                call omp_data_delete(loc(s%agb_spec_car), OMP_BYTES(s%agb_spec_car))
 #endif
             end if
             if (associated(s%speclib_agb_smooth)) then
                 !$acc exit data delete(s%speclib_agb_smooth)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%speclib_agb_smooth)
+                call omp_data_delete(loc(s%speclib_agb_smooth), &
+                                     OMP_BYTES(s%speclib_agb_smooth))
 #endif
             end if
             if (associated(s%agb_spec_o_smooth)) then
                 !$acc exit data delete(s%agb_spec_o_smooth)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_o_smooth)
+                call omp_data_delete(loc(s%agb_spec_o_smooth), &
+                                     OMP_BYTES(s%agb_spec_o_smooth))
 #endif
             end if
             if (associated(s%agb_spec_c_smooth)) then
                 !$acc exit data delete(s%agb_spec_c_smooth)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_c_smooth)
+                call omp_data_delete(loc(s%agb_spec_c_smooth), &
+                                     OMP_BYTES(s%agb_spec_c_smooth))
 #endif
             end if
             if (associated(s%agb_spec_car_smooth)) then
                 !$acc exit data delete(s%agb_spec_car_smooth)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_car_smooth)
+                call omp_data_delete(loc(s%agb_spec_car_smooth), &
+                                     OMP_BYTES(s%agb_spec_car_smooth))
 #endif
             end if
             if (associated(s%agb_logt_c)) then
                 !$acc exit data delete(s%agb_logt_c)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_logt_c)
+                call omp_data_delete(loc(s%agb_logt_c), OMP_BYTES(s%agb_logt_c))
 #endif
             end if
             if (associated(s%agb_spec_c)) then
                 !$acc exit data delete(s%agb_spec_c)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_c)
+                call omp_data_delete(loc(s%agb_spec_c), OMP_BYTES(s%agb_spec_c))
 #endif
             end if
             if (associated(s%agb_logt_o)) then
                 !$acc exit data delete(s%agb_logt_o)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_logt_o)
+                call omp_data_delete(loc(s%agb_logt_o), OMP_BYTES(s%agb_logt_o))
 #endif
             end if
             if (associated(s%agb_spec_o)) then
                 !$acc exit data delete(s%agb_spec_o)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%agb_spec_o)
+                call omp_data_delete(loc(s%agb_spec_o), OMP_BYTES(s%agb_spec_o))
 #endif
             end if
             if (associated(s%wmb_spec)) then
                 !$acc exit data delete(s%wmb_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%wmb_spec)
+                call omp_data_delete(loc(s%wmb_spec), OMP_BYTES(s%wmb_spec))
 #endif
             end if
             if (associated(s%speclib)) then
                 !$acc exit data delete(s%speclib)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%speclib)
+                call omp_data_delete(loc(s%speclib), OMP_BYTES(s%speclib))
 #endif
             end if
             if (associated(s%spec_res)) then
                 !$acc exit data delete(s%spec_res)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_res)
+                call omp_data_delete(loc(s%spec_res), OMP_BYTES(s%spec_res))
 #endif
             end if
             if (associated(s%spec_nu)) then
                 !$acc exit data delete(s%spec_nu)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_nu)
+                call omp_data_delete(loc(s%spec_nu), OMP_BYTES(s%spec_nu))
 #endif
             end if
             if (associated(s%spec_lambda)) then
                 !$acc exit data delete(s%spec_lambda)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%spec_lambda)
+                call omp_data_delete(loc(s%spec_lambda), OMP_BYTES(s%spec_lambda))
 #endif
             end if
             if (associated(s%sun_spec)) then
                 !$acc exit data delete(s%sun_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sun_spec)
+                call omp_data_delete(loc(s%sun_spec), OMP_BYTES(s%sun_spec))
 #endif
             end if
             if (associated(s%vega_spec)) then
                 !$acc exit data delete(s%vega_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%vega_spec)
+                call omp_data_delete(loc(s%vega_spec), OMP_BYTES(s%vega_spec))
 #endif
             end if
             if (associated(s%filter_leff)) then
                 !$acc exit data delete(s%filter_leff)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%filter_leff)
+                call omp_data_delete(loc(s%filter_leff), OMP_BYTES(s%filter_leff))
 #endif
             end if
             if (associated(s%magvega)) then
                 !$acc exit data delete(s%magvega)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%magvega)
+                call omp_data_delete(loc(s%magvega), OMP_BYTES(s%magvega))
 #endif
             end if
             if (associated(s%magsun)) then
                 !$acc exit data delete(s%magsun)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%magsun)
+                call omp_data_delete(loc(s%magsun), OMP_BYTES(s%magsun))
 #endif
             end if
             if (associated(s%bands)) then
                 !$acc exit data delete(s%bands)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%bands)
+                call omp_data_delete(loc(s%bands), OMP_BYTES(s%bands))
 #endif
             end if
             if (associated(s%g03smcextn)) then
                 !$acc exit data delete(s%g03smcextn)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%g03smcextn)
+                call omp_data_delete(loc(s%g03smcextn), OMP_BYTES(s%g03smcextn))
 #endif
             end if
             if (associated(s%wgdust)) then
                 !$acc exit data delete(s%wgdust)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%wgdust)
+                call omp_data_delete(loc(s%wgdust), OMP_BYTES(s%wgdust))
 #endif
             end if
             if (associated(s%indexdefined)) then
                 !$acc exit data delete(s%indexdefined)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%indexdefined)
+                call omp_data_delete(loc(s%indexdefined), OMP_BYTES(s%indexdefined))
 #endif
             end if
 
@@ -2078,73 +2321,83 @@ contains
             if (allocated(s%ssp_basis_spec)) then
                 !$acc exit data delete(s%ssp_basis_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_basis_spec)
+                call omp_data_delete(loc(s%ssp_basis_spec), &
+                                     OMP_BYTES(s%ssp_basis_spec))
 #endif
             end if
             if (allocated(s%ssp_basis_mass)) then
                 !$acc exit data delete(s%ssp_basis_mass)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_basis_mass)
+                call omp_data_delete(loc(s%ssp_basis_mass), &
+                                     OMP_BYTES(s%ssp_basis_mass))
 #endif
             end if
             if (allocated(s%ssp_basis_lbol)) then
                 !$acc exit data delete(s%ssp_basis_lbol)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%ssp_basis_lbol)
+                call omp_data_delete(loc(s%ssp_basis_lbol), &
+                                     OMP_BYTES(s%ssp_basis_lbol))
 #endif
             end if
             if (allocated(s%csp_ssp_grid)) then
                 !$acc exit data delete(s%csp_ssp_grid)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_ssp_grid)
+                call omp_data_delete(loc(s%csp_ssp_grid), OMP_BYTES(s%csp_ssp_grid))
 #endif
             end if
             if (allocated(s%csp_emlin_grid)) then
                 !$acc exit data delete(s%csp_emlin_grid)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_emlin_grid)
+                call omp_data_delete(loc(s%csp_emlin_grid), &
+                                     OMP_BYTES(s%csp_emlin_grid))
 #endif
             end if
             if (allocated(s%csp_ssp_lum_linear)) then
                 !$acc exit data delete(s%csp_ssp_lum_linear)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_ssp_lum_linear)
+                call omp_data_delete(loc(s%csp_ssp_lum_linear), &
+                                     OMP_BYTES(s%csp_ssp_lum_linear))
 #endif
             end if
             if (allocated(s%csp_igm_transmission)) then
                 !$acc exit data delete(s%csp_igm_transmission)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_igm_transmission)
+                call omp_data_delete(loc(s%csp_igm_transmission), &
+                                     OMP_BYTES(s%csp_igm_transmission))
 #endif
             end if
             if (allocated(s%csp_spec_final)) then
                 !$acc exit data delete(s%csp_spec_final)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_spec_final)
+                call omp_data_delete(loc(s%csp_spec_final), &
+                                     OMP_BYTES(s%csp_spec_final))
 #endif
             end if
             if (allocated(s%csp_emlin_final)) then
                 !$acc exit data delete(s%csp_emlin_final)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_emlin_final)
+                call omp_data_delete(loc(s%csp_emlin_final), &
+                                     OMP_BYTES(s%csp_emlin_final))
 #endif
             end if
             if (allocated(s%csp_weights)) then
                 !$acc exit data delete(s%csp_weights)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_weights)
+                call omp_data_delete(loc(s%csp_weights), OMP_BYTES(s%csp_weights))
 #endif
             end if
             if (allocated(s%csp_emlin_young)) then
                 !$acc exit data delete(s%csp_emlin_young)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_emlin_young)
+                call omp_data_delete(loc(s%csp_emlin_young), &
+                                     OMP_BYTES(s%csp_emlin_young))
 #endif
             end if
             if (allocated(s%csp_emlin_old)) then
                 !$acc exit data delete(s%csp_emlin_old)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%csp_emlin_old)
+                call omp_data_delete(loc(s%csp_emlin_old), &
+                                     OMP_BYTES(s%csp_emlin_old))
 #endif
             end if
 
@@ -2152,91 +2405,102 @@ contains
             if (allocated(s%dust_transmission_diffuse)) then
                 !$acc exit data delete(s%dust_transmission_diffuse)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dust_transmission_diffuse)
+                call omp_data_delete(loc(s%dust_transmission_diffuse), &
+                    OMP_BYTES(s%dust_transmission_diffuse))
 #endif
             end if
             if (allocated(s%dust_frequencies)) then
                 !$acc exit data delete(s%dust_frequencies)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dust_frequencies)
+                call omp_data_delete(loc(s%dust_frequencies), &
+                                     OMP_BYTES(s%dust_frequencies))
 #endif
             end if
             if (allocated(s%dust_spec_total_work)) then
                 !$acc exit data delete(s%dust_spec_total_work)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dust_spec_total_work)
+                call omp_data_delete(loc(s%dust_spec_total_work), &
+                                     OMP_BYTES(s%dust_spec_total_work))
 #endif
             end if
             if (allocated(s%dust_emission_shape)) then
                 !$acc exit data delete(s%dust_emission_shape)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dust_emission_shape)
+                call omp_data_delete(loc(s%dust_emission_shape), &
+                                     OMP_BYTES(s%dust_emission_shape))
 #endif
             end if
             if (allocated(s%dust_emission_final)) then
                 !$acc exit data delete(s%dust_emission_final)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%dust_emission_final)
+                call omp_data_delete(loc(s%dust_emission_final), &
+                                     OMP_BYTES(s%dust_emission_final))
 #endif
             end if
             if (allocated(s%gas_neb_cont_reduced)) then
                 !$acc exit data delete(s%gas_neb_cont_reduced)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%gas_neb_cont_reduced)
+                call omp_data_delete(loc(s%gas_neb_cont_reduced), &
+                                     OMP_BYTES(s%gas_neb_cont_reduced))
 #endif
             end if
             if (allocated(s%gas_neb_line_reduced)) then
                 !$acc exit data delete(s%gas_neb_line_reduced)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%gas_neb_line_reduced)
+                call omp_data_delete(loc(s%gas_neb_line_reduced), &
+                                     OMP_BYTES(s%gas_neb_line_reduced))
 #endif
             end if
             if (allocated(s%gas_current_step_cont)) then
                 !$acc exit data delete(s%gas_current_step_cont)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%gas_current_step_cont)
+                call omp_data_delete(loc(s%gas_current_step_cont), &
+                                     OMP_BYTES(s%gas_current_step_cont))
 #endif
             end if
             if (allocated(s%gas_current_step_lines)) then
                 !$acc exit data delete(s%gas_current_step_lines)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%gas_current_step_lines)
+                call omp_data_delete(loc(s%gas_current_step_lines), &
+                                     OMP_BYTES(s%gas_current_step_lines))
 #endif
             end if
             if (allocated(s%scalar_reductions)) then
                 !$acc exit data delete(s%scalar_reductions)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%scalar_reductions)
+                call omp_data_delete(loc(s%scalar_reductions), &
+                                     OMP_BYTES(s%scalar_reductions))
 #endif
             end if
             if (allocated(s%sfh_t_calc)) then
                 !$acc exit data delete(s%sfh_t_calc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sfh_t_calc)
+                call omp_data_delete(loc(s%sfh_t_calc), OMP_BYTES(s%sfh_t_calc))
 #endif
             end if
             if (allocated(s%sfh_sfr_calc)) then
                 !$acc exit data delete(s%sfh_sfr_calc)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sfh_sfr_calc)
+                call omp_data_delete(loc(s%sfh_sfr_calc), OMP_BYTES(s%sfh_sfr_calc))
 #endif
             end if
             if (allocated(s%sfh_age_integrand)) then
                 !$acc exit data delete(s%sfh_age_integrand)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sfh_age_integrand)
+                call omp_data_delete(loc(s%sfh_age_integrand), &
+                                     OMP_BYTES(s%sfh_age_integrand))
 #endif
             end if
             if (allocated(s%sfh_w_tmp1)) then
                 !$acc exit data delete(s%sfh_w_tmp1)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sfh_w_tmp1)
+                call omp_data_delete(loc(s%sfh_w_tmp1), OMP_BYTES(s%sfh_w_tmp1))
 #endif
             end if
             if (allocated(s%sfh_w_tmp2)) then
                 !$acc exit data delete(s%sfh_w_tmp2)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%sfh_w_tmp2)
+                call omp_data_delete(loc(s%sfh_w_tmp2), OMP_BYTES(s%sfh_w_tmp2))
 #endif
             end if
 
@@ -2244,47 +2508,39 @@ contains
             if (allocated(s%out_csp_spec)) then
                 !$acc exit data delete(s%out_csp_spec)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%out_csp_spec)
+                call omp_data_delete(loc(s%out_csp_spec), OMP_BYTES(s%out_csp_spec))
 #endif
             end if
             if (allocated(s%out_csp_emlin)) then
                 !$acc exit data delete(s%out_csp_emlin)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%out_csp_emlin)
+                call omp_data_delete(loc(s%out_csp_emlin), &
+                                     OMP_BYTES(s%out_csp_emlin))
 #endif
             end if
             if (allocated(s%out_mass_csp)) then
                 !$acc exit data delete(s%out_mass_csp)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%out_mass_csp)
+                call omp_data_delete(loc(s%out_mass_csp), OMP_BYTES(s%out_mass_csp))
 #endif
             end if
             if (allocated(s%out_lbol_csp)) then
                 !$acc exit data delete(s%out_lbol_csp)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: s%out_lbol_csp)
+                call omp_data_delete(loc(s%out_lbol_csp), OMP_BYTES(s%out_lbol_csp))
 #endif
             end if
         end associate
 
         if (allocated(ctx%pset%ssp_gen_age)) then
             !$acc exit data delete(ctx%pset%ssp_gen_age)
-#ifdef OMP_TARGET
-            !$omp target exit data map(delete: ctx%pset%ssp_gen_age)
-#endif
         end if
         if (allocated(ctx%pset%mag_compute)) then
             !$acc exit data delete(ctx%pset%mag_compute)
-#ifdef OMP_TARGET
-            !$omp target exit data map(delete: ctx%pset%mag_compute)
-#endif
         end if
 
         call batch_grid_release(ctx%state%batch)
         !$acc exit data delete(ctx%state)
-#ifdef OMP_TARGET
-        !$omp target exit data map(delete: ctx%state)
-#endif
         !$acc exit data delete(ctx)
 #ifdef OMP_TARGET
         !$omp target exit data map(delete: ctx)

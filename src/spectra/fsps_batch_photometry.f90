@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_batch_photometry
     !> @brief Magnitudes of many spectra at once on the device (batched CSP, compute_csp_scenario).
     !>
@@ -13,6 +14,7 @@ module fsps_batch_photometry
     use fsps_precision, only: WP, KP
     use fsps_constants, only: SAFE_FLOOR, C_LIGHT, ABS_MAG_ZEROPOINT_LOG
     use fsps_context_types, only: fsps_context_t, batch_grid_release
+    use fsps_omp_data, only: omp_data_to, omp_data_delete, omp_data_update_to
     use fsps_cosmology, only: compute_igm_transmission
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_special_functions, only: mag_from_flux
@@ -128,7 +130,7 @@ contains
             else
                 call observed_frame_t(n_col, nspec, g%i_lo, g%t_obs, g%wl, spec, fobs)
             end if
-            call band_fluxes(n_col, nbands, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
+            call band_fluxes(n_col, nbands, nspec, g%bands_t, g%j_lo, g%j_hi, do_band, g%wtl, fobs, fband)
             call magnitudes_from_fluxes(ctx, n_col, nbands, do_band, dist, fband, mags_l)
 #ifdef OMP_TARGET
             !$omp end target data
@@ -165,7 +167,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(fband, do_band, dist, mags_l) copyin(vega) private(v, vv)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(v, vv)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(v, vv)
 #endif
         do m = 1, n_col
             do b = 1, nbands
@@ -263,12 +265,20 @@ contains
         g%igm_t = 1.0_KP
         !$acc enter data copyin(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+        call omp_data_to(loc(g%i_lo), OMP_BYTES(g%i_lo))
+        call omp_data_to(loc(g%j_lo), OMP_BYTES(g%j_lo))
+        call omp_data_to(loc(g%j_hi), OMP_BYTES(g%j_hi))
+        call omp_data_to(loc(g%t_obs), OMP_BYTES(g%t_obs))
+        call omp_data_to(loc(g%wt), OMP_BYTES(g%wt))
+        call omp_data_to(loc(g%wtl), OMP_BYTES(g%wtl))
+        call omp_data_to(loc(g%wl), OMP_BYTES(g%wl))
+        call omp_data_to(loc(g%bands_t), OMP_BYTES(g%bands_t))
+        call omp_data_to(loc(g%igm_t), OMP_BYTES(g%igm_t))
 #endif
         if (igm) call compute_igm_transmission(ctx%state%spec_lambda, zred, igm_factor, g%igm_t)
         ! (with OpenMP target offload compute_igm_transmission runs on the host)
 #ifdef OMP_TARGET
-        !$omp target update to(g%igm_t)
+        call omp_data_update_to(loc(g%igm_t), OMP_BYTES(g%igm_t))
 #endif
 
 #ifdef FSPS_CUBLAS
@@ -288,7 +298,7 @@ contains
         end do
         !$acc enter data copyin(g%cmat)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%cmat)
+        call omp_data_to(loc(g%cmat), OMP_BYTES(g%cmat))
 #endif
 #endif
         g%ready = .true.
@@ -317,7 +327,10 @@ contains
             if (g%sm_sigma == sigma .and. g%sm_minl == minl .and. g%sm_maxl == maxl) return
             !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
 #ifdef OMP_TARGET
-            !$omp target exit data map(delete: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            call omp_data_delete(loc(g%sm_lo), OMP_BYTES(g%sm_lo))
+            call omp_data_delete(loc(g%sm_hi), OMP_BYTES(g%sm_hi))
+            call omp_data_delete(loc(g%sm_off), OMP_BYTES(g%sm_off))
+            call omp_data_delete(loc(g%sm_coef), OMP_BYTES(g%sm_coef))
 #endif
             deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
             g%sm_ready = .false.
@@ -333,7 +346,10 @@ contains
         end if
         !$acc enter data copyin(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
 #ifdef OMP_TARGET
-        !$omp target enter data map(to: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+        call omp_data_to(loc(g%sm_lo), OMP_BYTES(g%sm_lo))
+        call omp_data_to(loc(g%sm_hi), OMP_BYTES(g%sm_hi))
+        call omp_data_to(loc(g%sm_off), OMP_BYTES(g%sm_off))
+        call omp_data_to(loc(g%sm_coef), OMP_BYTES(g%sm_coef))
 #endif
         g%sm_sigma = sigma
         g%sm_minl = minl
@@ -351,14 +367,17 @@ contains
 
         ! The operator's arrays passed as arrays: device code does not refer to the cache's
         ! derived type, which is mapped only through its components
-        call smooth_kernel(ctx%state%nspec, n_col, ctx%state%batch%sm_lo, ctx%state%batch%sm_hi, &
+        call smooth_kernel(ctx%state%nspec, n_col, size(ctx%state%batch%sm_lo), size(ctx%state%batch%sm_off), &
+                           size(ctx%state%batch%sm_coef), ctx%state%batch%sm_lo, ctx%state%batch%sm_hi, &
                            ctx%state%batch%sm_off, ctx%state%batch%sm_coef, spec)
     end subroutine smooth_columns
 
-    subroutine smooth_kernel(nspec, n_col, sm_lo, sm_hi, sm_off, sm_coef, spec)
-        integer, intent(in)                 :: nspec, n_col
-        integer, intent(in), contiguous     :: sm_lo(:), sm_hi(:), sm_off(:)
-        real(WP), intent(in), contiguous    :: sm_coef(:)
+    subroutine smooth_kernel(nspec, n_col, n_lo, n_off, n_coef, sm_lo, sm_hi, sm_off, sm_coef, spec)
+        integer, intent(in)                 :: nspec, n_col, n_lo, n_off, n_coef
+        ! (Explicit-shape dummies for the cache arrays, mapped by address (fsps_omp_data): LLVM
+        ! flang's implicit map of an assumed-shape dummy of such data gave a null base address)
+        integer, intent(in)                 :: sm_lo(n_lo), sm_hi(n_lo), sm_off(n_off)
+        real(WP), intent(in)                :: sm_coef(n_coef)
         real(KP), intent(inout)             :: spec(:,:)
 
         real(KP), allocatable :: sm(:,:)
@@ -428,7 +447,8 @@ contains
         integer, intent(in)     :: n_col, nspec, npad
         logical, intent(in)     :: transposed
         real(WP), intent(in)    :: zc(:)
-        real(KP), intent(in)    :: wl(:), total(:,:)
+        real(KP), intent(in)    :: wl(nspec)   ! (explicit shape: mapped by address)
+        real(KP), intent(in)    :: total(:,:)
         real(KP), intent(out)   :: fobs(:,:)
 
         integer  :: m, j, il
@@ -437,7 +457,7 @@ contains
 
         !$acc parallel loop gang vector collapse(2) present(ctx, zc, wl, total, fobs) private(il, v, target, t, f)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do collapse(2) private(il, v, target, t, f)
+        !$omp target teams distribute parallel do map(alloc: ctx) collapse(2) private(il, v, target, t, f)
 #endif
         do m = 1, n_col
             do j = 1, npad
@@ -465,9 +485,12 @@ contains
 
     !> Observed-frame spectrum / lambda (prepare_observed_spectrum), zero in the padding rows.
     subroutine observed_frame(n_mod, nspec, npad, i_lo, t_obs, wl, total, fobs)
-        integer, intent(in)     :: n_mod, nspec, npad, i_lo(:)
-        real(WP), intent(in)    :: t_obs(:)
-        real(KP), intent(in)    :: wl(:), total(:,:)
+        integer, intent(in)     :: n_mod, nspec, npad
+        ! (Explicit-shape dummies for the cache arrays, mapped by address (fsps_omp_data): LLVM
+        ! flang's implicit map of an assumed-shape dummy of such data gave a null base address)
+        integer, intent(in)     :: i_lo(nspec)
+        real(WP), intent(in)    :: t_obs(nspec)
+        real(KP), intent(in)    :: wl(nspec), total(:,:)
         real(KP), intent(out)   :: fobs(:,:)
 
         integer  :: m, j, il
@@ -497,9 +520,12 @@ contains
 
     !> observed_frame, written transposed (models, pixels) for band_fluxes.
     subroutine observed_frame_t(n_mod, nspec, i_lo, t_obs, wl, total, fobs_t)
-        integer, intent(in)     :: n_mod, nspec, i_lo(:)
-        real(WP), intent(in)    :: t_obs(:)
-        real(KP), intent(in)    :: wl(:), total(:,:)
+        integer, intent(in)     :: n_mod, nspec
+        ! (Explicit-shape dummies for the cache arrays, mapped by address (fsps_omp_data): LLVM
+        ! flang's implicit map of an assumed-shape dummy of such data gave a null base address)
+        integer, intent(in)     :: i_lo(nspec)
+        real(WP), intent(in)    :: t_obs(nspec)
+        real(KP), intent(in)    :: wl(nspec), total(:,:)
         real(KP), intent(out)   :: fobs_t(:,:)
 
         integer  :: m, j, il
@@ -529,7 +555,8 @@ contains
     !> regrouped by pixel, formed in FP64; prepare_batch_grid); the blocks are summed in FP64.
     subroutine band_fluxes_gemm(n_mod, npad, nbands, cmat, fobs, fband)
         integer, intent(in)     :: n_mod, npad, nbands
-        real(KP), intent(in)    :: cmat(:,:), fobs(:,:)
+        real(KP), intent(in)    :: cmat(npad, nbands)   ! (explicit shape: mapped by address)
+        real(KP), intent(in)    :: fobs(:,:)
         real(WP), intent(out)   :: fband(:,:)
 
         real(KP), allocatable :: partial(:,:,:)
@@ -596,11 +623,15 @@ contains
 
     !> Band fluxes: the trapezoid filter integral of fobs over each band's support, compensated at
     !> FP32 kernel precision.
-    subroutine band_fluxes(n_mod, nbands, bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
-        integer, intent(in)     :: n_mod, nbands, j_lo(:), j_hi(:), do_band(:)
+    subroutine band_fluxes(n_mod, nbands, nspec, bands_t, j_lo, j_hi, do_band, wt, fobs_t, fband)
+        integer, intent(in)     :: n_mod, nbands, nspec, do_band(:)
+        ! (Explicit-shape dummies for the cache arrays, mapped by address (fsps_omp_data): LLVM
+        ! flang's implicit map of an assumed-shape dummy of such data gave a null base address)
+        integer, intent(in)     :: j_lo(nbands), j_hi(nbands)
+        real(KP), intent(in)    :: bands_t(nbands, nspec), wt(nspec)
         !> Observed spectrum / lambda, transposed (models, pixels): the threads of a gang read
         !> consecutive models
-        real(KP), intent(in)    :: bands_t(:,:), wt(:), fobs_t(:,:)
+        real(KP), intent(in)    :: fobs_t(:,:)
         real(WP), intent(out)   :: fband(:,:)
 
         !> Models per gang: the threads of a gang share one band, hence one trip count (no

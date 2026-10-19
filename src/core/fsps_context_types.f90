@@ -1,3 +1,4 @@
+#define OMP_BYTES(x) (int(storage_size(x) / 8, 8) * size(x, kind=8))
 module fsps_context_types
     !> @brief
     !> Core derived types that define FSPS contexts and shared state.
@@ -13,6 +14,7 @@ module fsps_context_types
         NEMLINE, NEBNZ, NEBNAGE, NEBNIP, NAGNDUST, NTABMAX
     use fsps_types, only: PARAMS, COMPSPOUT, TLSF, OBSDAT
     use fsps_cache, only: fsps_setup_cache_t
+    use fsps_omp_data, only: omp_data_to, omp_data_delete, omp_data_update_to
 
     implicit none
     private
@@ -325,12 +327,20 @@ contains
         if (g%ready) then
             !$acc exit data delete(g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
 #ifdef OMP_TARGET
-            !$omp target exit data map(delete: g%i_lo, g%j_lo, g%j_hi, g%t_obs, g%wt, g%wtl, g%wl, g%bands_t, g%igm_t)
+            call omp_data_delete(loc(g%i_lo), OMP_BYTES(g%i_lo))
+            call omp_data_delete(loc(g%j_lo), OMP_BYTES(g%j_lo))
+            call omp_data_delete(loc(g%j_hi), OMP_BYTES(g%j_hi))
+            call omp_data_delete(loc(g%t_obs), OMP_BYTES(g%t_obs))
+            call omp_data_delete(loc(g%wt), OMP_BYTES(g%wt))
+            call omp_data_delete(loc(g%wtl), OMP_BYTES(g%wtl))
+            call omp_data_delete(loc(g%wl), OMP_BYTES(g%wl))
+            call omp_data_delete(loc(g%bands_t), OMP_BYTES(g%bands_t))
+            call omp_data_delete(loc(g%igm_t), OMP_BYTES(g%igm_t))
 #endif
             if (allocated(g%cmat)) then
                 !$acc exit data delete(g%cmat)
 #ifdef OMP_TARGET
-                !$omp target exit data map(delete: g%cmat)
+                call omp_data_delete(loc(g%cmat), OMP_BYTES(g%cmat))
 #endif
             end if
         end if
@@ -340,7 +350,10 @@ contains
         if (g%sm_ready) then
             !$acc exit data delete(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
 #ifdef OMP_TARGET
-            !$omp target exit data map(delete: g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
+            call omp_data_delete(loc(g%sm_lo), OMP_BYTES(g%sm_lo))
+            call omp_data_delete(loc(g%sm_hi), OMP_BYTES(g%sm_hi))
+            call omp_data_delete(loc(g%sm_off), OMP_BYTES(g%sm_off))
+            call omp_data_delete(loc(g%sm_coef), OMP_BYTES(g%sm_coef))
 #endif
         end if
         if (allocated(g%sm_lo)) deallocate(g%sm_lo, g%sm_hi, g%sm_off, g%sm_coef)
