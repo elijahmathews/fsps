@@ -54,8 +54,8 @@ program test_data_parity
     end do
     inquire (file=trim(std_root)//'/fsps-data.json', exist=exists)
     if (.not. exists) then
-        write (*, '(A)') '# SKIP: no standard data root at '//trim(std_root)//' (tools/fsps_data/convert_legacy.py)'
-        stop 77
+        write (*, '(A)') '1..0 # SKIP no standard data root at '//trim(std_root)//' (tools/fsps_data/convert_legacy.py)'
+        stop
     end if
     ! SPS_HOME is searched before FSPS_DATA_HOME
     if (c_setenv('SPS_HOME'//c_null_char, ''//c_null_char, 1_c_int) /= 0) stop 3

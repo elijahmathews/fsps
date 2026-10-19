@@ -1,0 +1,69 @@
+{
+ "format": "fsps-data",
+ "format_version": 1,
+ "kind": "agb_spectra",
+ "name": "crich_aringer",
+ "title": "Theoretical C-rich TP-AGB spectra - coarse test subset of the full library; not for science",
+ "provenance": {
+  "converter": "tools/fsps_data",
+  "created": "2026-10-19T21:43:50Z",
+  "subset_of": "agb_spectra/crich_aringer",
+  "subset": {
+   "wavelength": "slice(None, None, 40)"
+  }
+ },
+ "metadata": {},
+ "axes": {
+  "type": {
+   "units": "spectral type index",
+   "values": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0
+   ]
+  },
+  "wavelength": {
+   "units": "angstrom",
+   "file": "axis_wavelength.bin",
+   "dtype": "<f8",
+   "shape": [
+    226
+   ],
+   "sha256": "fbe6cacd7c3a22a76334adce446e2a209e7aa9104c39e28c911f349a156063e8"
+  }
+ },
+ "arrays": {
+  "teff": {
+   "file": "teff.bin",
+   "dtype": "<f4",
+   "shape": [
+    9
+   ],
+   "axes": [
+    "type"
+   ],
+   "units": "K",
+   "sha256": "721220186070045aec96da72910cc54f6f2c150c4941d3f1400f02001ff5f577"
+  },
+  "flux": {
+   "file": "flux.bin",
+   "dtype": "<f4",
+   "shape": [
+    9,
+    226
+   ],
+   "axes": [
+    "type",
+    "wavelength"
+   ],
+   "units": "L_nu / L_bol (Hz^-1)",
+   "sha256": "0f72eebb7a4c5b8986a9e9005f1dd6d31bf1419372ebacec9c28ad08bddbddf3"
+  }
+ }
+}

@@ -33,7 +33,7 @@ module fsps_initialization
                        load_agb_spectra, load_post_agb_spectra, load_attenuation_curves, &
                        load_wmbasic_spectra, load_lsf_data, load_agn_dust_models, &
                        apply_legacy_filter_norm, isochrone_kind, load_spectral_grid_axes, &
-                       use_standard_library
+                       use_standard_library, library_spec, metallicity_axis
     use fsps_datalib, only: datalib_t, datalib_available, datalib_open, datalib_meta_real, datalib_axis_len, &
                             datalib_axis_values, datalib_check_array, datalib_read_real
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
@@ -222,8 +222,8 @@ contains
         ctx%isoc_type_name = trim(isoc_name)
         ctx%spec_type_name = trim(spec_name)
         ctx%dust_type_name = trim(dust_name)
-        ctx%state%isoc_type = trim(isoc_name)
-        ctx%state%spec_type = trim(spec_name)
+        call split_selection(isoc_name, ctx%state%isoc_type, ctx%state%isoc_select)
+        call split_selection(spec_name, ctx%state%spec_type, ctx%state%spec_select)
         ctx%state%str_dustem = trim(dust_name)
 
         ! Paths first: with standard-format libraries the dimensions come from their manifests
@@ -231,6 +231,12 @@ contains
 
         call set_simulation_dimensions(ctx)
         call configure_dust_model(ctx)
+        if ((len_trim(ctx%state%isoc_select) > 0 .and. .not. uses_standard_isochrones(ctx)) .or. &
+            (len_trim(ctx%state%spec_select) > 0 .and. .not. use_standard_library(ctx, 'stellar_spectra', &
+                                                                                     ctx%state%spec_type))) then
+            write (error_unit, '(A)') '[FSPS_INIT] Error: axis selections (name:axis=value) need a standard-format library'
+            error stop 1
+        end if
 
         if (zin > ctx%state%nz) then
             write (error_unit, '(A,1x,I0,1x,I0)') '[FSPS_INIT] Error: zin > nz', zin, ctx%state%nz
@@ -389,6 +395,21 @@ contains
 
     end subroutine set_simulation_dimensions
 
+    !> @brief Splits 'name:axis=value,...' into the library name and its axis selections.
+    subroutine split_selection(full, name, sel)
+        character(len=*), intent(in) :: full
+        character(len=*), intent(out) :: name, sel
+        integer :: k
+        k = index(full, ':')
+        if (k > 0) then
+            name = full(1:k - 1)
+            sel = full(k + 1:)
+        else
+            name = full
+            sel = ''
+        end if
+    end subroutine split_selection
+
     !> @brief True if the isochrones (or, for BPASS, the SSP library) are read in the standard format.
     logical function uses_standard_isochrones(ctx)
         type(fsps_context_t), intent(in) :: ctx
@@ -401,9 +422,10 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(datalib_t) :: lib
 
-        call datalib_open(lib, ctx%sps_home, isochrone_kind(ctx%state%isoc_type), ctx%state%isoc_type)
+        call datalib_open(lib, ctx%sps_home, isochrone_kind(ctx%state%isoc_type), &
+                          library_spec(ctx, isochrone_kind(ctx%state%isoc_type), ctx%state%isoc_type))
         ctx%state%zsol = datalib_meta_real(lib, 'solar_metallicity')
-        ctx%state%nz = datalib_axis_len(lib, 'Z')
+        ctx%state%nz = datalib_axis_len(lib, metallicity_axis(lib))
         if (ctx%state%isoc_type == 'bpss') then
             ctx%state%nt = datalib_axis_len(lib, 'log_age')
             ! The SSP library is also the spectral library
@@ -420,9 +442,10 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         type(datalib_t) :: lib
 
-        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', ctx%state%spec_type)
+        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', &
+                          library_spec(ctx, 'stellar_spectra', ctx%state%spec_type))
         ctx%state%zsol_spec = datalib_meta_real(lib, 'solar_metallicity')
-        ctx%state%nzinit = datalib_axis_len(lib, 'Z')
+        ctx%state%nzinit = datalib_axis_len(lib, metallicity_axis(lib))
         ctx%state%nspec = datalib_axis_len(lib, 'wavelength')
         ! The (log T, log g) grid sizes are fixed by the context's lookup tables
         if (datalib_axis_len(lib, 'logT') /= NDIM_LOGT .or. datalib_axis_len(lib, 'logg') /= NDIM_LOGG) then
@@ -1223,7 +1246,8 @@ contains
         !   - zin selects the isochrones loaded and the reference time grid.
         write (cache_key, '(A,"|",A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
                            &"|",ES24.16,"|",I0,"|",I0)') &
-            trim(ctx%sps_home), trim(ctx%data_format), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), &
+            trim(ctx%sps_home), trim(ctx%data_format), trim(ctx%state%isoc_type)//':'//trim(ctx%state%isoc_select), &
+            trim(ctx%state%spec_type)//':'//trim(ctx%state%spec_select), &
             trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &

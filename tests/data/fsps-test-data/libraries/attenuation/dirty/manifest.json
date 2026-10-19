@@ -1,0 +1,107 @@
+{
+ "format": "fsps-data",
+ "format_version": 1,
+ "kind": "attenuation",
+ "name": "dirty",
+ "title": "Radiative-transfer attenuation curves (dusty galactic environments) - coarse test subset of the full library; not for science",
+ "provenance": {
+  "converter": "tools/fsps_data",
+  "created": "2026-10-19T21:43:50Z",
+  "subset_of": "attenuation/dirty",
+  "subset": {}
+ },
+ "metadata": {},
+ "axes": {
+  "structure": {
+   "units": "",
+   "labels": [
+    "homogeneous",
+    "clumpy"
+   ]
+  },
+  "tau_v": {
+   "units": "V-band optical depth",
+   "values": [
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    4.5,
+    5.0,
+    5.5,
+    6.0,
+    7.0,
+    8.0,
+    9.0,
+    10.0
+   ]
+  },
+  "model": {
+   "units": "",
+   "labels": [
+    "MW_dusty",
+    "MW_shell",
+    "MW_cloudy",
+    "SMC_dusty",
+    "SMC_shell",
+    "SMC_cloudy"
+   ]
+  },
+  "wavelength": {
+   "units": "angstrom",
+   "values": [
+    1000.0,
+    1142.0,
+    1285.0,
+    1428.0,
+    1571.0,
+    1714.0,
+    1857.0,
+    2000.0,
+    2142.0,
+    2285.0,
+    2428.0,
+    2571.0,
+    2714.0,
+    2857.0,
+    3000.0,
+    3776.0,
+    4754.0,
+    5985.0,
+    7535.0,
+    9487.0,
+    11943.0,
+    15036.0,
+    18929.0,
+    23830.0,
+    30001.0
+   ]
+  }
+ },
+ "arrays": {
+  "attenuation": {
+   "file": "attenuation.bin",
+   "dtype": "<f4",
+   "shape": [
+    2,
+    18,
+    6,
+    25
+   ],
+   "axes": [
+    "structure",
+    "tau_v",
+    "model",
+    "wavelength"
+   ],
+   "units": "attenuation optical depth",
+   "sha256": "fdda40657bb0a5aa057888c0764655d575e9f17315c0fedc51540fef94b749d1"
+  }
+ }
+}

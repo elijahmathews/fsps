@@ -586,6 +586,111 @@ class Converter:
                   units="L_sun Hz^-1 per M_sun (scaled by L_sun on load)")
         self.finish(lib)
 
+    # ------------------------------------------------------------------ upstream [alpha/Fe] layouts
+    @staticmethod
+    def afe_from_iso_tag(tag):
+        """MIST isochrone tag 'm2', 'p0', 'p4' -> -0.2, 0.0, +0.4."""
+        v = int(tag[1:]) / 10.0
+        return -v if tag[0] == "m" else v
+
+    def upstream_mist(self, src, name="mist", zsol=0.0185, nt=107):
+        """Alpha-enhanced MIST isochrones of the upstream layout.
+
+        ``src/zlegend.dat`` holds lines '(A4,F6.2)': a file tag ('m250') and [Fe/H]; the files
+        are ``isoc_feh_<tag>_afe_<m2|p0|p2|p4|p6>_vvcrit0.4_full.dat`` (MIST format, 9 columns).
+        Output: axes afe (default 0) and feh; an ``available`` mask when not every [alpha/Fe]
+        exists at every [Fe/H].
+        """
+        import glob
+        tags, feh = [], []
+        with open(os.path.join(src, "zlegend.dat")) as f:
+            for line in f:
+                if line.strip():
+                    tags.append(line[:4])
+                    feh.append(fortran_float(line[4:10].strip()))
+        afe_tags = sorted({os.path.basename(p).split("_afe_")[1].split("_")[0]
+                           for p in glob.glob(os.path.join(src, "isoc_feh_*_afe_*_vvcrit0.4_full.dat"))},
+                          key=self.afe_from_iso_tag)
+        afe = [self.afe_from_iso_tag(t) for t in afe_tags]
+        nfeh, nafe = len(tags), len(afe_tags)
+        avail = np.zeros((nafe, nfeh), dtype=np.int32)
+        npts = np.zeros((nafe, nfeh, nt), dtype=np.int32)
+        logage = np.zeros((nafe, nfeh, nt))
+        cols = []
+        for ia, at in enumerate(afe_tags):
+            for iz, zt in enumerate(tags):
+                path = os.path.join(src, f"isoc_feh_{zt}_afe_{at}_vvcrit0.4_full.dat")
+                if not os.path.exists(path):
+                    continue
+                avail[ia, iz] = 1
+                for it, (age, rows) in enumerate(self.parse_isochrone_file(path, nt, True)):
+                    npts[ia, iz, it] = len(rows)
+                    logage[ia, iz, it] = age
+                    cols.extend(rows)
+        cols = np.array(cols, dtype=np.float64).reshape(-1, 8)
+        lib = LibraryWriter(self.out, "isochrones", name, title="MIST isochrones with [alpha/Fe] variations",
+                            provenance={"converted_from": "upstream FSPS layout: " + src})
+        lib.metadata["solar_metallicity"] = zsol
+        lib.axis("afe", "[alpha/Fe] (dex)", values=afe, default=0.0)
+        lib.axis("feh", "[Fe/H] (dex); Z = solar_metallicity * 10^[Fe/H]", values=feh)
+        lib.axis("age_index", "index", values=list(range(1, nt + 1)))
+        lib.array("npoints", npts, axes=["afe", "feh", "age_index"], dtype="<i4", units="count")
+        lib.array("log_age", logage, axes=["afe", "feh", "age_index"], units="log10(yr)")
+        if not avail.all():
+            lib.array("available", avail, axes=["afe", "feh"], dtype="<i4", units="1 if tabulated, 0 if absent")
+        for k, cname in enumerate(["mini", "mact", "logl", "logt", "logg", "composition", "phase", "log_mdot"]):
+            lib.array(cname, cols[:, k], units="as the legacy isochrone column",
+                      description="one value per point; ordered by afe, feh, isochrone, mass")
+        self.finish(lib)
+        return lib
+
+    def upstream_c3k(self, src, name=None, zsol=0.0185):
+        """Per-[alpha/Fe] C3K spectra of the upstream layout (``SPECTRA/C3K/<name>/``).
+
+        ``<name>.lambda``, ``<name>.res``, ``<name>_zlegend.dat`` ([Fe/H] strings such as -2.50),
+        ``logt.dat`` (log T in the first column), ``logg.dat``, and one FP32 binary per
+        ([Fe/H], [alpha/Fe]): ``<name>_feh<feh>_afe<afe>.spec.bin`` = (nspec, nlogt, nlogg).
+        """
+        import glob
+        name = name or os.path.basename(os.path.normpath(src))
+        lam = np.array([fortran_float(split_tokens(l)[0]) for l in open(os.path.join(src, name + ".lambda"))
+                        if l.strip()])
+        res = np.array([fortran_float(split_tokens(l)[0]) for l in open(os.path.join(src, name + ".res"))
+                        if l.strip()])
+        ztags = [l.strip() for l in open(os.path.join(src, name + "_zlegend.dat")) if l.strip()]
+        logt = np.array([fortran_float(split_tokens(l)[0]) for l in open(os.path.join(src, "logt.dat")) if l.strip()])
+        logg = np.array([fortran_float(split_tokens(l)[0]) for l in open(os.path.join(src, "logg.dat")) if l.strip()])
+        afe_tags = sorted({os.path.basename(p)[:-len(".spec.bin")].split("_afe")[1]
+                           for p in glob.glob(os.path.join(src, f"{name}_feh*_afe*.spec.bin"))}, key=float)
+        nspec, nt, ng = len(lam), len(logt), len(logg)
+        flux = np.full((len(afe_tags), len(ztags), ng, nt, nspec), np.nan, dtype="<f4")
+        avail = np.zeros((len(afe_tags), len(ztags)), dtype=np.int32)
+        for ia, at in enumerate(afe_tags):
+            for iz, zt in enumerate(ztags):
+                path = os.path.join(src, f"{name}_feh{zt}_afe{at}.spec.bin")
+                if not os.path.exists(path):
+                    continue
+                raw = np.fromfile(path, dtype="<f4")
+                if raw.size != nspec * nt * ng:
+                    raise ValueError(f"{path}: {raw.size} values, expected {nspec * nt * ng}")
+                flux[ia, iz] = raw.reshape(ng, nt, nspec)
+                avail[ia, iz] = 1
+        lib = LibraryWriter(self.out, "stellar_spectra", name, title=f"C3K spectra ({name}) with [alpha/Fe] variations",
+                            provenance={"converted_from": "upstream FSPS layout: " + src})
+        lib.metadata["solar_metallicity"] = zsol
+        lib.axis("afe", "[alpha/Fe] (dex)", values=[float(t) for t in afe_tags], default=0.0)
+        lib.axis("feh", "[Fe/H] (dex); Z = solar_metallicity * 10^[Fe/H]", values=[float(t) for t in ztags])
+        lib.axis("logT", "log10(K)", values=logt)
+        lib.axis("logg", "log10(cm s^-2)", values=logg)
+        lib.axis("wavelength", "angstrom", data=lam, medium="vacuum")
+        lib.array("flux", flux, axes=["afe", "feh", "logg", "logT", "wavelength"], dtype="<f4",
+                  units="erg s^-1 cm^-2 Hz^-1 (Eddington flux H_nu)")
+        lib.array("resolution", res, axes=["wavelength"], units="as the legacy .res file")
+        if not avail.all():
+            lib.array("available", avail, axes=["afe", "feh"], dtype="<i4", units="1 if tabulated, 0 if absent")
+        self.finish(lib)
+        return lib
+
     def small_tables(self):
         os.makedirs(os.path.join(self.out, "data"), exist_ok=True)
         for fn in SMALL_TABLES:
@@ -624,8 +729,20 @@ def main(argv=None):
     ap.add_argument("--only", nargs="*", default=None, help="kind or kind/name prefixes to convert")
     ap.add_argument("--release", default="unreleased")
     ap.add_argument("--list", action="store_true", help="list the conversion jobs and exit")
+    ap.add_argument("--upstream-mist", metavar="DIR",
+                    help="also convert upstream alpha-enhanced MIST isochrones (ISOCHRONES/MIST) as isochrones/mist_afe")
+    ap.add_argument("--upstream-c3k", metavar="DIR", action="append", default=[],
+                    help="also convert an upstream per-[alpha/Fe] C3K directory (SPECTRA/C3K/<name>)")
     a = ap.parse_args(argv)
     conv = Converter(a.legacy_root, a.out_root)
+    if a.upstream_mist or a.upstream_c3k:
+        os.makedirs(a.out_root, exist_ok=True)
+        if a.upstream_mist:
+            conv.upstream_mist(a.upstream_mist, name="mist_afe")
+        for d in a.upstream_c3k:
+            conv.upstream_c3k(d)
+        if a.only is None:
+            a.only = ["(none)"]
     jobs = conv.jobs()
     if a.list:
         for name, _ in jobs:

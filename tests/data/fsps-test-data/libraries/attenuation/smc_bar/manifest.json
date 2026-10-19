@@ -1,0 +1,65 @@
+{
+ "format": "fsps-data",
+ "format_version": 1,
+ "kind": "attenuation",
+ "name": "smc_bar",
+ "title": "SMC bar extinction curve - coarse test subset of the full library; not for science",
+ "provenance": {
+  "converter": "tools/fsps_data",
+  "created": "2026-10-19T21:43:50Z",
+  "subset_of": "attenuation/smc_bar",
+  "subset": {}
+ },
+ "metadata": {},
+ "axes": {
+  "wavelength": {
+   "units": "angstrom",
+   "values": [
+    1160.0,
+    1190.0,
+    1230.0,
+    1270.0,
+    1310.0,
+    1360.0,
+    1400.0000000000002,
+    1450.0,
+    1510.0,
+    1570.0,
+    1630.0,
+    1700.0000000000002,
+    1780.0,
+    1860.0,
+    1950.0,
+    2050.0,
+    2160.0,
+    2290.0,
+    2420.0,
+    2580.0,
+    2760.0000000000005,
+    2960.0,
+    3700.0,
+    4400.0,
+    5500.0,
+    6500.0,
+    8100.000000000001,
+    12500.0,
+    16500.0,
+    21980.0
+   ]
+  }
+ },
+ "arrays": {
+  "extinction": {
+   "file": "extinction.bin",
+   "dtype": "<f4",
+   "shape": [
+    30
+   ],
+   "axes": [
+    "wavelength"
+   ],
+   "units": "A(lambda)/A(V)",
+   "sha256": "e95acf111f1fb9f6d13237b2e932c09923c5598208aa8a1571f63e6518e04ef9"
+  }
+ }
+}

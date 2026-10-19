@@ -54,7 +54,7 @@ module fsps_io
     use fsps_datalib, only: datalib_t, datalib_available, datalib_open, datalib_axis_values, &
                             datalib_axis_len, datalib_has_array, datalib_check_array, datalib_read_real, &
                             datalib_read_int, datalib_array_len, datalib_meta_real, datalib_meta_string, &
-                            datalib_meta_node, datalib_has_meta
+                            datalib_meta_node, datalib_has_meta, datalib_has_axis
     use fsps_json, only: json_len, json_item, json_child, json_real
     use, intrinsic :: iso_fortran_env, only: real32, int64, iostat_end, error_unit, file_storage_size
 
@@ -84,6 +84,8 @@ module fsps_io
     public :: load_spectral_grid_axes
     public :: isochrone_kind
     public :: use_standard_library
+    public :: library_spec
+    public :: metallicity_axis
     
     ! --- Public API: Input (Runtime) ---
     public :: load_tabular_sfh
@@ -528,11 +530,11 @@ contains
 
         if (is_spec) then
             if (use_standard_library(ctx, 'stellar_spectra', lib_type)) then
-                call standard_axis(ctx, 'stellar_spectra', lib_type, 'Z', ctx%state%zlegendinit)
+                call standard_metallicity(ctx, 'stellar_spectra', lib_type, ctx%state%zsol_spec, ctx%state%zlegendinit)
                 return
             end if
         else if (use_standard_library(ctx, isochrone_kind(lib_type), lib_type)) then
-            call standard_axis(ctx, isochrone_kind(lib_type), lib_type, 'Z', ctx%state%zlegend)
+            call standard_metallicity(ctx, isochrone_kind(lib_type), lib_type, ctx%state%zsol, ctx%state%zlegend)
             return
         end if
 
@@ -678,7 +680,7 @@ contains
             block
                 type(datalib_t) :: lib
                 integer(int64) :: off
-                call datalib_open(lib, ctx%sps_home, 'stellar_spectra', spec_type)
+                call datalib_open(lib, ctx%sps_home, 'stellar_spectra', library_spec(ctx, 'stellar_spectra', spec_type))
                 call datalib_check_array(lib, 'resolution', ['wavelength'], [ctx%state%nspec], off)
                 call datalib_read_real(lib, 'resolution', int(ctx%state%nspec, int64), ctx%state%spec_res, off)
             end block
@@ -2966,6 +2968,52 @@ contains
         use_standard_library = datalib_available(ctx%sps_home, kind, name, ctx%data_format)
     end function use_standard_library
 
+    !> @brief The library name with the context's axis selections ('mist:afe=0.4') for the
+    !> isochrone, SSP and spectral libraries, the plain name for every other kind.
+    function library_spec(ctx, kind, name) result(spec)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: kind, name
+        character(len=:), allocatable :: spec
+        spec = trim(name)
+        select case (kind)
+        case ('isochrones', 'ssp')
+            if (len_trim(ctx%state%isoc_select) > 0) spec = spec // ':' // trim(ctx%state%isoc_select)
+        case ('stellar_spectra')
+            if (len_trim(ctx%state%spec_select) > 0) spec = spec // ':' // trim(ctx%state%spec_select)
+        end select
+    end function library_spec
+
+    !> @brief Name of a library's metallicity axis: 'Z' (mass fraction) or 'feh' ([Fe/H], with
+    !> Z = Z_sun 10^[Fe/H] and Z_sun the library's solar_metallicity).
+    function metallicity_axis(lib) result(axis)
+        type(datalib_t), intent(in) :: lib
+        character(len=:), allocatable :: axis
+        if (datalib_has_axis(lib, 'Z')) then
+            axis = 'Z'
+        else if (datalib_has_axis(lib, 'feh')) then
+            axis = 'feh'
+        else
+            write(error_unit, '(A)') '[FSPS_IO] Error: library ' // lib%kind // '/' // lib%name // &
+                ' has no metallicity axis (Z or feh)'
+            error stop 1
+        end if
+    end function metallicity_axis
+
+    !> @brief Metallicities (mass fractions) of a library's metallicity axis.
+    subroutine standard_metallicity(ctx, kind, name, zsol, dest)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: kind, name
+        real(WP), intent(in) :: zsol
+        real(WP), intent(out) :: dest(:)
+        type(datalib_t) :: lib
+        character(len=:), allocatable :: axis
+
+        call datalib_open(lib, ctx%sps_home, kind, name)
+        axis = metallicity_axis(lib)
+        call standard_axis(ctx, kind, name, axis, dest)
+        if (axis == 'feh') dest = 10.0_wp**dest * zsol
+    end subroutine standard_metallicity
+
     !> @brief Library kind holding the "isochrones" of an isochrone set ('ssp' for BPASS).
     function isochrone_kind(isoc_type) result(kind)
         character(len=*), intent(in) :: isoc_type
@@ -3031,17 +3079,42 @@ contains
         real(WP), dimension(:,:,:), intent(out), contiguous :: array_out
         type(datalib_t) :: lib
         integer(int64) :: off, nblock
+        character(len=10) :: zax
 
-        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', spec_type)
-        call datalib_check_array(lib, 'flux', [character(len=10) :: 'Z', 'logg', 'logT', 'wavelength'], &
+        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', library_spec(ctx, 'stellar_spectra', spec_type))
+        zax = metallicity_axis(lib)
+        call datalib_check_array(lib, 'flux', [character(len=10) :: zax, 'logg', 'logT', 'wavelength'], &
                                  [ctx%state%nzinit, NDIM_LOGG, NDIM_LOGT, ctx%state%nspec], off)
         nblock = int(ctx%state%nspec, int64) * NDIM_LOGT * NDIM_LOGG
         if (size(array_out, kind=int64) /= nblock) then
             write(error_unit, '(A)') '[FSPS_IO] Error: spectral slab of the wrong size for ' // trim(spec_type)
             error stop 1
         end if
+        call check_available(lib, off / (nblock * ctx%state%nzinit), z_idx, ctx%state%nzinit)
         call datalib_read_real(lib, 'flux', nblock, array_out, off + int(z_idx - 1, int64) * nblock)
     end subroutine read_spectra_standard
+
+    !> @brief Stops if a library with an irregular grid (array 'available' over the extra axes
+    !> and metallicity) does not tabulate metallicity `z_idx` in extra-axis block `block`.
+    subroutine check_available(lib, block, z_idx, nz)
+        type(datalib_t), intent(in) :: lib
+        integer(int64), intent(in) :: block
+        integer, intent(in) :: z_idx, nz
+        integer, allocatable :: avail(:)
+        if (.not. datalib_has_array(lib, 'available')) return
+        allocate(avail(datalib_array_len(lib, 'available')))
+        call datalib_read_int(lib, 'available', size(avail, kind=int64), avail)
+        if (block * nz + z_idx > size(avail)) then
+            write(error_unit, '(A)') '[FSPS_IO] Error: ' // lib%kind // '/' // lib%name // &
+                ': array "available" does not match the grid'
+            error stop 1
+        end if
+        if (avail(block * nz + z_idx) == 0) then
+            write(error_unit, '(A,I0,A)') '[FSPS_IO] Error: ' // lib%kind // '/' // lib%name // &
+                ' does not tabulate metallicity ', z_idx, ' at the selected [alpha/Fe] (or other extra axis)'
+            error stop 1
+        end if
+    end subroutine check_available
 
     !> @brief One metallicity of a standard-format isochrone library.
     subroutine read_isochrones_standard(ctx, isoc_type, z_idx)
@@ -3052,26 +3125,33 @@ contains
         type(datalib_t) :: lib
         integer :: nt, nz, it, np, k
         integer(int64) :: off, row0, nrows, total
-        integer, allocatable :: npts(:, :)
+        integer, allocatable :: npts(:, :), npts_all(:)
         real(WP), allocatable :: logage(:, :), col(:)
+        character(len=9) :: zax
         character(len=12), parameter :: COLS(7) = [character(len=12) :: 'mini', 'mact', 'logl', 'logt', &
                                                     'logg', 'composition', 'phase']
 
         nt = ctx%state%nt
         nz = ctx%state%nz
-        call datalib_open(lib, ctx%sps_home, 'isochrones', isoc_type)
-        allocate(npts(nt, nz), logage(nt, nz))
-        call datalib_check_array(lib, 'npoints', ['Z        ', 'age_index'], [nz, nt], off)
-        call datalib_read_int(lib, 'npoints', int(nt * nz, int64), npts, off)
-        call datalib_check_array(lib, 'log_age', ['Z        ', 'age_index'], [nz, nt], off)
+        call datalib_open(lib, ctx%sps_home, 'isochrones', library_spec(ctx, 'isochrones', isoc_type))
+        zax = metallicity_axis(lib)
+        allocate(logage(nt, nz))
+        call datalib_check_array(lib, 'log_age', [character(len=9) :: zax, 'age_index'], [nz, nt], off)
         call datalib_read_real(lib, 'log_age', int(nt * nz, int64), logage, off)
-        if (any(npts < 0) .or. any(npts > NM)) then
+        ! npoints of every (extra axes, Z, age) block: the rows of the blocks before the selected
+        ! one (e.g. other [alpha/Fe]) precede its rows in the columns
+        call datalib_check_array(lib, 'npoints', [character(len=9) :: zax, 'age_index'], [nz, nt], off)
+        allocate(npts_all(datalib_array_len(lib, 'npoints')))
+        call datalib_read_int(lib, 'npoints', size(npts_all, kind=int64), npts_all)
+        npts = reshape(npts_all(off + 1:off + nt * nz), [nt, nz])
+        if (any(npts_all < 0) .or. any(npts_all > NM)) then
             write(error_unit, '(A,I0,A)') '[FSPS_IO] Error: isochrones/' // trim(isoc_type) // &
                 ': npoints must be between 0 and ', NM, ' (points per isochrone)'
             error stop 1
         end if
-        total = sum(int(npts, int64))
-        row0 = sum(int(npts(:, 1:z_idx - 1), int64))
+        call check_available(lib, off / int(nt * nz, int64), z_idx, nz)
+        total = sum(int(npts_all, int64))
+        row0 = sum(int(npts_all(1:off), int64)) + sum(int(npts(:, 1:z_idx - 1), int64))
         nrows = sum(int(npts(:, z_idx), int64))
 
         allocate(col(nrows))
@@ -3140,7 +3220,7 @@ contains
         nt = ctx%state%nt
         nz = ctx%state%nz
         nspec = ctx%state%nspec
-        call datalib_open(lib, ctx%sps_home, 'ssp', 'bpss')
+        call datalib_open(lib, ctx%sps_home, 'ssp', library_spec(ctx, 'ssp', 'bpss'))
         call standard_axis(ctx, 'ssp', 'bpss', 'wavelength', ctx%state%spec_lambda)
         where (ctx%state%spec_lambda > SAFE_FLOOR)
             ctx%state%spec_nu = C_LIGHT / ctx%state%spec_lambda

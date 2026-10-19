@@ -1,0 +1,98 @@
+{
+ "format": "fsps-data",
+ "format_version": 1,
+ "kind": "agb_spectra",
+ "name": "orich",
+ "title": "Empirical O-rich TP-AGB spectra - coarse test subset of the full library; not for science",
+ "provenance": {
+  "converter": "tools/fsps_data",
+  "created": "2026-10-19T21:43:50Z",
+  "subset_of": "agb_spectra/orich",
+  "subset": {
+   "wavelength": "slice(None, None, 25)"
+  }
+ },
+ "metadata": {},
+ "axes": {
+  "type": {
+   "units": "spectral type index",
+   "values": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0
+   ]
+  },
+  "wavelength": {
+   "units": "angstrom",
+   "file": "axis_wavelength.bin",
+   "dtype": "<f8",
+   "shape": [
+    246
+   ],
+   "sha256": "b08c7c4132cc8305f0dd8ce14b4680210d0e60abcc214c5191848fab9e6d98a7"
+  },
+  "logZ": {
+   "units": "log10(Z/Z_sun)",
+   "values": [
+    -1.98,
+    -1.8,
+    -1.68,
+    -1.58,
+    -1.5,
+    -1.38,
+    -1.28,
+    -1.2,
+    -1.07,
+    -0.98,
+    -0.88,
+    -0.79,
+    -0.69,
+    -0.59,
+    -0.49,
+    -0.39,
+    -0.3,
+    -0.2,
+    -0.1,
+    0.0,
+    0.1,
+    0.2
+   ]
+  }
+ },
+ "arrays": {
+  "teff": {
+   "file": "teff.bin",
+   "dtype": "<f4",
+   "shape": [
+    9,
+    22
+   ],
+   "axes": [
+    "type",
+    "logZ"
+   ],
+   "units": "K",
+   "sha256": "d4374d8e6deccc61220f73970736e5b1123d469c74f509823181910ca0f784d7"
+  },
+  "flux": {
+   "file": "flux.bin",
+   "dtype": "<f4",
+   "shape": [
+    9,
+    246
+   ],
+   "axes": [
+    "type",
+    "wavelength"
+   ],
+   "units": "F_lambda normalized to unit integral over angstrom",
+   "sha256": "4400bc2153f513da37b6676f57f45cf1fb1d67320433c8af144811e2d3a49900"
+  }
+ }
+}

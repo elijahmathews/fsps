@@ -79,6 +79,10 @@ module fsps_context_types
         real(WP) :: zsol_spec = 0.0_wp
         character(len=64) :: isoc_type = ''
         character(len=64) :: spec_type = ''
+        !> Axis selections of the isochrone and spectral libraries (standard format), e.g.
+        !> 'afe=0.4' from a library name 'mist:afe=0.4'; empty: each axis's default
+        character(len=64) :: isoc_select = ''
+        character(len=64) :: spec_select = ''
         integer :: nt = 0
         integer :: nz = 0
         integer :: nspec = 0

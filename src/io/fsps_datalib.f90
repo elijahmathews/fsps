@@ -358,6 +358,7 @@ contains
                 do j = 1, lib%nsel
                     if (trim(lib%sel_axis(j)) == axname) idx = select_index(lib, axname, trim(lib%sel_value(j)))
                 end do
+                if (idx == 0) idx = default_index(lib, axname)
                 if (idx == 0) call lib_error(lib, 'array "' // name // '" has an extra axis "' // axname // &
                     '" of length ' // itoa(int(shape_(i))) // ': select one value with "' // lib%name // ':' // &
                     axname // '=<value>"')
@@ -366,6 +367,23 @@ contains
             stride = stride * shape_(i)
         end do
     end subroutine datalib_check_array
+
+    !> Index of the axis's "default" coordinate (a number or a label), 0 if it has none.
+    integer function default_index(lib, axis)
+        type(datalib_t), intent(in) :: lib
+        character(len=*), intent(in) :: axis
+        integer :: node
+        character(len=40) :: buf
+        default_index = 0
+        node = json_child(lib%doc, axis_node(lib, axis), 'default')
+        select case (json_kind(lib%doc, node))
+        case (JSON_K_NUMBER)
+            write(buf, '(ES24.16)') json_real(lib%doc, node)
+            default_index = select_index(lib, axis, trim(adjustl(buf)))
+        case (JSON_K_STRING)
+            default_index = select_index(lib, axis, json_string(lib%doc, node))
+        end select
+    end function default_index
 
     !> Index of `value` (a number or a label) on axis `axis`.
     integer function select_index(lib, axis, value)

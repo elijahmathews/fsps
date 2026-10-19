@@ -420,7 +420,7 @@ test('regression_bpass',
 
 # Bit-for-bit parity of the legacy layout and the standard data format (doc/DATA_FORMAT.md).
 # Needs a converted data root: -Dstandard_data_home=<root> (tools/fsps_data/convert_legacy.py);
-# skipped (exit 77) when the root has no fsps-data.json.
+# skipped when the root has no fsps-data.json.
 data_parity_exe = executable('test_data_parity', 'tests/test_data_parity.f90',
     dependencies : [fsps_dep, test_utils_dep],
     link_language : 'fortran'
@@ -436,6 +436,32 @@ test('data_parity', data_parity_exe,
     suite : 'data_parity',
     timeout : 1800
 )
+
+# Setup and synthesis from the small standard-format test library committed in the repository
+# (tests/data/fsps-test-data, no other data needed), and [alpha/Fe] axis selection on variants
+# derived at test time (tools/fsps_data/make_afe_variants.py)
+standard_library_exe = executable('test_standard_library', 'tests/test_standard_library.f90',
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
+python3 = find_program('python3', required : false)
+if python3.found()
+    test('unit_standard_library', python3,
+        args : [join_paths(meson.project_source_root(), 'tests/run_standard_library_test.py'),
+                standard_library_exe, join_paths(meson.project_source_root(), 'tests/data/fsps-test-data'),
+                meson.current_build_dir()],
+        env : unit_env,
+        protocol : 'tap',
+        suite : 'unit',
+        timeout : 300
+    )
+    # The Python data tools (format round trip, converters of the upstream [alpha/Fe] layouts)
+    test('unit_data_tools', python3,
+        args : [join_paths(meson.project_source_root(), 'tools/fsps_data/test_fsps_data.py')],
+        suite : 'unit',
+        timeout : 120
+    )
+endif
 
 # 4. C Tests
 executable('test_c_driver', 'tests/test_c_driver.c', 

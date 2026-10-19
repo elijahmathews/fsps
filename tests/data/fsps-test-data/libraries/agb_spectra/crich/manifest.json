@@ -1,0 +1,65 @@
+{
+ "format": "fsps-data",
+ "format_version": 1,
+ "kind": "agb_spectra",
+ "name": "crich",
+ "title": "Empirical C-rich TP-AGB spectra - coarse test subset of the full library; not for science",
+ "provenance": {
+  "converter": "tools/fsps_data",
+  "created": "2026-10-19T21:43:50Z",
+  "subset_of": "agb_spectra/crich",
+  "subset": {
+   "wavelength": "slice(None, None, 25)"
+  }
+ },
+ "metadata": {},
+ "axes": {
+  "type": {
+   "units": "spectral type index",
+   "values": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+   ]
+  },
+  "wavelength": {
+   "units": "angstrom",
+   "file": "axis_wavelength.bin",
+   "dtype": "<f8",
+   "shape": [
+    246
+   ],
+   "sha256": "b08c7c4132cc8305f0dd8ce14b4680210d0e60abcc214c5191848fab9e6d98a7"
+  }
+ },
+ "arrays": {
+  "teff": {
+   "file": "teff.bin",
+   "dtype": "<f4",
+   "shape": [
+    5
+   ],
+   "axes": [
+    "type"
+   ],
+   "units": "K",
+   "sha256": "a9be0f5b1ea1c77380267f7378716122e96e5925157ab3d12ae604ce6ad32519"
+  },
+  "flux": {
+   "file": "flux.bin",
+   "dtype": "<f4",
+   "shape": [
+    5,
+    246
+   ],
+   "axes": [
+    "type",
+    "wavelength"
+   ],
+   "units": "F_lambda normalized to unit integral over angstrom",
+   "sha256": "48779c9330bec9644e1c14a6f649e789b66765cfbf2221aa9fe40d559dc8b291"
+  }
+ }
+}
