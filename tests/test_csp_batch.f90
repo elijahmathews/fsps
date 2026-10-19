@@ -13,7 +13,11 @@ program test_csp_batch
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
     use fsps_csp, only: compute_csp_scenario
-    use fsps_csp_batch, only: compute_csp_batch
+    use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device
+    use, intrinsic :: iso_c_binding, only: c_ptr, c_associated, c_loc, c_size_t, c_f_pointer
+#if defined(OMP_TARGET)
+    use omp_lib, only: omp_target_memcpy, omp_get_initial_device, omp_get_default_device
+#endif
     use fsps_ssp, only: generate_ssp_grid
     use fsps_context, only: fsps_context_update_ssp_basis, fsps_context_move_to_device, &
                             fsps_context_set_pset, fsps_context_get_pset, fsps_context_prepare_pset, &
@@ -220,6 +224,7 @@ contains
         call assert_true(d_scal <= 1.0e-12_wp, "mass, L_bol, SFR", total_tests, total_failures)
         call assert_true(maxval(abs(mdust / ref_mdust - 1.0_wp)) <= SPEC_RTOL, "dust mass", &
                          total_tests, total_failures)
+        call check_spectra_device(spec)
 
         ! The SFH weights given as a matrix (non-parametric SFH input) instead of the parameters
         call compute_csp_batch(ctx, psets, mags, status, spec=spec, mass=mass, lbol=lbol, ssp_weights=ref_w)
@@ -351,6 +356,47 @@ contains
         call assert_true(d_line <= SPEC_RTOL, "emission lines", total_tests, total_failures)
         call assert_true(d_indx <= INDX_TOL, "spectral indices", total_tests, total_failures)
     end subroutine check_batch_z
+
+    !> batch_spectra_device after a batch with spec: the spectra at the returned address (on the
+    !> device in GPU builds) equal the ones copied back
+    subroutine check_spectra_device(spec)
+        real(WP), intent(in) :: spec(:, :)
+        type(c_ptr) :: dptr
+        integer :: ns, n, nb
+        real(KP), allocatable, target :: buf(:, :)
+        real(KP), pointer :: hp(:, :)
+        logical :: ok
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        interface
+            subroutine acc_d2h(dst, src, bytes) bind(C, name='acc_memcpy_from_device')
+                import :: c_ptr, c_size_t
+                type(c_ptr), value :: dst, src
+                integer(c_size_t), value :: bytes
+            end subroutine acc_d2h
+        end interface
+#elif defined(OMP_TARGET)
+        integer :: st
+#endif
+
+        call batch_spectra_device(ctx, dptr, ns, n, nb)
+        ok = c_associated(dptr) .and. ns == size(spec, 1) .and. n == size(spec, 2) .and. &
+             nb == storage_size(1.0_KP) / 8
+        if (ok) then
+            allocate(buf(ns, n))
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+            call acc_d2h(c_loc(buf), dptr, int(ns, c_size_t) * int(n, c_size_t) * int(nb, c_size_t))
+#elif defined(OMP_TARGET)
+            st = omp_target_memcpy(c_loc(buf), dptr, int(ns, c_size_t) * int(n, c_size_t) * int(nb, c_size_t), &
+                                   0_c_size_t, 0_c_size_t, omp_get_initial_device(), omp_get_default_device())
+            ok = st == 0
+#else
+            call c_f_pointer(dptr, hp, [ns, n])
+            buf = hp
+#endif
+            ok = ok .and. all(real(buf, WP) == spec(1:ns, 1:n))
+        end if
+        call assert_true(ok, "spectra on the device (batch_spectra_device)", total_tests, total_failures)
+    end subroutine check_spectra_device
 
     subroutine set_int(key, value)
         character(len=*), intent(in) :: key
