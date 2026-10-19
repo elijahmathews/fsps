@@ -144,6 +144,39 @@ Forecast to compare against: ~4 us per model (FP32) on the A100 at large N.
   silently broke the AGB dust screen in CI once).
 - Use `OMP_TARGET_OFFLOAD=MANDATORY` for OpenMP target runs so a silent host fallback fails.
 
+## Converge on OpenMP target offload; retire OpenACC
+
+Both directive sets are maintained today. That doubles every kernel's directives and every
+data-lifetime decision, doubles the CI configurations, and lets the two paths drift (the AMD
+780M faults traced to LLVM flang mapping semantics live in that gap). OpenMP target is the
+portable model (NVIDIA via nvfortran, AMD via LLVM flang / AOMP, Intel via ifx), so the plan is
+OpenMP only. OpenACC stays until then because it is:
+
+- faster on NVIDIA: A100 batch 2.9 vs 3.6 us/model (basic) and 7.1 vs 7.8 us/model (full
+  physics; FP32, N = 10^4); the per-call overhead work (pinned copy-back, async queues, packed
+  transfers) is OpenACC-specific;
+- the validated reference the OpenMP port is checked against;
+- the CPU-multicore path CI uses (`-Daccel=multicore`);
+- how cuBLAS is reached (`host_data use_device`).
+
+**Until the switch, OpenACC is frozen:** no new OpenACC-only features. New kernels get OpenMP
+directives first; OpenACC directives are kept only to preserve current NVIDIA performance.
+
+**Criteria to remove OpenACC:**
+
+- [ ] OpenMP passes the unit + regression suites and the case matrix on NVIDIA (nvfortran) and
+      AMD (LLVM flang / AOMP); ideally Intel (ifx).
+- [ ] The AMD 780M batch tests pass (flang mapping fixes: branch `fix/omp-flang-map-lifetimes`,
+      PR #13).
+- [ ] OpenMP within ~10% of OpenACC on the A100, at large N and in per-call overhead at N = 1.
+- [ ] Feature parity: single CSP call (`compute_csp_scenario`) and SSP stages offloaded; cuBLAS
+      through `use_device_addr`; asynchronous copies through `nowait` / `depend`;
+      device-resident and kernel-precision outputs.
+- [ ] `-Daccel=multicore` replaced by OpenMP host threading, CI updated.
+
+**Then, in one PR:** remove every `!$acc` directive and the `-Daccel=gpu` / `multicore`
+options, and update `AGENTS.md`, this file, `doc/CI.md` and the CI workflows.
+
 ## Recording results
 
 Write measurements and findings to `doc/GPU_RESULTS.md` (date, node, GPU, driver, nvfortran
