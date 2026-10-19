@@ -204,12 +204,14 @@ contains
     !> spectrum), on WP copies of the spectra, as the per-spectrum routine.
     subroutine compute_spectral_indices_columns(ctx, lambda, spec, n_col, indices)
         type(fsps_context_t), intent(in) :: ctx
-        real(WP), dimension(:), intent(in), contiguous :: lambda
+        real(WP), dimension(:), intent(in), contiguous, target :: lambda
         real(KP), dimension(:,:), intent(in) :: spec
         integer, intent(in) :: n_col
         real(WP), dimension(:,:), intent(out) :: indices   ! (nindx, n_col)
 
-        real(WP), allocatable :: specw(:,:), ind(:,:), lam(:)
+        real(WP), allocatable :: specw(:,:), ind(:,:)
+        real(WP), allocatable, target :: lam(:)
+        real(WP), pointer, contiguous :: lp(:)
         integer :: j, m, i, n_idx, nspec
 
         n_idx = ctx%state%nindx
@@ -217,11 +219,18 @@ contains
         ! Results in a local array: indices may have more columns than n_col, and mapping a
         ! section of it while the kernel refers to the whole dummy is "partially present"
         allocate(specw(nspec, n_col), ind(n_idx, n_col))
+#ifdef OMP_TARGET
         ! A local copy of the wavelengths for the kernel: with OpenMP target offload, nvfortran 25.1
         ! fails (illegal address) when a device function receives an assumed-shape dummy of the
         ! enclosing host routine; local arrays and their sections work
         lam = lambda
-        !$acc data present(spec) copyin(lam) create(specw) copyout(ind)
+        lp => lam
+#else
+        ! OpenACC: the wavelengths as given (the context's, already on the device: copyin finds
+        ! them there instead of uploading 48 kB per call)
+        lp => lambda
+#endif
+        !$acc data present(spec) copyin(lp) create(specw) copyout(ind)
 #ifdef OMP_TARGET
         !$omp target data map(to: lam) map(alloc: specw) map(from: ind)
 #endif
@@ -234,13 +243,13 @@ contains
                 specw(i, m) = real(spec(i, m), WP)
             end do
         end do
-        !$acc parallel loop gang vector collapse(2) present(ctx, lam, specw, ind)
+        !$acc parallel loop gang vector collapse(2) present(ctx, lp, specw, ind)
 #ifdef OMP_TARGET
         !$omp target teams distribute parallel do collapse(2)
 #endif
         do m = 1, n_col
             do j = 1, n_idx
-                ind(j, m) = spectral_index_value(ctx, lam, specw(:, m), j)
+                ind(j, m) = spectral_index_value(ctx, lp, specw(:, m), j)
             end do
         end do
 #ifdef OMP_TARGET

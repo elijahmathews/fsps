@@ -108,19 +108,23 @@ module fsps_csp_batch
         integer :: nt_neb = 0         !< ages with nebular emission (1..nt_neb)
         integer :: whlylim = 0        !< pixels below the Lyman limit
         logical :: cont = .false., lines_in_spec = .false., xrb = .false.
-        integer,  allocatable :: ia(:)          !< per age: CLOUDY age interval and weight
-        real(WP), allocatable :: wa(:)
-        real(WP), allocatable :: dwa(:)         !< per age: wa(t) - wa(t-1) within an interval
-        logical,  allocatable :: newr(:)        !< per age: the step dwa differs from the previous one
+        !> Host-filled inputs: sections of ipk, rpk, lpk (pack_nebular), one transfer per type
+        integer,  allocatable :: ipk(:)
+        real(WP), allocatable :: rpk(:)
+        logical,  allocatable :: lpk(:)
+        integer,  pointer, contiguous :: ia(:) => null()     !< per age: CLOUDY age interval and weight
+        real(WP), pointer, contiguous :: wa(:) => null()
+        real(WP), pointer, contiguous :: dwa(:) => null()    !< per age: wa(t) - wa(t-1) within an interval
+        logical,  pointer, contiguous :: newr(:) => null()   !< per age: the step dwa differs from the previous one
         real(WP), allocatable :: cy(:,:), co(:,:) !< (ages, N): SFH weight * Q, young and old (continuum)
         real(WP), allocatable :: q0(:,:)        !< per age and basis: ionizing photons (frac_obrun = 0)
-        integer,  allocatable :: iz(:), iu(:)   !< per model: gas_logz and gas_logu intervals and weights
-        real(WP), allocatable :: wz(:), wu(:)
-        real(WP), allocatable :: fesc(:)        !< per model: escaping EUV fraction (clamped frac_obrun)
-        real(WP), allocatable :: fabs(:)        !< per model: 1 - frac_obrun (absorbed fraction in Q)
+        integer,  pointer, contiguous :: iz(:) => null(), iu(:) => null()  !< per model: gas_logz and gas_logu intervals and weights
+        real(WP), pointer, contiguous :: wz(:) => null(), wu(:) => null()
+        real(WP), pointer, contiguous :: fesc(:) => null()   !< per model: escaping EUV fraction (clamped frac_obrun)
+        real(WP), pointer, contiguous :: fabs(:) => null()   !< per model: 1 - frac_obrun (absorbed fraction in Q)
         real(KP), allocatable :: lum(:,:)       !< line luminosities (lines, 2N): young, then old
-        integer,  allocatable :: lptr(:), lid(:) !< per pixel (CSR): lines whose profile reaches it
-        integer,  allocatable :: llo(:)         !< per line: pixel interval of its wavelength
+        integer,  pointer, contiguous :: lptr(:) => null(), lid(:) => null() !< per pixel (CSR): lines whose profile reaches it
+        integer,  pointer, contiguous :: llo(:) => null()    !< per line: pixel interval of its wavelength
     end type nebular_setup_t
 
 contains
@@ -158,25 +162,26 @@ contains
         !> and on the GPU's single-thread FP64 speed; measured on the A100 node.)
         integer, parameter :: HOST_SFH_MAX = 16
         real(WP), allocatable :: wh(:,:), t1h(:), t2h(:)
-        real(WP), allocatable :: wext(:,:), zcol(:)
-        integer  :: nzb
-        integer,  allocatable :: zlo(:), zhi(:)
-        real(WP), allocatable :: dz(:)
+        integer  :: nzb, nw
 
-        ! Per-model parameters and results on the host
+        ! Per-model inputs and results: sections of one array per type (ipk, rpk, lpk in, rout
+        ! out), so that each moves in one transfer. (At N = 1 the ~30 separate small pageable
+        ! transfers and their array descriptors were most of a call: ~10-20 us each on the A100
+        ! node.)
+        integer,  allocatable, target :: ipk(:)
+        real(WP), allocatable, target :: rpk(:), rout(:)
+        logical,  allocatable, target :: lpk(:)
+        integer,  pointer, contiguous :: it_tesc(:), iq(:), iu(:), ita(:), zlo(:), zhi(:)
+        real(WP), pointer, contiguous :: wq(:), wu(:), gam(:), wta(:), dz(:), zcol(:), lum_linear(:), wext(:,:)
+        logical,  pointer, contiguous :: emis(:), agn_on(:)
+        real(WP), pointer, contiguous :: s_abs(:), s_norm(:), s_esc(:), s_line(:), msum(:), lsum(:)
+
+        ! Work arrays on the device
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
-        real(WP), allocatable :: weights(:,:,:), tmp1(:,:), tmp2(:,:), lum_linear(:), msum(:), lsum(:)
-        integer,  allocatable :: it_tesc(:)
-        integer,  allocatable :: iq(:), iu(:)
-        real(WP), allocatable :: wq(:), wu(:), gam(:)
-        logical,  allocatable :: emis(:)
-        real(WP), allocatable :: s_abs(:), s_norm(:), s_esc(:), s_line(:)
+        real(WP), allocatable :: weights(:,:,:), tmp1(:,:), tmp2(:,:)
 
         ! Nebular emission and AGN (per age, per model, per pixel line lists)
-        type(nebular_setup_t) :: nb
-        integer,  allocatable :: ita(:)
-        real(WP), allocatable :: wta(:)
-        logical,  allocatable :: agn_on(:)
+        type(nebular_setup_t), target :: nb
         real(KP), allocatable :: eml(:,:)
 
         ! Work arrays (pixels x models) at kernel precision
@@ -238,25 +243,52 @@ contains
             end if
             if (psets(m)%zred /= zred .or. psets(m)%igm_factor /= psets(1)%igm_factor) zvar = .true.
         end do
-        allocate(zcol(n_mod))
-        zcol = psets(1:n_mod)%zred
         host_w = .false.
 #if (defined(_OPENACC) && !defined(ACC_MULTICORE)) || defined(OMP_TARGET)
         host_w = (.not. given_w) .and. n_mod < HOST_SFH_MAX
 #endif
+        nw = 1
+        if (given_w .or. host_w) nw = nt * n_mod
+        allocate(ipk(6 * n_mod), rpk(6 * n_mod + nt + nw), lpk(2 * n_mod), rout(6 * n_mod))
+        it_tesc => ipk(1:n_mod)
+        iq => ipk(n_mod + 1:2 * n_mod)
+        iu => ipk(2 * n_mod + 1:3 * n_mod)
+        ita => ipk(3 * n_mod + 1:4 * n_mod)
+        zlo => ipk(4 * n_mod + 1:5 * n_mod)
+        zhi => ipk(5 * n_mod + 1:6 * n_mod)
+        wq => rpk(1:n_mod)
+        wu => rpk(n_mod + 1:2 * n_mod)
+        gam => rpk(2 * n_mod + 1:3 * n_mod)
+        wta => rpk(3 * n_mod + 1:4 * n_mod)
+        dz => rpk(4 * n_mod + 1:5 * n_mod)
+        zcol => rpk(5 * n_mod + 1:6 * n_mod)
+        lum_linear => rpk(6 * n_mod + 1:6 * n_mod + nt)
+        if (nw > 1) then
+            wext(1:nt, 1:n_mod) => rpk(6 * n_mod + nt + 1:6 * n_mod + nt + nw)
+        else
+            wext(1:1, 1:1) => rpk(6 * n_mod + nt + 1:6 * n_mod + nt + 1)
+        end if
+        emis => lpk(1:n_mod)
+        agn_on => lpk(n_mod + 1:2 * n_mod)
+        s_abs => rout(1:n_mod)
+        s_norm => rout(n_mod + 1:2 * n_mod)
+        s_esc => rout(2 * n_mod + 1:3 * n_mod)
+        msum => rout(3 * n_mod + 1:4 * n_mod)
+        lsum => rout(4 * n_mod + 1:5 * n_mod)
+        s_line => rout(5 * n_mod + 1:6 * n_mod)
+        rpk = 0.0_wp
+
+        zcol = psets(1:n_mod)%zred
         if (given_w) then
-            allocate(wext(nt, n_mod))
             wext = ssp_weights(1:nt, 1:n_mod)
         else if (host_w) then
             ! Few models: the SFH weights on the host (as compute_csp_scenario does for one output),
             ! then used as a given weight matrix
-            allocate(wext(nt, n_mod), wh(nt, 1), t1h(nt), t2h(nt))
+            allocate(wh(nt, 1), t1h(nt), t2h(nt))
             do m = 1, n_mod
                 call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, wh, t1h, t2h)
                 wext(:, m) = wh(:, 1)
             end do
-        else
-            allocate(wext(1, 1))
         end if
 
         ! Smoothing as apply_smoothing (which does nothing for sigma <= SAFE_FLOOR)
@@ -271,7 +303,6 @@ contains
         if (zmode .and. nzb /= ctx%state%nz) then
             status = 3; return
         end if
-        allocate(zlo(n_mod), zhi(n_mod), dz(n_mod))
         zlo = 1; zhi = 1; dz = 0.0_wp
         if (zmode) then
             do m = 1, n_mod
@@ -284,12 +315,10 @@ contains
         ! 1. Host: per-model indices (birth-cloud age, dust emission grid, nebular grid, AGN
         !    template) and SFR
         ! ------------------------------------------------------------------
-        allocate(w2(nt, 2 * n_mod), lum_linear(nt), it_tesc(n_mod), msum(n_mod), lsum(n_mod))
+        allocate(w2(nt, 2 * n_mod))
         ! SFH scratch: sfh_weights_core uses ntfull entries (sized from the ages, not from the
         ! context's CSP workspace, which a context used only through the batch may not have)
         allocate(weights(nt, 1, n_mod), tmp1(nt, n_mod), tmp2(nt, n_mod))
-        allocate(iq(n_mod), iu(n_mod), wq(n_mod), wu(n_mod), gam(n_mod), emis(n_mod))
-        allocate(ita(n_mod), wta(n_mod), agn_on(n_mod))
         lum_linear = 10.0_wp**ctx%state%ssp_basis_lbol(1:nt, 1)
         do m = 1, n_mod
             if (psets(m)%dust_tesc > SAFE_FLOOR) then
@@ -345,41 +374,49 @@ contains
         else
             allocate(tdiff(1, 1))
         end if
-        allocate(s_abs(n_mod), s_norm(n_mod), s_esc(n_mod), s_line(n_mod))
 
-        !$acc data present(ctx) copyin(psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
-        !$acc      copyin(zlo, zhi, dz, wext, zcol) &
-        !$acc      copyin(nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs, nb%lptr) &
-        !$acc      copyin(nb%lid, nb%llo) create(w2, weights, tmp1, tmp2, yo, absorbed, nb%q0, nb%lum, s_line) &
-        !$acc      create(nb%cy, nb%co, tdiff) &
-        !$acc      copyout(s_abs, s_norm, s_esc, msum, lsum, eml)
+        !$acc data present(ctx) copyin(psets, ipk, rpk, lpk) create(w2, weights, tmp1, tmp2, yo, absorbed, tdiff) &
+        !$acc      copyout(rout, eml)
+        ! Nebular data only with nebular emission (its kernels run only then)
+        !$acc data copyin(nb%ipk, nb%rpk, nb%lpk) create(nb%q0, nb%lum, nb%cy, nb%co) if(neb)
 #ifdef OMP_TARGET
-        !$omp target data map(to: psets, iq, iu, wq, wu, gam, emis, it_tesc, lum_linear, ita, wta, agn_on) &
-        !$omp map(to: zlo, zhi, dz, wext, zcol) &
-        !$omp map(alloc: w2, weights, tmp1, tmp2, yo, absorbed, s_line, tdiff) &
-        !$omp map(from: s_abs, s_norm, s_esc, msum, lsum, eml)
+        !$omp target data map(to: psets, ipk, rpk, lpk) &
+        !$omp map(alloc: w2, weights, tmp1, tmp2, yo, absorbed, tdiff) &
+        !$omp map(from: rout, eml)
 #endif
 #ifdef OMP_TARGET
-        !$omp target data map(to: nb%ia, nb%wa, nb%dwa, nb%newr, nb%iz, nb%wz, nb%iu, nb%wu, nb%fesc, nb%fabs) &
-        !$omp map(to: nb%lptr, nb%lid, nb%llo) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
+        !$omp target data if(neb) map(to: nb%ipk, nb%rpk, nb%lpk) map(alloc: nb%q0, nb%lum, nb%cy, nb%co)
 #endif
 
         ! SFH weights (FP64), mass and L_bol per model, one thread per model; the weights are split
         ! into young and old ages at the model's dust_tesc and cast once to kernel precision
-        !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2, w2, it_tesc, lum_linear, msum, lsum, &
-        !$acc zlo, zhi, dz, wext) private(k, w)
+        ! (Two kernels: the device call's array sections cost six descriptor transfers per launch,
+        ! paid only when the device computes the weights.)
+        if (given_w .or. host_w) then
+            !$acc parallel loop collapse(2) present(weights, wext)
+#ifdef OMP_TARGET
+            !$omp target teams distribute parallel do collapse(2)
+#endif
+            do m = 1, n_mod
+                do k = 1, nt
+                    weights(k, 1, m) = wext(k, m)
+                end do
+            end do
+        else
+            !$acc parallel loop gang vector present(ctx, psets, weights, tmp1, tmp2)
+#ifdef OMP_TARGET
+            !$omp target teams distribute parallel do
+#endif
+            do m = 1, n_mod
+                call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
+            end do
+        end if
+        !$acc parallel loop gang vector present(ctx, weights, w2, it_tesc, lum_linear, msum, lsum, &
+        !$acc zlo, zhi, dz) private(k, w)
 #ifdef OMP_TARGET
         !$omp target teams distribute parallel do private(k, w)
 #endif
         do m = 1, n_mod
-            if (given_w .or. host_w) then
-                !$acc loop seq
-                do k = 1, nt
-                    weights(k, 1, m) = wext(k, m)
-                end do
-            else
-                call sfh_weights_core(ctx, psets(m), psets(m)%tage, 1, weights(:, :, m), tmp1(:, m), tmp2(:, m))
-            end if
             msum(m) = 0.0_wp
             lsum(m) = 0.0_wp
             !$acc loop seq
@@ -465,6 +502,7 @@ contains
 #ifdef OMP_TARGET
         !$omp end target data
 #endif
+        !$acc end data
         !$acc end data
 
         if (present(emlines)) then
@@ -629,7 +667,7 @@ contains
         type(params), intent(in)            :: psets(:)
         logical, intent(in)                 :: neb
         integer, intent(in)                 :: nzb
-        type(nebular_setup_t), intent(out)  :: nb
+        type(nebular_setup_t), intent(out), target :: nb
 
         real(WP), parameter :: LINE_PROFILE_CUT = 1.0e-14_wp   ! as add_lines_to_spectrum (CPU)
         integer  :: n_mod, nspec, t, m, i, j, jc, n, p
@@ -700,6 +738,7 @@ contains
         nb%lptr = 1
         if (.not. nb%lines_in_spec) then
             allocate(nb%lid(1)); nb%lid = 1
+            call pack_nebular(nb)
             return
         end if
         call prepare_line_gaussians(ctx, psets(1))
@@ -735,7 +774,51 @@ contains
                 cnt(j) = cnt(j) + 1
             end do
         end do
+        call pack_nebular(nb)
     end subroutine nebular_setup
+
+    !> Moves the host-filled arrays of nb into one array per type (nb%ipk, rpk, lpk) and points
+    !> them there, so the batch uploads them in three transfers.
+    subroutine pack_nebular(nb)
+        type(nebular_setup_t), intent(inout), target :: nb
+        integer :: oi, orr, ol
+
+        allocate(nb%ipk(size(nb%ia) + size(nb%iz) + size(nb%iu) + size(nb%lptr) + size(nb%lid) + size(nb%llo)))
+        allocate(nb%rpk(size(nb%wa) + size(nb%dwa) + size(nb%wz) + size(nb%wu) + size(nb%fesc) + size(nb%fabs)))
+        allocate(nb%lpk(size(nb%newr)))
+        oi = 0; orr = 0; ol = 0
+        call move_i(nb%ia); call move_i(nb%iz); call move_i(nb%iu)
+        call move_i(nb%lptr); call move_i(nb%lid); call move_i(nb%llo)
+        call move_r(nb%wa); call move_r(nb%dwa); call move_r(nb%wz)
+        call move_r(nb%wu); call move_r(nb%fesc); call move_r(nb%fabs)
+        nb%lpk = nb%newr
+        deallocate(nb%newr)
+        nb%newr => nb%lpk
+
+    contains
+
+        subroutine move_i(p)
+            integer, pointer, contiguous, intent(inout) :: p(:)
+            integer :: n
+
+            n = size(p)
+            nb%ipk(oi + 1:oi + n) = p
+            deallocate(p)
+            p => nb%ipk(oi + 1:oi + n)
+            oi = oi + n
+        end subroutine move_i
+
+        subroutine move_r(p)
+            real(WP), pointer, contiguous, intent(inout) :: p(:)
+            integer :: n
+
+            n = size(p)
+            nb%rpk(orr + 1:orr + n) = p
+            deallocate(p)
+            p => nb%rpk(orr + 1:orr + n)
+            orr = orr + n
+        end subroutine move_r
+    end subroutine pack_nebular
 
     !> AGN template interval for pset (apply_agn_dust_emission); on = AGN emission is added.
     subroutine agn_indices(ctx, pset, on, ita, wta)
