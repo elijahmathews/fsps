@@ -181,6 +181,15 @@ jobs:
       - name: Unit and regression tests
         run: meson test -C build --suite unit --suite regression --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
 
+      # The standard data format (doc/DATA_FORMAT.md): convert the checked-out legacy tree and
+      # require every loaded array and SSP/CSP output to be bit-for-bit those of the legacy reader
+      - name: Standard data format parity
+        if: matrix.full_data
+        run: |
+          sudo apt-get install -y -q python3-numpy
+          python3 tools/fsps_data/convert_legacy.py . fsps-data
+          meson test -C build --suite data_parity --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
+
       # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
       - name: Report test results
         if: ${{ !cancelled() }}
