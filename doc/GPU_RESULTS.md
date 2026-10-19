@@ -97,8 +97,8 @@ its host copy page-locked through the CUDA driver (`src/core/fsps_pinned.c`, res
   | + spectra copied back (WP), basic | 17.9 | **9.6** | 27.2 | **11.8** |
   | + spectra at kernel precision on the host, basic | | **4.7** | | **7.7** |
   | + spectra left on the device, basic | | 2.95 | | 4.07 |
-  | magnitudes only, full physics + smoothing | 7.10 | FULLMAGS32 | 8.49 | FULLMAGS64 |
-  | + spectra copied back (WP), full physics + smoothing | 21.5 | FULLSPEC32 | 32.7 | FULLSPEC64 |
+  | magnitudes only, full physics + smoothing | 7.10 | 6.89 | 8.49 | 8.61 |
+  | + spectra copied back (WP), full physics + smoothing | 21.5 | **13.4** | 32.7 | **16.2** |
 
   Copy-back cost (spectra minus magnitudes-only), basic: FP32 15.1 -> 6.6 us (-56%), FP64
   23.1 -> 7.7 us (-67%); at kernel precision 1.7 / 3.6 us (the DMA). What remains of the WP
@@ -128,9 +128,13 @@ region alone uploaded 28 small arrays and 24 array descriptors. Changes:
 
   | | basic, before | basic, now | full physics + smoothing, before | now |
   |---|---|---|---|---|
-  | batch, N = 1 | 606 | OV_N1_BASIC | 1067 | OV_N1_FULL |
-  | one `compute_csp_scenario` call | 628 | OV_SC_BASIC | 2169 | OV_SC_FULL |
-  | batch, N = 100, per model | 17.7 | OV_N100_BASIC | 26.1 | OV_N100_FULL |
+  | batch, N = 1 | 606 | **427** | 1067 | **828** |
+  | one `compute_csp_scenario` call | 678 | 625 | 2169 | **1393** |
+  | batch, N = 100, per model | 17.7 | 16.4 | 26.1 | 25.0 |
+
+  ("Before" is the copy-back branch; the basic single call is within run-to-run noise, 580-680
+  us. Final stack-tip numbers at N = 10000 are in the copy-back table above: full physics with
+  spectra copied back 21.5 -> 13.4 us per model FP32, 32.7 -> 16.2 FP64.)
 
   Not done: the scratch arrays created per call (9 descriptor uploads) could also live in the
   context; the single call still makes ~40 small transfers; and the async kernel queue of the
@@ -143,7 +147,16 @@ AMD interrupt). First step in `doc/GPU_PLAN.md`, "Next".
 
 **Validation** (stack tip, all nine builds: OpenACC FP32 / FP64, cuBLAS FP32 / FP64, OpenMP
 target FP32 / FP64 with `OMP_TARGET_OFFLOAD=MANDATORY`, OpenACC multicore FP32, gfortran FP64 /
-FP32): VALIDATION_LINE. Case matrix against the nvfortran CPU build: CASES_LINE.
+FP32): unit + regression 33/33 and `test_csp_batch` 166/166 in all nine (multicore after the
+fix below). Case matrix (35 cases) against the nvfortran CPU build: OpenACC FP32 worst 4.2e-7
+per pixel, 5.1e-7 mag, 3.0e-6 indices; OpenACC FP64 1.6e-11 per pixel, 1.3e-11 mag (`--rtol
+1e-10`): PASS, the same as in session 1. Found by the validation: the nebular grid
+reduction's device loop segfaulted under OpenACC multicore (reading the grids through ctx,
+like `compute_igm_transmission`'s loop in session 1); multicore keeps the host loop.
+
+Follow-up for the OpenMP mapping work (`fix/omp-flang-component-maps`, see that branch): the
+batch output buffer (`batch_out_reserve` / `batch_out_release`) still names `o%spec` in OpenMP
+enter / exit data; when both lines meet it must use `omp_data_alloc` / `omp_data_delete`.
 
 ### Design note: `compute_csp_scenario` as a batch of one (no code yet)
 
