@@ -1,6 +1,7 @@
 # Data libraries: survey and standard format
 
-This document describes how the code reads its input libraries (stellar spectra, isochrones,
+This document describes how libopensps (https://github.com/elijahmathews/libopensps), a modernized
+FSPS, reads its input libraries (stellar spectra, isochrones,
 nebular grids, dust, filters, ...), the standard format that replaces the legacy layout, and the
 tools that convert, package and fetch the data.
 
@@ -18,7 +19,7 @@ Contents:
 ### Locating the data
 
 `fsps_resolve_paths` (`src/core/fsps_environment.f90`) picks the data root `ctx%sps_home` from,
-in order: `SPS_HOME`, `FSPS_DATA_HOME`, `$XDG_DATA_HOME/fsps`, `~/.local/share/fsps`,
+in order (before this work): `SPS_HOME`, `FSPS_DATA_HOME`, `$XDG_DATA_HOME/fsps`, `~/.local/share/fsps`,
 `/usr/share/fsps`, `/usr/local/share/fsps`. A candidate is accepted if
 `<root>/data/allfilters.dat` or `<root>/data/FILTER_LIST` exists. Every reader builds paths as
 `trim(ctx%sps_home) // '/data/...'` with the file names written into the code. `SPS_HOME` wins
@@ -131,7 +132,7 @@ is small and complete. JSON has no comments; manifests have `title` and `notes` 
 
 ```
 <root>/
-  fsps-data.json                      root index (format version, release, list of libraries)
+  opensps-data.json                   root index (format version, release, list of libraries)
   libraries/<kind>/<name>/manifest.json
   libraries/<kind>/<name>/*.bin       arrays referenced by the manifest
   data/                               small text tables in their legacy formats (allindices.dat,
@@ -144,11 +145,11 @@ user files (`sfh_filename`, `imf_filename`, `alt_filter_file`) keep their legacy
 their legacy location under `data/`. A data root is self-contained: it holds everything a setup
 reads.
 
-### Root index: `fsps-data.json`
+### Root index: `opensps-data.json`
 
 ```json
 {
-  "format": "fsps-data",
+  "format": "opensps-data",
   "format_version": 1,
   "release": "2026.10.0",
   "title": "Default libraries converted from the legacy layout",
@@ -159,14 +160,14 @@ reads.
 }
 ```
 
-The loader requires `format` = `"fsps-data"` and `format_version` = 1, and finds libraries by
+The loader requires `format` = `"opensps-data"` and `format_version` = 1, and finds libraries by
 their conventional path; `libraries` is for the tools (packing, verification).
 
 ### Library manifest: `manifest.json`
 
 ```json
 {
-  "format": "fsps-data",
+  "format": "opensps-data",
   "format_version": 1,
   "kind": "stellar_spectra",
   "name": "miles",
@@ -393,8 +394,17 @@ then `write_root_index(root, release)` once all libraries are in place.
 
 ## 5. How the code selects a format
 
-- The data root is found as before (`SPS_HOME`, then `FSPS_DATA_HOME`, ...); a directory with
-  `fsps-data.json` is accepted as a root.
+- The data root is the first of these that holds data: `OPENSPS_DATA_HOME` (preferred; the Python
+  bindings use the same variable), then the older `SPS_HOME` and `FSPS_DATA_HOME`, then
+  `$XDG_DATA_HOME/fsps`, `~/.local/share/fsps`, `/usr/share/fsps`, `/usr/local/share/fsps`. A
+  directory with `opensps-data.json` (standard format) or `data/allfilters.dat` (legacy layout)
+  is a data root. Scripts and test environments that set a root set all three variables, so an
+  exported `OPENSPS_DATA_HOME` cannot override them.
+- **Transition alias**: the format was first named `fsps-data` (root index `fsps-data.json`,
+  manifest and index `"format": "fsps-data"`, release manifest `"format": "fsps-data-release"`).
+  Readers (the Fortran loader, `fsps_data.py`, `fetch_data.py`) accept the old names as well as
+  `opensps-data`, `opensps-data.json` and `opensps-data-release`; writers produce only the new
+  ones. The alias may be dropped once no root with the old names is in use.
 - `FSPS_DATA_FORMAT` = `auto` (default): each library is read from
   `libraries/<kind>/<name>/manifest.json` if that exists, otherwise from the legacy file
   under `data/`. `standard`: every library from the standard format (a missing manifest is an
@@ -446,8 +456,8 @@ then `write_root_index(root, release)` once all libraries are in place.
     `tools/fsps_data/upload_release.sh OUTDIR data-v1` publishes it with `gh release create` and
     `gh release upload` after review (never run by the tools).
   - `fetch_data.py DEST --release data-v1` (or `--release-manifest`, `--mirror DIR`) tries the
-    mirrors in order, checks archive and file checksums and unpacks; `FSPS_DATA_HOME` then points
-    at DEST.
+    mirrors in order, checks archive and file checksums and unpacks; `OPENSPS_DATA_HOME` then
+    points at DEST (in the examples `~/opensps-data`).
   - Measured (2026-10-20): `data-v1` is 38 archives, 525 MB with zstd (C3K optional); a
     `data-v2` with one library re-versioned reuses the other 36 archives and uploads two files.
     Fetching either through local-directory mirrors gives a root identical to the source.
@@ -461,17 +471,17 @@ then `write_root_index(root, release)` once all libraries are in place.
 - **Tests and the data root**: the unit suite needs no data at all (tests that read real data
   use the test library through `FSPS_TEST_LIBRARY`). The regression and stress suites read the
   root given by `meson setup -Ddata_home=<root>` (a legacy tree with `data/` or a standard root;
-  default: the source tree, while it still has `data/`); C3K tests run when that root has C3K.
+  default: `OPENSPS_DATA_HOME` as set when configuring, else the source tree); C3K tests run when that root has C3K.
   `data_parity` exists only while the source tree has `data/`. Verified in a copy of the tree
   without `data/`: unit 23/23 with no data, unit + regression 35/35 (FP64 and FP32) with
   `-Ddata_home=<converted root>` and `FSPS_DATA_FORMAT=standard`.
 - **CI**: today every job uses the checked-out `data/`, and the full-data job also converts it
   and runs `data_parity`. The switch to the published release is prepared in `ci.yml`: when the
   repository variable `FSPS_DATA_RELEASE` is set (e.g. `data-v1`), the test and sanitizer jobs
-  restore `~/.cache/fsps-data` from a cache keyed on the release (plus `-all` for the full-data
+  restore `~/.cache/opensps-data` from a cache keyed on the release (plus `-all` for the full-data
   job, which also fetches the optional C3K), run
-  `tools/fetch_data.py $HOME/fsps-data --release $FSPS_DATA_RELEASE`, and configure with
-  `-Ddata_home=$HOME/fsps-data`; `data_parity` is then skipped. To flip: publish the release
+  `tools/fetch_data.py $HOME/opensps-data --release $FSPS_DATA_RELEASE`, and configure with
+  `-Ddata_home=$HOME/opensps-data`; `data_parity` is then skipped. To flip: publish the release
   (`tools/fsps_data/upload_release.sh`), then *Settings > Secrets and variables > Actions >
   Variables*: `FSPS_DATA_RELEASE = data-v1` (or `gh variable set FSPS_DATA_RELEASE --body data-v1
   --repo elijahmathews/fsps`); unset it to return to the checkout. Once CI is green on the

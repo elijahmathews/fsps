@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "reference_spectra",
  "name": "sun",
@@ -7,7 +7,7 @@
  "title": "The Sun - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:06Z",
+  "created": "2026-10-20T12:35:45Z",
   "converted_from": "legacy FSPS layout: data/spectra/SUN_STScI.SED",
   "source": "Solar spectrum, f_nu at 10 pc (file SUN_STScI.SED)",
   "notes": "Likely source (STScI absolute solar spectrum; not stated in the file).",

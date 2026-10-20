@@ -10,7 +10,7 @@ Release structure (doc/DATA_FORMAT.md, Section 6):
 - One immutable archive per library and library version: ``<kind>-<name>-v<N>.tar.zst`` holding
   ``libraries/<kind>/<name>/``. N is the manifest's ``version``; a changed library must get a new
   version (the packer refuses to reuse a version whose files changed).
-- One base archive per release: ``base-<release>.tar.zst`` with ``fsps-data.json``, the small text
+- One base archive per release: ``base-<release>.tar.zst`` with ``opensps-data.json``, the small text
   tables in ``data/``, ``DATA_README.md`` (what to cite) and ``data_release.bib`` (the references,
   exported from NASA ADS).
 - The release manifest ``<release>.json``: for every archive its library, version, size, SHA-256,
@@ -32,7 +32,7 @@ import sys
 import tarfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fsps_data import Library, read_root_index  # noqa: E402
+from fsps_data import Library, read_root_index, root_index_path  # noqa: E402
 from provenance import write_data_readme  # noqa: E402
 
 DEFAULT_OPTIONAL = ["stellar_spectra/c3k_afe+0.0"]
@@ -157,7 +157,7 @@ def main(argv=None):
 
     write_data_readme(os.path.join(a.outdir, "DATA_README.md"), a.release, libs)
     base = f"base-{a.release}{ext}"
-    members = [(a.root, "fsps-data.json", None)]
+    members = [(a.root, os.path.basename(root_index_path(a.root)), None)]
     members += [(a.root, os.path.join("data", f), None) for f in sorted(os.listdir(os.path.join(a.root, "data")))]
     members.append((a.outdir, "DATA_README.md", "DATA_README.md"))
     shutil.copyfile(BIB, os.path.join(a.outdir, "data_release.bib"))
@@ -169,7 +169,7 @@ def main(argv=None):
                         "optional": False})
     upload.insert(0, base)
 
-    rel = {"format": "fsps-data-release", "format_version": 2, "release": a.release,
+    rel = {"format": "opensps-data-release", "format_version": 2, "release": a.release,
            "data_format_version": idx["format_version"], "mirrors": MIRRORS, "archives": archives}
     mpath = os.path.join(a.outdir, f"{a.release}.json")
     with open(mpath, "w") as f:

@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "dusty_agb",
  "name": "crich",
@@ -7,7 +7,7 @@
  "title": "Circumstellar dust shells of C-rich AGB stars - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:12Z",
+  "created": "2026-10-20T12:35:48Z",
   "converted_from": "legacy FSPS layout: data/dust/dusty/Crich_dusty.spec",
   "source": "Circumstellar dust shells of C-rich AGB stars computed with the radiative transfer code DUSTY (FSPS manual, section 1.11)",
   "cite": [

@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "stellar_spectra",
  "name": "miles",
@@ -7,7 +7,7 @@
  "title": "MILES empirical library merged with BaSeL - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:24:53Z",
+  "created": "2026-10-20T12:35:13Z",
   "converted_from": "legacy FSPS layout: data/spectra/MILES",
   "source": "MILES empirical stellar library, combined with the BaSeL library outside the MILES wavelength range and stellar-parameter coverage (doc/REVISION_HISTORY)",
   "notes": "Outside the MILES coverage the spectra are BaSeL (cite those references too).",

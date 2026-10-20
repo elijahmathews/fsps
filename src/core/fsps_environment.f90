@@ -35,12 +35,13 @@ contains
     !>
     !> @details
     !> Searches for the FSPS data directory in the following order:
-    !> 1. `SPS_HOME` environment variable.
-    !> 2. `FSPS_DATA_HOME` environment variable.
-    !> 3. `XDG_DATA_HOME/fsps` (Linux standard).
-    !> 4. `~/.local/share/fsps` (User local).
-    !> 5. `/usr/share/fsps` (System wide).
-    !> 6. `/usr/local/share/fsps` (Local system wide).
+    !> 1. `OPENSPS_DATA_HOME` environment variable (preferred).
+    !> 2. `SPS_HOME` environment variable (legacy FSPS).
+    !> 3. `FSPS_DATA_HOME` environment variable.
+    !> 4. `XDG_DATA_HOME/fsps` (Linux standard).
+    !> 5. `~/.local/share/fsps` (User local).
+    !> 6. `/usr/share/fsps` (System wide).
+    !> 7. `/usr/local/share/fsps` (Local system wide).
     !>
     !> If found, populates `ctx%sps_home` and `ctx%data_home`.
     !> Also resolves `ctx%output_home` based on write permissions and standards.
@@ -62,8 +63,19 @@ contains
         ! 1. SEARCH FOR DATA DIRECTORY
         ! ------------------------------------------------------------------------
 
-        call get_environment_variable("SPS_HOME", value=env_buffer, length=stat_len, status=stat_status)
+        call get_environment_variable("OPENSPS_DATA_HOME", value=env_buffer, length=stat_len, status=stat_status)
         if (stat_status == 0 .and. stat_len > 0) then
+            candidate = trim(env_buffer)
+            if (check_data_exists(candidate)) then
+                ctx%sps_home = trim(candidate)
+                found = .true.
+            end if
+        end if
+
+        ! Then the legacy variable SPS_HOME
+        if (.not. found) call get_environment_variable("SPS_HOME", value=env_buffer, length=stat_len, &
+                                                       status=stat_status)
+        if (.not. found .and. stat_status == 0 .and. stat_len > 0) then
             candidate = trim(env_buffer)
             if (check_data_exists(candidate)) then
                 ctx%sps_home = trim(candidate)
@@ -127,7 +139,7 @@ contains
         ! ERROR: Not found
         if (.not. found) then
             write (error_unit, '(A)') '[FSPS_ENV] Error: FSPS data path not found.'
-            write (error_unit, '(A)') '           Please set FSPS_DATA_HOME or SPS_HOME environment variable.'
+            write (error_unit, '(A)') '           Please set OPENSPS_DATA_HOME (or FSPS_DATA_HOME / SPS_HOME).'
             error stop 1
         end if
 
@@ -213,7 +225,7 @@ contains
 
     !> @brief Checks if the 'data' subdirectory exists within a given path.
     !> @param[in] path The root directory candidate.
-    !> @return .true. if `path` is a standard data root (`fsps-data.json`) or a legacy one
+    !> @return .true. if `path` is a standard data root (`opensps-data.json`, or the older `fsps-data.json`) or a legacy one
     !>         (`path/data/allfilters.dat` or `path/data/FILTER_LIST` exists).
     logical function check_data_exists(path)
         character(len=*), intent(in) :: path

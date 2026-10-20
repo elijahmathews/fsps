@@ -160,11 +160,12 @@ def _refs(bibcodes):
 def write_data_readme(path, release, libraries, layout_note=""):
     """Writes the release's DATA_README.md: what each library is and what to cite."""
     lines = [
-        f"# OpenSPS / FSPS data release {release}",
+        f"# libopensps data release {release}",
         "",
-        "Libraries for the modernized FSPS code in the standard data format (doc/DATA_FORMAT.md of the code). "
-        "Unpack the archives into one directory (tools/fetch_data.py does this and verifies every checksum) and point "
-        "`FSPS_DATA_HOME` at it.",
+        "Libraries for libopensps (https://github.com/elijahmathews/libopensps), a modernized FSPS, in its standard "
+        "data format (doc/DATA_FORMAT.md of libopensps). Unpack the archives into one directory "
+        "(`tools/fetch_data.py ~/opensps-data --release " + release + "` does this and verifies every checksum) and "
+        "point `OPENSPS_DATA_HOME` at it.",
         "",
         "## What to cite",
         "",
@@ -188,7 +189,7 @@ def write_data_readme(path, release, libraries, layout_note=""):
     lines += ["", "## Layout", "", layout_note or (
         "Each library is one archive, `<kind>-<name>-v<N>.tar.zst` (or `.tar.gz`), holding "
         "`libraries/<kind>/<name>/` (a `manifest.json` and raw little-endian arrays); the base archive holds "
-        "`fsps-data.json`, the small text tables in `data/`, this file and `data_release.bib`. Archives are "
+        "`opensps-data.json`, the small text tables in `data/`, this file and `data_release.bib`. Archives are "
         "immutable: a changed library gets a new version and a new archive, and the release manifest "
         "`<release>.json` lists, for every library, its version, SHA-256, size and download URLs (mirrors), possibly "
         "pointing at archives of an earlier release."),

@@ -19,7 +19,7 @@ run_case() {
     # shellcheck disable=SC2206
     extra+=(${FIXTURE_ARGS:-})
     # shellcheck disable=SC2086
-    (cd "$OUT" && SPS_HOME="$DATA_HOME" FSPS_DATA_HOME="$DATA_HOME" "$BUILD/generate_opensps_fixtures" \
+    (cd "$OUT" && OPENSPS_DATA_HOME="$DATA_HOME" SPS_HOME="$DATA_HOME" FSPS_DATA_HOME="$DATA_HOME" "$BUILD/generate_opensps_fixtures" \
         --isoc "$isoc" --spec "$spec" --dust "$dust" "${extra[@]}" --out "$name.opsf" $overrides \
         > "$name.log" 2>&1) || { echo "failed: $name (see $OUT/$name.log)" >&2; return 1; }
 }

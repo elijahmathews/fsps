@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download, verify and unpack an FSPS data release (doc/DATA_FORMAT.md, Section 6).
+"""Download, verify and unpack a libopensps data release (doc/DATA_FORMAT.md, Section 6).
 
 Usage:
     tools/fetch_data.py DEST [--release data-v1 | --release-manifest PATH_OR_URL]
@@ -13,7 +13,7 @@ locations first (a directory or base URL holding the archive files; a local mani
 directory is one), then each archive's mirror URLs. It checks each archive's SHA-256, unpacks it
 into DEST, and checks the size and SHA-256 of every file the unpacked manifests list. Archives
 already in the cache with the right checksum are not fetched again (CI caches that directory).
-Then point FSPS_DATA_HOME at DEST.
+Then point OPENSPS_DATA_HOME at DEST (e.g. ~/opensps-data).
 
 Standard library only (Python >= 3.8); .tar.zst archives need Python >= 3.14, the zstandard
 module or the zstd command.
@@ -94,7 +94,10 @@ def safe_extract(tar, dest):
 def verify_root(dest):
     """Problems found in the files of every library unpacked in DEST."""
     problems = []
-    with open(os.path.join(dest, "fsps-data.json")) as f:
+    index = os.path.join(dest, "opensps-data.json")
+    if not os.path.exists(index):
+        index = os.path.join(dest, "fsps-data.json")  # name before the libopensps rename
+    with open(index) as f:
         idx = json.load(f)
     for lib in idx["libraries"]:
         d = os.path.join(dest, lib["path"])
@@ -130,7 +133,7 @@ def main(argv=None):
     ap.add_argument("--mirror", action="append", default=[], help="directory or base URL tried first")
     ap.add_argument("--with", dest="extra", nargs="*", default=[], help="optional libraries to fetch too")
     ap.add_argument("--all", action="store_true", help="fetch every archive, optional ones included")
-    ap.add_argument("--cache", default=os.path.join(os.path.expanduser("~"), ".cache", "fsps-data"))
+    ap.add_argument("--cache", default=os.path.join(os.path.expanduser("~"), ".cache", "opensps-data"))
     ap.add_argument("--list", action="store_true", help="list the archives of the release and exit")
     a = ap.parse_args(argv)
 
@@ -143,8 +146,9 @@ def main(argv=None):
         sys.exit(f"cannot get the release manifest {src}: {exc}")
     with open(mpath) as f:
         rel = json.load(f)
-    if rel.get("format") != "fsps-data-release" or rel.get("format_version") != 2 or \
-            rel.get("data_format_version") != 1:
+    # 'fsps-data-release': the name before the libopensps rename, still accepted
+    if rel.get("format") not in ("opensps-data-release", "fsps-data-release") or \
+            rel.get("format_version") != 2 or rel.get("data_format_version") != 1:
         sys.exit(f"{src}: not a release manifest this script reads (release format 2, data format 1)")
     mirrors = list(a.mirror)
     if a.release_manifest and not is_url(a.release_manifest):
@@ -179,7 +183,7 @@ def main(argv=None):
     if problems:
         sys.exit("verification failed:\n  " + "\n  ".join(problems))
     print(f"release {rel['release']}: {len(want)} archives unpacked and verified in {a.dest}")
-    print(f"export FSPS_DATA_HOME={os.path.abspath(a.dest)}")
+    print(f"export OPENSPS_DATA_HOME={os.path.abspath(a.dest)}")
     return 0
 
 

@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "xrb",
  "name": "xsp",
@@ -7,7 +7,7 @@
  "title": "X-ray binary spectra of simple populations - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:14Z",
+  "created": "2026-10-20T12:35:50Z",
   "converted_from": "legacy FSPS layout: data/spectra/xrb",
   "source": "X-ray binary spectra of simple populations (11 [Fe/H] x 10 ages)",
   "notes": "Data from K. Garofali, added to FSPS in 2023.",

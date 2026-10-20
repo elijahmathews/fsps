@@ -7,7 +7,7 @@ program test_data_parity
     !> and one from STANDARD_ROOT (FSPS_DATA_FORMAT=standard), then requires every array the
     !> setup loads to be identical (values compared exactly; NaN matches NaN), and the SSP grid
     !> and a CSP (spectrum, magnitudes, indices, line luminosities) to be identical too.
-    !> Exits 77 (skip) when STANDARD_ROOT has no fsps-data.json.
+    !> Skipped when STANDARD_ROOT has no opensps-data.json (or the older fsps-data.json).
     use, intrinsic :: iso_c_binding, only: c_char, c_int, c_null_char
     use fsps_precision, only: WP, KP
     use fsps_types, only: PARAMS, COMPSPOUT
@@ -52,12 +52,13 @@ program test_data_parity
             i = i + 1
         end if
     end do
-    inquire (file=trim(std_root)//'/fsps-data.json', exist=exists)
+    inquire (file=trim(std_root)//'/opensps-data.json', exist=exists)
+    if (.not. exists) inquire (file=trim(std_root)//'/fsps-data.json', exist=exists)
     if (.not. exists) then
         write (*, '(A)') '1..0 # SKIP no standard data root at '//trim(std_root)//' (tools/fsps_data/convert_legacy.py)'
         stop
     end if
-    ! SPS_HOME is searched before FSPS_DATA_HOME
+    ! OPENSPS_DATA_HOME and SPS_HOME are searched before FSPS_DATA_HOME: set the first, clear the second
     if (c_setenv('SPS_HOME'//c_null_char, ''//c_null_char, 1_c_int) /= 0) stop 3
 
     call print_major_header('Data format parity: legacy layout vs standard format')
@@ -87,6 +88,7 @@ contains
 
     subroutine use_root(root, fmt)
         character(len=*), intent(in) :: root, fmt
+        if (c_setenv('OPENSPS_DATA_HOME'//c_null_char, trim(root)//c_null_char, 1_c_int) /= 0) stop 3
         if (c_setenv('FSPS_DATA_HOME'//c_null_char, trim(root)//c_null_char, 1_c_int) /= 0) stop 3
         if (c_setenv('FSPS_DATA_FORMAT'//c_null_char, trim(fmt)//c_null_char, 1_c_int) /= 0) stop 3
     end subroutine use_root

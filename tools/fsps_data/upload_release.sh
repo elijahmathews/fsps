@@ -31,4 +31,4 @@ read -r -p "Proceed? [y/N] " ok
 
 gh release create "$TAG" --repo "$REPO" --title "Data release $TAG" --notes-file "$DIR/DATA_README.md" $DRAFT
 gh release upload "$TAG" --repo "$REPO" "${FILES[@]}"
-echo "Done. Check: tools/fetch_data.py /tmp/fsps-data-check --release $TAG --cache /tmp/fsps-data-check-cache"
+echo "Done. Check: tools/fetch_data.py /tmp/opensps-data-check --release $TAG --cache /tmp/opensps-data-check-cache"

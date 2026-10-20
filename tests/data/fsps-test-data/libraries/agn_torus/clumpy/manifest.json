@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "agn_torus",
  "name": "clumpy",
@@ -7,7 +7,7 @@
  "title": "Clumpy AGN torus models (Y = 10, sigma = 10, N0 = 10, q = 2) - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:04Z",
+  "created": "2026-10-20T12:35:45Z",
   "converted_from": "legacy FSPS layout: data/dust/Nenkova08_y010_torusg_n10_q2.0.dat",
   "source": "Clumpy AGN torus models, 'reformatted for FSPS' (file header of Nenkova08_y010_torusg_n10_q2.0.dat): Y = 10, sigma = 10 (torusg), N0 = 10, q = 2.0; a small subset of the grid",
   "cite": [

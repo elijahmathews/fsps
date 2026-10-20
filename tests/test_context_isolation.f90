@@ -10,7 +10,7 @@ program test_context_isolation
     !>   4. a context that hits an existing entry reads no data and reproduces the first context's
     !>      SSP and CSP output bit for bit, while settings the shared data depend on (cloudy_dust,
     !>      compute_vega_mags) select a separate entry.
-    !> Requires the FSPS data tree (FSPS_DATA_HOME), like the regression tests.
+    !> Requires the FSPS data tree (OPENSPS_DATA_HOME / FSPS_DATA_HOME), like the regression tests.
 
     use fsps_precision, only: WP, KP
     use fsps_types, only: PARAMS, COMPSPOUT

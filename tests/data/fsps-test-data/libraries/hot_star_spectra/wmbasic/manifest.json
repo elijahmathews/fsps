@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "hot_star_spectra",
  "name": "wmbasic",
@@ -7,7 +7,7 @@
  "title": "WMBasic O-star spectra - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:09Z",
+  "created": "2026-10-20T12:35:47Z",
   "converted_from": "legacy FSPS layout: data/spectra/Hot_spectra/WMBASIC_*",
   "source": "WMBasic O-star spectral grid",
   "notes": "Grid courtesy of J. J. Eldridge, M. Ng and G. Taylor (as distributed with FSPS); WM-basic code: see cite_code.",

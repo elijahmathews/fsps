@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "attenuation",
  "name": "dirty",
@@ -7,7 +7,7 @@
  "title": "Radiative-transfer attenuation curves (dusty galactic environments) - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:26:04Z",
+  "created": "2026-10-20T12:35:45Z",
   "converted_from": "legacy FSPS layout: data/dust/alldirty_{h,c}.dat",
   "source": "Radiative-transfer attenuation curves for dusty galactic environments, MW and SMC grains, dusty/shell/cloudy geometries, homogeneous and clumpy media (files alldirty_{h,c}.dat)",
   "cite": [

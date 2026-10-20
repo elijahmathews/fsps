@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "kind": "nebular",
  "name": "mist_nodust",
@@ -7,7 +7,7 @@
  "title": "Nebular continuum and lines for the mist isochrones, without dust in the ionized gas - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T12:25:38Z",
+  "created": "2026-10-20T12:35:32Z",
   "converted_from": "legacy FSPS layout: data/nebular/ZAU_ND_mist.{cont,lines}",
   "source": "Cloudy photoionization tables provided by Nell Byler, ionized by the mist SSPs, without dust in the ionized gas (FSPS manual, section 1.13)",
   "cite": [

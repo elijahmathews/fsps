@@ -179,13 +179,13 @@ jobs:
         if: env.DATA_RELEASE != ''
         uses: actions/cache@v4
         with:
-          path: ~/.cache/fsps-data
-          key: fsps-data-${{ env.DATA_RELEASE }}${{ matrix.full_data && '-all' || '' }}
+          path: ~/.cache/opensps-data
+          key: opensps-data-${{ env.DATA_RELEASE }}${{ matrix.full_data && '-all' || '' }}
       - name: Fetch the data release
         if: env.DATA_RELEASE != ''
         run: |
-          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"${{ matrix.full_data && ' --all' || '' }}
-          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+          python3 tools/fetch_data.py "$HOME/opensps-data" --release "$DATA_RELEASE"${{ matrix.full_data && ' --all' || '' }}
+          echo "DATA_ARGS=-Ddata_home=$HOME/opensps-data" >> "$GITHUB_ENV"
 
       - name: Configure
         run: meson setup build --buildtype=release ${{ matrix.setup_args }} $DATA_ARGS
@@ -216,7 +216,7 @@ jobs:
         if: matrix.full_data && env.DATA_RELEASE == ''
         run: |
           sudo apt-get install -y -q python3-numpy
-          python3 tools/fsps_data/convert_legacy.py . fsps-data
+          python3 tools/fsps_data/convert_legacy.py . opensps-data
           meson test -C build --suite data_parity --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
 
       # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
@@ -311,13 +311,13 @@ jobs:
         if: env.DATA_RELEASE != ''
         uses: actions/cache@v4
         with:
-          path: ~/.cache/fsps-data
-          key: fsps-data-${{ env.DATA_RELEASE }}
+          path: ~/.cache/opensps-data
+          key: opensps-data-${{ env.DATA_RELEASE }}
       - name: Fetch the data release
         if: env.DATA_RELEASE != ''
         run: |
-          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"
-          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+          python3 tools/fetch_data.py "$HOME/opensps-data" --release "$DATA_RELEASE"
+          echo "DATA_ARGS=-Ddata_home=$HOME/opensps-data" >> "$GITHUB_ENV"
 
       - run: meson setup build -Denable_stress_testing=true -Db_sanitize=address,undefined $DATA_ARGS
       - run: meson compile -C build
@@ -381,13 +381,13 @@ jobs:
         if: env.DATA_RELEASE != ''
         uses: actions/cache@v4
         with:
-          path: ~/.cache/fsps-data
-          key: fsps-data-${{ env.DATA_RELEASE }}
+          path: ~/.cache/opensps-data
+          key: opensps-data-${{ env.DATA_RELEASE }}
       - name: Fetch the data release
         if: env.DATA_RELEASE != ''
         run: |
-          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"
-          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+          python3 tools/fetch_data.py "$HOME/opensps-data" --release "$DATA_RELEASE"
+          echo "DATA_ARGS=-Ddata_home=$HOME/opensps-data" >> "$GITHUB_ENV"
 
       - run: meson setup build -Denable_stress_testing=true -Db_sanitize=thread -Denable_openmp=true $DATA_ARGS
       - run: meson compile -C build

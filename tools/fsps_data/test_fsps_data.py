@@ -43,6 +43,18 @@ def test_round_trip(tmp):
     check(np.array_equal(back.array("flux"), flux), "round trip: FP32 array identical")
     check(back.axis_values("Z")[1] == 0.0142, "round trip: inline axis value exact")
     check(back.verify() == [], "round trip: checksums verify")
+    import json
+    import fsps_data as fd
+    check(json.load(open(os.path.join(back.path, "manifest.json")))["format"] == "opensps-data",
+          "new libraries are written as opensps-data")
+    mp = os.path.join(back.path, "manifest.json")
+    m = json.load(open(mp))
+    m["format"] = "fsps-data"
+    json.dump(m, open(mp, "w"))
+    check(Library.open(tmp, "stellar_spectra", "toy").name == "toy", "transition alias: an fsps-data manifest reads")
+    fd.write_root_index(tmp, "test")
+    os.rename(os.path.join(tmp, "opensps-data.json"), os.path.join(tmp, "fsps-data.json"))
+    check(fd.read_root_index(tmp)["release"] == "test", "transition alias: an fsps-data.json root index reads")
     with open(os.path.join(back.path, "flux.bin"), "r+b") as f:
         f.write(b"\0")
     check(back.verify() != [], "round trip: a corrupted file is detected")
