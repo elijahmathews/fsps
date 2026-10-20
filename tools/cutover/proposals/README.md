@@ -1,4 +1,10 @@
-# libopensps
+<!--
+Proposal, not applied: sections for libopensps's README.md, to follow the skeleton's logo
+header and tagline. Written for the state after the rename pull request (opensps.h,
+libopensps.so.0, OPENSPS_* names); merge what you want by hand.
+-->
+
+## What libopensps is
 
 libopensps is a library for stellar population synthesis: spectra, magnitudes, spectral indices
 and line luminosities of simple and composite stellar populations, with dust attenuation and

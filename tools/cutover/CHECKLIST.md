@@ -1,7 +1,7 @@
 # Cutover day checklist
 
-The steps in order, with commands. `FORK` is a clone of elijahmathews/fsps, `NEW` the directory
-where libopensps is assembled. Scripts and decisions: [README.md](README.md). Every `gh`
+The steps in order, with commands. `FORK` is a clone of elijahmathews/fsps, `NEW` the clone of
+libopensps where the import is built. Scripts and decisions: [README.md](README.md). Every `gh`
 command names its repository with `-R` / `--repo`.
 
 ```sh
@@ -11,8 +11,9 @@ export OPENSPS_DATA_HOME=~/opensps-data
 ```
 
 Decided: version 0.1.0 (`libopensps.so.0`, the rename script's default; the C API version stays
-1.2); the regression references leave the snapshot (the default) for the data release; the two
-Google Code era handles stay handles.
+1.2); the regression references are left out of the import (the default) for the data release;
+the two Google Code era handles stay handles. Open: whether the internal Fortran names follow
+(README.md, "Renaming the internal names").
 
 ## 0. Before the day
 
@@ -57,52 +58,82 @@ git push origin fsps-final
 CUT=$(git rev-parse fsps-final^{commit})
 ```
 
-## 3. Build libopensps locally
+## 3. Build the import commit locally
 
 ```sh
-$FORK/tools/cutover/make_initial_tree.sh --repo $FORK $CUT $NEW
-cd $NEW && git log --stat -1 | head -20 && cat AUTHORS && head -6 LICENSE.md
-du -sh .git                                   # a few MB; the references were copied to $NEW.references
+git clone https://github.com/elijahmathews/libopensps.git $NEW
+$FORK/tools/cutover/make_import_commit.sh --repo $FORK $CUT $NEW    # branch `import`, one commit
+cd $NEW && git log --format='%h %an %s' -5 && git show --stat HEAD | head -30 && cat AUTHORS
 ```
 
-The commit is "libopensps: the state of elijahmathews/fsps at commit $CUT", unsigned, authored
-by your git identity, without trailers (`--trailer` adds some if wanted). Check that the
-references left out are those of data-v2, then build and test from the fetched release:
+The commit is `feat: import elijahmathews/fsps at commit $CUT` on top of `main`, unsigned,
+authored by your git identity, without trailers. `main`'s own README.md, LICENSE.md, AGENTS.md
+(and CLAUDE.md) are kept; `proposals/README.md` has README sections to merge by hand later. The
+regression references left out are in `$NEW.references`; check them against data-v2 and run the
+suites from the fetched release:
 
 ```sh
 python3 tools/fetch_data.py $OPENSPS_DATA_HOME --release data-v2 --all
-# the references library of the release against $NEW.references/SHA256SUMS (same files, same sums)
+(cd $NEW.references && for f in $(find . -type f ! -name SHA256SUMS); do
+   cmp -s "$f" "$(find $OPENSPS_DATA_HOME/libraries/references -name "$(basename "$f")" | head -1)" || echo "DIFFERS: $f"; done)
 meson setup build --buildtype=release && meson setup build32 --buildtype=release -Dkernel_precision=single
 meson compile -C build && meson compile -C build32
 meson test -C build --suite unit --suite regression && meson test -C build32 --suite unit --suite regression
 ```
 
-## 4. Push to libopensps
+## 4. Land the import on main
+
+First, so that CI on the pull request fetches the data and the references:
 
 ```sh
-cd $NEW
-git remote add origin git@github.com:elijahmathews/libopensps.git
-git push -u origin main
-gh variable set FSPS_DATA_RELEASE -R elijahmathews/libopensps --body data-v2   # CI fetches the references with the data
+gh variable set FSPS_DATA_RELEASE -R elijahmathews/libopensps --body data-v2
 ```
 
-## 5. The rename (first pull request in libopensps)
+**Recommended: a pull request, squash-merged** (one commit stays one commit, with its message):
 
 ```sh
-cd $NEW && git switch -c rename/opensps
+cd $NEW && git push -u origin import
+gh pr create -R elijahmathews/libopensps --base main --head import   --title "feat: import elijahmathews/fsps at commit $CUT" --body "$(git log -1 --format=%b)"
+gh pr checks -R elijahmathews/libopensps import --watch
+gh pr merge -R elijahmathews/libopensps import --squash   --subject "feat: import elijahmathews/fsps at commit $CUT" --body "$(git log -1 --format=%b)"
+```
+
+(or merge in the web interface: check that the squash message is the commit's.)
+
+**Alternative: a direct push** by you (bypasses the protection and CI before landing; the
+commit lands exactly as built):
+
+```sh
+cd $NEW && git push origin import:main
+```
+
+## 5. The rename (its own pull request)
+
+```sh
+cd $NEW && git fetch && git switch -c refactor/rename-opensps origin/main
 tools/cutover/rename_to_opensps.sh .                  # version 0.1.0, libopensps.so.0
 tools/cutover/rename_to_opensps.sh --check-only . && git diff --stat
 meson setup build --wipe && meson compile -C build && meson test -C build --suite unit --suite regression
 readelf -d build/libopensps.so | grep SONAME          # libopensps.so.0
-nm -D --defined-only build/libopensps.so | awk '{print $3}' | grep -i '^fsps'   # expect nothing
-git add -A && git -c commit.gpgsign=false commit -m "Rename the public surface to opensps; version 0.1.0"
-git push -u origin rename/opensps
-gh pr create -R elijahmathews/libopensps --base main --head rename/opensps --fill
-gh pr checks -R elijahmathews/libopensps rename/opensps --watch
+nm -D --defined-only build/libopensps.so | awk '{print $3}' | grep -E '^fsps\w*[^_]$'   # no C functions: expect nothing
+git add -A && git -c commit.gpgsign=false commit -F - <<'MSG'
+refactor!: rename the public C API and library to opensps
+
+The library is libopensps (version 0.1.0, soname libopensps.so.0), the header
+opensps.h, the pkg-config name opensps; C functions and macros carry the
+prefixes opensps_ and OPENSPS_. Internal Fortran names are unchanged.
+
+BREAKING CHANGE: libfsps, fsps.h, pkg-config fsps and the fsps_* / FSPS_* C
+names are now libopensps, opensps.h, opensps and opensps_* / OPENSPS_*. A
+deprecated fsps.h maps the old names; link against libopensps.
+MSG
+git push -u origin refactor/rename-opensps
+gh pr create -R elijahmathews/libopensps --base main --head refactor/rename-opensps --fill
+gh pr checks -R elijahmathews/libopensps refactor/rename-opensps --watch
 ```
 
-Review the installed `README.md`, `CITATION.cff` (ORCID, version, DOI are TODO) and
-`CONTRIBUTING.md`; merge once CI passes.
+Squash-merge once CI passes (the pull request title is the commit subject: keep it the
+Conventional one above, with the `BREAKING CHANGE:` footer in the body).
 
 ## 6. Repository settings (github.com/elijahmathews/libopensps/settings)
 

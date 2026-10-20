@@ -12,7 +12,10 @@
 #            fsps -> opensps, C symbols fsps_* -> opensps_* (every bind(C) name and every
 #            function of the public header), public header macros FSPS_* -> OPENSPS_*, Meson
 #            project / library / dependency names, packaging (RPM, Debian), C tests, the C API
-#            document, CI branch filters, README / CITATION.cff / CONTRIBUTING.md (templates/)
+#            document, CI branch filters
+#   never    the repository's own README.md, LICENSE.md, AGENTS.md, CONTRIBUTING.md, SECURITY.md,
+#            CODE_OF_CONDUCT.md, CITATION.cff, AUTHORS, assets/ (proposals for them, if any, are
+#            in tools/cutover/proposals/)
 #   kept     Fortran module, procedure, constant and file names (fsps_*), environment variables
 #            (SPS_HOME, FSPS_DATA_HOME, FSPS_TEST_*, ...), the installed data directory
 #            (share/fsps), internal preprocessor switches (FSPS_PINNED, FSPS_CUBLAS)
@@ -25,8 +28,7 @@
 #                       inherited 3.2.0 / .so.3 belonged to libfsps). The C API version
 #                       (OPENSPS_API_VERSION_*, currently 1.2) is separate and is not changed.
 #   --keep-version      leave the version and soversion as they are
-#   --branch NAME       default branch for CI triggers and AGENTS.md (default: main)
-#   --no-templates      do not install README.md / CITATION.cff / CONTRIBUTING.md from templates/
+#   --branch NAME       default branch for CI triggers (default: main)
 #   --check-only        change nothing; list what still carries the old public names (exit 1 if any)
 #   -h, --help          this text
 set -euo pipefail
@@ -37,7 +39,6 @@ usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '/^set -euo/d' -e 's/^# \{0,1\}/
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 version="0.1.0"
 branch="main"
-templates=1
 check_only=0
 args=()
 while [ $# -gt 0 ]; do
@@ -45,7 +46,6 @@ while [ $# -gt 0 ]; do
         --version) version=$2; shift 2 ;;
         --keep-version) version=""; shift ;;
         --branch) branch=$2; shift 2 ;;
-        --no-templates) templates=0; shift ;;
         --check-only) check_only=1; shift ;;
         -h|--help) usage; exit 0 ;;
         -*) die "unknown option $1 (see --help)" ;;
@@ -65,7 +65,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 && is_git=1
 # Never edited: this tool and its templates, the credit and license files (they name
 # elijahmathews/fsps on purpose), the legacy-FSPS comparison tools (their "fsps" is legacy FSPS),
 # the compatibility header, and data.
-excluded_re='^(tools/cutover/|tools/legacy_parity/|tools/benchmark_legacy/|AUTHORS$|LICENSE\.md$|include/fsps\.h$|data/|tests/data/)'
+excluded_re='^(tools/cutover/|tools/legacy_parity/|tools/benchmark_legacy/|AUTHORS$|LICENSE\.md$|README\.md$|AGENTS\.md$|CONTRIBUTING\.md$|SECURITY\.md$|CODE_OF_CONDUCT\.md$|CITATION\.cff$|assets/|include/fsps\.h$|data/|tests/data/)'
 compat_marker='libopensps compatibility header'
 tmp_list=$(mktemp)
 trap 'rm -f "$tmp_list"' EXIT
@@ -77,8 +77,6 @@ list_files() {
         find . -type f -not -path './.git/*' -printf '%P\n'
     fi | grep -v -E "$excluded_re" | while IFS= read -r f; do
         [ -f "$f" ] && grep -Iq . "$f" 2>/dev/null || continue
-        # README / CITATION.cff / CONTRIBUTING.md already written for libopensps are left alone
-        case "$f" in README.md|CITATION.cff|CONTRIBUTING.md) grep -q libopensps "$f" && continue ;; esac
         printf '%s\n' "$f"
     done
     return 0
@@ -297,17 +295,12 @@ if [ -f .github/workflows/packaging.yml ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
-# 6. CI triggers and the agent guide: the default branch of libopensps
+# 6. CI triggers: the default branch of libopensps
 # ---------------------------------------------------------------------------------------------
 for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     perl -i -pe "s/^(\\s*branches:\\s*)\\[(?:master, develop|master|master, $branch|$branch, develop)\\]/\${1}[$branch]/" "$wf"
 done
-if [ -f AGENTS.md ]; then
-    perl -i -pe "s/topic branch from \`develop\`/topic branch from \`$branch\`/;
-                 s/against \`develop\`/against \`$branch\`/;
-                 s/^A modernized fork of FSPS \\(Flexible Stellar Population Synthesis; Conroy et al.\\), in Fortran\$/libopensps: a modernized FSPS (Flexible Stellar Population Synthesis; Conroy et al.), in Fortran/" AGENTS.md
-fi
 
 # ---------------------------------------------------------------------------------------------
 # 7. The C API document's title, and the compatibility header
@@ -353,20 +346,6 @@ if [ -n "$old_header_text" ] && [ ! -f include/fsps.h ]; then
     } > include/fsps.h
     [ $is_git -eq 1 ] && git add include/fsps.h
     echo "  wrote include/fsps.h (deprecated compatibility header: $(printf '%s\n' "$old_syms" | grep -c .) functions, $(printf '%s\n' "$old_macs" | grep -c .) macros)"
-fi
-
-# ---------------------------------------------------------------------------------------------
-# 8. README.md, CITATION.cff, CONTRIBUTING.md from the templates (unless already libopensps's)
-# ---------------------------------------------------------------------------------------------
-if [ $templates -eq 1 ] && [ -d "$script_dir/templates" ]; then
-    for t in README.md CITATION.cff CONTRIBUTING.md; do
-        [ -f "$script_dir/templates/$t" ] || continue
-        if [ ! -f "$t" ] || ! grep -q 'libopensps' "$t"; then
-            cp "$script_dir/templates/$t" "$t"
-            [ $is_git -eq 1 ] && git add "$t"
-            echo "  installed $t from tools/cutover/templates"
-        fi
-    done
 fi
 
 echo "== Project $(perl -ne 'print $1 if /^project\(\x27(\w+)\x27/' meson.build) $proj_version, soname libopensps.so.$soversion"
