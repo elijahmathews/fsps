@@ -159,6 +159,7 @@ lib_sources = files(
     'src/physics/fsps_imf.f90',
     'src/physics/fsps_sfh.f90',
     'src/physics/fsps_ssp.f90',
+    'src/physics/fsps_ssp_operator.f90',
     'src/physics/fsps_stellar_modifications.f90',
 
     # Spectra Modules
@@ -291,6 +292,7 @@ executable('generate_opensps_fixtures', 'tests/generate_opensps_fixtures.f90', d
 executable('benchmark_hotpaths', 'tests/benchmark_hotpaths.f90', dependencies : fsps_dep, link_language : 'fortran')
 executable('benchmark_phases', 'tests/benchmark_phases.f90', dependencies : fsps_dep, link_language : 'fortran')
 executable('benchmark_csp_batch', 'tests/benchmark_csp_batch.f90', dependencies : fsps_dep, link_language : 'fortran')
+executable('benchmark_ssp_operator', 'tests/benchmark_ssp_operator.f90', dependencies : fsps_dep, link_language : 'fortran')
 
 if get_option('enable_stress_testing')
     stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep, link_language : 'fortran')
@@ -362,6 +364,19 @@ csp_batch_exe = executable('test_csp_batch', 'tests/test_csp_batch.f90',
     link_language : 'fortran'
 )
 test('csp_batch', csp_batch_exe,
+    protocol : 'tap',
+    env : regression_env,
+    suite : 'regression',
+    timeout : 900
+)
+
+# Integration test: the batched SSP operator (fsps_ssp_operator) against generate_ssp_grid, for
+# many IMFs from one IMF-independent operator
+ssp_operator_exe = executable('test_ssp_operator', 'tests/test_ssp_operator.f90',
+    dependencies : [fsps_dep, test_utils_dep],
+    link_language : 'fortran'
+)
+test('ssp_operator', ssp_operator_exe,
     protocol : 'tap',
     env : regression_env,
     suite : 'regression',
