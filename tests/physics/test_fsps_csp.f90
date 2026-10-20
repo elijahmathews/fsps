@@ -4,7 +4,7 @@ module test_fsps_csp_mod
     use fsps_types, only: params, sfhparams, compspout
     use fsps_context_types, only: fsps_context_t
     use fsps_context, only: fsps_context_prepare_csp_workspace, fsps_context_update_ssp_basis
-    use fsps_csp, only: compute_sfh_weights, convert_sfhparams, integrate_csp_step, apply_dust_physics, &
+    use fsps_csp, only: set_scenario_batch, compute_sfh_weights, convert_sfhparams, integrate_csp_step, apply_dust_physics, &
                         apply_post_processing, compute_csp_scenario
     use fsps_interpolation, only: find_interval
     use fsps_cosmology, only: compute_igm_transmission
@@ -28,6 +28,9 @@ contains
 
     subroutine run_fsps_csp_tests()
         call print_minor_header("fsps_csp")
+        ! These tests inspect the old single-call path's internal state (SFH weights, IGM
+        ! transmission): run it whatever FSPS_SCENARIO_BATCH says
+        call set_scenario_batch(.false.)
 
         call test_convert_sfhparams_units()
         call test_single_ssp_dirac()
