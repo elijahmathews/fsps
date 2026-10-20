@@ -68,7 +68,7 @@ module fsps_csp_batch
     use openacc, only: acc_get_cuda_stream
 #endif
     use fsps_context, only: fsps_context_move_to_device
-    use fsps_csp, only: sfh_weights_core
+    use fsps_sfh, only: sfh_weights_core
     use fsps_sfh, only: get_sfh_properties_at_age
     use fsps_dust, only: compute_attenuation_curve_point, one_minus_trans
     use fsps_interpolation, only: find_interval
@@ -143,7 +143,19 @@ contains
     !>                       (zero without nebular emission).
     !> @param[out]   indx    Optional spectral indices (nindx, N), as compspout%indx.
     !> @param[in]    ssp_weights Optional SSP weights (ntfull, N) instead of the SFH parameters.
-    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx, ssp_weights)
+    !> @param[out]   spec_young, spec_old  Optional (all six together) intrinsic young and old
+    !>                       spectra (nspec, N), L_sun/Hz per solar mass formed: the age sums split
+    !>                       at dust_tesc (young: ages <= dust_tesc), with nebular emission included
+    !>                       (it belongs to the young ages; their ionizing flux is removed as in the
+    !>                       full model), before any dust, dust emission, AGN, IGM or smoothing. They
+    !>                       are what the attenuation stage receives: without dust emission, AGN, IGM
+    !>                       and smoothing, spec = (young (T_birth (1 - frac_obrun) + frac_obrun) +
+    !>                       old T_dust3) (T_diffuse (1 - frac_nodust) + frac_nodust).
+    !> @param[out]   mass_young, mass_old  Surviving stellar mass of the young and old ages.
+    !> @param[out]   lbol_young, lbol_old  log10 L_bol [L_sun] of the young and old stellar ages
+    !>                       (as lbol: stars only).
+    subroutine compute_csp_batch(ctx, psets, mags, status, spec, mass, lbol, mdust, sfr, emlines, indx, ssp_weights, &
+                                 spec_young, spec_old, mass_young, mass_old, lbol_young, lbol_old)
         type(fsps_context_t), intent(inout) :: ctx
         type(params), intent(in)            :: psets(:)
         real(WP), intent(out)               :: mags(:,:)
@@ -152,10 +164,12 @@ contains
         real(WP), intent(out), optional     :: mass(:), lbol(:), mdust(:), sfr(:)
         real(WP), intent(out), optional     :: emlines(:,:), indx(:,:)
         real(WP), intent(in), optional      :: ssp_weights(:,:)
+        real(WP), intent(out), optional     :: spec_young(:,:), spec_old(:,:)
+        real(WP), intent(out), optional     :: mass_young(:), mass_old(:), lbol_young(:), lbol_old(:)
 
         integer :: n_mod, nt, nspec, nbands, m, k
-        real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear
-        logical  :: igm, any_emis, neb, agn, smooth, zmode, zvar, given_w, host_w
+        real(WP) :: zred, dust_age_log, w, mass_frac, sfr_norm, frac_linear, mk, lk
+        logical  :: igm, any_emis, neb, agn, smooth, zmode, zvar, given_w, host_w, parts
         !> Below this batch size the SFH weights are computed on the host: on the device each
         !> model's SFH integral is one serial thread (~0.3 ms on the A100, the same on the P100),
         !> on the host ~20 us per model. (Hardware note: the crossover depends on the host core
@@ -175,6 +189,7 @@ contains
         real(WP), pointer, contiguous :: wq(:), wu(:), gam(:), wta(:), dz(:), zcol(:), lum_linear(:), wext(:,:)
         logical,  pointer, contiguous :: emis(:), agn_on(:)
         real(WP), pointer, contiguous :: s_abs(:), s_norm(:), s_esc(:), s_line(:), msum(:), lsum(:)
+        real(WP), pointer, contiguous :: msy(:), mso(:), lsy(:), lso(:)
 
         ! Work arrays on the device
         real(KP), allocatable :: w2(:,:)   ! (ages, 2N): young weights, then old
@@ -226,6 +241,15 @@ contains
         if (ctx%redshift_colors_val /= 0 .or. ctx%compute_light_ages_val /= 0) then
             status = 2; return
         end if
+        parts = present(spec_young) .and. present(spec_old) .and. present(mass_young) .and. &
+                present(mass_old) .and. present(lbol_young) .and. present(lbol_old)
+        if (parts) then
+            if (size(spec_young, 1) < nspec .or. size(spec_young, 2) < n_mod .or. &
+                size(spec_old, 1) < nspec .or. size(spec_old, 2) < n_mod .or. size(mass_young) < n_mod .or. &
+                size(mass_old) < n_mod .or. size(lbol_young) < n_mod .or. size(lbol_old) < n_mod) then
+                status = 3; return
+            end if
+        end if
         given_w = present(ssp_weights)
         if (given_w) then
             if (size(ssp_weights, 1) < nt .or. size(ssp_weights, 2) < n_mod) then
@@ -249,7 +273,7 @@ contains
 #endif
         nw = 1
         if (given_w .or. host_w) nw = nt * n_mod
-        allocate(ipk(6 * n_mod), rpk(6 * n_mod + nt + nw), lpk(2 * n_mod), rout(6 * n_mod))
+        allocate(ipk(6 * n_mod), rpk(6 * n_mod + nt + nw), lpk(2 * n_mod), rout(10 * n_mod))
         it_tesc => ipk(1:n_mod)
         iq => ipk(n_mod + 1:2 * n_mod)
         iu => ipk(2 * n_mod + 1:3 * n_mod)
@@ -276,6 +300,10 @@ contains
         msum => rout(3 * n_mod + 1:4 * n_mod)
         lsum => rout(4 * n_mod + 1:5 * n_mod)
         s_line => rout(5 * n_mod + 1:6 * n_mod)
+        msy => rout(6 * n_mod + 1:7 * n_mod)
+        mso => rout(7 * n_mod + 1:8 * n_mod)
+        lsy => rout(8 * n_mod + 1:9 * n_mod)
+        lso => rout(9 * n_mod + 1:10 * n_mod)
         rpk = 0.0_wp
 
         zcol = psets(1:n_mod)%zred
@@ -412,26 +440,35 @@ contains
             end do
         end if
         !$acc parallel loop gang vector present(ctx, weights, w2, it_tesc, lum_linear, msum, lsum, &
-        !$acc zlo, zhi, dz) private(k, w)
+        !$acc msy, mso, lsy, lso, zlo, zhi, dz) private(k, w, mk, lk)
 #ifdef OMP_TARGET
-        !$omp target teams distribute parallel do private(k, w)
+        !$omp target teams distribute parallel do private(k, w, mk, lk)
 #endif
         do m = 1, n_mod
             msum(m) = 0.0_wp
             lsum(m) = 0.0_wp
+            msy(m) = 0.0_wp; mso(m) = 0.0_wp; lsy(m) = 0.0_wp; lso(m) = 0.0_wp
             !$acc loop seq
             do k = 1, nt
                 w = weights(k, 1, m)
                 if (w > SAFE_FLOOR) then
                     if (zmode) then
                         ! The interpolated SSP's mass and L_bol (compute_interpolated_ssp)
-                        msum(m) = msum(m) + w * ((1.0_wp - dz(m)) * ctx%state%ssp_basis_mass(k, zlo(m)) + &
-                                                 dz(m) * ctx%state%ssp_basis_mass(k, zhi(m)))
-                        lsum(m) = lsum(m) + w * 10.0_wp**((1.0_wp - dz(m)) * ctx%state%ssp_basis_lbol(k, zlo(m)) + &
-                                                          dz(m) * ctx%state%ssp_basis_lbol(k, zhi(m)))
+                        mk = w * ((1.0_wp - dz(m)) * ctx%state%ssp_basis_mass(k, zlo(m)) + &
+                                  dz(m) * ctx%state%ssp_basis_mass(k, zhi(m)))
+                        lk = w * 10.0_wp**((1.0_wp - dz(m)) * ctx%state%ssp_basis_lbol(k, zlo(m)) + &
+                                           dz(m) * ctx%state%ssp_basis_lbol(k, zhi(m)))
                     else
-                        msum(m) = msum(m) + w * ctx%state%ssp_basis_mass(k, 1)
-                        lsum(m) = lsum(m) + w * lum_linear(k)
+                        mk = w * ctx%state%ssp_basis_mass(k, 1)
+                        lk = w * lum_linear(k)
+                    end if
+                    msum(m) = msum(m) + mk
+                    lsum(m) = lsum(m) + lk
+                    ! Young (ages <= dust_tesc) and old parts, summed separately (no differences)
+                    if (k <= it_tesc(m)) then
+                        msy(m) = msy(m) + mk; lsy(m) = lsy(m) + lk
+                    else
+                        mso(m) = mso(m) + mk; lso(m) = lso(m) + lk
                     end if
                 else
                     w = 0.0_wp
@@ -452,6 +489,17 @@ contains
         if (neb) call add_nebular_batch(ctx, n_mod, nspec, nt, nzb, ctx%state%ssp_basis_spec, w2, it_tesc, &
                                         zlo, zhi, dz, nb, yo, eml)
         if (neb) call attenuate_lines(ctx, psets, n_mod, nb%lum, nb%llo, eml, s_line)
+        ! Intrinsic young and old spectra (the input of the attenuation), on request
+        if (parts) then
+            !$acc update host(yo)
+#ifdef OMP_TARGET
+            !$omp target update from(yo)
+#endif
+            do m = 1, n_mod
+                spec_young(1:nspec, m) = real(yo(:, m), WP)
+                spec_old(1:nspec, m) = real(yo(:, n_mod + m), WP)
+            end do
+        end if
         associate(total => ctx%state%batch_out%spec)
         call attenuate_batch(ctx, psets, n_mod, nspec, iq, iu, wq, wu, gam, emis, agn_on, yo, total, absorbed, tdiff)
         if (any_emis) then
@@ -516,6 +564,12 @@ contains
         end if
         do m = 1, n_mod
             if (present(mass)) mass(m) = msum(m)
+            if (parts) then
+                mass_young(m) = msy(m)
+                mass_old(m) = mso(m)
+                lbol_young(m) = log10(max(lsy(m), tiny(1.0_wp)))
+                lbol_old(m) = log10(max(lso(m), tiny(1.0_wp)))
+            end if
             if (present(lbol)) then
                 if (lsum(m) > SAFE_FLOOR) then
                     lbol(m) = log10(lsum(m))

@@ -1,7 +1,7 @@
 program test_physics_oracles
     !> End-to-end checks of FSPS outputs against independent physical identities and published
     !> values, rather than against earlier output of the same code. Requires the FSPS data tree
-    !> (FSPS_DATA_HOME), like the regression tests.
+    !> (OPENSPS_DATA_HOME / FSPS_DATA_HOME), like the regression tests.
     !>
     !>   1. Dust energy balance: with dust emission on, attenuation moves luminosity into the IR
     !>      without changing L_bol, for every dust_type.
@@ -185,7 +185,7 @@ contains
 
         call print_group("Nebular H-beta / Q(H0) equals Case B")
 
-        i_hbeta = emission_line_index(4861.0_wp)
+        i_hbeta = emission_line_index(ctx, 4861.0_wp)
         call assert_true(i_hbeta > 0, "H-beta found in the line list", total_tests, total_failures)
         if (i_hbeta <= 0) return
 
@@ -323,6 +323,8 @@ contains
             call assert_relative_error(spectral_lbol(ctx, spec_all), &
                                        spectral_lbol(ctx, single(1)%spec(1:ctx%state%nspec)), 1.0e-6_wp, &
                                        trim(msg) // " spectrum", total_tests, total_failures)
+            write(*, '(A,ES10.2)') "# max |single - all-ages| / max(spectrum): ", &
+                maxval(abs(single(1)%spec(1:ctx%state%nspec) - spec_all)) / maxval(spec_all)
             call assert_true(maxval(abs(single(1)%spec(1:ctx%state%nspec) - spec_all)) <= &
                              1.0e-6_wp * maxval(spec_all), trim(msg) // " spectrum element-wise", &
                              total_tests, total_failures)
@@ -467,15 +469,17 @@ contains
     end function spectral_lbol
 
     !> Index of the emission line closest to the given wavelength (Angstrom), or 0.
-    integer function emission_line_index(lambda)
+    integer function emission_line_index(ctx, lambda)
+        use fsps_io, only: auxiliary_table_path
+        type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: lambda
         emission_line_index = 0
         block
             real(WP) :: line_lambda
             integer :: unit_in, ios, i
-            character(len=512) :: path, line
-            call get_environment_variable('FSPS_DATA_HOME', path)
-            open(newunit=unit_in, file=trim(path) // '/data/emlines_info.dat', status='old', &
+            character(len=512) :: line
+            ! The context's resolved data root, legacy or standard layout alike
+            open(newunit=unit_in, file=auxiliary_table_path(ctx, 'emlines_info.dat'), status='old', &
                  action='read', iostat=ios)
             if (ios /= 0) return
             do i = 1, NEMLINE

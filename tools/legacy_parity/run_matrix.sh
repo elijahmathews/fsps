@@ -83,7 +83,7 @@ run_case() {
     (cd "$legacy" && SPS_HOME="$OUT/sps_home" ./csp_dump --out "$OUT/legacy/$name.opsf" \
         "${extra[@]}" $overrides > "$OUT/legacy/$name.log" 2>&1) || { echo "legacy failed: $name" >&2; return 1; }
     # shellcheck disable=SC2086
-    (cd "$OUT/fork" && SPS_HOME="$ROOT" FSPS_DATA_HOME="$ROOT" "$BUILD/generate_opensps_fixtures" \
+    (cd "$OUT/fork" && OPENSPS_DATA_HOME="$ROOT" SPS_HOME="$ROOT" FSPS_DATA_HOME="$ROOT" "$BUILD/generate_opensps_fixtures" \
         --isoc "$isoc" --spec "$spec" --dust "$dust" "${extra[@]}" --out "$name.opsf" $overrides \
         > "$name.log" 2>&1) || { echo "fork failed: $name" >&2; return 1; }
 }

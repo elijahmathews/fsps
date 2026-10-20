@@ -12,7 +12,7 @@ module fsps_initialization
     !>    the entry and computes its own context-local state.
     !> 4. Pre-calculates derived physical quantities (redshift grids, cosmology).
 
-    use iso_fortran_env, only: error_unit
+    use iso_fortran_env, only: error_unit, int64
     use fsps_precision, only: WP, KP
     use fsps_constants, only: VERBOSE, TIME_RES_INCR, SAFE_FLOOR, C_LIGHT, L_SOL, PI, &
                               NM, NDIM_LOGT, NDIM_LOGG, NDIM_WMB_LOGT, NDIM_WMB_LOGG, &
@@ -32,7 +32,10 @@ module fsps_initialization
                        load_standard_sed, load_index_definitions, load_wr_spectra, &
                        load_agb_spectra, load_post_agb_spectra, load_attenuation_curves, &
                        load_wmbasic_spectra, load_lsf_data, load_agn_dust_models, &
-                       apply_legacy_filter_norm
+                       apply_legacy_filter_norm, isochrone_kind, load_spectral_grid_axes, &
+                       use_standard_library, library_spec, metallicity_axis
+    use fsps_datalib, only: datalib_t, datalib_available, datalib_open, datalib_meta_real, datalib_axis_len, &
+                            datalib_axis_values, datalib_check_array, datalib_read_real
     use fsps_cosmology, only: get_universe_age, get_luminosity_distance
     use fsps_interpolation, only: find_interval, interpolate_linear
     use fsps_integration, only: integrate_trapezoid_array
@@ -219,19 +222,26 @@ contains
         ctx%isoc_type_name = trim(isoc_name)
         ctx%spec_type_name = trim(spec_name)
         ctx%dust_type_name = trim(dust_name)
-        ctx%state%isoc_type = trim(isoc_name)
-        ctx%state%spec_type = trim(spec_name)
+        call split_selection(isoc_name, ctx%state%isoc_type, ctx%state%isoc_select)
+        call split_selection(spec_name, ctx%state%spec_type, ctx%state%spec_select)
         ctx%state%str_dustem = trim(dust_name)
+
+        ! Paths first: with standard-format libraries the dimensions come from their manifests
+        call fsps_resolve_paths(ctx)
 
         call set_simulation_dimensions(ctx)
         call configure_dust_model(ctx)
+        if ((len_trim(ctx%state%isoc_select) > 0 .and. .not. uses_standard_isochrones(ctx)) .or. &
+            (len_trim(ctx%state%spec_select) > 0 .and. .not. use_standard_library(ctx, 'stellar_spectra', &
+                                                                                     ctx%state%spec_type))) then
+            write (error_unit, '(A)') '[FSPS_INIT] Error: axis selections (name:axis=value) need a standard-format library'
+            error stop 1
+        end if
 
         if (zin > ctx%state%nz) then
             write (error_unit, '(A,1x,I0,1x,I0)') '[FSPS_INIT] Error: zin > nz', zin, ctx%state%nz
             error stop 1
         end if
-
-        call fsps_resolve_paths(ctx)
 
         call build_cache_key(ctx, zin, cache_key)
         call fsps_cache_get_setup(cache_key, ctx%setup_cache, cache_is_new)
@@ -296,11 +306,15 @@ contains
     !> @param[inout] ctx The context to configure.
     subroutine set_simulation_dimensions(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
         character(len=64) :: iso_str, spec_str
 
         iso_str = trim(ctx%state%isoc_type)
         spec_str = trim(ctx%state%spec_type)
 
+        if (uses_standard_isochrones(ctx)) then
+            call isochrone_dimensions_from_manifest(ctx)
+        else
         select case (iso_str)
         case ('mist')
             ctx%state%zsol = 0.0142_wp
@@ -330,7 +344,11 @@ contains
             write (error_unit, '(A,1x,A)') '[FSPS_INIT] Error: Unknown isoc_type', trim(iso_str)
             error stop 1
         end select
+        end if
 
+        if (iso_str /= 'bpss' .and. datalib_available(ctx%sps_home, 'stellar_spectra', spec_str, ctx%data_format)) then
+            call spectral_dimensions_from_manifest(ctx)
+        else
         select case (spec_str)
         case ('miles')
             ctx%state%zsol_spec = 0.019_wp
@@ -354,8 +372,15 @@ contains
                 error stop 1
             end if
         end select
+        end if
 
         ctx%state%nbands = 159
+        if (len_trim(ctx%state%alt_filter_file) == 0 .or. trim(ctx%state%alt_filter_file) == 'allfilters.dat') then
+            if (use_standard_library(ctx, 'filters', 'allfilters')) then
+                call datalib_open(lib, ctx%sps_home, 'filters', 'allfilters')
+                ctx%state%nbands = datalib_axis_len(lib, 'filter')
+            end if
+        end if
         ctx%state%nindx = 30
         ctx%state%ntfull = TIME_RES_INCR*ctx%state%nt
 
@@ -369,6 +394,66 @@ contains
         end if
 
     end subroutine set_simulation_dimensions
+
+    !> @brief Splits 'name:axis=value,...' into the library name and its axis selections.
+    subroutine split_selection(full, name, sel)
+        character(len=*), intent(in) :: full
+        character(len=*), intent(out) :: name, sel
+        integer :: k
+        k = index(full, ':')
+        if (k > 0) then
+            name = full(1:k - 1)
+            sel = full(k + 1:)
+        else
+            name = full
+            sel = ''
+        end if
+    end subroutine split_selection
+
+    !> @brief True if the isochrones (or, for BPASS, the SSP library) are read in the standard format.
+    logical function uses_standard_isochrones(ctx)
+        type(fsps_context_t), intent(in) :: ctx
+        uses_standard_isochrones = datalib_available(ctx%sps_home, isochrone_kind(ctx%state%isoc_type), &
+                                                     ctx%state%isoc_type, ctx%data_format)
+    end function uses_standard_isochrones
+
+    !> @brief nt, nz and the solar metallicity of a standard-format isochrone (or SSP) library.
+    subroutine isochrone_dimensions_from_manifest(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+
+        call datalib_open(lib, ctx%sps_home, isochrone_kind(ctx%state%isoc_type), &
+                          library_spec(ctx, isochrone_kind(ctx%state%isoc_type), ctx%state%isoc_type))
+        ctx%state%zsol = datalib_meta_real(lib, 'solar_metallicity')
+        ctx%state%nz = datalib_axis_len(lib, metallicity_axis(lib))
+        if (ctx%state%isoc_type == 'bpss') then
+            ctx%state%nt = datalib_axis_len(lib, 'log_age')
+            ! The SSP library is also the spectral library
+            ctx%state%zsol_spec = ctx%state%zsol
+            ctx%state%nzinit = 1
+            ctx%state%nspec = datalib_axis_len(lib, 'wavelength')
+        else
+            ctx%state%nt = datalib_axis_len(lib, 'age_index')
+        end if
+    end subroutine isochrone_dimensions_from_manifest
+
+    !> @brief nspec, nzinit and the solar metallicity of a standard-format spectral library.
+    subroutine spectral_dimensions_from_manifest(ctx)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
+
+        call datalib_open(lib, ctx%sps_home, 'stellar_spectra', &
+                          library_spec(ctx, 'stellar_spectra', ctx%state%spec_type))
+        ctx%state%zsol_spec = datalib_meta_real(lib, 'solar_metallicity')
+        ctx%state%nzinit = datalib_axis_len(lib, metallicity_axis(lib))
+        ctx%state%nspec = datalib_axis_len(lib, 'wavelength')
+        ! The (log T, log g) grid sizes are fixed by the context's lookup tables
+        if (datalib_axis_len(lib, 'logT') /= NDIM_LOGT .or. datalib_axis_len(lib, 'logg') /= NDIM_LOGG) then
+            write (error_unit, '(A,I0,A,I0,A)') '[FSPS_INIT] Error: spectral library ' // trim(ctx%state%spec_type) // &
+                ' must be on the ', NDIM_LOGT, ' x ', NDIM_LOGG, ' (log T, log g) grid of this version'
+            error stop 1
+        end if
+    end subroutine spectral_dimensions_from_manifest
 
     !> @brief Allocates the massive shared arrays within the cache object.
     !>
@@ -491,17 +576,7 @@ contains
         call load_spectral_resolution(ctx, ctx%state%spec_type)
         call load_zlegend_file(ctx, ctx%state%spec_type, .true.)
 
-        open (91, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logt.dat', status='old', action='read')
-        do i = 1, NDIM_LOGT
-            read (91, *) ctx%state%speclib_logt(i)
-        end do
-        close (91)
-
-        open (91, file=trim(ctx%sps_home)//'/data/spectra/BaSeL3.1/basel_logg.dat', status='old', action='read')
-        do i = 1, NDIM_LOGG
-            read (91, *) ctx%state%speclib_logg(i)
-        end do
-        close (91)
+        call load_spectral_grid_axes(ctx, ctx%state%spec_type)
 
         nzinit = ctx%state%nzinit
         allocate (speclibinit(ctx%state%nspec, nzinit, NDIM_LOGT, NDIM_LOGG))
@@ -598,13 +673,17 @@ contains
         call load_dusty_agb_spectra(ctx)
 
         if (ctx%state%isoc_type == 'mist' .or. ctx%state%isoc_type == 'pdva' .or. &
-            ctx%state%isoc_type == 'prsc' .or. ctx%state%isoc_type == 'bpss') then
+            ctx%state%isoc_type == 'prsc' .or. ctx%state%isoc_type == 'bpss' .or. &
+            (ctx%data_format /= 'legacy' .and. &
+             datalib_available(ctx%sps_home, 'nebular', trim(ctx%state%isoc_type)//nebular_suffix(ctx), 'auto'))) then
             call load_nebular_grid(ctx, ctx%state%isoc_type, ctx%cloudy_dust_val == 1)
             call compute_nebular_kernels(ctx)
         end if
 
         if (ctx%state%isoc_type == 'bpss') then
-            call load_xray_nebular_grid(ctx)
+            ! The grid photoionized with X-ray binaries included (xnebem_*); read like the
+            ! regular grid, whose axes it shares
+            call load_nebular_grid(ctx, ctx%state%isoc_type, ctx%cloudy_dust_val == 1, xray=.true.)
         end if
 
         ! X-ray binary spectra (11 x 10 tables read as text, ~2 s) are only used with
@@ -1134,8 +1213,14 @@ contains
 
     subroutine configure_dust_model(ctx)
         type(fsps_context_t), intent(inout) :: ctx
+        type(datalib_t) :: lib
 
-        if (trim(ctx%state%str_dustem) == 'THEMIS') then
+        if (use_standard_library(ctx, 'dust_emission', ctx%state%str_dustem)) then
+            call datalib_open(lib, ctx%sps_home, 'dust_emission', ctx%state%str_dustem)
+            ctx%state%ndim_dustem = datalib_axis_len(lib, 'wavelength')
+            ctx%state%numin_dustem = datalib_axis_len(lib, 'umin')
+            ctx%state%nqpah_dustem = datalib_axis_len(lib, 'qpah')
+        else if (trim(ctx%state%str_dustem) == 'THEMIS') then
             ctx%state%ndim_dustem = 576
             ctx%state%numin_dustem = 37
             ctx%state%nqpah_dustem = 11
@@ -1159,9 +1244,11 @@ contains
         !   - cloudy_dust selects the nebular grid files (ZAU_WD_* vs ZAU_ND_*);
         !   - compute_vega_mags converts the shared magsun to the Vega system;
         !   - zin selects the isochrones loaded and the reference time grid.
-        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
+        write (cache_key, '(A,"|",A,"|",A,"|",A,"|",A,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",I0,"|",A, &
                            &"|",ES24.16,"|",I0,"|",I0)') &
-            trim(ctx%sps_home), trim(ctx%state%isoc_type), trim(ctx%state%spec_type), trim(ctx%state%str_dustem), &
+            trim(ctx%sps_home), trim(ctx%data_format), trim(ctx%state%isoc_type)//':'//trim(ctx%state%isoc_select), &
+            trim(ctx%state%spec_type)//':'//trim(ctx%state%spec_select), &
+            trim(ctx%state%str_dustem), &
             zin, ctx%smooth_velocity_val, ctx%setup_nebular_gaussians_val, ctx%add_neb_emission_val, &
             ctx%add_neb_continuum_val, ctx%add_dust_emission_val, ctx%add_agn_dust_val, &
             ctx%add_xrb_emission_val, ctx%add_agb_dust_model_val, trim(ctx%state%alt_filter_file), &
@@ -1337,180 +1424,151 @@ contains
     subroutine load_dusty_agb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, nlam, stat
+        integer :: i, j, k, nlam, stat, u
         integer :: jj, i_spec
-        real(WP), allocatable :: lambda_dagb(:), fluxin_dagb(:)
+        real(WP), allocatable :: lambda_dagb(:), fluxin(:, :, :)   ! (lambda, tau, Teff)
+        character(len=5), parameter :: CHEM(2) = ['orich', 'crich']
+        character(len=5), parameter :: LEGACY(2) = ['Orich', 'Crich']
+        type(datalib_t) :: lib
+        integer(int64) :: off
 
-        open (99, file=trim(ctx%sps_home)//'/data/dust/dusty/Orich_dusty.spec', status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: dusty O-rich models missing'
-            error stop 1
-        end if
-
-        read (99, *) nlam
-        allocate (lambda_dagb(nlam), fluxin_dagb(nlam))
-        read (99, *) lambda_dagb
-
-        do i = 1, NTEFF_DAGB
-            do j = 1, NTAU_DAGB
-                read (99, *) ctx%state%teff_dagb(1, i), ctx%state%tau1_dagb(1, j)
-                read (99, *) fluxin_dagb
-                jj = max(find_interval(ctx%state%spec_lambda, lambda_dagb(1)), 1)
-                do i_spec = jj, ctx%state%nspec
-                    ctx%state%flux_dagb(i_spec, 1, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, &
-                                                                              ctx%state%spec_lambda(i_spec))
+        do k = 1, 2
+            if (use_standard_library(ctx, 'dusty_agb', CHEM(k))) then
+                call datalib_open(lib, ctx%sps_home, 'dusty_agb', CHEM(k))
+                call datalib_axis_values(lib, 'wavelength', lambda_dagb)
+                nlam = size(lambda_dagb)
+                call standard_axis_values(lib, 'teff', ctx%state%teff_dagb(k, :))
+                call standard_axis_values(lib, 'tau', ctx%state%tau1_dagb(k, :))
+                allocate (fluxin(nlam, NTAU_DAGB, NTEFF_DAGB))
+                call datalib_check_array(lib, 'transfer', [character(len=10) :: 'teff', 'tau', 'wavelength'], &
+                                         [NTEFF_DAGB, NTAU_DAGB, nlam], off)
+                call datalib_read_real(lib, 'transfer', size(fluxin, kind=int64), fluxin, off)
+            else
+                open (newunit=u, file=trim(ctx%sps_home)//'/data/dust/dusty/'//LEGACY(k)//'_dusty.spec', &
+                      status='old', action='read', iostat=stat)
+                if (stat /= 0) then
+                    write (error_unit, '(A)') '[FSPS_INIT] Error: dusty '//LEGACY(k)//' models missing'
+                    error stop 1
+                end if
+                read (u, *) nlam
+                allocate (lambda_dagb(nlam), fluxin(nlam, NTAU_DAGB, NTEFF_DAGB))
+                read (u, *) lambda_dagb
+                do i = 1, NTEFF_DAGB
+                    do j = 1, NTAU_DAGB
+                        read (u, *) ctx%state%teff_dagb(k, i), ctx%state%tau1_dagb(k, j)
+                        read (u, *) fluxin(:, j, i)
+                    end do
                 end do
-            end do
-        end do
-        close (99)
+                close (u)
+            end if
 
-        deallocate (lambda_dagb, fluxin_dagb)
-
-        open (99, file=trim(ctx%sps_home)//'/data/dust/dusty/Crich_dusty.spec', status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: dusty C-rich models missing'
-            error stop 1
-        end if
-
-        read (99, *) nlam
-        allocate (lambda_dagb(nlam), fluxin_dagb(nlam))
-        read (99, *) lambda_dagb
-
-        do i = 1, NTEFF_DAGB
-            do j = 1, NTAU_DAGB
-                read (99, *) ctx%state%teff_dagb(2, i), ctx%state%tau1_dagb(2, j)
-                read (99, *) fluxin_dagb
-                jj = max(find_interval(ctx%state%spec_lambda, lambda_dagb(1)), 1)
-                do i_spec = jj, ctx%state%nspec
-                    ctx%state%flux_dagb(i_spec, 2, i, j) = interpolate_linear(lambda_dagb, fluxin_dagb, &
-                                                                              ctx%state%spec_lambda(i_spec))
-                end do
-            end do
-        end do
-        close (99)
-
-        deallocate (lambda_dagb, fluxin_dagb)
-
-    end subroutine load_dusty_agb_spectra
-
-    subroutine load_xray_nebular_grid(ctx)
-        type(fsps_context_t), intent(inout) :: ctx
-
-        integer :: i, j, k, stat, i_spec
-        real(WP), dimension(NEBNIP) :: readcontneb
-        real(WP), dimension(NEBNIP) :: raw_spec_log
-        real(WP), dimension(NEBNAGE) :: tmp_age
-        real(WP), dimension(NEBNZ) :: tmp_logz
-        real(WP), dimension(NEBNIP) :: tmp_logu
-        real(WP), dimension(:), allocatable :: readlambneb
-        character(len=1024) :: file_path
-
-        allocate (readlambneb(ctx%state%nspec))
-
-        if (ctx%cloudy_dust_val == 1) then
-            file_path = trim(ctx%sps_home)//'/data/nebular/ZAU_WX_WD_'//trim(ctx%state%isoc_type)//'.cont'
-        else
-            file_path = trim(ctx%sps_home)//'/data/nebular/ZAU_WX_ND_'//trim(ctx%state%isoc_type)//'.cont'
-        end if
-
-        open (99, file=trim(file_path), status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: X-ray nebular cont file missing'
-            error stop 1
-        end if
-        read (99, *)
-        read (99, *) readlambneb
-        do i = 1, NEBNZ
-            do j = 1, NEBNAGE
-                do k = 1, NEBNIP
-                    read (99, *, iostat=stat) tmp_logz(i), tmp_age(j), tmp_logu(k)
-                    read (99, *, iostat=stat) readcontneb
-                    raw_spec_log = log10(readcontneb + 10.0_wp**(-95.0_wp))
-                    do i_spec = 1, ctx%state%nspec
-                        ctx%state%xnebem_cont(i_spec, i, j, k) = interpolate_linear(readlambneb, raw_spec_log, &
-                                                                                      ctx%state%spec_lambda(i_spec))
+            jj = max(find_interval(ctx%state%spec_lambda, lambda_dagb(1)), 1)
+            do i = 1, NTEFF_DAGB
+                do j = 1, NTAU_DAGB
+                    do i_spec = jj, ctx%state%nspec
+                        ctx%state%flux_dagb(i_spec, k, i, j) = interpolate_linear(lambda_dagb, fluxin(:, j, i), &
+                                                                                  ctx%state%spec_lambda(i_spec))
                     end do
                 end do
             end do
+            deallocate (lambda_dagb, fluxin)
         end do
-        close (99)
 
-        if (ctx%cloudy_dust_val == 1) then
-            file_path = trim(ctx%sps_home)//'/data/nebular/ZAU_WX_WD_'//trim(ctx%state%isoc_type)//'.lines'
-        else
-            file_path = trim(ctx%sps_home)//'/data/nebular/ZAU_WX_ND_'//trim(ctx%state%isoc_type)//'.lines'
-        end if
+    end subroutine load_dusty_agb_spectra
 
-        open (99, file=trim(file_path), status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: X-ray nebular line file missing'
+    !> @brief Copies the coordinates of axis `axis` of an open library into `dest` (same length).
+    subroutine standard_axis_values(lib, axis, dest)
+        type(datalib_t), intent(in) :: lib
+        character(len=*), intent(in) :: axis
+        real(WP), intent(out) :: dest(:)
+        real(WP), allocatable :: vals(:)
+        call datalib_axis_values(lib, axis, vals)
+        if (size(vals) /= size(dest)) then
+            write (error_unit, '(A,I0,A,I0)') '[FSPS_INIT] Error: axis '//axis//' of '//lib%kind//'/'//lib%name// &
+                ' has ', size(vals), ' values, expected ', size(dest)
             error stop 1
         end if
-        read (99, *)
-        read (99, *) ctx%state%nebem_line_pos
-        do i = 1, NEBNZ
-            do j = 1, NEBNAGE
-                do k = 1, NEBNIP
-                    read (99, *, iostat=stat) ctx%state%nebem_logz(i), ctx%state%nebem_age(j), ctx%state%nebem_logu(k)
-                    read (99, *, iostat=stat) ctx%state%xnebem_line(:, i, j, k)
-                end do
-            end do
-        end do
-        close (99)
+        dest = vals
+    end subroutine standard_axis_values
 
-        ctx%state%nebem_age = log10(ctx%state%nebem_age)
-        ctx%state%xnebem_line = log10(ctx%state%xnebem_line + 10.0_wp**(-95.0_wp))
 
-        deallocate (readlambneb)
-    end subroutine load_xray_nebular_grid
 
     subroutine load_xrb_spectra(ctx)
         type(fsps_context_t), intent(inout) :: ctx
 
-        integer :: i, j, stat, i_spec
+        integer :: i, j, stat, i_spec, u
         character(len=5), allocatable :: zz_str(:)
-        real(WP), allocatable :: tspec(:)
+        real(WP), allocatable :: tspec(:, :, :)     ! (lambda, age, [Fe/H])
+        type(datalib_t) :: lib
+        integer(int64) :: off
 
-        allocate (tspec(ctx%state%nspec_xrb))
-        allocate (zz_str(ctx%state%nz_xrb))
+        if (use_standard_library(ctx, 'xrb', 'xsp')) then
+            call datalib_open(lib, ctx%sps_home, 'xrb', 'xsp')
+            call standard_axis_values(lib, 'wavelength', ctx%state%lam_xrb)
+            call standard_axis_values(lib, 'log_age', ctx%state%ages_xrb)
+            call standard_axis_values(lib, 'feh', ctx%state%zmet_xrb)
+            allocate (tspec(ctx%state%nspec_xrb, ctx%state%nt_xrb, ctx%state%nz_xrb))
+            call datalib_check_array(lib, 'flux', [character(len=10) :: 'feh', 'log_age', 'wavelength'], &
+                                     [ctx%state%nz_xrb, ctx%state%nt_xrb, ctx%state%nspec_xrb], off)
+            call datalib_read_real(lib, 'flux', size(tspec, kind=int64), tspec, off)
+        else
+            allocate (tspec(ctx%state%nspec_xrb, ctx%state%nt_xrb, ctx%state%nz_xrb))
+            allocate (zz_str(ctx%state%nz_xrb))
 
-        open (98, file=trim(ctx%sps_home)//'/data/spectra/xrb/xsp.lambda', status='old', action='read', iostat=stat)
-        if (stat /= 0) then
-            write (error_unit, '(A)') '[FSPS_INIT] Error: xrb lambda file missing'
-            error stop 1
-        end if
-
-        do i = 1, ctx%state%nspec_xrb
-            read (98, *) ctx%state%lam_xrb(i)
-        end do
-        close (98)
-
-        ctx%state%ages_xrb = log10((/1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp, 5.0_wp, 8.0_wp, 10.0_wp, 12.6_wp, 16.0_wp, 20.0_wp/)) + 6.0_wp
-        ctx%state%zmet_xrb = (/-1.3_wp, -1.0_wp, -0.8_wp, -0.7_wp, -0.5_wp, -0.4_wp, -0.3_wp, -0.2_wp, 0.0_wp, 0.2_wp, 0.3_wp/)
-        zz_str = (/'-1.30', '-1.00', '-0.80', '-0.70', '-0.50', '-0.40', '-0.30', '-0.20', '+0.00', '+0.20', '+0.30'/)
-
-        do j = 1, ctx%state%nz_xrb
-            open (98, file=trim(ctx%sps_home)// &
-                  '/data/spectra/xrb/xsp_feh'//zz_str(j)//'.spec', &
-                  status='old', action='read', iostat=stat)
+            open (newunit=u, file=trim(ctx%sps_home)//'/data/spectra/xrb/xsp.lambda', status='old', action='read', &
+                  iostat=stat)
             if (stat /= 0) then
-                write (error_unit, '(A,A)') '[FSPS_INIT] Error: xrb spec missing for ', zz_str(j)
+                write (error_unit, '(A)') '[FSPS_INIT] Error: xrb lambda file missing'
                 error stop 1
             end if
+            do i = 1, ctx%state%nspec_xrb
+                read (u, *) ctx%state%lam_xrb(i)
+            end do
+            close (u)
+
+            ctx%state%ages_xrb = log10((/1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp, 5.0_wp, 8.0_wp, 10.0_wp, 12.6_wp, 16.0_wp, &
+                                         20.0_wp/)) + 6.0_wp
+            ctx%state%zmet_xrb = (/-1.3_wp, -1.0_wp, -0.8_wp, -0.7_wp, -0.5_wp, -0.4_wp, -0.3_wp, -0.2_wp, 0.0_wp, &
+                                   0.2_wp, 0.3_wp/)
+            zz_str = (/'-1.30', '-1.00', '-0.80', '-0.70', '-0.50', '-0.40', '-0.30', '-0.20', '+0.00', '+0.20', '+0.30'/)
+
+            do j = 1, ctx%state%nz_xrb
+                open (newunit=u, file=trim(ctx%sps_home)//'/data/spectra/xrb/xsp_feh'//zz_str(j)//'.spec', &
+                      status='old', action='read', iostat=stat)
+                if (stat /= 0) then
+                    write (error_unit, '(A,A)') '[FSPS_INIT] Error: xrb spec missing for ', zz_str(j)
+                    error stop 1
+                end if
+                do i = 1, ctx%state%nt_xrb
+                    read (u, *) tspec(:, i, j)
+                end do
+                close (u)
+            end do
+        end if
+
+        do j = 1, ctx%state%nz_xrb
             do i = 1, ctx%state%nt_xrb
-                read (98, *) tspec
                 do i_spec = 1, ctx%state%nspec
-                    ctx%state%spec_xrb(i_spec, i, j) = max(interpolate_linear(ctx%state%lam_xrb, tspec, &
+                    ctx%state%spec_xrb(i_spec, i, j) = max(interpolate_linear(ctx%state%lam_xrb, tspec(:, i, j), &
                                                            ctx%state%spec_lambda(i_spec)), SAFE_FLOOR)
                 end do
             end do
-            close (98)
         end do
 
         ctx%state%spec_xrb = ctx%state%spec_xrb*L_SOL
 
-        deallocate (tspec, zz_str)
     end subroutine load_xrb_spectra
+
+    !> @brief Name suffix of the nebular library for the context's cloudy_dust setting.
+    function nebular_suffix(ctx) result(sfx)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=:), allocatable :: sfx
+        if (ctx%cloudy_dust_val == 1) then
+            sfx = '_dust'
+        else
+            sfx = '_nodust'
+        end if
+    end function nebular_suffix
 
     subroutine convert_to_vega_system(ctx)
         type(fsps_context_t), intent(inout) :: ctx
