@@ -453,21 +453,26 @@ then `write_root_index(root, release)` once all libraries are in place.
     redistribution note, taken only from the FSPS sources (README, manual, revision history, data
     headers and READMEs, code comments); these mostly give author and year, so full references,
     versions, URLs and licenses are marked TODO for the maintainers.
-- **CI** today: the full-data job converts the checked-out legacy tree and runs `data_parity`;
-  all jobs run the test library in the unit suite. Once the data live outside the repository,
-  the regression and legacy-parity jobs would fetch the release instead of checking out `data/`:
-
-  ```yaml
-  - uses: actions/cache@v4
-    with:
-      path: ~/.cache/fsps-data
-      key: fsps-data-${{ hashFiles('tools/fetch_data.py') }}-<release>
-  - run: python3 tools/fetch_data.py fsps-data --release-manifest <URL> --cache ~/.cache/fsps-data
-  - run: FSPS_DATA_HOME=$PWD/fsps-data FSPS_DATA_FORMAT=standard meson test -C build --suite regression
-  ```
-
-  The cache holds the verified archives (~0.6 GB without C3K), so a run downloads them once per
-  release.
+- **Tests and the data root**: the unit suite needs no data at all (tests that read real data
+  use the test library through `FSPS_TEST_LIBRARY`). The regression and stress suites read the
+  root given by `meson setup -Ddata_home=<root>` (a legacy tree with `data/` or a standard root;
+  default: the source tree, while it still has `data/`); C3K tests run when that root has C3K.
+  `data_parity` exists only while the source tree has `data/`. Verified in a copy of the tree
+  without `data/`: unit 23/23 with no data, unit + regression 35/35 (FP64 and FP32) with
+  `-Ddata_home=<converted root>` and `FSPS_DATA_FORMAT=standard`.
+- **CI**: today every job uses the checked-out `data/`, and the full-data job also converts it
+  and runs `data_parity`. The switch to the published release is prepared in `ci.yml`: when the
+  repository variable `FSPS_DATA_RELEASE` is set (e.g. `data-v1`), the test and sanitizer jobs
+  restore `~/.cache/fsps-data` from a cache keyed on the release (plus `-all` for the full-data
+  job, which also fetches the optional C3K), run
+  `tools/fetch_data.py $HOME/fsps-data --release $FSPS_DATA_RELEASE`, and configure with
+  `-Ddata_home=$HOME/fsps-data`; `data_parity` is then skipped. To flip: publish the release
+  (`tools/fsps_data/upload_release.sh`), then *Settings > Secrets and variables > Actions >
+  Variables*: `FSPS_DATA_RELEASE = data-v1` (or `gh variable set FSPS_DATA_RELEASE --body data-v1
+  --repo elijahmathews/fsps`); unset it to return to the checkout. Once CI is green on the
+  release, `data/` can leave the tree (a fresh repository started from that commit). The
+  archives are `.tar.zst`, which `fetch_data.py` unpacks with the `zstd` command on the hosted
+  runners' Python versions.
 - **Size without the data** (measured 2026-10-19): the files tracked outside `data/` are 70 MB
   (68 MB checked out; 49 MB of git objects in a fresh repository after `git gc`). 54 MB of
   that are the regression references `tests/data/sps_ref_*.bin` (FP64 spectra, which barely
