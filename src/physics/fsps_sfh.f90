@@ -38,6 +38,7 @@ module fsps_sfh
 
     public :: compute_ssp_weights
     public :: get_sfh_properties_at_age
+    public :: sfh_weights_core, convert_sfhparams
     public :: compute_sfh_statistics
 
     ! ------------------------------------------------------------------------
@@ -1062,5 +1063,288 @@ contains
             idx = lower
         end if
     end function find_interval_tab_time
+
+    !> @brief compute_sfh_weights for one output, with caller-provided scratch columns (the batched
+    !> CSP runs one per model on the device).
+    subroutine sfh_weights_core(ctx, pset, tage, nzin, w, tmp1, tmp2)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: tage
+        integer, intent(in)                 :: nzin
+        real(WP), intent(inout), contiguous :: w(:,:)              ! (ages, nzin)
+        real(WP), intent(inout), contiguous :: tmp1(:), tmp2(:)    ! scratch (ages)
+
+        !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
+
+        ! Local variables
+        type(sfhparams) :: sfh
+        real(WP) :: mass1, mass2
+        real(WP) :: frac_linear, mass_frac, sfr, fburst_val
+        real(WP) :: t1, t2, dt, zbin, dz
+        integer :: i, k, imin, imax
+        integer :: nt, j
+
+        ! 1. Setup
+        nt = ctx%state%ntfull
+        do k = 1, nzin
+            do i = 1, nt
+                w(i, k) = 0.0_wp
+            end do
+        end do
+        do i = 1, nt
+            tmp1(i) = 0.0_wp
+            tmp2(i) = 0.0_wp
+        end do
+
+        ! Initialize SFH struct with unit conversions (Gyr -> Yr)
+        call convert_sfhparams(pset, tage, sfh)
+
+        ! Optimization: Only calculate up to the age of the universe + buffer
+        ! (Legacy logic: +2 steps to be safe against interpolation edge cases)
+        imax = min(max(find_interval(ctx%state%time_full, log10(sfh%tage)) + 2, 1), nt)
+
+        ! --------------------------------------------------------------------
+        ! CASE: SSP (Type 0)
+        ! --------------------------------------------------------------------
+        if (pset%sfh == 0) then
+            sfh%type = -1        ! -1 indicates Burst in compute_ssp_weights
+            sfh%tb   = sfh%tage  ! Burst at 'now' (lookback time = tage)
+            
+            imin = max(imax - 2, 1) ! Optimization: SSP is local
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
+            return
+        end if
+
+        ! --------------------------------------------------------------------
+        ! CASE: Tau (1) or Delayed Tau (4)
+        ! --------------------------------------------------------------------
+        if (pset%sfh == 1 .or. pset%sfh == 4) then
+            ! A. Main Exponential Component
+            sfh%type = pset%sfh
+            imin = 0
+            call compute_ssp_weights(ctx, sfh, imin, imax, w(:, 1))
+
+            ! Normalize to 1.0 mass
+            mass1 = sum(w(1:imax, 1))
+            if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
+            w(:, 1) = w(:, 1) / mass1
+
+            ! B. Add Constant and Burst (if requested)
+            if (pset%const > 0.0_wp .or. pset%fburst > SAFE_FLOOR) then
+                
+                ! Constant Component
+                sfh%type = 0 ! Constant
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
+                mass1 = 0.0_wp
+                do i = 1, imax
+                    mass1 = mass1 + tmp1(i)
+                end do
+                if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
+
+                ! Burst Component
+                tmp2(:) = 0.0_wp
+                fburst_val = 0.0_wp
+                
+                if (sfh%tb >= 0.0_wp) then
+                    sfh%type = -1 ! Burst
+                    call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
+                    fburst_val = pset%fburst
+                    
+                    ! Extend imax to include burst if it happened earlier
+                    imax = max(imax, min(max(find_interval(ctx%state%time_full, log10(sfh%tb)) + 2, 1), nt))
+                end if
+
+                ! Combine: (1 - C - B) * Tau + C * Const + B * Burst
+                do i = 1, nt
+                    w(i, 1) = (1.0_wp - pset%const - fburst_val) * w(i, 1) + &
+                                           pset%const * (tmp1(i) / mass1) + &
+                                           fburst_val * tmp2(i)
+                end do
+            end if
+            return
+        end if
+
+        ! --------------------------------------------------------------------
+        ! CASE: Simha (5)
+        ! --------------------------------------------------------------------
+        if (pset%sfh == 5) then
+            ! A. Delayed Tau Portion
+            sfh%type = 4
+            imin = 0
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
+            mass1 = 0.0_wp
+            do i = 1, imax
+                mass1 = mass1 + tmp1(i)
+            end do
+
+            ! B. Linear Cutoff Portion
+            sfh%type = 5
+            sfh%use_simha_limits = 1
+            call compute_ssp_weights(ctx, sfh, imin, imax, tmp2(:))
+            sfh%use_simha_limits = 0
+            mass2 = 0.0_wp
+            do i = 1, imax
+                mass2 = mass2 + tmp2(i)
+            end do
+
+            ! Normalize
+            if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
+            if (mass2 < SAFE_FLOOR) mass2 = 1.0_wp
+
+            ! C. Get Mixing Fraction
+            call get_sfh_properties_at_age(ctx, pset, tage, mass_frac, sfr, frac_linear)
+
+            ! Combine
+            do i = 1, nt
+                w(i, 1) = (tmp1(i) / mass1) * (1.0_wp - frac_linear) + &
+                                       (tmp2(i) / mass2) * frac_linear
+            end do
+            return
+        end if
+
+        ! --------------------------------------------------------------------
+        ! CASE: Tabular (2=File, 3=Array)
+        ! --------------------------------------------------------------------
+        if (pset%sfh == 2 .or. pset%sfh == 3) then
+            ! We treat the table as a series of linear SFH segments.
+            ! sfh_tab is in [Years, SFR, Z]
+            
+            ! Loop over table bins
+            do j = 1, ctx%state%ntabsfh - 1
+                
+                ! Bin Edges in Lookback Time (Note: Table is in Forward Time)
+                ! t1 = Older edge, t2 = Younger edge
+                t1 = tage * 1.0e9_wp - ctx%state%sfh_tab(1, j+1)
+                t2 = tage * 1.0e9_wp - ctx%state%sfh_tab(1, j)
+
+                ! Skip bins entirely in the future
+                if (t2 < 0.0_wp) cycle
+
+                ! Average Z of bin
+                zbin = (ctx%state%sfh_tab(3, j) + ctx%state%sfh_tab(3, j+1)) / 2.0_wp
+
+                ! Calculate Slope for "Linear" Type 5 model
+                ! Slope = - dSFR / dt / SFR_start (approx normalization for Simha model logic)
+                ! Legacy code uses this specific definition compatible with Type 5 math.
+                ! Note: Denominator is dt = (t2 - t1)
+                dt = max(t2 - t1, SAFE_FLOOR)
+                sfh%sf_slope = -(ctx%state%sfh_tab(2, j+1) - ctx%state%sfh_tab(2, j)) / &
+                               dt / max(ctx%state%sfh_tab(2, j+1), SAFE_FLOOR)
+
+                ! Set Integration Limits for this bin
+                sfh%type = 5
+                sfh%tq   = min(max(t1, 10.0_wp**ctx%tiny_logt_val), 10.0_wp**ctx%state%time_full(nt))
+                sfh%tage = min(max(t2, 10.0_wp**ctx%tiny_logt_val), 10.0_wp**ctx%state%time_full(nt))
+                sfh%sf_trunc = sfh%tage - sfh%tq ! Width of integration
+
+                ! Calculate Mass formed in this bin (Analytic integral of linear segment)
+                ! Mass = SFR_end * (1 + slope/2 * width) * width
+                mass2 = ctx%state%sfh_tab(2, j+1) * &
+                        (1.0_wp + sfh%sf_slope/2.0_wp * (sfh%tage + sfh%tq - 2.0_wp*t1)) * &
+                        (sfh%tage - sfh%tq)
+
+                ! Get Weights for this segment
+                imin = min(max(find_interval(ctx%state%time_full, log10(max(t1, SAFE_FLOOR))) - 1, 0), nt)
+                imax = min(max(find_interval(ctx%state%time_full, log10(max(t2, SAFE_FLOOR))) + 2, 0), nt)
+                
+                call compute_ssp_weights(ctx, sfh, imin, imax, tmp1(:))
+                
+                mass1 = 0.0_wp
+                do i = 1, nt
+                    mass1 = mass1 + tmp1(i)
+                end do
+                if (mass1 < SAFE_FLOOR) mass1 = 1.0_wp
+
+                ! Distribute to Metallicities
+                if (nzin > 1) then
+                    ! Find Z interval
+                    k = max(min(find_interval(ctx%state%zlegend, zbin), ctx%state%nz - 1), 1)
+                    
+                    ! Calc interpolation factor dz
+                    dz = (log10(zbin) - log10(ctx%state%zlegend(k))) / &
+                         (log10(ctx%state%zlegend(k+1)) - log10(ctx%state%zlegend(k)))
+                    dz = max(min(dz, 1.0_wp), -1.0_wp) ! Clamp extrapolation
+                    
+                    ! Vectorized Add
+                    do i = 1, nt
+                        w(i, k)   = w(i, k) + &
+                                                 (1.0_wp - dz) * tmp1(i) * (mass2 / mass1)
+                        w(i, k+1) = w(i, k+1) + &
+                                                 dz            * tmp1(i) * (mass2 / mass1)
+                    end do
+                else
+                    ! Single Z
+                    do i = 1, nt
+                        w(i, 1) = w(i, 1) + tmp1(i) * (mass2 / mass1)
+                    end do
+                end if
+            end do
+        end if
+
+    end subroutine sfh_weights_core
+
+    !> @brief Converts user parameters (pset) into internal physical units (sfhparams).
+    !>
+    !> @details
+    !> Performs necessary unit conversions (Gyr -> Years), calculates lookback times,
+    !> and sets up derived parameters like truncation times and zero-crossings.
+    !>
+    !> @param[in]  pset Parameters from user.
+    !> @param[in]  tage Age of the galaxy [Gyr].
+    !> @param[out] sfh  Internal SFH structure.
+    pure subroutine convert_sfhparams(pset, tage, sfh)
+        type(params), intent(in)     :: pset
+        real(WP), intent(in)         :: tage
+        type(sfhparams), intent(out) :: sfh
+
+        real(WP) :: start_time
+        
+        ! 1. Determine Start Time (Offset)
+        if (any([1, 4, 5] == pset%sfh)) then
+            start_time = pset%sf_start * 1.0e9_wp
+        else
+            start_time = 0.0_wp
+        end if
+
+        ! 2. Basic Conversions (Gyr -> Yr)
+        sfh%tage     = tage * 1.0e9_wp - start_time
+        sfh%tburst   = pset%tburst * 1.0e9_wp - start_time
+        sfh%sf_trunc = pset%sf_trunc * 1.0e9_wp - start_time
+        sfh%tau      = pset%tau * 1.0e9_wp
+        
+        ! Note sign flip: pset slope is (+ = increasing in forward time)
+        ! sfh slope is (+ = increasing in lookback time)
+        sfh%sf_slope = -pset%sf_slope / 1.0e9_wp
+
+        ! 3. Derived Times (Lookback)
+        sfh%tb = sfh%tage - sfh%tburst
+
+        ! Truncation Time (Lookback)
+        if (sfh%sf_trunc <= 0.0_wp .or. sfh%sf_trunc > sfh%tage) then
+            sfh%tq = 0.0_wp
+        else
+            sfh%tq = sfh%tage - sfh%sf_trunc
+        end if
+
+        ! 4. Zero Crossing for Simha/Linear models
+        ! t0 = time where SFR hits zero
+        if (sfh%sf_slope > SAFE_FLOOR) then
+            sfh%t0 = sfh%tq - (1.0_wp / sfh%sf_slope)
+        else
+            sfh%t0 = 0.0_wp
+        end if
+
+        ! Clamp t0 to be physical
+        if (sfh%t0 > sfh%tq .or. sfh%t0 <= 0.0_wp) then
+            sfh%t0 = 0.0_wp
+        end if
+        
+        ! Initialize Simha flag
+        sfh%use_simha_limits = 0
+
+    end subroutine convert_sfhparams
 
 end module fsps_sfh

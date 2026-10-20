@@ -151,6 +151,7 @@ lib_sources = files(
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_csp.f90',
     'src/physics/fsps_csp_batch.f90',
+    'src/physics/fsps_scenario_batch.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
