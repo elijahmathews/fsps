@@ -19,6 +19,12 @@ option('gpu_arch', type: 'string', value: 'cc80,cc90',
 option('cublas', type: 'boolean', value: false,
   description: 'With -Daccel=gpu: run the batched CSP matrix products through cuBLAS (NVIDIA only; the OpenACC loops are the portable default)')
 
+option('tests', type: 'boolean', value: true,
+  description: 'Build the test and benchmark programs (off when built as a subproject of a binding package)')
+
+option('install_data', type: 'boolean', value: true,
+  description: 'Install the data tree under datadir/fsps (1.3 GB)')
+
 option('standard_data_home', type: 'string', value: '',
   description: 'Standard-format data root for the data_parity suite (default: <source>/fsps-data)')
 

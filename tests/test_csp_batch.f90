@@ -12,7 +12,7 @@ program test_csp_batch
     use fsps_constants, only: NEMLINE
     use fsps_types, only: PARAMS, COMPSPOUT
     use fsps_api, only: fsps_create, fsps_setup, fsps_destroy
-    use fsps_csp, only: compute_csp_scenario
+    use fsps_csp, only: compute_csp_scenario, set_scenario_batch
     use fsps_csp_batch, only: compute_csp_batch, batch_spectra_device, batch_spectra_host
     use, intrinsic :: iso_c_binding, only: c_ptr, c_associated, c_loc, c_size_t, c_f_pointer
 #if defined(OMP_TARGET)
@@ -48,6 +48,9 @@ program test_csp_batch
 
     allocate(ctx)
     call fsps_create(ctx)
+    ! The reference is the old single-call path (an independent implementation) and its SFH
+    ! weights, whatever FSPS_SCENARIO_BATCH says
+    call set_scenario_batch(.false.)
     ctx%pset%zmet = 10
     call fsps_setup(ctx, 10, isoc_type_in='mist', spec_type_in='miles', dust_type_in='DL07')
     call fsps_context_move_to_device(ctx)

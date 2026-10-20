@@ -153,6 +153,7 @@ lib_sources = files(
     'src/physics/fsps_cosmology.f90',
     'src/physics/fsps_csp.f90',
     'src/physics/fsps_csp_batch.f90',
+    'src/physics/fsps_scenario_batch.f90',
     'src/physics/fsps_dust.f90',
     'src/physics/fsps_gas.f90',
     'src/physics/fsps_imf.f90',
@@ -191,10 +192,16 @@ fsps_dep = declare_dependency(
     include_directories : include_directories('include'),
     dependencies : [omp_dep, accel_dep, threads_dep]
 )
+# dependency('fsps') in a project that has this one as a subproject
+meson.override_dependency('fsps', fsps_dep)
 
 # ===================================
 # Tests
 # ===================================
+
+# Tests are optional (-Dtests=false), e.g. when the library is built as a subproject
+if get_option('tests')
+# (the test section below is not indented, to keep it diffable)
 
 # 1. Test Utilities (Helper for other tests)
 test_utils_lib = static_library(
@@ -239,7 +246,7 @@ unit_test_sources = files(
     'tests/spectra/test_fsps_smoothing.f90',
     'tests/spectra/test_fsps_spectral_indices.f90',
     'tests/spectra/test_fsps_spectral_library.f90',
-    
+
     'tests/test_fsps.f90' # Main driver
 )
 
@@ -493,6 +500,26 @@ test('c_batch', test_c_batch_exe,
     suite : 'regression',
     timeout : 600
 )
+test_c_batch_parts_exe = executable('test_c_batch_parts', 'tests/test_c_batch_parts.c',
+    dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
+    include_directories : include_directories('include')
+)
+test('c_batch_parts', test_c_batch_parts_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
+test_c_csp_exe = executable('test_c_csp', 'tests/test_c_csp.c',
+    dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
+    include_directories : include_directories('include')
+)
+test('c_csp', test_c_csp_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
+
+endif # tests
 
 # ===================================
 # Installation (PkgConfig & Data)
@@ -501,8 +528,9 @@ test('c_batch', test_c_batch_exe,
 # Install Headers
 install_headers('include/fsps.h')
 
-# Install Data (recursively copies the directory)
-if fs.is_dir('data')
+# Install Data (recursively copies the directory; 1.3 GB, off with -Dinstall_data=false, e.g. for
+# a Python wheel that builds the library as a subproject; skipped when the tree has no data/)
+if get_option('install_data') and fs.is_dir('data')
     install_subdir('data', install_dir : join_paths(datadir, 'fsps'))
 endif
 
