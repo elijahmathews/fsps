@@ -121,6 +121,37 @@ Status codes: 301 not set up, 302 no CSP computed yet, 304 `zmet` out of range, 
 computation failed (or `sfh = 3` without a table); 3 from `fsps_context_set_sfh_tab` for `ntab`
 outside 1 to `NTABMAX`.
 
+### Young and old components of the batch
+
+```c
+void fsps_context_compute_csp_batch_parts(int handle, int n, int n_params, const char *const *names,
+                                          const double *const *values, const double *ssp_weights,
+                                          double *mags, double *spec, double *mass, double *lbol,
+                                          double *mdust, double *sfr, double *emlines, double *indx,
+                                          double *young, double *old, double *mass_young,
+                                          double *mass_old, double *lbol_young, double *lbol_old,
+                                          int *status);
+```
+
+The batch (same arguments and outputs as `fsps_context_compute_csp_batch`), plus the intrinsic
+spectra of its young (ages <= `dust_tesc`) and old parts, `nspec x n` each, in L_sun/Hz per
+solar mass formed, for applying dust afterwards (emulator training sets). They are what the
+batch's attenuation stage receives: the age sums with nebular emission included (nebular
+emission belongs to the young ages: their ionizing flux is replaced by it, as in the full
+model), before dust, dust emission, AGN, IGM and smoothing. Without those four,
+
+    spec = (young * (T_birth * (1 - frac_obrun) + frac_obrun) + old * T_dust3)
+           * (T_diffuse * (1 - frac_nodust) + frac_nodust)
+
+with `T = exp(-tau)`, `tau_birth = dust1 * (lambda / 5500 A)^dust1_index` (0 for `dust1 = 0`),
+`tau_diffuse = dust2 * curve(lambda)` and `tau_dust3 = dust3 * curve(lambda)`, `curve` the
+attenuation curve of `dust_type` (for `dust_type = 0`, `(lambda / 5500 A)^dust_index`). Dust
+emission (energy balance), the AGN torus, IGM absorption and smoothing act on the attenuated
+total. `mass_young`, `mass_old` are the surviving stellar masses and `lbol_young`, `lbol_old`
+the log10 stellar L_bol of the two parts (they add up to `mass` and `lbol`); these four may be
+`NULL`, `young` and `old` may not (status 3). Tested in `tests/test_c_batch_parts.c`, which
+rebuilds the full spectrum from the parts.
+
 ### SSP grid
 
 ```c

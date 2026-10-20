@@ -436,6 +436,15 @@ test('c_batch', test_c_batch_exe,
     suite : 'regression',
     timeout : 600
 )
+test_c_batch_parts_exe = executable('test_c_batch_parts', 'tests/test_c_batch_parts.c',
+    dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
+    include_directories : include_directories('include')
+)
+test('c_batch_parts', test_c_batch_parts_exe,
+    env : regression_env,
+    suite : 'regression',
+    timeout : 600
+)
 test_c_csp_exe = executable('test_c_csp', 'tests/test_c_csp.c',
     dependencies : [fsps_dep, meson.get_compiler('c').find_library('m', required : false)],
     include_directories : include_directories('include')

@@ -39,7 +39,7 @@ module fsps_c_api
     ! ---------------------------------------------------------------------
 
     integer, parameter :: fsps_driver_version_major = 1
-    integer, parameter :: fsps_driver_version_minor = 1   ! = FSPS_API_VERSION_MINOR in fsps.h
+    integer, parameter :: fsps_driver_version_minor = 2   ! = FSPS_API_VERSION_MINOR in fsps.h
     integer, parameter :: fsps_driver_version_patch = 0
 
     ! ---------------------------------------------------------------------
@@ -501,6 +501,53 @@ contains
         type(c_ptr), value :: c_names, c_values, c_weights
         type(c_ptr), value :: c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, c_emlines, c_indx
         integer(c_int), intent(OUT) :: status
+
+        call batch_handle(handle, n, n_params, c_names, c_values, c_weights, c_mags, c_spec, c_mass, c_lbol, &
+                          c_mdust, c_sfr, c_emlines, c_indx, c_null_ptr, c_null_ptr, c_null_ptr, c_null_ptr, &
+                          c_null_ptr, c_null_ptr, status)
+    end subroutine fsps_context_compute_csp_batch_handle
+
+    !> @brief The batch with its intrinsic young and old components as well (emulator training
+    !> sets: birth-cloud and diffuse dust applied afterwards).
+    !>
+    !> @details
+    !> As fsps_context_compute_csp_batch, plus young and old (nspec x n, required): the intrinsic
+    !> spectra of the ages <= dust_tesc and > dust_tesc, nebular emission included in them (it
+    !> belongs to the young ages), before dust, dust emission, AGN, IGM and smoothing; and the
+    !> surviving stellar masses and log10 L_bol of the two parts (any of the four may be NULL).
+    subroutine fsps_context_compute_csp_batch_parts_handle(handle, n, n_params, c_names, c_values, c_weights, &
+                                                           c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, &
+                                                           c_emlines, c_indx, c_young, c_old, c_mass_young, &
+                                                           c_mass_old, c_lbol_young, c_lbol_old, status) &
+        bind(C, name="fsps_context_compute_csp_batch_parts")
+        integer(c_int), value :: handle, n, n_params
+        type(c_ptr), value :: c_names, c_values, c_weights
+        type(c_ptr), value :: c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, c_emlines, c_indx
+        type(c_ptr), value :: c_young, c_old, c_mass_young, c_mass_old, c_lbol_young, c_lbol_old
+        integer(c_int), intent(OUT) :: status
+
+        if (.not. c_associated(c_young) .or. .not. c_associated(c_old)) then
+            status = 3
+            call fsps_set_error(3, 'compute_csp_batch_parts: young and old are required')
+            return
+        end if
+        call batch_handle(handle, n, n_params, c_names, c_values, c_weights, c_mags, c_spec, c_mass, c_lbol, &
+                          c_mdust, c_sfr, c_emlines, c_indx, c_young, c_old, c_mass_young, c_mass_old, &
+                          c_lbol_young, c_lbol_old, status)
+    end subroutine fsps_context_compute_csp_batch_parts_handle
+
+    !> The two batch entry points (parts requested when c_young is associated).
+    subroutine batch_handle(handle, n, n_params, c_names, c_values, c_weights, c_mags, c_spec, c_mass, c_lbol, &
+                            c_mdust, c_sfr, c_emlines, c_indx, c_young, c_old, c_mass_young, c_mass_old, &
+                            c_lbol_young, c_lbol_old, status)
+        integer(c_int), intent(IN) :: handle, n, n_params
+        type(c_ptr), intent(IN) :: c_names, c_values, c_weights
+        type(c_ptr), intent(IN) :: c_mags, c_spec, c_mass, c_lbol, c_mdust, c_sfr, c_emlines, c_indx
+        type(c_ptr), intent(IN) :: c_young, c_old, c_mass_young, c_mass_old, c_lbol_young, c_lbol_old
+        integer(c_int), intent(OUT) :: status
+        real(c_double), pointer :: young(:, :), old(:, :), pv(:)
+        real(WP), allocatable, target :: spec_l(:, :)
+        real(WP), allocatable :: my_l(:), mo_l(:), ly_l(:), lo_l(:)
         type(c_ptr), pointer :: name_ptrs(:), value_ptrs(:)
         real(c_double), pointer :: v(:)
         real(c_double), pointer :: mags(:, :), spec(:, :), emlines(:, :), indx(:, :), weights(:, :)
@@ -586,7 +633,55 @@ contains
         ! (Not by passing disassociated pointers as absent arguments: with -acc=gpu, nvfortran
         ! 25.1 reports some of them as present.)
         allocate(mass_l(n), lbol_l(n), mdust_l(n), sfr_l(n), eml_l(NEMLINE, n))
-        if (c_associated(c_spec)) then
+        if (c_associated(c_young)) then
+            ! With the young / old parts: the spectra always (the caller's array or a local one)
+            call c_f_pointer(c_young, young, [nspec, n])
+            call c_f_pointer(c_old, old, [nspec, n])
+            allocate(my_l(n), mo_l(n), ly_l(n), lo_l(n))
+            if (.not. c_associated(c_spec)) then
+                allocate(spec_l(nspec, n))
+                spec => spec_l
+            end if
+            if (c_associated(c_indx)) then
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx, ssp_weights=weights, &
+                                           spec_young=young, spec_old=old, mass_young=my_l, mass_old=mo_l, &
+                                           lbol_young=ly_l, lbol_old=lo_l)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, indx=indx, &
+                                           spec_young=young, spec_old=old, mass_young=my_l, mass_old=mo_l, &
+                                           lbol_young=ly_l, lbol_old=lo_l)
+                end if
+            else
+                if (c_associated(c_weights)) then
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, ssp_weights=weights, &
+                                           spec_young=young, spec_old=old, mass_young=my_l, mass_old=mo_l, &
+                                           lbol_young=ly_l, lbol_old=lo_l)
+                else
+                    call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
+                                           sfr=sfr_l, emlines=eml_l, &
+                                           spec_young=young, spec_old=old, mass_young=my_l, mass_old=mo_l, &
+                                           lbol_young=ly_l, lbol_old=lo_l)
+                end if
+            end if
+            if (st == 0) then
+                if (c_associated(c_mass_young)) then
+                    call c_f_pointer(c_mass_young, pv, [n]); pv = my_l
+                end if
+                if (c_associated(c_mass_old)) then
+                    call c_f_pointer(c_mass_old, pv, [n]); pv = mo_l
+                end if
+                if (c_associated(c_lbol_young)) then
+                    call c_f_pointer(c_lbol_young, pv, [n]); pv = ly_l
+                end if
+                if (c_associated(c_lbol_old)) then
+                    call c_f_pointer(c_lbol_old, pv, [n]); pv = lo_l
+                end if
+            end if
+        else if (c_associated(c_spec)) then
             if (c_associated(c_indx)) then
                 if (c_associated(c_weights)) then
                     call compute_csp_batch(ctx, psets, mags, st, spec=spec, mass=mass_l, lbol=lbol_l, mdust=mdust_l, &
@@ -642,7 +737,7 @@ contains
         end if
         status = st
         end associate
-    end subroutine fsps_context_compute_csp_batch_handle
+    end subroutine batch_handle
 
     !> Where the last batch's spectra are (see batch_spectra_device): the device address, nspec,
     !> the number of models and the bytes per value (4 or 8); status 1 for a bad handle.

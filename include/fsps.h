@@ -9,10 +9,11 @@ extern "C" {
 // API version (also returned by fsps_get_driver_version). The minor number grows when entry
 // points are added; the major number changes only for incompatible changes. 1.1 added the
 // context grids (lambda, ages, zlegend, emlambda, filter data), the tabular SFH and the single
-// CSP (fsps_context_compute_csp / fsps_context_get_csp).
+// CSP (fsps_context_compute_csp / fsps_context_get_csp). 1.2 added the batch's young and old
+// components (fsps_context_compute_csp_batch_parts).
 // ----------------------------------------------------------------------------
 #define FSPS_API_VERSION_MAJOR 1
-#define FSPS_API_VERSION_MINOR 1
+#define FSPS_API_VERSION_MINOR 2
 #define FSPS_API_VERSION_PATCH 0
 
 // ----------------------------------------------------------------------------
@@ -135,6 +136,25 @@ void fsps_context_compute_csp_batch(int handle, int n, int n_params, const char 
                                     double *mags, double *spec, double *mass, double *lbol,
                                     double *mdust, double *sfr, double *emlines, double *indx,
                                     int *status);
+
+// The batch with its intrinsic young and old components as well (e.g. emulator training sets
+// that apply birth-cloud and diffuse dust afterwards). Arguments as fsps_context_compute_csp_batch,
+// plus young, old (nspec x n, column-major, required): the age sums of the ages <= dust_tesc and
+// > dust_tesc, L_sun/Hz per solar mass formed, with nebular emission included (it belongs to the
+// young ages, whose ionizing flux it replaces), before dust, dust emission, AGN, IGM and
+// smoothing. Without those, spec = (young (T_birth (1 - frac_obrun) + frac_obrun) + old T_dust3)
+// (T_diffuse (1 - frac_nodust) + frac_nodust), with T = exp(-tau): tau_birth = dust1 (lambda /
+// 5500 A)^dust1_index, tau_diffuse = dust2 curve(lambda), tau_dust3 = dust3 curve(lambda), curve
+// the dust_type's attenuation curve. mass_young, mass_old: surviving stellar masses [M_sun];
+// lbol_young, lbol_old: log10 L_bol [L_sun] of the stars (log10 of the smallest double when a
+// part is empty); any of these four may be NULL. status as the batch, 3 also for NULL young / old.
+void fsps_context_compute_csp_batch_parts(int handle, int n, int n_params, const char *const *names,
+                                          const double *const *values, const double *ssp_weights,
+                                          double *mags, double *spec, double *mass, double *lbol,
+                                          double *mdust, double *sfr, double *emlines, double *indx,
+                                          double *young, double *old, double *mass_young,
+                                          double *mass_old, double *lbol_young, double *lbol_old,
+                                          int *status);
 
 // The last batch's spectra where they were computed, for callers that keep working on the GPU
 // (pass spec = NULL to the batch to skip the copy to the host): *ptr is a device address (host
