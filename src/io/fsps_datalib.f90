@@ -26,7 +26,7 @@ module fsps_datalib
     private
 
     public :: datalib_t
-    public :: DATA_FORMAT_VERSION, DATA_ROOT_INDEX
+    public :: DATA_FORMAT_VERSION, DATA_ROOT_INDEX, DATA_ROOT_INDEX_OLD
     public :: DATA_FORMAT_AUTO, DATA_FORMAT_LEGACY, DATA_FORMAT_STANDARD
     public :: datalib_format_from_env, datalib_root_is_standard, datalib_available
     public :: datalib_open, datalib_base_name
@@ -37,7 +37,12 @@ module fsps_datalib
     public :: datalib_meta_node
 
     integer, parameter :: DATA_FORMAT_VERSION = 1
-    character(len=*), parameter :: DATA_ROOT_INDEX = 'fsps-data.json'
+    !> Root index and format identifier; the names before the libopensps rename ('fsps-data.json',
+    !> 'fsps-data') are still read (transition alias, doc/DATA_FORMAT.md)
+    character(len=*), parameter :: DATA_ROOT_INDEX = 'opensps-data.json'
+    character(len=*), parameter :: DATA_ROOT_INDEX_OLD = 'fsps-data.json'
+    character(len=*), parameter :: DATA_FORMAT_ID = 'opensps-data'
+    character(len=*), parameter :: DATA_FORMAT_ID_OLD = 'fsps-data'
     character(len=*), parameter :: DATA_FORMAT_AUTO = 'auto'
     character(len=*), parameter :: DATA_FORMAT_LEGACY = 'legacy'
     character(len=*), parameter :: DATA_FORMAT_STANDARD = 'standard'
@@ -84,10 +89,13 @@ contains
         end select
     end function datalib_format_from_env
 
-    !> True if `root` holds a standard-format root index.
+    !> True if `root` holds a standard-format root index (opensps-data.json, or the older
+    !> fsps-data.json).
     logical function datalib_root_is_standard(root)
         character(len=*), intent(in) :: root
         inquire(file=trim(root) // '/' // DATA_ROOT_INDEX, exist=datalib_root_is_standard)
+        if (.not. datalib_root_is_standard) &
+            inquire(file=trim(root) // '/' // DATA_ROOT_INDEX_OLD, exist=datalib_root_is_standard)
     end function datalib_root_is_standard
 
     !> Whether library (kind, name) is read in the standard format under the given mode:
@@ -138,7 +146,7 @@ contains
         logical :: ok
         character(len=512) :: msg
         integer :: node, k, kc, ke
-        character(len=:), allocatable :: sels, item
+        character(len=:), allocatable :: sels, item, fmt
 
         lib%kind = trim(kind)
         lib%name = datalib_base_name(spec)
@@ -153,8 +161,9 @@ contains
             error stop 1
         end if
 
-        if (json_string(lib%doc, json_child(lib%doc, 1, 'format')) /= 'fsps-data') &
-            call lib_error(lib, 'manifest.json is not an fsps-data manifest (field "format")')
+        fmt = json_string(lib%doc, json_child(lib%doc, 1, 'format'))
+        if (fmt /= DATA_FORMAT_ID .and. fmt /= DATA_FORMAT_ID_OLD) &
+            call lib_error(lib, 'manifest.json is not an opensps-data manifest (field "format")')
         node = json_child(lib%doc, 1, 'format_version')
         if (json_int(lib%doc, node) /= DATA_FORMAT_VERSION) &
             call lib_error(lib, 'unsupported format_version (this code reads version 1)')

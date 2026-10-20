@@ -10,36 +10,39 @@ Release structure (doc/DATA_FORMAT.md, Section 6):
 - One immutable archive per library and library version: ``<kind>-<name>-v<N>.tar.zst`` holding
   ``libraries/<kind>/<name>/``. N is the manifest's ``version``; a changed library must get a new
   version (the packer refuses to reuse a version whose files changed).
-- One base archive per release: ``base-<release>.tar.zst`` with ``fsps-data.json``, the small text
-  tables in ``data/`` and ``DATA_README.md`` (what to cite).
+- One base archive per release: ``base-<release>.tar.zst`` with ``opensps-data.json``, the small text
+  tables in ``data/``, ``DATA_README.md`` (what to cite) and ``data_release.bib`` (the references,
+  exported from NASA ADS).
 - The release manifest ``<release>.json``: for every archive its library, version, size, SHA-256,
   the release tag it was uploaded to and a list of mirror URLs. With --previous, libraries whose
   version and files are unchanged point at the archive of the earlier release instead of being
   packed and uploaded again.
 
 OUTDIR receives the new archives, the release manifest, DATA_README.md and UPLOAD.txt (the files
-to attach to the release tag; see upload_release.sh). Mirrors: the GitHub release of the tag, then
-a Zenodo placeholder.
+to attach to the release tag; see upload_release.sh). Mirrors: the GitHub release of the tag (more
+can be added to MIRRORS later).
 """
 import argparse
 import gzip
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tarfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fsps_data import Library, read_root_index  # noqa: E402
+from fsps_data import Library, read_root_index, root_index_path  # noqa: E402
 from provenance import write_data_readme  # noqa: E402
 
 DEFAULT_OPTIONAL = ["stellar_spectra/c3k_afe+0.0"]
 GITHUB_REPO = "elijahmathews/opensps-data"
+# Download locations of an archive, tried in order; {tag} is the release the archive was uploaded
+# to. More mirrors (e.g. a Zenodo record of a tagged release) can be appended here later.
 MIRRORS = [
     "https://github.com/" + GITHUB_REPO + "/releases/download/{tag}/{file}",
-    # TODO(zenodo): the record of the tagged data release, once archived on Zenodo
-    "https://zenodo.org/records/TODO-{tag}/files/{file}",
 ]
+BIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_release.bib")
 
 
 def sha256(path):
@@ -154,26 +157,29 @@ def main(argv=None):
 
     write_data_readme(os.path.join(a.outdir, "DATA_README.md"), a.release, libs)
     base = f"base-{a.release}{ext}"
-    members = [(a.root, "fsps-data.json", None)]
+    members = [(a.root, os.path.basename(root_index_path(a.root)), None)]
     members += [(a.root, os.path.join("data", f), None) for f in sorted(os.listdir(os.path.join(a.root, "data")))]
     members.append((a.outdir, "DATA_README.md", "DATA_README.md"))
+    shutil.copyfile(BIB, os.path.join(a.outdir, "data_release.bib"))
+    members.append((a.outdir, "data_release.bib", "data_release.bib"))
     nbytes, sha = pack(a.outdir, base, members, comp)
     archives.insert(0, {"library": None, "version": a.release, "file": base, "bytes": nbytes, "sha256": sha,
                         "release_tag": a.release, "urls": urls(a.release, base),
-                        "description": "root index, small text tables, DATA_README.md", "optional": False})
+                        "description": "root index, small text tables, DATA_README.md, data_release.bib",
+                        "optional": False})
     upload.insert(0, base)
 
-    rel = {"format": "fsps-data-release", "format_version": 2, "release": a.release,
+    rel = {"format": "opensps-data-release", "format_version": 2, "release": a.release,
            "data_format_version": idx["format_version"], "mirrors": MIRRORS, "archives": archives}
     mpath = os.path.join(a.outdir, f"{a.release}.json")
     with open(mpath, "w") as f:
         json.dump(rel, f, indent=1)
         f.write("\n")
-    upload += [os.path.basename(mpath), "DATA_README.md"]
+    upload += [os.path.basename(mpath), "DATA_README.md", "data_release.bib"]
     with open(os.path.join(a.outdir, "UPLOAD.txt"), "w") as f:
         f.write("\n".join(upload) + "\n")
     new = sum(x["bytes"] for x in archives if x["release_tag"] == a.release)
-    print(f"{len(archives)} archives, {len(upload) - 2} new ({new / 1e6:.0f} MB to upload); manifest {mpath}")
+    print(f"{len(archives)} archives, {len(upload) - 3} new ({new / 1e6:.0f} MB to upload); manifest {mpath}")
     return 0
 
 

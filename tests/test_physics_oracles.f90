@@ -1,7 +1,7 @@
 program test_physics_oracles
     !> End-to-end checks of FSPS outputs against independent physical identities and published
     !> values, rather than against earlier output of the same code. Requires the FSPS data tree
-    !> (FSPS_DATA_HOME), like the regression tests.
+    !> (OPENSPS_DATA_HOME / FSPS_DATA_HOME), like the regression tests.
     !>
     !>   1. Dust energy balance: with dust emission on, attenuation moves luminosity into the IR
     !>      without changing L_bol, for every dust_type.

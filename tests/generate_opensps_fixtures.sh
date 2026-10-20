@@ -14,6 +14,7 @@ OUTDIR="$(realpath -m "${1:?usage: $0 OUTDIR}")"
 GENERATOR="$PROJECT_ROOT/build/generate_opensps_fixtures"
 
 export SPS_HOME="$PROJECT_ROOT"
+export OPENSPS_DATA_HOME="$PROJECT_ROOT"
 export FSPS_DATA_HOME="$PROJECT_ROOT"
 
 meson compile -C "$PROJECT_ROOT/build" generate_opensps_fixtures > /dev/null

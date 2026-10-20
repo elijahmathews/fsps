@@ -1,6 +1,6 @@
-"""Read, write and verify FSPS data libraries in the standard format (doc/DATA_FORMAT.md).
+"""Read, write and verify data libraries of libopensps in the standard format (doc/DATA_FORMAT.md).
 
-A data root holds ``fsps-data.json`` and ``libraries/<kind>/<name>/manifest.json`` with one raw
+A data root holds ``opensps-data.json`` and ``libraries/<kind>/<name>/manifest.json`` with one raw
 little-endian array per ``.bin`` file. This module needs only the standard library and NumPy.
 
 Writing a library::
@@ -27,9 +27,20 @@ import re
 
 import numpy as np
 
-FORMAT = "fsps-data"
+FORMAT = "opensps-data"
 FORMAT_VERSION = 1
-ROOT_INDEX = "fsps-data.json"
+ROOT_INDEX = "opensps-data.json"
+# Names before the libopensps rename, still accepted when reading (transition alias)
+OLD_FORMAT = "fsps-data"
+OLD_ROOT_INDEX = "fsps-data.json"
+FORMATS = (FORMAT, OLD_FORMAT)
+
+
+def root_index_path(root):
+    """The root index of a data root: opensps-data.json, or the older fsps-data.json."""
+    p = os.path.join(root, ROOT_INDEX)
+    old = os.path.join(root, OLD_ROOT_INDEX)
+    return p if os.path.exists(p) or not os.path.exists(old) else old
 MANIFEST = "manifest.json"
 DTYPES = {"<f4": np.dtype("<f4"), "<f8": np.dtype("<f8"), "<i4": np.dtype("<i4"), "<i8": np.dtype("<i8")}
 
@@ -186,7 +197,7 @@ class Library:
         path = root if kind is None else library_dir(root, kind, name)
         with open(os.path.join(path, MANIFEST)) as f:
             man = json.load(f)
-        if man.get("format") != FORMAT or man.get("format_version") != FORMAT_VERSION:
+        if man.get("format") not in FORMATS or man.get("format_version") != FORMAT_VERSION:
             raise ValueError(f"{path}: not an {FORMAT} v{FORMAT_VERSION} library")
         return cls(path, man)
 
@@ -238,7 +249,7 @@ class Library:
 
 
 def write_root_index(root, release, title=""):
-    """Writes fsps-data.json listing every library found under root/libraries."""
+    """Writes opensps-data.json listing every library found under root/libraries."""
     libs = []
     base = os.path.join(root, "libraries")
     for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
@@ -256,9 +267,9 @@ def write_root_index(root, release, title=""):
 
 
 def read_root_index(root):
-    with open(os.path.join(root, ROOT_INDEX)) as f:
+    with open(root_index_path(root)) as f:
         idx = json.load(f)
-    if idx.get("format") != FORMAT or idx.get("format_version") != FORMAT_VERSION:
+    if idx.get("format") not in FORMATS or idx.get("format_version") != FORMAT_VERSION:
         raise ValueError(f"{root}: not an {FORMAT} v{FORMAT_VERSION} data root")
     return idx
 

@@ -60,6 +60,7 @@ contains
 
     subroutine use_root(root)
         character(len=*), intent(in) :: root
+        if (c_setenv('OPENSPS_DATA_HOME'//c_null_char, trim(root)//c_null_char, 1_c_int) /= 0) stop 3
         if (c_setenv('FSPS_DATA_HOME'//c_null_char, trim(root)//c_null_char, 1_c_int) /= 0) stop 3
     end subroutine use_root
 

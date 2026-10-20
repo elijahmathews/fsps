@@ -17,7 +17,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fsps_data import Library, LibraryWriter  # noqa: E402
+from fsps_data import Library, LibraryWriter, root_index_path  # noqa: E402
 
 COLS = ["mini", "mact", "logl", "logt", "logg", "composition", "phase", "log_mdot"]
 
@@ -70,7 +70,8 @@ def main(argv):
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
-    shutil.copy2(os.path.join(src, "fsps-data.json"), out)
+    idx = root_index_path(src)
+    shutil.copy2(idx, os.path.join(out, os.path.basename(idx)))
     os.symlink(os.path.join(src, "data"), os.path.join(out, "data"))
     for kind in os.listdir(os.path.join(src, "libraries")):
         os.makedirs(os.path.join(out, "libraries", kind))

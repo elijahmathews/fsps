@@ -4,7 +4,7 @@
 Usage:
     convert_legacy.py LEGACY_ROOT OUT_ROOT [--only KIND[/NAME] ...] [--release R] [--list]
 
-LEGACY_ROOT contains ``data/``; OUT_ROOT receives ``fsps-data.json``, ``libraries/`` and a
+LEGACY_ROOT contains ``data/``; OUT_ROOT receives ``opensps-data.json``, ``libraries/`` and a
 copy of the small text tables in ``data/``. Every reader below mirrors the Fortran reader named
 in its docstring value for value (list-directed text is parsed with the same correctly rounded
 conversion), so the Fortran loader reproduces the legacy arrays bit for bit; the binary

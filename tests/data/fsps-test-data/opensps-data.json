@@ -1,5 +1,5 @@
 {
- "format": "fsps-data",
+ "format": "opensps-data",
  "format_version": 1,
  "release": "test",
  "title": "Coarse test subsets of the default libraries (not for science)",
