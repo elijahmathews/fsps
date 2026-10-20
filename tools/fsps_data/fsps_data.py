@@ -74,8 +74,9 @@ def _json_number(x):
 class LibraryWriter:
     """Builds one library directory: arrays first (written immediately), manifest last."""
 
-    def __init__(self, root, kind, name, title="", notes="", provenance=None):
+    def __init__(self, root, kind, name, title="", notes="", provenance=None, version=1):
         self.root = root
+        self.version = int(version)   # version of this library's data; bump on any change
         self.kind = kind
         self.name = name
         self.dir = library_dir(root, kind, name)
@@ -146,7 +147,7 @@ class LibraryWriter:
                 datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         prov.update(self.provenance)
         man = {"format": FORMAT, "format_version": FORMAT_VERSION, "kind": self.kind,
-               "name": self.name}
+               "name": self.name, "version": self.version}
         if self.title:
             man["title"] = self.title
         if self.notes:

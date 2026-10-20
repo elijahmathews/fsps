@@ -56,8 +56,9 @@ def narrow(a):
 def subset_generic(src, out, kind, name, sel):
     lib = Library.open(src, kind, name)
     m = lib.manifest
-    w = LibraryWriter(out, kind, name, title=(m.get("title", "") + " - " + TITLE_NOTE),
-                      provenance={"subset_of": f"{kind}/{name}", "subset": {k: str(v) for k, v in sel.items()}})
+    prov = dict(m.get("provenance", {}), subset_of=f"{kind}/{name} v{m.get('version', 1)}",
+                subset={k: str(v) for k, v in sel.items()})
+    w = LibraryWriter(out, kind, name, title=(m.get("title", "") + " - " + TITLE_NOTE), provenance=prov)
     w.metadata.update(lib.metadata)
     for ax, desc in m["axes"].items():
         extra = {k: v for k, v in desc.items() if k not in ("units", "values", "labels", "file", "dtype", "shape",
@@ -102,7 +103,7 @@ def subset_isochrones(src, out):
             for c in cols:
                 new_cols[c].append(cols[c][take])
     w = LibraryWriter(out, "isochrones", "mist", title="MIST isochrones - " + TITLE_NOTE,
-                      provenance={"subset_of": "isochrones/mist"})
+                      provenance=dict(lib.manifest.get("provenance", {}), subset_of="isochrones/mist"))
     w.metadata.update(lib.metadata)
     w.axis("Z", "mass fraction", values=lib.axis_values("Z")[ISOC_Z])
     w.axis("age_index", "index", values=list(range(1, len(ages) + 1)))
@@ -127,7 +128,7 @@ def subset_filters(src, out):
         keep_t.append(tr[idx])
         new_n.append(len(idx))
     w = LibraryWriter(out, "filters", "allfilters", title="Default filter set - " + TITLE_NOTE,
-                      provenance={"subset_of": "filters/allfilters"})
+                      provenance=dict(lib.manifest.get("provenance", {}), subset_of="filters/allfilters"))
     w.metadata.update(lib.metadata)
     w.axis("filter", "", labels=lib.axis_values("filter"))
     w.array("npoints", np.array(new_n, dtype=np.int32), axes=["filter"], dtype="<i4", units="count")

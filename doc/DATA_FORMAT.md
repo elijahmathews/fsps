@@ -368,8 +368,10 @@ All in `tools/` (Python >= 3.8; NumPy for everything except `fetch_data.py`):
 | `fsps_data/convert_legacy.py LEGACY_ROOT OUT_ROOT` | Converts all 37 libraries of the legacy layout (35 s); `--only kind[/name]`; `--upstream-mist`, `--upstream-c3k` for the upstream [alpha/Fe] layouts |
 | `fsps_data/make_test_library.py STANDARD_ROOT OUT` | Builds the test library of Section 6 |
 | `fsps_data/make_afe_variants.py` | [alpha/Fe] variants of the test library for `unit_standard_library` |
-| `fsps_data/pack_data.py ROOT OUTDIR --release R` | Release archives and their manifest |
-| `fetch_data.py DEST --release-manifest M` | Download, verify and unpack a release |
+| `fsps_data/provenance.py` | Source, version, citations and redistribution note of each library (written into the manifests and DATA_README.md) |
+| `fsps_data/pack_data.py ROOT OUTDIR --release data-vK [--previous M]` | Versioned library archives, release manifest, DATA_README.md (Section 6) |
+| `fsps_data/upload_release.sh OUTDIR data-vK` | Publishes a packed release as a GitHub release (run by hand after review) |
+| `fetch_data.py DEST [--release data-vK]` | Download from the mirrors, verify and unpack a release |
 | `fsps_data/test_fsps_data.py` | Tests of the tools (format round trip, list-directed reader, upstream converters) |
 
 Writing a library from Python:
@@ -425,11 +427,32 @@ then `write_root_index(root, release)` once all libraries are in place.
   MILES, 40 points per filter, FP32). `unit_standard_library` runs a setup, an SSP grid and a
   CSP from it alone, plus the [alpha/Fe] checks; with the other unit tests (which build their own
   small files) the unit suite needs no external data. It is not for science.
-- **Releases**: `pack_data.py` makes one archive per library (683 MB in all; C3K is optional)
-  and `fsps-data-<release>.json`; hosting them (e.g. a Zenodo record, which gives a DOI per
-  release, or GitHub release assets) is still to be decided, so the URLs in `pack_data.py` and
-  `fetch_data.py` are placeholders marked TODO. `fetch_data.py` verifies archive and file
-  checksums; `FSPS_DATA_HOME` then points at the unpacked root.
+- **Releases** (hosting decided: GitHub releases of `elijahmathews/opensps-data`, with Zenodo
+  snapshots of tagged data releases later; the repository is not created yet):
+  - Every library is an immutable, separately versioned archive,
+    `<kind>-<name>-v<N>.tar.zst` (`.tar.gz` without zstd), holding `libraries/<kind>/<name>/`;
+    `N` is the manifest's `version`, which must be raised whenever a library's files change.
+  - A data release (tag `data-vK`) is a small release manifest `data-vK.json` plus a base
+    archive `base-data-vK.tar.zst` (root index, small text tables, `DATA_README.md`). The
+    manifest lists each archive's library, version, size, SHA-256, the tag it was uploaded to and
+    its mirror URLs: `https://github.com/elijahmathews/opensps-data/releases/download/<tag>/<file>`
+    first, a Zenodo record second (placeholder, TODO). A release reuses unchanged archives of an
+    earlier one (`pack_data.py --previous`) instead of uploading them again.
+  - `pack_data.py ROOT OUTDIR --release data-v1` writes the archives, the manifest,
+    `DATA_README.md` (what each library is and what to cite, from `tools/fsps_data/provenance.py`;
+    a copy is `tools/fsps_data/DATA_README.md`) and `UPLOAD.txt`;
+    `tools/fsps_data/upload_release.sh OUTDIR data-v1` publishes it with `gh release create` and
+    `gh release upload` after review (never run by the tools).
+  - `fetch_data.py DEST --release data-v1` (or `--release-manifest`, `--mirror DIR`) tries the
+    mirrors in order, checks archive and file checksums and unpacks; `FSPS_DATA_HOME` then points
+    at DEST.
+  - Measured (2026-10-20): `data-v1` is 38 archives, 525 MB with zstd (C3K optional); a
+    `data-v2` with one library re-versioned reuses the other 36 archives and uploads two files.
+    Fetching either through local-directory mirrors gives a root identical to the source.
+  - Provenance: every manifest's `provenance` holds source, version, what to cite and the
+    redistribution note, taken only from the FSPS sources (README, manual, revision history, data
+    headers and READMEs, code comments); these mostly give author and year, so full references,
+    versions, URLs and licenses are marked TODO for the maintainers.
 - **CI** today: the full-data job converts the checked-out legacy tree and runs `data_parity`;
   all jobs run the test library in the unit suite. Once the data live outside the repository,
   the regression and legacy-parity jobs would fetch the release instead of checking out `data/`:

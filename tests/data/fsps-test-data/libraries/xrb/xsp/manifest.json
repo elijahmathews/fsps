@@ -3,11 +3,29 @@
  "format_version": 1,
  "kind": "xrb",
  "name": "xsp",
+ "version": 1,
  "title": "X-ray binary spectra of simple populations - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-19T21:43:50Z",
-  "subset_of": "xrb/xsp",
+  "created": "2026-10-20T07:40:27Z",
+  "converted_from": "legacy FSPS layout: data/spectra/xrb",
+  "source": "X-ray binary spectra of simple populations (11 [Fe/H] x 10 ages)",
+  "url": "TODO",
+  "version": "TODO",
+  "cite": [
+   "TODO: reference (none in the FSPS sources)"
+  ],
+  "cite_also": [
+   "Conroy, Gunn & White 2009, ApJ, 699, 486 (doi:10.1088/0004-637X/699/1/486)",
+   "Conroy & Gunn 2010, ApJ, 712, 833 (doi:10.1088/0004-637X/712/2/833)"
+  ],
+  "redistribution": "Distributed publicly with FSPS (https://github.com/cconroy20/fsps), from whose data tree this library was converted. No separate license is stated in the FSPS distribution; the terms of the original data apply.",
+  "notes": "",
+  "todo": [
+   "origin of the files in data/spectra/xrb",
+   "license or redistribution terms of the original data (not stated in the FSPS sources)"
+  ],
+  "subset_of": "xrb/xsp v1",
   "subset": {
    "wavelength": "slice(None, None, 50)"
   }

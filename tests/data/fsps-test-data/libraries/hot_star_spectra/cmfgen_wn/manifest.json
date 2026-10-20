@@ -3,11 +3,28 @@
  "format_version": 1,
  "kind": "hot_star_spectra",
  "name": "cmfgen_wn",
+ "version": 1,
  "title": "CMFGEN Wolf-Rayet spectra (WN) - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-19T21:43:50Z",
-  "subset_of": "hot_star_spectra/cmfgen_wn",
+  "created": "2026-10-20T07:40:24Z",
+  "converted_from": "legacy FSPS layout: data/spectra/Hot_spectra/CMFGEN_WN*",
+  "source": "CMFGEN Wolf-Rayet spectra, nitrogen sequence",
+  "url": "TODO",
+  "version": "TODO",
+  "cite": [
+   "Smith et al. 2002 (doc/REVISION_HISTORY, for the OB and WR spectra added in v2.2; TODO: confirm that it applies to these files and give the full reference)"
+  ],
+  "cite_also": [
+   "Conroy, Gunn & White 2009, ApJ, 699, 486 (doi:10.1088/0004-637X/699/1/486)",
+   "Conroy & Gunn 2010, ApJ, 712, 833 (doi:10.1088/0004-637X/712/2/833)"
+  ],
+  "redistribution": "Distributed publicly with FSPS (https://github.com/cconroy20/fsps), from whose data tree this library was converted. No separate license is stated in the FSPS distribution; the terms of the original data apply.",
+  "notes": "",
+  "todo": [
+   "license or redistribution terms of the original data (not stated in the FSPS sources)"
+  ],
+  "subset_of": "hot_star_spectra/cmfgen_wn v1",
   "subset": {
    "wavelength": "slice(None, None, 10)"
   }

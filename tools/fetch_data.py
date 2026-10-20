@@ -2,30 +2,36 @@
 """Download, verify and unpack an FSPS data release (doc/DATA_FORMAT.md, Section 6).
 
 Usage:
-    tools/fetch_data.py DEST [--release-manifest PATH_OR_URL] [--base-url URL]
-                             [--with KIND/NAME ...] [--all] [--cache DIR] [--list]
+    tools/fetch_data.py DEST [--release data-v1 | --release-manifest PATH_OR_URL]
+                             [--mirror DIR_OR_URL ...] [--with KIND/NAME ...] [--all]
+                             [--cache DIR] [--list]
 
-Reads the release manifest (``fsps-data-<release>.json``, written by
-tools/fsps_data/pack_data.py), downloads every archive that is not optional (plus those named
-with --with, or all with --all) into a cache, checks each archive's SHA-256, unpacks it into
-DEST, and finally checks the size and SHA-256 of every file the unpacked manifests list. Point
-FSPS_DATA_HOME at DEST afterwards. Archives already in the cache with the right checksum are
-not downloaded again (CI caches that directory).
+Reads the release manifest (``<release>.json``, written by tools/fsps_data/pack_data.py; by
+default the one attached to the release tag on GitHub) and fetches every archive that is not
+optional (plus those named with --with, or all with --all) into a cache, trying the --mirror
+locations first (a directory or base URL holding the archive files; a local manifest's own
+directory is one), then each archive's mirror URLs. It checks each archive's SHA-256, unpacks it
+into DEST, and checks the size and SHA-256 of every file the unpacked manifests list. Archives
+already in the cache with the right checksum are not fetched again (CI caches that directory).
+Then point FSPS_DATA_HOME at DEST.
 
-Standard library only (no NumPy), Python >= 3.8.
+Standard library only (Python >= 3.8); .tar.zst archives need Python >= 3.14, the zstandard
+module or the zstd command.
 """
 import argparse
 import hashlib
+import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.request
 
-# TODO(hosting): the release manifest of the current data release; to be set when the archives
-# are published (e.g. on Zenodo or as GitHub release assets).
-DEFAULT_MANIFEST = "https://example.invalid/fsps-data/latest/fsps-data-latest.json"
+GITHUB_REPO = "elijahmathews/opensps-data"
+MANIFEST_URL = "https://github.com/" + GITHUB_REPO + "/releases/download/{tag}/{tag}.json"
+DEFAULT_RELEASE = "data-v1"
 CHUNK = 1 << 22
 
 
@@ -37,31 +43,56 @@ def sha256(path):
     return h.hexdigest()
 
 
+def is_url(s):
+    return "://" in s and not s.startswith("file://")
+
+
 def fetch(src, dest):
     """Copies a local path or downloads a URL to dest (through a temporary file)."""
     tmp = dest + ".part"
-    if "://" not in src or src.startswith("file://"):
+    if not is_url(src):
         shutil.copyfile(src.replace("file://", ""), tmp)
     else:
-        with urllib.request.urlopen(src) as r, open(tmp, "wb") as f:
+        with urllib.request.urlopen(src, timeout=60) as r, open(tmp, "wb") as f:
             shutil.copyfileobj(r, f, CHUNK)
     os.replace(tmp, dest)
+
+
+def open_tar(path):
+    """A tar stream over a .tar.gz or .tar.zst archive."""
+    if path.endswith(".tar.gz"):
+        return tarfile.open(path, "r|gz")
+    if path.endswith(".tar.zst"):
+        try:
+            from compression import zstd  # Python >= 3.14
+            return tarfile.open(fileobj=zstd.ZstdFile(path, "rb"), mode="r|")
+        except ImportError:
+            pass
+        try:
+            import zstandard
+            return tarfile.open(fileobj=zstandard.ZstdDecompressor().stream_reader(open(path, "rb")), mode="r|")
+        except ImportError:
+            pass
+        if shutil.which("zstd"):
+            data = subprocess.run(["zstd", "-dc", path], check=True, capture_output=True).stdout
+            return tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        sys.exit(f"{path}: .tar.zst needs Python >= 3.14, the zstandard module or the zstd command")
+    raise ValueError(f"unknown archive type: {path}")
 
 
 def safe_extract(tar, dest):
     """Unpacks only regular files and directories below dest (no links, no absolute paths)."""
     root = os.path.realpath(dest)
-    for m in tar.getmembers():
+    for m in tar:
         target = os.path.realpath(os.path.join(dest, m.name))
         if not (m.isfile() or m.isdir()) or os.path.isabs(m.name) or \
                 os.path.commonpath([root, target]) != root:
             raise ValueError(f"refusing archive member {m.name!r}")
-    for m in tar.getmembers():
         tar.extract(m, dest)
 
 
 def verify_root(dest):
-    """Problems found in the files of every library listed in DEST/fsps-data.json."""
+    """Problems found in the files of every library unpacked in DEST."""
     problems = []
     with open(os.path.join(dest, "fsps-data.json")) as f:
         idx = json.load(f)
@@ -78,42 +109,50 @@ def verify_root(dest):
             n = 1
             for s in desc["shape"]:
                 n *= s
-            nbytes = n * int(desc["dtype"][2:])
             p = os.path.join(d, desc["file"])
-            if not os.path.exists(p) or os.path.getsize(p) != nbytes:
+            if not os.path.exists(p) or os.path.getsize(p) != n * int(desc["dtype"][2:]):
                 problems.append(f"{p}: missing or wrong size")
             elif sha256(p) != desc["sha256"]:
                 problems.append(f"{p}: checksum mismatch")
     return problems
 
 
+def candidates(entry, mirrors):
+    out = [m.rstrip("/") + "/" + entry["file"] if is_url(m) else os.path.join(m, entry["file"]) for m in mirrors]
+    return out + [u for u in entry.get("urls", []) if "TODO" not in u]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dest")
-    ap.add_argument("--release-manifest", default=DEFAULT_MANIFEST)
-    ap.add_argument("--base-url", default=None, help="override the archive location given in the manifest")
+    ap.add_argument("--release", default=DEFAULT_RELEASE, help="release tag (default %(default)s)")
+    ap.add_argument("--release-manifest", help="path or URL of the release manifest (default: from the tag)")
+    ap.add_argument("--mirror", action="append", default=[], help="directory or base URL tried first")
     ap.add_argument("--with", dest="extra", nargs="*", default=[], help="optional libraries to fetch too")
     ap.add_argument("--all", action="store_true", help="fetch every archive, optional ones included")
     ap.add_argument("--cache", default=os.path.join(os.path.expanduser("~"), ".cache", "fsps-data"))
     ap.add_argument("--list", action="store_true", help="list the archives of the release and exit")
     a = ap.parse_args(argv)
 
-    if "example.invalid" in a.release_manifest:
-        sys.exit("No data release is published yet (TODO: hosting). Pass --release-manifest PATH_OR_URL, "
-                 "e.g. the fsps-data-<release>.json written by tools/fsps_data/pack_data.py.")
     os.makedirs(a.cache, exist_ok=True)
-    mpath = os.path.join(a.cache, os.path.basename(a.release_manifest))
-    fetch(a.release_manifest, mpath)
+    src = a.release_manifest or MANIFEST_URL.format(tag=a.release)
+    mpath = os.path.join(a.cache, os.path.basename(src))
+    try:
+        fetch(src, mpath)
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"cannot get the release manifest {src}: {exc}")
     with open(mpath) as f:
         rel = json.load(f)
-    if rel.get("format") != "fsps-data-release" or rel.get("data_format_version") != 1:
-        sys.exit(f"{a.release_manifest}: not a release of data format version 1")
-    base = a.base_url or rel["base_url"]
-    if "example.invalid" in base and a.base_url is None and "://" not in a.release_manifest:
-        base = os.path.dirname(os.path.abspath(a.release_manifest))  # archives next to a local manifest
+    if rel.get("format") != "fsps-data-release" or rel.get("format_version") != 2 or \
+            rel.get("data_format_version") != 1:
+        sys.exit(f"{src}: not a release manifest this script reads (release format 2, data format 1)")
+    mirrors = list(a.mirror)
+    if a.release_manifest and not is_url(a.release_manifest):
+        mirrors.append(os.path.dirname(os.path.abspath(a.release_manifest.replace("file://", ""))))
     if a.list:
         for e in rel["archives"]:
-            print(f"{e['file']:60s} {e['bytes'] / 1e6:8.1f} MB{'  (optional)' if e['optional'] else ''}")
+            print(f"{e['file']:55s} {e['bytes'] / 1e6:8.1f} MB  {e['release_tag']}"
+                  f"{'  (optional)' if e['optional'] else ''}")
         return 0
 
     want = [e for e in rel["archives"] if a.all or not e["optional"] or e.get("library") in a.extra]
@@ -121,13 +160,20 @@ def main(argv=None):
     for e in want:
         cached = os.path.join(a.cache, e["file"])
         if not (os.path.exists(cached) and os.path.getsize(cached) == e["bytes"] and sha256(cached) == e["sha256"]):
-            src = base.rstrip("/") + "/" + e["file"] if "://" in base else os.path.join(base, e["file"])
-            print(f"fetching {e['file']} ({e['bytes'] / 1e6:.1f} MB)", flush=True)
-            fetch(src, cached)
-            if sha256(cached) != e["sha256"]:
+            for url in candidates(e, mirrors):
+                try:
+                    print(f"fetching {e['file']} ({e['bytes'] / 1e6:.1f} MB) from {url}", flush=True)
+                    fetch(url, cached)
+                except Exception as exc:  # noqa: BLE001 - try the next mirror
+                    print(f"  failed: {exc}", flush=True)
+                    continue
+                if sha256(cached) == e["sha256"]:
+                    break
+                print("  checksum mismatch", flush=True)
                 os.remove(cached)
-                sys.exit(f"{e['file']}: checksum mismatch after download")
-        with tarfile.open(cached, "r:gz") as tar:
+            else:
+                sys.exit(f"{e['file']}: no mirror provided a valid copy")
+        with open_tar(cached) as tar:
             safe_extract(tar, a.dest)
     problems = verify_root(a.dest)
     if problems:

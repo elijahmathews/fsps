@@ -21,6 +21,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fsps_data import LibraryWriter, ListReader, fortran_float, split_tokens, write_root_index  # noqa: E402
+from provenance import provenance  # noqa: E402
 
 # Sizes and grids that the legacy code holds as constants (src/core/fsps_constants.f90,
 # src/io/fsps_io.f90, src/core/fsps_initialization.f90)
@@ -91,8 +92,9 @@ class Converter:
         return os.path.join(self.data, *parts)
 
     def writer(self, kind, name, title, source, notes=""):
-        lib = LibraryWriter(self.out, kind, name, title=title, notes=notes,
-                            provenance={"converted_from": "legacy FSPS layout: data/" + source})
+        prov = {"converted_from": "legacy FSPS layout: data/" + source}
+        prov.update(provenance(kind, name))
+        lib = LibraryWriter(self.out, kind, name, title=title, notes=notes, provenance=prov)
         return lib
 
     def finish(self, lib):
@@ -629,7 +631,7 @@ class Converter:
                     cols.extend(rows)
         cols = np.array(cols, dtype=np.float64).reshape(-1, 8)
         lib = LibraryWriter(self.out, "isochrones", name, title="MIST isochrones with [alpha/Fe] variations",
-                            provenance={"converted_from": "upstream FSPS layout: " + src})
+                            provenance=dict(provenance("isochrones", name), converted_from="upstream FSPS layout: " + src))
         lib.metadata["solar_metallicity"] = zsol
         lib.axis("afe", "[alpha/Fe] (dex)", values=afe, default=0.0)
         lib.axis("feh", "[Fe/H] (dex); Z = solar_metallicity * 10^[Fe/H]", values=feh)
@@ -676,7 +678,7 @@ class Converter:
                 flux[ia, iz] = raw.reshape(ng, nt, nspec)
                 avail[ia, iz] = 1
         lib = LibraryWriter(self.out, "stellar_spectra", name, title=f"C3K spectra ({name}) with [alpha/Fe] variations",
-                            provenance={"converted_from": "upstream FSPS layout: " + src})
+                            provenance=dict(provenance("stellar_spectra", name), converted_from="upstream FSPS layout: " + src))
         lib.metadata["solar_metallicity"] = zsol
         lib.axis("afe", "[alpha/Fe] (dex)", values=[float(t) for t in afe_tags], default=0.0)
         lib.axis("feh", "[Fe/H] (dex); Z = solar_metallicity * 10^[Fe/H]", values=[float(t) for t in ztags])
