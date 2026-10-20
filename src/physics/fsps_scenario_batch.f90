@@ -4,7 +4,8 @@
 !> compute_csp_scenario for one age (pset%tage > 0) as a batch of one model
 !> (compute_csp_batch), packed into results(1) as the scenario path does. Returns .false.
 !> (results untouched) for the options the batch does not cover yet: several metallicities,
-!> redshift colours, light-weighted ages, fast mode (no magnitudes), and anything the batch
+!> redshift colours, light-weighted ages, fast mode (no magnitudes), OpenACC multicore builds,
+!> and anything the batch
 !> rejects (non-device smoothing, invalid dust settings: status /= 0). Design note:
 !> doc/GPU_RESULTS.md, "compute_csp_scenario as a batch of one".
 logical function fsps_scenario_batch_of_one(ctx, pset, nzin, results) result(done)
@@ -25,6 +26,13 @@ logical function fsps_scenario_batch_of_one(ctx, pset, nzin, results) result(don
     integer :: st, nspec, nbands, nindx
 
     done = .false.
+#ifdef ACC_MULTICORE
+    ! OpenACC multicore keeps the old path: its FP32 reductions are plain per-core sums (~2e-6 of
+    ! the peak here, against 4e-8 on the GPU and the CPU), which fails the single-age vs all-ages
+    ! oracle (1e-6 of the peak, test_physics_oracles); multicore is to be replaced by OpenMP
+    ! host threads (doc/ROADMAP.md)
+    return
+#endif
     if (nzin /= 1 .or. size(ctx%state%ssp_basis_spec, 3) /= 1) return
     if (ctx%redshift_colors_val /= 0 .or. ctx%compute_light_ages_val /= 0 .or. ctx%fast_mode) return
     nspec = ctx%state%nspec

@@ -323,6 +323,8 @@ contains
             call assert_relative_error(spectral_lbol(ctx, spec_all), &
                                        spectral_lbol(ctx, single(1)%spec(1:ctx%state%nspec)), 1.0e-6_wp, &
                                        trim(msg) // " spectrum", total_tests, total_failures)
+            write(*, '(A,ES10.2)') "# max |single - all-ages| / max(spectrum): ", &
+                maxval(abs(single(1)%spec(1:ctx%state%nspec) - spec_all)) / maxval(spec_all)
             call assert_true(maxval(abs(single(1)%spec(1:ctx%state%nspec) - spec_all)) <= &
                              1.0e-6_wp * maxval(spec_all), trim(msg) // " spectrum element-wise", &
                              total_tests, total_failures)
