@@ -214,7 +214,13 @@ contains
             ! Native points and their IMF bin edges (as compute_imf_weights)
             call load_timestep_data(ctx, nz, t, buf)
             n_nat = buf%n_stars
-            call grow_pts(op%n_pts + n_nat)
+            if (op%n_pts + n_nat > size(g_mini)) then
+                cap_pts = max(op%n_pts + n_nat, 2 * size(g_mini))
+                call grow_r1(g_mini, op%n_pts, cap_pts)
+                call grow_r1(g_m1, op%n_pts, cap_pts)
+                call grow_r1(g_m2, op%n_pts, cap_pts)
+                call grow_i1(g_first, op%n_pts, cap_pts)
+            end if
             do j = 1, n_nat
                 k = op%n_pts + j
                 g_mini(k) = buf%initial_mass(j)
@@ -347,7 +353,7 @@ contains
                                           exp(buf%log_lum(j) * LN10), buf%log_g(j), buf%phase(j), &
                                           buf%co_ratio(j), buf%log_mdot(j), star)
                 op%n_direct = op%n_direct + 1
-                if (op%n_direct > size(d_spec, 2)) call grow_direct()
+                if (op%n_direct > size(d_spec, 2)) call grow_k2(d_spec, op%n_direct - 1, 2 * size(d_spec, 2))
                 d_spec(:, op%n_direct) = star
                 do ii = 1, nc
                     call push(ROW_DIRECT, op%n_direct, c_k(ii), c_f(ii))
@@ -383,7 +389,6 @@ contains
         integer function find_slot(r1, kt, ktau)
             integer, intent(in) :: r1, kt, ktau
             integer :: s
-            integer, allocatable :: tmp(:,:)
             do s = 1, ns_age
                 if (s_key(1, s) == r1 .and. s_key(2, s) == kt .and. s_key(3, s) == ktau) then
                     find_slot = s
@@ -391,7 +396,7 @@ contains
                 end if
             end do
             if (ns_age == size(s_key, 2)) then
-                allocate(tmp(3, 2 * ns_age)); tmp(:, 1:ns_age) = s_key(:, 1:ns_age); call move_alloc(tmp, s_key)
+                call grow_i2(s_key, ns_age, 2 * ns_age)
             end if
             ns_age = ns_age + 1
             s_key(:, ns_age) = [r1, kt, ktau]
@@ -402,12 +407,9 @@ contains
         subroutine push(kind, idx, k, v)
             integer, intent(in)  :: kind, idx, k
             real(WP), intent(in) :: v
-            integer(int64), allocatable :: tk(:)
-            real(WP), allocatable :: tv(:)
             if (ne == size(e_key)) then
-                allocate(tk(2 * ne), tv(2 * ne))
-                tk(1:ne) = e_key(1:ne); tv(1:ne) = e_val(1:ne)
-                call move_alloc(tk, e_key); call move_alloc(tv, e_val)
+                call grow_i8(e_key, ne, 2 * ne)
+                call grow_r1(e_val, ne, 2 * ne)
             end if
             ne = ne + 1
             e_key(ne) = ior(ishft(int(kind, int64), KEY_IDX_BITS + KEY_COL_BITS), &
@@ -426,7 +428,7 @@ contains
             ! Slots of this age become global
             do m = 1, ns_age
                 op%n_slots = op%n_slots + 1
-                if (op%n_slots > size(g_slot_key, 2)) call grow_slots()
+                if (op%n_slots > size(g_slot_key, 2)) call grow_i2(g_slot_key, op%n_slots - 1, 2 * size(g_slot_key, 2))
                 g_slot_key(:, op%n_slots) = s_key(:, m)
             end do
             if (ne == 0) then
@@ -446,7 +448,11 @@ contains
                 end if
                 if (rkey /= prev_rkey) then
                     op%n_rows = op%n_rows + 1
-                    if (op%n_rows + 1 > size(g_row_ptr)) call grow_rows()
+                    if (op%n_rows + 1 > size(g_row_ptr)) then
+                        call grow_i1(g_row_ptr, op%n_rows, 2 * size(g_row_ptr))
+                        call grow_i1(g_kind, op%n_rows - 1, 2 * size(g_row_ptr))
+                        call grow_i1(g_idx, op%n_rows - 1, 2 * size(g_row_ptr))
+                    end if
                     kind = int(ishft(rkey, -KEY_IDX_BITS))
                     idx = int(iand(rkey, IDX_MASK))
                     if (kind == ROW_DUSTY) then
@@ -462,7 +468,10 @@ contains
                 end if
                 k = int(iand(e_key(perm(m)), COL_MASK))
                 op%nnz = op%nnz + 1
-                if (op%nnz > size(g_col)) call grow_nnz()
+                if (op%nnz > size(g_col)) then
+                    call grow_i1(g_col, op%nnz - 1, 2 * size(g_col))
+                    call grow_r1(g_val, op%nnz - 1, 2 * size(g_val))
+                end if
                 g_col(op%nnz) = op%n_pts + k
                 g_val(op%nnz) = e_val(perm(m))
                 g_row_ptr(op%n_rows + 1) = op%nnz + 1
@@ -471,50 +480,59 @@ contains
             op%n_pts = op%n_pts + n_nat
         end subroutine flush_age
 
-        subroutine grow_pts(n)
-            integer, intent(in) :: n
-            real(WP), allocatable :: a(:)
-            integer, allocatable :: ia(:)
-            integer :: cap
-            if (n <= size(g_mini)) return
-            cap = max(n, 2 * size(g_mini))
-            allocate(a(cap)); a(1:op%n_pts) = g_mini(1:op%n_pts); call move_alloc(a, g_mini)
-            allocate(a(cap)); a(1:op%n_pts) = g_m1(1:op%n_pts); call move_alloc(a, g_m1)
-            allocate(a(cap)); a(1:op%n_pts) = g_m2(1:op%n_pts); call move_alloc(a, g_m2)
-            allocate(ia(cap)); ia(1:op%n_pts) = g_first(1:op%n_pts); call move_alloc(ia, g_first)
-        end subroutine grow_pts
-
-        subroutine grow_rows()
-            integer, allocatable :: ia(:)
-            integer :: cap
-            cap = 2 * size(g_kind)
-            allocate(ia(cap + 1)); ia(1:size(g_row_ptr)) = g_row_ptr; call move_alloc(ia, g_row_ptr)
-            allocate(ia(cap)); ia(1:size(g_kind)) = g_kind; call move_alloc(ia, g_kind)
-            allocate(ia(cap)); ia(1:size(g_idx)) = g_idx; call move_alloc(ia, g_idx)
-        end subroutine grow_rows
-
-        subroutine grow_nnz()
-            integer, allocatable :: ia(:)
-            real(WP), allocatable :: a(:)
-            integer :: cap
-            cap = 2 * size(g_col)
-            allocate(ia(cap)); ia(1:size(g_col)) = g_col; call move_alloc(ia, g_col)
-            allocate(a(cap)); a(1:size(g_val)) = g_val; call move_alloc(a, g_val)
-        end subroutine grow_nnz
-
-        subroutine grow_slots()
-            integer, allocatable :: ia(:,:)
-            allocate(ia(3, 2 * size(g_slot_key, 2))); ia(:, 1:size(g_slot_key, 2)) = g_slot_key
-            call move_alloc(ia, g_slot_key)
-        end subroutine grow_slots
-
-        subroutine grow_direct()
-            real(KP), allocatable :: a(:,:)
-            allocate(a(nspec, 2 * size(d_spec, 2))); a(:, 1:size(d_spec, 2)) = d_spec
-            call move_alloc(a, d_spec)
-        end subroutine grow_direct
-
     end subroutine ssp_operator_build
+
+    ! ------------------------------------------------------------------------
+    ! Growing arrays (module procedures: with nvfortran 26.1 -acc, move_alloc on host-associated
+    ! allocatables inside internal procedures corrupted the heap)
+    ! ------------------------------------------------------------------------
+
+    !> Grows a to size cap, keeping a(1:n_keep).
+    subroutine grow_i1(a, n_keep, cap)
+        integer, allocatable, intent(inout) :: a(:)
+        integer, intent(in) :: n_keep, cap
+        integer, allocatable :: b(:)
+        allocate(b(cap))
+        b(1:n_keep) = a(1:n_keep)
+        call move_alloc(b, a)
+    end subroutine grow_i1
+
+    subroutine grow_i8(a, n_keep, cap)
+        integer(int64), allocatable, intent(inout) :: a(:)
+        integer, intent(in) :: n_keep, cap
+        integer(int64), allocatable :: b(:)
+        allocate(b(cap))
+        b(1:n_keep) = a(1:n_keep)
+        call move_alloc(b, a)
+    end subroutine grow_i8
+
+    subroutine grow_r1(a, n_keep, cap)
+        real(WP), allocatable, intent(inout) :: a(:)
+        integer, intent(in) :: n_keep, cap
+        real(WP), allocatable :: b(:)
+        allocate(b(cap))
+        b(1:n_keep) = a(1:n_keep)
+        call move_alloc(b, a)
+    end subroutine grow_r1
+
+    !> Grows the second dimension of a to cap, keeping a(:, 1:n_keep).
+    subroutine grow_i2(a, n_keep, cap)
+        integer, allocatable, intent(inout) :: a(:,:)
+        integer, intent(in) :: n_keep, cap
+        integer, allocatable :: b(:,:)
+        allocate(b(size(a, 1), cap))
+        b(:, 1:n_keep) = a(:, 1:n_keep)
+        call move_alloc(b, a)
+    end subroutine grow_i2
+
+    subroutine grow_k2(a, n_keep, cap)
+        real(KP), allocatable, intent(inout) :: a(:,:)
+        integer, intent(in) :: n_keep, cap
+        real(KP), allocatable :: b(:,:)
+        allocate(b(size(a, 1), cap))
+        b(:, 1:n_keep) = a(:, 1:n_keep)
+        call move_alloc(b, a)
+    end subroutine grow_k2
 
     !> Stable sort of keys (merge sort): perm such that keys(perm) is non-decreasing.
     subroutine sort_keys(keys, perm)
@@ -555,7 +573,25 @@ contains
 
     subroutine ssp_operator_free(op)
         type(ssp_operator_t), intent(inout) :: op
-        op = ssp_operator_t()
+        ! Component by component (no derived-type assignment: plain for every compiler)
+        if (allocated(op%pt_ptr)) deallocate(op%pt_ptr)
+        if (allocated(op%pt_mini)) deallocate(op%pt_mini)
+        if (allocated(op%pt_m1)) deallocate(op%pt_m1)
+        if (allocated(op%pt_m2)) deallocate(op%pt_m2)
+        if (allocated(op%pt_first)) deallocate(op%pt_first)
+        if (allocated(op%age_on)) deallocate(op%age_on)
+        if (allocated(op%age_nstars)) deallocate(op%age_nstars)
+        if (allocated(op%age_mmax)) deallocate(op%age_mmax)
+        if (allocated(op%age_row_ptr)) deallocate(op%age_row_ptr)
+        if (allocated(op%age_slot_ptr)) deallocate(op%age_slot_ptr)
+        if (allocated(op%row_ptr)) deallocate(op%row_ptr)
+        if (allocated(op%row_kind)) deallocate(op%row_kind)
+        if (allocated(op%row_idx)) deallocate(op%row_idx)
+        if (allocated(op%col)) deallocate(op%col)
+        if (allocated(op%val)) deallocate(op%val)
+        if (allocated(op%slot_key)) deallocate(op%slot_key)
+        if (allocated(op%direct_spec)) deallocate(op%direct_spec)
+        op%n_pts = 0; op%n_rows = 0; op%nnz = 0; op%n_slots = 0; op%n_direct = 0
     end subroutine ssp_operator_free
 
     ! ------------------------------------------------------------------------
