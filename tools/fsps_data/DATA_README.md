@@ -1,6 +1,6 @@
-# libopensps data release data-v1
+# libopensps data release data-v2
 
-Libraries for libopensps (https://github.com/elijahmathews/libopensps), a modernized FSPS, in its standard data format (doc/DATA_FORMAT.md of libopensps). Unpack the archives into one directory (`tools/fetch_data.py ~/opensps-data --release data-v1` does this and verifies every checksum) and point `OPENSPS_DATA_HOME` at it.
+Libraries for libopensps (https://github.com/elijahmathews/libopensps), a modernized FSPS, in its standard data format (doc/DATA_FORMAT.md of libopensps). Unpack the archives into one directory (`tools/fetch_data.py ~/opensps-data --release data-v2` does this and verifies every checksum) and point `OPENSPS_DATA_HOME` at it.
 
 ## What to cite
 
@@ -42,6 +42,8 @@ Redistribution: these files have been distributed publicly with FSPS (https://gi
 | `nebular/prsc_nodust` (v1) | Cloudy photoionization tables provided by Nell Byler, ionized by the prsc SSPs, without dust in the ionized gas (FSPS manual, section 1.13). | Byler et al. 2017, ApJ, 840, 44 (2017ApJ...840...44B) | Ferland et al. 2013, RMxAA, 49, 137 (2013RMxAA..49..137F) |
 | `reference_spectra/sun` (v1) | Solar spectrum, f_nu at 10 pc (file SUN_STScI.SED). Likely source (STScI absolute solar spectrum; not stated in the file). | Colina et al. 1996, AJ, 112, 307 (1996AJ....112..307C) | - |
 | `reference_spectra/vega` (v1) | Model atmosphere for Vega, Teff = 9400 K, log g = 3.90, [M/H] = -0.50 (file header of A0V_KURUCZ_92.SED). | Kurucz 1992, IAU Symp., 149, 225 (1992IAUS..149..225K) | - |
+| `references/param` (v1) | Regression references of tests/test_param_regression.f90: one .opsf file (SSP and CSP outputs) per case of tests/data/param_cases.psv. Regenerate with 'test_param_regression tests/data/param_cases.psv <dir> --generate', then tools/fsps_data/make_references.py; only for an intended, explained physics change. | - | - |
+| `references/sps` (v1) | Regression references of tests/test_runner.f90: SSP and CSP outputs (spectra, magnitudes, indices) for five library combinations, in the legacy binary layout of tests/generate_test_data.f90. Regenerate with tests/generate_test_data.sh (writes tests/data/sps_ref_*.bin), then tools/fsps_data/make_references.py; only for an intended, explained physics change. | - | - |
 | `ssp/bpss` (v1) | BPASS binary population SSPs, '-bin-imf135all_100' models; lowest metallicity omitted, ages cut at 15.8 Gyr (FSPS manual, section 1.16). Version: BPASS v2.2 (Salpeter IMF to 100 Msun; file bpass_v2.2_salpeter100.ssp.bin). | Eldridge et al. 2017, PASA, 34, e058 (2017PASA...34...58E)<br>Stanway & Eldridge 2018, MNRAS, 479, 75 (2018MNRAS.479...75S) | - |
 | `stellar_spectra/basel` (v1) | BaSeL 3.1 theoretical library, WLBC version (file names basel_wlbc_*). Version: 3.1 (WLBC). | Lejeune et al. 1997, A&AS, 125, 229 (1997A&AS..125..229L)<br>Lejeune et al. 1998, A&AS, 130, 65 (1998A&AS..130...65L)<br>Westera et al. 2002, A&A, 381, 524 (2002A&A...381..524W) | - |
 | `stellar_spectra/c3k_afe+0.0` (v1) | C3K theoretical spectra, [alpha/Fe] = 0, downsampled from full C3K resolution and interpolated onto the BaSeL log g - log T grid (data/spectra/C3K/readme.md). C3K (Conroy et al., unpublished; computed with ATLAS12/SYNTHE), distributed with FSPS; no dedicated publication. Described in use by Byrne et al. 2022; alpha-enhanced extension: Park et al. 2025. | Byrne et al. 2022, MNRAS, 512, 5329 (2022MNRAS.512.5329B)<br>Park et al. 2025, ApJ, 994, 165 (2025ApJ...994..165P) | - |
@@ -54,4 +56,4 @@ Each library is one archive, `<kind>-<name>-v<N>.tar.zst` (or `.tar.gz`), holdin
 
 ## Open questions
 
-- For every library: license or redistribution terms of the original data (not stated in the FSPS sources).
+- For every library converted from the FSPS data tree: license or redistribution terms of the original data (not stated in the FSPS sources).

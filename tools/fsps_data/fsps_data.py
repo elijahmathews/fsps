@@ -98,6 +98,7 @@ class LibraryWriter:
         self.metadata = {}
         self.axes = {}
         self.arrays = {}
+        self.opaque = {}
 
     def _write_file(self, fname, data, dtype):
         a = np.ascontiguousarray(data)
@@ -153,6 +154,18 @@ class LibraryWriter:
         desc["sha256"] = sha
         self.arrays[name] = desc
 
+    def file(self, name, src, description=""):
+        """An opaque file (e.g. a regression reference), copied byte for byte from `src`."""
+        import shutil
+        fname = os.path.basename(src)
+        dst = os.path.join(self.dir, fname)
+        shutil.copyfile(src, dst)
+        desc = {"file": fname, "bytes": os.path.getsize(dst)}
+        if description:
+            desc["description"] = description
+        desc["sha256"] = sha256_file(dst)
+        self.opaque[name] = desc
+
     def write(self):
         prov = {"converter": "tools/fsps_data", "created":
                 datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
@@ -168,6 +181,8 @@ class LibraryWriter:
                            for k, v in self.metadata.items()}
         man["axes"] = self.axes
         man["arrays"] = self.arrays
+        if self.opaque:
+            man["files"] = self.opaque
         with open(os.path.join(self.dir, MANIFEST), "w") as f:
             json.dump(man, f, indent=1)
             f.write("\n")
@@ -230,6 +245,8 @@ class Library:
             if "file" in desc:
                 n = int(np.prod(desc["shape"])) * DTYPES[desc["dtype"]].itemsize
                 out.append((desc["file"], desc["sha256"], n))
+        for desc in self.manifest.get("files", {}).values():
+            out.append((desc["file"], desc["sha256"], int(desc["bytes"])))
         return out
 
     def verify(self):

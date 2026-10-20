@@ -106,14 +106,18 @@ def verify_root(dest):
             continue  # an optional library that was not fetched
         with open(mpath) as f:
             man = json.load(f)
-        for desc in list(man["axes"].values()) + list(man["arrays"].values()):
+        for desc in list(man["axes"].values()) + list(man["arrays"].values()) + \
+                list(man.get("files", {}).values()):
             if "file" not in desc:
                 continue
-            n = 1
-            for s in desc["shape"]:
-                n *= s
+            if "bytes" in desc:          # an opaque file (e.g. a regression reference)
+                nbytes = int(desc["bytes"])
+            else:
+                nbytes = int(desc["dtype"][2:])
+                for s in desc["shape"]:
+                    nbytes *= s
             p = os.path.join(d, desc["file"])
-            if not os.path.exists(p) or os.path.getsize(p) != n * int(desc["dtype"][2:]):
+            if not os.path.exists(p) or os.path.getsize(p) != nbytes:
                 problems.append(f"{p}: missing or wrong size")
             elif sha256(p) != desc["sha256"]:
                 problems.append(f"{p}: checksum mismatch")

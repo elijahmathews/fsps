@@ -68,7 +68,7 @@ program test_runner
     type(fsps_context_t) :: ctx
     type(PARAMS) :: pset
     integer :: i, unit_in, status, arg_count
-    character(len=255) :: filename_in, env_buffer, arg_val
+    character(len=1024) :: filename_in, env_buffer, arg_val
     character(len=20) :: isoc_arg, spec_arg, dust_arg
     logical :: isoc_set, spec_set, dust_set
 
@@ -82,6 +82,7 @@ program test_runner
     logical :: test_passed
     integer :: nfail
     logical :: verbose_output
+    logical :: ref_exists
     integer :: max_fail_print, fail_printed
     logical :: fail_suppression_noted
 
@@ -164,6 +165,15 @@ program test_runner
         write(*, *) 'ERROR: Must provide reference filename as argument.'
         write(*, *) 'Usage: ./test_runner [--isoc type] [--spec type] [--dust type] tests/data/sps_ref_XXX.bin'
         stop EXIT_FAILURE
+    end if
+
+    ! Without its reference (data release library references/sps, or tests/data) the test is
+    ! skipped, not failed: exit status 77 is meson's SKIP
+    inquire(file=trim(filename_in), exist=ref_exists)
+    if (.not. ref_exists) then
+        write(*, '(A)') 'SKIP: regression reference ' // trim(filename_in) // ' not found (data release library ' // &
+            'references/sps; set OPENSPS_DATA_HOME or -Ddata_home)'
+        stop 77
     end if
 
     ! Read tolerance from environment variable
