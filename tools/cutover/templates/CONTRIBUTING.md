@@ -7,7 +7,7 @@ detailed guide (it is written for AI coding agents but applies to everyone).
 ## Build and test
 
 ```sh
-python3 tools/fetch_data.py ~/opensps-data && export FSPS_DATA_HOME=~/opensps-data
+python3 tools/fetch_data.py ~/opensps-data && export OPENSPS_DATA_HOME=~/opensps-data
 meson setup build --buildtype=release                              # FP64
 meson setup build32 --buildtype=release -Dkernel_precision=single  # FP32 kernels
 meson compile -C build && meson compile -C build32
@@ -19,8 +19,9 @@ meson test -C build32 --suite unit --suite regression --print-errorlogs
 
 - The unit and regression suites pass in both the FP64 and the FP32 build. Report failures with
   their output; never claim a test passed without running it.
-- Regression references (`tests/data/sps_ref_*.bin`, `tests/data/param_ref/`) change only for an
-  intended, explained physics change; say why in the commit message.
+- Regression references (a versioned library of the data release) change only for an intended,
+  explained physics change: regenerate them, publish a new data release and say why in the
+  commit message.
 - Physics changes are compared with legacy FSPS (`tools/legacy_parity/`); every deliberate
   difference is listed with its cause in `tools/legacy_parity/README.md`.
 - The single CSP (`compute_csp_scenario`) and the batch (`compute_csp_batch`) stay physically

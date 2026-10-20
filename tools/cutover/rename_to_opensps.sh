@@ -20,7 +20,11 @@
 #            (written once, from the names present at the first run; frozen afterwards)
 #
 # Options:
-#   --version X.Y.Z     also set the Meson project version (and soversion X); default: unchanged
+#   --version X.Y.Z     library version: Meson project version, soversion X (libopensps.so.X), RPM
+#                       and Debian package versions (default 0.1.0, i.e. libopensps.so.0; the
+#                       inherited 3.2.0 / .so.3 belonged to libfsps). The C API version
+#                       (OPENSPS_API_VERSION_*, currently 1.2) is separate and is not changed.
+#   --keep-version      leave the version and soversion as they are
 #   --branch NAME       default branch for CI triggers and AGENTS.md (default: main)
 #   --no-templates      do not install README.md / CITATION.cff / CONTRIBUTING.md from templates/
 #   --check-only        change nothing; list what still carries the old public names (exit 1 if any)
@@ -31,7 +35,7 @@ die() { echo "rename_to_opensps: $*" >&2; exit 1; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '/^set -euo/d' -e 's/^# \{0,1\}//'; }
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-version=""
+version="0.1.0"
 branch="main"
 templates=1
 check_only=0
@@ -39,6 +43,7 @@ args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) version=$2; shift 2 ;;
+        --keep-version) version=""; shift ;;
         --branch) branch=$2; shift 2 ;;
         --no-templates) templates=0; shift ;;
         --check-only) check_only=1; shift ;;
@@ -257,6 +262,9 @@ if [ -f packaging/opensps.spec ]; then
         perl -i -pe 's{^(%\{_includedir\}/opensps\.h)\n}{$1\n%{_includedir}/fsps.h\n}' packaging/opensps.spec
     perl -i -pe "s{(%\\{_libdir\\}/libopensps\\.so\\.)[0-9]+\\*}{\${1}${soversion}*}" packaging/opensps.spec
     [ -z "$version" ] || perl -i -pe "s/^Version:(\\s+)\\S+/Version:\${1}$version/" packaging/opensps.spec
+    if [ -n "$version" ]; then
+        perl -0 -i -pe "s/(%changelog\n\* [^\n]*?) - [0-9][^\s]*-1\n(?!- Renamed)/\$1 - $version-1\n- Renamed from fsps to opensps (libopensps $version, soname libopensps.so.${version%%.*})\n/" packaging/opensps.spec
+    fi
 fi
 if [ -d debian ]; then
     perl -i -pe 's/^Source: fsps$/Source: opensps/;
@@ -265,6 +273,9 @@ if [ -d debian ]; then
                  s/^Description: FSPS shared library$/Description: libopensps shared library/;
                  s/^ Shared library for FSPS \(Flexible Stellar Population Synthesis\)\.$/ Shared library of libopensps, derived from FSPS (Flexible Stellar Population Synthesis)./' debian/control
     perl -i -pe 's/^fsps \(/opensps (/' debian/changelog
+    if [ -n "$version" ]; then
+        perl -0 -i -pe "s/\Aopensps \([^)]*\)(.*?\n\n)(?!  \* Renamed)/opensps ($version-1)\$1  * Renamed from fsps to opensps (libopensps $version, soname libopensps.so.${version%%.*}).\n/s" debian/changelog
+    fi
     perl -i -pe 's/^Upstream-Name: fsps$/Upstream-Name: opensps/;
                  s{^Source: https://github.com/elijahmathews/fsps$}{Source: https://github.com/elijahmathews/libopensps}' debian/copyright
     perl -i -pe 's{/fsps-\$1}{/opensps-\$1}; s{github.com/elijahmathews/fsps/tags}{github.com/elijahmathews/libopensps/tags}' debian/watch

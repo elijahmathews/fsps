@@ -47,31 +47,34 @@ builds are described in `doc/GPU_PLAN.md`.
 
 ## Data
 
-The data (isochrones, stellar spectra, dust, nebular and filter libraries; about 0.7 GB) are not
-in this repository. They are distributed as versioned archives in a documented format
-(`doc/DATA_FORMAT.md`) and fetched with checksums verified:
+The data (isochrones, stellar spectra, dust, nebular and filter libraries, and the regression
+references) are not in this repository. They are published as versioned releases of
+[elijahmathews/opensps-data](https://github.com/elijahmathews/opensps-data), in a documented
+format (`doc/DATA_FORMAT.md`), and fetched with their checksums verified:
 
 ```sh
-python3 tools/fetch_data.py ~/opensps-data             # TODO: the data-v1 release manifest URL
-export FSPS_DATA_HOME=~/opensps-data
+python3 tools/fetch_data.py ~/opensps-data          # the default release; --release data-vN to pick one
+export OPENSPS_DATA_HOME=~/opensps-data
 ```
 
-The library looks for its data in `SPS_HOME`, then `FSPS_DATA_HOME`, then
-`$XDG_DATA_HOME/fsps`, `~/.local/share/fsps`, `/usr/share/fsps` and `/usr/local/share/fsps`
-(these names are unchanged from FSPS, so existing setups keep working). Any library in the
-standard format can be added without code changes (`doc/DATA_FORMAT.md`).
+The library takes its data root from `OPENSPS_DATA_HOME`, then (for existing FSPS setups)
+`SPS_HOME` and `FSPS_DATA_HOME`, then `$XDG_DATA_HOME/fsps`, `~/.local/share/fsps`,
+`/usr/share/fsps` and `/usr/local/share/fsps`. Any library in the standard format can be added
+without code changes (`doc/DATA_FORMAT.md`).
 
 ## Test
 
 ```sh
-meson test -C build --suite unit                         # no external data needed
-FSPS_DATA_HOME=~/opensps-data meson test -C build --suite regression
+meson test -C build --suite unit                  # no external data needed
+OPENSPS_DATA_HOME=~/opensps-data meson setup build --reconfigure
+meson test -C build --suite regression            # needs the full data release
 ```
 
 The unit suite runs on the small test library in `tests/data/fsps-test-data`. The regression
 suite (references, a parameterized case matrix, physical identities, the batched against the
-single CSP) needs the full data. Both pass in FP64 and FP32 builds before a change is merged
-([CONTRIBUTING.md](CONTRIBUTING.md)).
+single CSP) needs the full data release, which also holds its reference outputs; the data root
+is taken from `OPENSPS_DATA_HOME` when the build is configured (or `-Ddata_home=`). Both suites
+pass in FP64 and FP32 builds before a change is merged ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## The C API
 
@@ -113,13 +116,15 @@ Every function reports through a `status` argument (`OPENSPS_STATUS_OK` = 0; the
 `opensps.h`), and `opensps_get_last_error` returns the message. The batched entry point
 `opensps_context_compute_csp_batch` evaluates many models in one call. The API is versioned
 (`OPENSPS_API_VERSION_MAJOR/MINOR/PATCH`, `opensps_get_driver_version`); the reference is
-`doc/C_API.md`.
+`doc/C_API.md`. The C API version is numbered separately from the library
+version (libopensps 0.1.0, `libopensps.so.0`): it changes only when the interface does.
 
 Coming from elijahmathews/fsps: the C names changed from `fsps_*` / `FSPS_*` to `opensps_*` /
 `OPENSPS_*`, the header from `fsps.h` to `opensps.h`, the library from `libfsps` to
 `libopensps` and the pkg-config name from `fsps` to `opensps`. A deprecated `fsps.h` that maps
-the old names is installed for now. Environment variables, parameter names and the data
-directory names are unchanged.
+the old names is installed for now. Parameter names, the data directory names and the
+environment variables `SPS_HOME` and `FSPS_DATA_HOME` still work; `OPENSPS_DATA_HOME` is
+preferred.
 
 ## Language bindings
 

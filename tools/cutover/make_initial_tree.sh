@@ -19,9 +19,12 @@
 #   --fsps-base REV       last commit of upstream FSPS in the fork's history; AUTHORS credits
 #                         commits up to it to FSPS and later ones to the fork (default: merge-base
 #                         with upstream/master if that remote exists, else 82a873508d50, the fork point)
-#   --exclude-refs DIR    also leave out the regression references tests/data/sps_ref_*.bin
-#                         (54 MB) and copy them, with SHA256SUMS, to DIR (e.g. for a release asset).
-#                         Off by default: see "What is left out" in tools/cutover/README.md.
+#   --refs-dir DIR        where the regression references left out of the tree are copied, with
+#                         SHA256SUMS, for checking against the data release (default:
+#                         <out-dir>.references). The references (tests/data/sps_ref_*.bin and
+#                         tests/data/param_ref/, ~59 MB) are left out by default: they live in the
+#                         data release as a versioned library (tools/cutover/README.md).
+#   --keep-refs           keep the regression references in the tree instead
 #   --trailer TEXT        append a trailer line to the commit message (repeatable). None by default:
 #                         the commit is a snapshot of other commits, not new work.
 #   --date DATE           author/committer date of the snapshot (default: now)
@@ -37,6 +40,7 @@ author=""
 branch="main"
 fsps_base=""
 refs_dir=""
+keep_refs=0
 date=""
 trailers=()
 default_fsps_base=82a873508d500ca353bbb922459bf928498f7a72
@@ -48,7 +52,8 @@ while [ $# -gt 0 ]; do
         --author) author=$2; shift 2 ;;
         --branch) branch=$2; shift 2 ;;
         --fsps-base) fsps_base=$2; shift 2 ;;
-        --exclude-refs) refs_dir=$2; shift 2 ;;
+        --refs-dir) refs_dir=$2; shift 2 ;;
+        --keep-refs) keep_refs=1; shift ;;
         --trailer) trailers+=("$2"); shift 2 ;;
         --date) date=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -87,8 +92,14 @@ git -C "$repo" merge-base --is-ancestor "$fsps_base" "$commit" || die "$fsps_bas
 if [ -e "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ]; then
     die "$out exists and is not empty"
 fi
+if [ $keep_refs -eq 0 ] && [ -n "$refs_dir" ] && [ -n "$(ls -A "$refs_dir" 2>/dev/null)" ]; then
+    die "$refs_dir exists and is not empty"
+fi
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
+if [ $keep_refs -eq 0 ] && [ -z "$refs_dir" ] && [ -n "$(ls -A "$out.references" 2>/dev/null)" ]; then
+    die "$out.references exists and is not empty (pass --refs-dir)"
+fi
 
 echo "== Exporting $commit"
 git -C "$repo" archive --format=tar "$commit" | tar -x -C "$out"
@@ -101,17 +112,21 @@ if [ -d "$out/data" ]; then
     removed+=("data/ ($(du -sh "$out/data" | cut -f1); the libraries, distributed as data archives)")
     rm -rf "$out/data"
 fi
-if [ -n "$refs_dir" ]; then
-    mkdir -p "$refs_dir"
-    refs_dir=$(cd "$refs_dir" && pwd)
+if [ $keep_refs -eq 0 ]; then
+    [ -n "$refs_dir" ] || refs_dir="$out.references"
     shopt -s nullglob
     refs=("$out"/tests/data/sps_ref_*.bin)
     shopt -u nullglob
+    [ -d "$out/tests/data/param_ref" ] && refs+=("$out/tests/data/param_ref")
     if [ ${#refs[@]} -gt 0 ]; then
-        cp "${refs[@]}" "$refs_dir/"
-        (cd "$refs_dir" && sha256sum sps_ref_*.bin > SHA256SUMS)
-        removed+=("tests/data/sps_ref_*.bin ($(du -ch "${refs[@]}" | tail -1 | cut -f1); copied to $refs_dir)")
-        rm -f "${refs[@]}"
+        [ -e "$refs_dir" ] && [ -n "$(ls -A "$refs_dir" 2>/dev/null)" ] && die "$refs_dir exists and is not empty"
+        mkdir -p "$refs_dir"
+        refs_dir=$(cd "$refs_dir" && pwd)
+        refs_size=$(du -csh "${refs[@]}" | tail -1 | cut -f1)
+        cp -r "${refs[@]}" "$refs_dir/"
+        (cd "$refs_dir" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS)
+        removed+=("tests/data/sps_ref_*.bin, tests/data/param_ref/ ($refs_size; regression references, in the data release; copied to $refs_dir)")
+        rm -rf "${refs[@]}"
     fi
 fi
 
@@ -148,13 +163,13 @@ format_people() {
         local nm=${who% <*} years=$lo
         [ "$hi" != "$lo" ] && years="$lo-$hi"
         if [[ "$nm" == *@* ]]; then
-            handles+="${handles:+, }${nm%%@*} (commits $years)"
+            handles+="${handles:+, }${nm%%@*}"
         else
             named+="- $nm"$'\n'
         fi
     done
     printf '%s' "$named"
-    [ -n "$handles" ] && printf '\nCommits recorded under an address only, not yet tied to a name: %s.\n' "$handles"
+    [ -n "$handles" ] && printf '\nContributors from the Google Code era of FSPS, known only by these handles: %s.\n' "$handles"
     return 0
 }
 

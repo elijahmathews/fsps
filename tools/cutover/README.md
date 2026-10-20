@@ -15,33 +15,25 @@ Both scripts print `--help`.
 ## What the first commit leaves out
 
 The snapshot is `git archive <commit>`, so nothing untracked or ignored (build directories,
-`.mod` files, `fsps-data/`) can get in. Of the tracked files it leaves out:
+`.mod` files, converted data roots) can get in. Of the tracked files it leaves out:
 
-- **`data/`** (1.4 GB): the libraries, distributed as versioned archives (PR #21,
-  `tools/fetch_data.py`).
-
-Files above 1 MB that remain (the script lists them on every run):
-
-| File | Size | Decision |
+| Path | Size | Where it goes |
 |---|---|---|
-| `tests/data/sps_ref_*.bin` (5 files) | 52 MB | **kept** by default; `--exclude-refs DIR` moves them out |
-| `tests/data/fsps-test-data/.../miles/flux.bin` (after PR #21) | 2.4 MB | kept: the test library the unit suite runs on |
+| `data/` | 1.4 GB | the data release (elijahmathews/opensps-data), fetched by `tools/fetch_data.py` |
+| `tests/data/sps_ref_*.bin` (5 files) | 52 MB | the data release, as a versioned library of regression references |
+| `tests/data/param_ref/` (35 files) | 7.1 MB | the same library |
 
-Why the regression references stay in the first commit: they are the test oracles of the
-regression suite (meson registers them by path), so removing them breaks `meson test --suite
-regression` until a follow-up teaches meson to find them elsewhere; and the roadmap ports
-unfinished work with `git format-patch` / `git am`, which relies on the trees being identical
-apart from `data/`. With them, the repository is 47 MB of git objects (49 MB with PR #21),
-within the roadmap's ~50 MB goal. The cost comes later: each regeneration of the references
-adds about 50 MB to libopensps's history for good. Recommendation: move them out (to the data
-release, or a separate reference archive fetched like the data) in libopensps **before** they
-are first regenerated. Without them the repository would be 7 MB (10 MB with PR #21).
-`--exclude-refs DIR` does it at cutover instead and writes the files with `SHA256SUMS` to `DIR`.
+The references are copied with `SHA256SUMS` to `<out-dir>.references` (`--refs-dir`), to check
+them against the release; `--keep-refs` keeps them in the tree instead. Why they leave: they are
+generated outputs, and every intended physics change regenerates them; in the repository each
+regeneration would add ~60 MB to the history for good.
+In the data release they are versioned with the data they were computed from, and
+the regression tests find them through the data root (falling back to `tests/data/`).
 
-Everything else is small (< 1 MB): `doc/MANUAL.pdf` (0.16 MB, the FSPS manual), the
-parameterized references `tests/data/param_ref/*.opsf` (7.1 MB together, each below 1 MB), editor and agent
-files (`.vscode/`, `.fortls`, `CLAUDE.md`, `GEMINI.md`), all kept so that the snapshot is the
-fork's tree.
+What remains above 1 MB (the script lists it on every run): the test library's MILES fluxes
+(`tests/data/fsps-test-data/.../miles/flux.bin`, 2.4 MB), which the unit suite runs on. Also
+kept, all small: `doc/MANUAL.pdf` (the FSPS manual), `tests/data/param_cases.psv` (the case
+matrix), editor and agent files (`.vscode/`, `.fortls`, `CLAUDE.md`, `GEMINI.md`).
 
 ## AUTHORS and the license
 
@@ -50,9 +42,9 @@ generated from the history of `<commit>` (`git log --use-mailmap`, ordered by nu
 commits): FSPS contributors are those with commits up to the fork point (`--fsps-base`, the
 merge base with `upstream/master`, `82a873508d50`), fork contributors those after it. Identities
 are merged only where they are certainly one person (`authors.mailmap`: Charlie Conroy under six
-addresses, Benjamin Johnson, Nell Byler, Elijah Mathews under two each). Two Google Code era
-committers appear only as addresses (`tomorrowsville`, 2011-2013; `avillaum`, 2014) and are
-listed as such; if they can be identified, add them to `authors.mailmap` and rerun. Bots and AI
+addresses, Benjamin Johnson, Nell Byler, Elijah Mathews under two each). Two committers appear
+only as addresses; `AUTHORS` lists them as "contributors from the Google Code era of FSPS,
+known only by these handles" (`tomorrowsville`, `avillaum`), without guessing names. Bots and AI
 agents are not listed as authors; a sentence notes that the fork was written with AI agents.
 
 `LICENSE.md` keeps the FSPS notice unchanged and gains one line after it:
@@ -64,7 +56,7 @@ agents are not listed as authors; a sentence notes that the fork was written wit
 
 | Renamed | From | To |
 |---|---|---|
-| Library and soname | `libfsps.so.3` | `libopensps.so.3` (`--version X.Y.Z` sets version and soversion) |
+| Library version and soname | 3.2.0, `libfsps.so.3` | 0.1.0, `libopensps.so.0` (`--version X.Y.Z`; `--keep-version`) |
 | Header | `include/fsps.h` | `include/opensps.h` |
 | pkg-config | `fsps.pc` | `opensps.pc` |
 | C symbols (all exported `bind(C)` names and header functions) | `fsps_*` | `opensps_*` |
@@ -86,9 +78,8 @@ Kept, on purpose:
   across the cutover harder, for no change a user can see. If wanted, it can be a separate,
   purely mechanical pull request once the porting window has closed.
 - **Environment variables** (`SPS_HOME`, `FSPS_DATA_HOME`, `FSPS_TEST_*`, ...) and the data
-  directory names (`share/fsps`, `~/.local/share/fsps`): existing setups, CI and the Python
-  bindings' data search keep working. An `OPENSPS_DATA_HOME` alias would be a small code
-  change, better made deliberately than by a rename script.
+  directory names (`share/fsps`, `~/.local/share/fsps`): existing setups and CI keep working.
+  `OPENSPS_DATA_HOME`, the preferred name, is already read first (PR #29).
 - **Internal preprocessor switches** (`FSPS_PINNED`, `FSPS_CUBLAS`): build internals.
 
 **Compatibility:** `include/fsps.h` becomes a deprecated header that includes `opensps.h` and
@@ -101,6 +92,15 @@ compatibility (the soname changes anyway). Remove it at the next major version.
 declarations, header macros) rather than from a fixed list, so running it again on a tree that
 gained `fsps_*` entry points (a ported patch) renames just those, and running it on a renamed
 tree changes nothing. `--check-only` lists what still carries an old name.
+
+**Versions:** libopensps starts at 0.1.0, soname `libopensps.so.0`: the inherited 3.2.0 and
+`.so.3` were libfsps's, and a new library name starts its own numbering (before 1.0, an
+incompatible change raises the minor version and keeps soname 0; from 1.0 on, the soname
+follows the major version). The RPM and Debian package versions follow (`libopensps0`). The C
+API version (`OPENSPS_API_VERSION_*`, `opensps_get_driver_version`, now 1.2) stays separate: it
+describes the interface the bindings check, changes only when entry points do, and would
+otherwise jump with every library release. The `FSPS Version: 3.2` line of the verbose banner
+also stays: it names the FSPS version whose physics the code follows.
 
 ## Porting a patch from this repository after the rename
 
