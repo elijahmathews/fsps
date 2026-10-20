@@ -33,6 +33,8 @@ module fsps_context
     public :: fsps_context_get_paths
     public :: fsps_context_prepare_pset
     public :: is_ssp_sensitive_float_param
+    public :: is_ssp_sensitive_int_param
+    public :: is_ssp_sensitive_str_param
     public :: fsps_context_compute_ssp
     public :: fsps_context_compute_csp
     public :: fsps_context_update_ssp_basis
