@@ -88,6 +88,16 @@ program test_param_regression
     rtol = env_real('FSPS_TEST_RTOL', 1.0e-5_wp)
     allocate(pinned(MAX_LIBRARIES))
 
+    ! Without references (neither the data release's references/param nor tests/data/param_ref)
+    ! the suite is skipped, not failed: probed with the first case of the table
+    if (.not. generate) then
+        if (.not. references_present()) then
+            write(*, '(A)') '1..0 # SKIP regression references not found in ' // trim(ref_dir) // &
+                ' (data release library references/param; set OPENSPS_DATA_HOME or -Ddata_home)'
+            stop
+        end if
+    end if
+
     call print_major_header("Parameterized Regression (parity case matrix)")
 
     open(newunit=unit_cases, file=trim(case_file), status='old', action='read', iostat=ios)
@@ -124,6 +134,27 @@ program test_param_regression
     end if
 
 contains
+
+    !> True if the reference of the first case of the table exists in ref_dir.
+    logical function references_present()
+        integer :: u, ios2, k
+        character(len=1024) :: l
+        logical :: ex
+        references_present = .false.
+        open(newunit=u, file=trim(case_file), status='old', action='read', iostat=ios2)
+        if (ios2 /= 0) return
+        do
+            read(u, '(A)', iostat=ios2) l
+            if (ios2 /= 0) exit
+            if (len_trim(l) == 0 .or. l(1:1) == '#') cycle
+            k = index(l, '|')
+            if (k <= 1) exit
+            inquire(file=trim(ref_dir) // '/' // trim(adjustl(l(1:k - 1))) // '.opsf', exist=ex)
+            references_present = ex
+            exit
+        end do
+        close(u)
+    end function references_present
 
     !> True if the case passes the --only and --skip-spec filters.
     logical function selected(spec_line)

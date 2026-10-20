@@ -55,6 +55,14 @@ def test_round_trip(tmp):
     fd.write_root_index(tmp, "test")
     os.rename(os.path.join(tmp, "opensps-data.json"), os.path.join(tmp, "fsps-data.json"))
     check(fd.read_root_index(tmp)["release"] == "test", "transition alias: an fsps-data.json root index reads")
+    ref = os.path.join(tmp, "ref.bin")
+    open(ref, "wb").write(bytes(range(256)) * 3)
+    w = LibraryWriter(tmp, "references", "toyref")
+    w.file("ref.bin", ref)
+    w.write()
+    lr = Library.open(tmp, "references", "toyref")
+    check(lr.verify() == [] and open(os.path.join(lr.path, "ref.bin"), "rb").read() == open(ref, "rb").read(),
+          "opaque files: byte-identical copy, verified")
     with open(os.path.join(back.path, "flux.bin"), "r+b") as f:
         f.write(b"\0")
     check(back.verify() != [], "round trip: a corrupted file is detected")

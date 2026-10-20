@@ -368,6 +368,37 @@ test('csp_batch', csp_batch_exe,
     timeout : 900
 )
 
+# Regression references (doc/DATA_FORMAT.md, Section 7): the data release's libraries
+# references/sps and references/param in the data root, else the in-tree copies in tests/data while
+# they exist. Without either the tests that use them are skipped (exit 77 / TAP SKIP), not failed;
+# tests/data/references.json pins the expected versions (test references_pin).
+sps_ref_dir = join_paths(data_home, 'libraries/references/sps')
+if not fs.is_file(join_paths(sps_ref_dir, 'manifest.json'))
+    sps_ref_dir = join_paths(meson.project_source_root(), 'tests/data')
+    if not fs.is_file(join_paths(sps_ref_dir, 'sps_ref_MILES-1_MIST-1.bin'))
+        sps_ref_dir = join_paths(data_home, 'libraries/references/sps')
+        message('Regression references references/sps not found in ' + data_home + ' or tests/data: those tests are skipped')
+    endif
+endif
+param_ref_dir = join_paths(data_home, 'libraries/references/param')
+if not fs.is_file(join_paths(param_ref_dir, 'manifest.json'))
+    param_ref_dir = join_paths(meson.project_source_root(), 'tests/data/param_ref')
+    if not fs.is_dir(param_ref_dir)
+        param_ref_dir = join_paths(data_home, 'libraries/references/param')
+        message('Regression references references/param not found in ' + data_home + ' or tests/data: those tests are skipped')
+    endif
+endif
+message('Regression references: ' + sps_ref_dir + ', ' + param_ref_dir)
+python3_ref = find_program('python3', required : false)
+if python3_ref.found()
+    test('references_pin', python3_ref,
+        args : [join_paths(meson.project_source_root(), 'tests/check_references.py'),
+                join_paths(meson.project_source_root(), 'tests/data/references.json'), sps_ref_dir, param_ref_dir],
+        suite : 'regression',
+        timeout : 120
+    )
+endif
+
 # Parameterized regression over the parity case matrix (shared with generate_opensps_fixtures.sh),
 # sharded by case family so that meson runs the shards in parallel
 param_regression_exe = executable('test_param_regression', 'tests/test_param_regression.f90',
@@ -380,7 +411,7 @@ foreach shard : ['ssp_', 'csp_', 'lib_']
         protocol : 'tap',
         args : [
             join_paths(meson.project_source_root(), 'tests/data/param_cases.psv'),
-            join_paths(meson.project_source_root(), 'tests/data/param_ref'),
+            param_ref_dir,
             '--only', shard
         ] + param_filter_args,
         env : regression_env,
@@ -392,7 +423,7 @@ endforeach
 test('regression_miles_mist',
         test_runner_exe,
         args : [
-            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-1_MIST-1.bin'),
+            join_paths(sps_ref_dir, 'sps_ref_MILES-1_MIST-1.bin'),
             '--isoc', 'mist', '--spec', 'miles'
         ],
         env : regression_env,
@@ -403,7 +434,7 @@ test('regression_miles_mist',
 test('regression_basel_padova',
         test_runner_exe,
         args : [
-            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_MIST-0_BASEL-1_PADOVA-1.bin'),
+            join_paths(sps_ref_dir, 'sps_ref_MILES-0_MIST-0_BASEL-1_PADOVA-1.bin'),
             '--isoc', 'pdva', '--spec', 'basel'
         ],
         env : regression_env,
@@ -414,7 +445,7 @@ test('regression_basel_padova',
 test('regression_themis_dust',
         test_runner_exe,
         args : [
-            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-1_MIST-1_THEMIS-1_DL07-0.bin'),
+            join_paths(sps_ref_dir, 'sps_ref_MILES-1_MIST-1_THEMIS-1_DL07-0.bin'),
             '--isoc', 'mist', '--spec', 'miles', '--dust', 'themis'
         ],
         env : regression_env,
@@ -426,7 +457,7 @@ if c3k_available
     test('regression_c3k_mist',
             test_runner_exe,
             args : [
-                join_paths(meson.project_source_root(), 'tests/data/sps_ref_MILES-0_C3K-1_MIST-1.bin'),
+                join_paths(sps_ref_dir, 'sps_ref_MILES-0_C3K-1_MIST-1.bin'),
                 '--isoc', 'mist', '--spec', 'c3k_afe+0.0'
             ],
             env : regression_env,
@@ -438,7 +469,7 @@ endif
 test('regression_bpass',
         test_runner_exe,
         args : [
-            join_paths(meson.project_source_root(), 'tests/data/sps_ref_MIST-0_BPASS-1.bin'),
+            join_paths(sps_ref_dir, 'sps_ref_MIST-0_BPASS-1.bin'),
             '--isoc', 'bpss'
         ],
         env : regression_env,
