@@ -205,6 +205,13 @@ test_utils_lib = static_library(
 
 test_utils_dep = declare_dependency(link_with : test_utils_lib)
 
+# The data root of the regression and stress suites: -Ddata_home=<root> (a legacy tree containing data/, or a
+# standard-format root such as one unpacked by tools/fetch_data.py); default: this source tree.
+data_home = get_option('data_home')
+if data_home == ''
+    data_home = meson.project_source_root()
+endif
+
 # 2. Unit Tests
 unit_test_sources = files(
     'tests/core/test_fsps_cache.f90',
@@ -276,7 +283,8 @@ executable('benchmark_csp_batch', 'tests/benchmark_csp_batch.f90', dependencies 
 if get_option('enable_stress_testing')
     stress_test_exe = executable('stress_test', 'tests/stress_test.f90', dependencies : fsps_dep, link_language : 'fortran')
     stress_env = environment()
-    stress_env.set('FSPS_DATA_HOME', meson.project_source_root())
+    stress_env.set('FSPS_DATA_HOME', data_home)
+    stress_env.set('SPS_HOME', data_home)
     test('stress_test', stress_test_exe,
         suite : 'stress',
         env : stress_env,
@@ -287,12 +295,6 @@ endif
 
 # 3a. Regression Tests (run through Meson test framework)
 fs = import('fs')
-# The data root of the regression suites: -Ddata_home=<root> (a legacy tree containing data/, or a
-# standard-format root such as one unpacked by tools/fetch_data.py); default: this source tree.
-data_home = get_option('data_home')
-if data_home == ''
-    data_home = meson.project_source_root()
-endif
 # The C3K library (~600 MB) may be absent (e.g. a sparse CI clone, or a release fetched without the
 # optional archive); its tests are then skipped rather than failing on missing files.
 c3k_available = (fs.is_dir(join_paths(data_home, 'data/spectra/C3K')) or
