@@ -110,7 +110,7 @@ discover_symbols() {
 check() {
     local hits left
     hits=$(list_files | xargs -r -d '\n' grep -nIE \
-        "#include *[<\"]fsps\.h[>\"]|\blibfsps|\bpkgconfig\(fsps\)|\bfsps\.pc\b|^project\('fsps'|library\('fsps'|override_dependency\('fsps'|\bfsps_dep\b" \
+        "#include *[<\"]fsps\.h[>\"]|\blibfsps|\bpkgconfig\(fsps\)|\bfsps\.pc\b|^project\('fsps'|library\('fsps'|override_dependency\('fsps'|dependency\('fsps'\)|\bfsps_dep\b" \
         2>/dev/null || true)
     left=$(discover_symbols)
     [ -z "$left" ] || hits+=$'\n'"C symbols still named fsps_*: $(printf '%s ' $left)"
@@ -211,6 +211,8 @@ while IFS= read -r f; do
         s/\bfsps\.pc\b/opensps.pc/g;
         s/\bFSPS_C_API\.md\b/C_API.md/g;
         s/\bfsps\.spec\b/opensps.spec/g;
+        s/\bdependency\(\x27fsps\x27\)/dependency(\x27opensps\x27)/g;
+        s/\bfsps_dep\b/opensps_dep/g;
     ' "$f"
 done < "$tmp_list"
 
