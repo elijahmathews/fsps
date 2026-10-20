@@ -178,8 +178,21 @@ jobs:
         run: meson compile -C build
 
       # Coverage instrumentation slows the tests several-fold, so that build gets longer timeouts
+      # nvfortran's math runtime picks a CPU-specific library at startup and occasionally aborts
+      # there ("Error during math dispatch processing") on some hosted-runner CPUs, before any
+      # test code runs; retry once in that case only, so real failures still fail the job
       - name: Unit and regression tests
-        run: meson test -C build --suite unit --suite regression --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
+        run: |
+          lscpu | grep -m1 'Model name' || true
+          args="--suite unit --suite regression --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}"
+          if ! meson test -C build $args; then
+            if grep -q 'Error during math dispatch' build/meson-logs/testlog.txt; then
+              echo "::warning::nvfortran math dispatch abort; retrying once"
+              meson test -C build $args
+            else
+              exit 1
+            fi
+          fi
 
       # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
       - name: Report test results
