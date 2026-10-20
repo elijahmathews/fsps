@@ -40,6 +40,11 @@
    "path": "libraries/dust_emission/DL07"
   },
   {
+   "kind": "dust_emission",
+   "name": "THEMIS",
+   "path": "libraries/dust_emission/THEMIS"
+  },
+  {
    "kind": "dusty_agb",
    "name": "crich",
    "path": "libraries/dusty_agb/crich"

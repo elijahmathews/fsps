@@ -245,6 +245,8 @@ tests_units_exe = executable(
 # One TAP test per module: meson runs them in parallel and reports every assertion
 unit_env = environment()
 unit_env.set('FSPS_TEST_TAP', '1')
+# Unit tests that read real data use the small standard-format test library, never data/
+unit_env.set('FSPS_TEST_LIBRARY', join_paths(meson.project_source_root(), 'tests/data/fsps-test-data'))
 unit_modules = [
     'fsps_cache', 'fsps_context', 'fsps_context_types', 'fsps_strings', 'fsps_types', 'fsps_io',
     'fsps_integration', 'fsps_interpolation', 'fsps_special_functions', 'fsps_cosmology', 'fsps_csp',
@@ -284,12 +286,19 @@ if get_option('enable_stress_testing')
 endif
 
 # 3a. Regression Tests (run through Meson test framework)
-# The C3K library (~600 MB) may be left out of a checkout (e.g. a sparse CI clone); its tests are
-# then skipped rather than failing on missing files.
 fs = import('fs')
-c3k_available = fs.is_dir('data/spectra/C3K')
+# The data root of the regression suites: -Ddata_home=<root> (a legacy tree containing data/, or a
+# standard-format root such as one unpacked by tools/fetch_data.py); default: this source tree.
+data_home = get_option('data_home')
+if data_home == ''
+    data_home = meson.project_source_root()
+endif
+# The C3K library (~600 MB) may be absent (e.g. a sparse CI clone, or a release fetched without the
+# optional archive); its tests are then skipped rather than failing on missing files.
+c3k_available = (fs.is_dir(join_paths(data_home, 'data/spectra/C3K')) or
+                 fs.is_dir(join_paths(data_home, 'libraries/stellar_spectra/c3k_afe+0.0')))
 if not c3k_available
-    message('data/spectra/C3K not found: C3K regression tests are skipped')
+    message('C3K not found in ' + data_home + ': C3K regression tests are skipped')
 endif
 regression_env = environment()
 if kernel_precision == 'single'
@@ -300,7 +309,9 @@ if kernel_precision == 'single'
 else
     regression_env.set('FSPS_TEST_RTOL', '1.0E-5')
 endif
-regression_env.set('FSPS_DATA_HOME', meson.project_source_root())
+# Both variables: SPS_HOME, if exported by the user, would otherwise take precedence
+regression_env.set('FSPS_DATA_HOME', data_home)
+regression_env.set('SPS_HOME', data_home)
 # Programs built on tests/test_utils.f90 report each assertion as TAP
 regression_env.set('FSPS_TEST_TAP', '1')
 
@@ -429,6 +440,8 @@ standard_data_home = get_option('standard_data_home')
 if standard_data_home == ''
     standard_data_home = join_paths(meson.project_source_root(), 'fsps-data')
 endif
+# The legacy side is the source tree's data/, so the suite exists only while the tree has it
+if fs.is_dir('data')
 test('data_parity', data_parity_exe,
     protocol : 'tap',
     args : [meson.project_source_root(), standard_data_home] + (c3k_available ? [] : ['--skip-spec', 'c3k_afe+0.0']),
@@ -436,6 +449,7 @@ test('data_parity', data_parity_exe,
     suite : 'data_parity',
     timeout : 1800
 )
+endif
 
 # Setup and synthesis from the small standard-format test library committed in the repository
 # (tests/data/fsps-test-data, no other data needed), and [alpha/Fe] axis selection on variants
@@ -486,7 +500,9 @@ test('c_batch', test_c_batch_exe,
 install_headers('include/fsps.h')
 
 # Install Data (recursively copies the directory)
-install_subdir('data', install_dir : join_paths(datadir, 'fsps'))
+if fs.is_dir('data')
+    install_subdir('data', install_dir : join_paths(datadir, 'fsps'))
+endif
 
 # Pkg-config generation
 pkg = import('pkgconfig')

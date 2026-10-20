@@ -21,3 +21,6 @@ option('cublas', type: 'boolean', value: false,
 
 option('standard_data_home', type: 'string', value: '',
   description: 'Standard-format data root for the data_parity suite (default: <source>/fsps-data)')
+
+option('data_home', type: 'string', value: '',
+  description: 'Data root of the regression suites: a legacy tree with data/ or a standard-format root (default: the source tree)')

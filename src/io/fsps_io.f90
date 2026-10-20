@@ -85,6 +85,7 @@ module fsps_io
     public :: isochrone_kind
     public :: use_standard_library
     public :: library_spec
+    public :: auxiliary_table_path
     public :: metallicity_axis
     
     ! --- Public API: Input (Runtime) ---
@@ -2982,6 +2983,15 @@ contains
             if (len_trim(ctx%state%spec_select) > 0) spec = spec // ':' // trim(ctx%state%spec_select)
         end select
     end function library_spec
+
+    !> @brief Path of a small auxiliary table (e.g. 'emlines_info.dat') in the context's data
+    !> root: `<root>/data/<name>` in both the legacy and the standard layout.
+    function auxiliary_table_path(ctx, name) result(path)
+        type(fsps_context_t), intent(in) :: ctx
+        character(len=*), intent(in) :: name
+        character(len=:), allocatable :: path
+        path = trim(ctx%sps_home) // '/data/' // trim(name)
+    end function auxiliary_table_path
 
     !> @brief Name of a library's metallicity axis: 'Z' (mass fraction) or 'feh' ([Fe/H], with
     !> Z = Z_sun 10^[Fe/H] and Z_sun the library's solar_metallicity).

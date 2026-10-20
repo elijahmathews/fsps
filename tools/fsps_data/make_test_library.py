@@ -26,6 +26,7 @@ SPEC = {
     ("stellar_spectra", "miles"): {"Z": [1, 3], "wavelength": slice(None, None, 25)},
     ("nebular", "mist_nodust"): {"wavelength": slice(None, None, 10)},
     ("dust_emission", "DL07"): {"wavelength": slice(None, None, 8)},
+    ("dust_emission", "THEMIS"): {"wavelength": slice(None, None, 8)},
     ("agn_torus", "clumpy"): {},
     ("attenuation", "dirty"): {},
     ("attenuation", "smc_bar"): {},
