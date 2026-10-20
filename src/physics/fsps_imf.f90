@@ -15,7 +15,9 @@ module fsps_imf
 
     public :: compute_imf_weights
     public :: get_imf_value
-    public :: integrate_imf_interval_analytic
+    public :: integrate_imf_interval_analytic, imf_integral, imf_integral_p, imf_pack_params
+    public :: IMF_NPAR, IMF_P_SALP, IMF_P_ALPHA, IMF_P_VDMC, IMF_P_MDAVE, IMF_P_LOWER_LIMIT, &
+              IMF_P_UPPER_LIMIT, IMF_P_LOWER_BOUND, IMF_P_MLIM_BH, IMF_P_MLIM_NS, IMF_P_NUSER, IMF_P_USER
     public :: CHAB_MC, CHAB_SIGMA2, CHAB_IND
 
     ! ------------------------------------------------------------------------
@@ -37,7 +39,59 @@ module fsps_imf
     real(WP), parameter :: VD_AL     = 0.14_wp
     real(WP), parameter :: VD_NC     = 25.0_wp
 
+    ! ------------------------------------------------------------------------
+    ! PACKED IMF PARAMETERS
+    ! ------------------------------------------------------------------------
+    ! One IMF parameter set as a plain real vector p(IMF_NPAR) (the batched SSP operator keeps one
+    ! per model; the IMF type is an integer passed alongside). Filled by imf_pack_params from
+    ! the context after configure_imf_parameters.
+    integer, parameter :: IMF_P_SALP = 1          !< Salpeter slope (ctx%state%salp_ind)
+    integer, parameter :: IMF_P_ALPHA = 2         !< 2..4: Kroupa / Dave slopes (imf1, imf2, imf3)
+    integer, parameter :: IMF_P_VDMC = 5          !< van Dokkum characteristic mass
+    integer, parameter :: IMF_P_MDAVE = 6         !< Dave break mass
+    integer, parameter :: IMF_P_LOWER_LIMIT = 7   !< imf_lower_limit (M_sun)
+    integer, parameter :: IMF_P_UPPER_LIMIT = 8   !< imf_upper_limit (M_sun)
+    integer, parameter :: IMF_P_LOWER_BOUND = 9   !< lower edge of the first isochrone mass bin
+    integer, parameter :: IMF_P_MLIM_BH = 10      !< lowest initial mass forming a black hole
+    integer, parameter :: IMF_P_MLIM_NS = 11      !< lowest initial mass forming a neutron star
+    integer, parameter :: IMF_P_NUSER = 12        !< number of user IMF segments (as a real)
+    integer, parameter :: IMF_P_USER = 13         !< 13..312: user segments (lower, upper, slope) x 100
+    integer, parameter :: IMF_NPAR = IMF_P_USER + 3 * 100 - 1
+
 contains
+
+    !> Packs the context's IMF parameters (after configure_imf_parameters) into p(IMF_NPAR).
+    subroutine imf_pack_params(ctx, p)
+        type(fsps_context_t), intent(in) :: ctx
+        real(WP), intent(out) :: p(IMF_NPAR)
+        p = 0.0_wp
+        p(IMF_P_SALP) = ctx%state%salp_ind
+        p(IMF_P_ALPHA:IMF_P_ALPHA + 2) = ctx%state%imf_alpha
+        p(IMF_P_VDMC) = ctx%state%imf_vdmc
+        p(IMF_P_MDAVE) = ctx%state%imf_mdave
+        p(IMF_P_LOWER_LIMIT) = ctx%state%imf_lower_limit
+        p(IMF_P_UPPER_LIMIT) = ctx%state%imf_upper_limit
+        p(IMF_P_LOWER_BOUND) = ctx%state%imf_lower_bound
+        p(IMF_P_MLIM_BH) = ctx%state%mlim_bh
+        p(IMF_P_MLIM_NS) = ctx%state%mlim_ns
+        p(IMF_P_NUSER) = real(ctx%state%n_user_imf, WP)
+        p(IMF_P_USER:IMF_NPAR) = reshape(ctx%state%imf_user_alpha, [3 * 100])
+    end subroutine imf_pack_params
+
+    !> imf_integral with the IMF parameters packed in p(IMF_NPAR) (imf_pack_params).
+    pure function imf_integral_p(imf_type, p, m1, m2, mass_weighted) result(int_val)
+        !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
+        integer, intent(in)  :: imf_type
+        real(WP), intent(in) :: p(IMF_NPAR)
+        real(WP), intent(in) :: m1, m2
+        logical, intent(in)  :: mass_weighted
+        real(WP) :: int_val
+        int_val = imf_integral(imf_type, p(IMF_P_SALP), p(IMF_P_ALPHA:IMF_P_ALPHA + 2), p(IMF_P_VDMC), &
+                               p(IMF_P_MDAVE), nint(p(IMF_P_NUSER)), p(IMF_P_USER:IMF_NPAR), m1, m2, mass_weighted)
+    end function imf_integral_p
 
     !> @brief
     !> Computes the number of stars in each mass bin, normalized to 1 Msun total mass.
@@ -119,16 +173,12 @@ contains
     ! These match the interface required by fsps_integration
     ! ------------------------------------------------------------------------
 
-    !> @brief Analytic integral of IMF over [m1, m2] for power-law IMF families.
+    !> @brief Analytic integral of the IMF over [m1, m2] (number, or mass when mass_weighted).
     !>
     !> @details
-    !> Supports IMF base types:
-    !> - 0: Salpeter
-    !> - 2: Kroupa (piecewise power law)
-    !> - 4: Dave (two-slope power law)
-    !> - 5: User-defined piecewise power law
-    !>
-    !> Falls back to zero for unsupported types (caller guards usage).
+    !> Closed forms for every IMF type (mod(ctx%imf_type_val, 10)): 0 Salpeter, 1 Chabrier,
+    !> 2 Kroupa, 3 van Dokkum, 4 Dave, 5 user-defined piecewise power law. The integrals are
+    !> imf_integral (plain arguments, also used by the batched SSP operator, fsps_ssp_operator).
     pure function integrate_imf_interval_analytic(ctx, m1, m2, mass_weighted) result(int_val)
         !$acc routine seq
 #ifdef OMP_TARGET
@@ -139,8 +189,33 @@ contains
         logical, intent(in)  :: mass_weighted
         real(WP) :: int_val
 
+        int_val = imf_integral(ctx%imf_type_val, ctx%state%salp_ind, ctx%state%imf_alpha, ctx%state%imf_vdmc, &
+                               ctx%state%imf_mdave, ctx%state%n_user_imf, ctx%state%imf_user_alpha, &
+                               m1, m2, mass_weighted)
+    end function integrate_imf_interval_analytic
+
+    !> @brief Analytic integral of the IMF over [m1, m2], with the IMF parameters as plain
+    !> arguments (no context): usable from device code for a batch of IMF parameter sets.
+    !>
+    !> @details
+    !> imf_type: as ctx%imf_type_val (its base type mod 10 is used); alpha: Kroupa / Dave slopes
+    !> (ctx%state%imf_alpha); user_alpha(3, n_user_imf): user segments (lower mass, upper mass,
+    !> slope), as ctx%state%imf_user_alpha. Unsupported types integrate to zero.
+    pure function imf_integral(imf_type, salp_ind, alpha, vdmc, mdave, n_user_imf, user_alpha, &
+                               m1, m2, mass_weighted) result(int_val)
+        !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
+        integer, intent(in)  :: imf_type, n_user_imf
+        real(WP), intent(in) :: salp_ind, alpha(3), vdmc, mdave
+        real(WP), intent(in) :: user_alpha(3, *)
+        real(WP), intent(in) :: m1, m2
+        logical, intent(in)  :: mass_weighted
+        real(WP) :: int_val
+
         integer :: imf_type_base
-        real(WP) :: lo, hi, a1, a2, a3, mdave, c2, vd_break
+        real(WP) :: lo, hi, a1, a2, a3, c2, vd_break
         real(WP) :: seg_lo, seg_hi, imfcu
         integer  :: n, n_user
 
@@ -149,11 +224,11 @@ contains
         hi = max(m1, m2)
         if (hi <= lo) return
 
-        imf_type_base = mod(ctx%imf_type_val, 10)
+        imf_type_base = mod(imf_type, 10)
 
         select case (imf_type_base)
         case (0)
-            int_val = integrate_powerlaw(lo, hi, ctx%state%salp_ind, mass_weighted, 1.0_wp)
+            int_val = integrate_powerlaw(lo, hi, salp_ind, mass_weighted, 1.0_wp)
 
         case (1)
             ! Chabrier (2003): lognormal below 1 M_sun (closed form with erf), power law above
@@ -167,20 +242,20 @@ contains
 
         case (3)
             ! van Dokkum (2008): scaled lognormal up to nc * mc, power law above (get_imf_value)
-            vd_break = VD_NC * ctx%state%imf_vdmc
+            vd_break = VD_NC * vdmc
             seg_lo = lo
             seg_hi = min(hi, vd_break)
             if (seg_hi > seg_lo) int_val = int_val + VD_AL * (0.5_wp * vd_break)**(-VD_IND) * &
-                integrate_lognormal(seg_lo, seg_hi, log10(ctx%state%imf_vdmc), VD_SIGMA2, mass_weighted)
+                integrate_lognormal(seg_lo, seg_hi, log10(vdmc), VD_SIGMA2, mass_weighted)
             seg_lo = max(lo, vd_break)
             seg_hi = hi
             if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, VD_IND + 1.0_wp, &
                                                                        mass_weighted, VD_AH)
 
         case (2)
-            a1 = ctx%state%imf_alpha(1)
-            a2 = ctx%state%imf_alpha(2)
-            a3 = ctx%state%imf_alpha(3)
+            a1 = alpha(1)
+            a2 = alpha(2)
+            a3 = alpha(3)
             c2 = 0.5_wp**(-a1 + a2)
 
             seg_lo = max(lo, 0.08_wp)
@@ -196,10 +271,9 @@ contains
             if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a3, mass_weighted, c2)
 
         case (4)
-            a1 = ctx%state%imf_alpha(1)
-            a2 = ctx%state%imf_alpha(2)
-            mdave = ctx%state%imf_mdave
-
+            a1 = alpha(1)
+            a2 = alpha(2)
+            
             seg_lo = max(lo, 0.08_wp)
             seg_hi = min(hi, mdave)
             if (seg_hi > seg_lo) int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, a1, mass_weighted, 1.0_wp)
@@ -211,33 +285,33 @@ contains
             end if
 
         case (5)
-            n_user = ctx%state%n_user_imf
+            n_user = n_user_imf
             imfcu = 1.0_wp
 
             ! First segment
             if (n_user >= 1) then
-                seg_lo = max(lo, ctx%state%imf_user_alpha(1,1))
-                seg_hi = min(hi, ctx%state%imf_user_alpha(2,1))
+                seg_lo = max(lo, user_alpha(1,1))
+                seg_hi = min(hi, user_alpha(2,1))
                 if (seg_hi > seg_lo) then
-                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, ctx%state%imf_user_alpha(3,1), mass_weighted, 1.0_wp)
+                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, user_alpha(3,1), mass_weighted, 1.0_wp)
                 end if
             end if
 
             do n = 2, n_user
-                imfcu = imfcu * ctx%state%imf_user_alpha(1,n)**(-ctx%state%imf_user_alpha(3,n-1) + &
-                        ctx%state%imf_user_alpha(3,n))
+                imfcu = imfcu * user_alpha(1,n)**(-user_alpha(3,n-1) + &
+                        user_alpha(3,n))
 
-                seg_lo = max(lo, ctx%state%imf_user_alpha(1,n))
-                seg_hi = min(hi, ctx%state%imf_user_alpha(2,n))
+                seg_lo = max(lo, user_alpha(1,n))
+                seg_hi = min(hi, user_alpha(2,n))
                 if (seg_hi > seg_lo) then
-                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, ctx%state%imf_user_alpha(3,n), mass_weighted, imfcu)
+                    int_val = int_val + integrate_powerlaw(seg_lo, seg_hi, user_alpha(3,n), mass_weighted, imfcu)
                 end if
             end do
 
         case default
             int_val = 0.0_wp
         end select
-    end function integrate_imf_interval_analytic
+    end function imf_integral
 
     !> Integral of a lognormal IMF segment, exp(-(log10 m - log_mc)^2 / (2 sigma2)) / m, over
     !> [m1, m2], or of m times it when mass_weighted (Chabrier and van Dokkum below their break).

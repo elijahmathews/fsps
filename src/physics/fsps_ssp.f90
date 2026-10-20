@@ -74,7 +74,9 @@ module fsps_ssp
     end type dusty_defer_t
     public :: init_isochrone_buffer, reset_buffer, free_isochrone_buffer
     public :: load_timestep_data
-    public :: apply_isochrone_physics
+    public :: apply_isochrone_physics, apply_isochrone_modifications
+    public :: sum_small_templates, sum_dusty_slots, add_main_library_templates, finish_ssp_grid
+    public :: add_column, add_column_sp
     public :: compute_integrated_properties, accumulate_spectrum
     public :: interpolate_time_grid
     public :: configure_imf_parameters
@@ -153,8 +155,6 @@ contains
         real(WP), intent(out), contiguous   :: mass_grid(:)
         real(WP), intent(out), contiguous   :: lbol_grid(:)
         real(WP), intent(out), contiguous   :: spec_grid(:,:)
-        real(WP), allocatable               :: temp_spec_grid(:,:)
-        real(KP), allocatable               :: kp_in(:,:), kp_out(:,:)
 
         ! Local variables
         type(isochrone_buffer_t) :: buf
@@ -336,6 +336,25 @@ contains
         ! 5. POST-PROCESSING
         ! --------------------------------------------------------------------
 
+        call finish_ssp_grid(ctx, pset, mass_grid, lbol_grid, spec_grid)
+
+        ! Outputs are final on the host; refresh device copies the caller may have mapped
+        !$acc update device(spec_grid, mass_grid, lbol_grid) if_present
+
+    end subroutine generate_ssp_grid
+
+    !> @brief Post-processing of the SSP grid: time interpolation (TIME_RES_INCR > 1), nebular
+    !> emission (add_neb_emission = 2), X-ray binaries and instrumental smoothing. The last
+    !> step of generate_ssp_grid, shared with the batched SSP operator (fsps_ssp_operator).
+    subroutine finish_ssp_grid(ctx, pset, mass_grid, lbol_grid, spec_grid)
+        type(fsps_context_t), target, intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(inout), contiguous :: mass_grid(:)
+        real(WP), intent(inout), contiguous :: lbol_grid(:)
+        real(WP), intent(inout), contiguous :: spec_grid(:,:)
+        real(WP), allocatable               :: temp_spec_grid(:,:)
+        real(KP), allocatable               :: kp_in(:,:), kp_out(:,:)
+
         ! A. TIME INTERPOLATION
         !    If the calculation was done on a coarse grid (TIME_RES_INCR > 1),
         !    interpolate to fill the gaps.
@@ -371,10 +390,7 @@ contains
              call apply_lsf_smoothing_grid(ctx, spec_grid)
         end if
 
-        ! Outputs are final on the host; refresh device copies the caller may have mapped
-        !$acc update device(spec_grid, mass_grid, lbol_grid) if_present
-
-    end subroutine generate_ssp_grid
+    end subroutine finish_ssp_grid
 
     ! ------------------------------------------------------------------------
     ! BUFFER MANAGEMENT
@@ -512,6 +528,34 @@ contains
         real(WP), intent(in)                :: time_log_yr
         type(isochrone_buffer_t), intent(inout) :: buf
 
+        ! 1. Calculate IMF Weights
+        call compute_imf_weights(ctx, buf%initial_mass(1:buf%n_stars), &
+                                 buf%weights(1:buf%n_stars), buf%n_stars)
+
+        ! 2-4. Horizontal branch, blue stragglers, giant branch
+        call apply_isochrone_modifications(ctx, pset, time_log_yr, buf)
+
+    end subroutine apply_isochrone_physics
+
+    !> @brief The isochrone modifications of apply_isochrone_physics (blue HB, blue stragglers,
+    !> giant-branch shifts and weights), applied to buf%weights as set by the caller.
+    !>
+    !> @details
+    !> All of them are linear in the weights and do not depend on them otherwise (which stars
+    !> are added or changed depends only on the isochrone and pset), which the batched SSP
+    !> operator (fsps_ssp_operator) uses: with unit weights it reads off each star's weight
+    !> factor. The optional outputs are its bookkeeping: hb_flag(j) for the stars summed into
+    !> the HB weight (whose sum sets the blue-straggler weights), parent(i) = j for blue HB
+    !> stars i split from star j, n_after_hb = number of stars before the blue stragglers.
+    subroutine apply_isochrone_modifications(ctx, pset, time_log_yr, buf, hb_flag, parent, n_after_hb)
+        type(fsps_context_t), intent(inout) :: ctx
+        type(params), intent(in)            :: pset
+        real(WP), intent(in)                :: time_log_yr
+        type(isochrone_buffer_t), intent(inout) :: buf
+        logical, intent(inout), optional    :: hb_flag(:)
+        integer, intent(inout), optional    :: parent(:)
+        integer, intent(out), optional      :: n_after_hb
+
         ! Local variables
         real(WP) :: hb_weight
         
@@ -526,10 +570,6 @@ contains
         ! Initialize wrapper with current count
         n_stars_wrap(1) = buf%n_stars
         hb_weight = 0.0_wp
-
-        ! 1. Calculate IMF Weights
-        call compute_imf_weights(ctx, buf%initial_mass(1:buf%n_stars), &
-                                 buf%weights(1:buf%n_stars), buf%n_stars)
 
         ! --------------------------------------------------------------------
         ! PREPARE 2D VIEWS (Inline Rank Remapping)
@@ -554,8 +594,9 @@ contains
                 ctx, 1, pset%fbhb, time_log_yr, hb_weight, &
                 n_stars_wrap, &
                 p_mini, p_mact, p_logl, p_logt, p_logg, p_phase, &
-                buf%weights) ! weights is 1D in the interface
+                buf%weights, hb_flag, parent) ! weights is 1D in the interface
         end if
+        if (present(n_after_hb)) n_after_hb = n_stars_wrap(1)
 
         ! --------------------------------------------------------------------
         ! 3. ADD BLUE STRAGGLERS (BS)
@@ -583,7 +624,7 @@ contains
             pset%delt, pset%dell, pset%pagb, pset%redgb, pset%agb, &
             p_logl, p_logt, p_phase, buf%weights)
 
-    end subroutine apply_isochrone_physics
+    end subroutine apply_isochrone_modifications
 
     ! ------------------------------------------------------------------------
     ! INTEGRATION KERNELS
@@ -867,7 +908,7 @@ contains
 
         real(WP), allocatable :: w_main(:,:), w_wmb(:,:), w_pagb(:,:), w_wrn(:), w_wrc(:), &
                                  w_agbo(:), w_agbc(:), w_car(:)
-        real(KP), allocatable :: acc(:), comp(:), lam_sum(:), lam_comp(:), star(:)
+        real(KP), allocatable :: acc(:), comp(:), star(:)
         integer  :: ia, j, n, nspec, nz, src, nterm, i1(4), i2(4), a, b
         real(WP) :: coef(4), w
         logical  :: linear, dusty
@@ -875,8 +916,7 @@ contains
         ! weights are aggregated per dust-grid corner (key: C-rich flag, Teff index, tau index)
         integer,  allocatable :: dkey(:,:)
         real(WP), allocatable :: dw_main(:,:,:), dw_o(:,:), dw_c(:,:), dw_car(:,:)
-        real(KP), allocatable :: tmp(:), tmp_comp(:), low(:), low_comp(:)
-        integer  :: nslot, slot, d, rich, it, itau, i0, cdi(4), cdj(4)
+        integer  :: nslot, slot, d, rich, it, itau, cdi(4), cdj(4)
         real(WP) :: cd(4)
         logical  :: active, smooth, defer_small
 
@@ -977,47 +1017,8 @@ contains
                 end do
             end do
         end if
-        if (.not. defer_small) then
-            do b = 1, size(w_wmb, 2)
-                do a = 1, size(w_wmb, 1)
-                    if (w_wmb(a, b) /= 0.0_wp) &
-                        call add_column_sp(acc, comp, real(w_wmb(a, b), KP), ctx%state%wmb_spec(1:nspec, nz, a, b))
-                end do
-            end do
-            do b = 1, size(w_pagb, 2)
-                do a = 1, size(w_pagb, 1)
-                    if (w_pagb(a, b) /= 0.0_wp) &
-                        call add_column(acc, comp, real(w_pagb(a, b), KP), ctx%state%pagb_spec(1:nspec, a, b))
-                end do
-            end do
-            do a = 1, size(w_wrn)
-                if (w_wrn(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrn(a), KP), ctx%state%wrn_spec(1:nspec, a, nz))
-            end do
-            do a = 1, size(w_wrc)
-                if (w_wrc(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrc(a), KP), ctx%state%wrc_spec(1:nspec, a, nz))
-            end do
-            do a = 1, size(w_car)
-                if (w_car(a) /= 0.0_wp) call add_column(acc, comp, real(w_car(a), KP), ctx%state%agb_spec_car(1:nspec, a))
-            end do
-            ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library.
-            ! Before lambda^2 (up to 7e14 A^2 in the far IR) the weighted sum is ~1e-37 there, at the
-            ! bottom of the FP32 range, where subnormal handling (kept by gfortran, flushed by
-            ! nvfortran and GPUs) changed the result by 1%: the sum carries an exact factor AGB_SCALE
-            if (any(w_agbo /= 0.0_wp) .or. any(w_agbc /= 0.0_wp)) then
-                allocate(lam_sum(nspec), lam_comp(nspec))
-                lam_sum = 0.0_KP; lam_comp = 0.0_KP
-                do a = 1, size(w_agbo)
-                    if (w_agbo(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbo(a) * AGB_SCALE, KP), &
-                                                             ctx%state%agb_spec_o(1:nspec, a))
-                end do
-                do a = 1, size(w_agbc)
-                    if (w_agbc(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbc(a) * AGB_SCALE, KP), &
-                                                             ctx%state%agb_spec_c(1:nspec, a))
-                end do
-                call add_column(acc, comp, real(1.0_wp / AGB_SCALE, KP), &
-                                real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
-            end if
-        end if
+        if (.not. defer_small) call sum_small_templates(ctx, nz, w_wmb, w_pagb, w_wrn, w_wrc, w_car, w_agbo, &
+                                                        w_agbc, acc, comp)
 
         ! 3. Dust-shell AGB stars: per dust corner, the template sum (smoothed beyond 3 um, as in
         !    get_stellar_spectrum) times that corner's transfer function
@@ -1026,47 +1027,7 @@ contains
                 call defer_slot(slot)
             end do
         else if (nslot > 0) then
-            i0 = nspec - size(ctx%state%speclib_agb_smooth, 1) + 1
-            allocate(tmp(nspec), tmp_comp(nspec), low(nspec), low_comp(nspec))
-            do slot = 1, nslot
-                tmp = 0.0_KP; tmp_comp = 0.0_KP; low = 0.0_KP; low_comp = 0.0_KP
-                do b = 1, size(dw_main, 2)
-                    do a = 1, size(dw_main, 1)
-                        if (dw_main(a, b, slot) == 0.0_wp) cycle
-                        call add_column_sp(tmp(1:i0-1), tmp_comp(1:i0-1), real(dw_main(a, b, slot), KP), &
-                                           ctx%state%speclib(1:i0-1, nz, a, b))
-                        call add_column(tmp(i0:), tmp_comp(i0:), real(dw_main(a, b, slot), KP), &
-                                        ctx%state%speclib_agb_smooth(:, nz, a, b))
-                    end do
-                end do
-                do a = 1, size(dw_car, 1)
-                    if (dw_car(a, slot) == 0.0_wp) cycle
-                    call add_column(tmp(1:i0-1), tmp_comp(1:i0-1), real(dw_car(a, slot), KP), &
-                                    ctx%state%agb_spec_car(1:i0-1, a))
-                    call add_column(tmp(i0:), tmp_comp(i0:), real(dw_car(a, slot), KP), &
-                                    ctx%state%agb_spec_car_smooth(:, a))
-                end do
-                ! O/C-rich: lambda^2 / c below 3 um; the smoothed templates already include it
-                ! (low carries the factor AGB_SCALE, as lam_sum above)
-                do a = 1, size(dw_o, 1)
-                    if (dw_o(a, slot) == 0.0_wp) cycle
-                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_o(a, slot) * AGB_SCALE, KP), &
-                                    ctx%state%agb_spec_o(1:i0-1, a))
-                    call add_column(tmp(i0:), tmp_comp(i0:), real(dw_o(a, slot) * C_LIGHT, KP), &
-                                    ctx%state%agb_spec_o_smooth(:, a))
-                end do
-                do a = 1, size(dw_c, 1)
-                    if (dw_c(a, slot) == 0.0_wp) cycle
-                    call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_c(a, slot) * AGB_SCALE, KP), &
-                                    ctx%state%agb_spec_c(1:i0-1, a))
-                    call add_column(tmp(i0:), tmp_comp(i0:), real(dw_c(a, slot) * C_LIGHT, KP), &
-                                    ctx%state%agb_spec_c_smooth(:, a))
-                end do
-                tmp(1:i0-1) = tmp(1:i0-1) + real(ctx%state%spec_lambda(1:i0-1), KP)**2 * low(1:i0-1) * &
-                              real(1.0_wp / AGB_SCALE, KP)
-                call add_column(acc, comp, 1.0_KP, tmp * ctx%state%flux_dagb(1:nspec, dkey(1, slot) + 1, &
-                                                                            dkey(2, slot), dkey(3, slot)))
-            end do
+            call sum_dusty_slots(ctx, nz, nslot, dkey, dw_main, dw_o, dw_c, dw_car, acc, comp)
         end if
 
         if (present(w_main_out)) then
@@ -1139,49 +1100,159 @@ contains
             find_slot = nslot
         end function find_slot
 
-        !> acc += a * x, compensated when the kernels are narrower than WP (templates stored in FP32).
-        subroutine add_column_sp(acc, comp, a, x)
-            real(KP), intent(inout) :: acc(:), comp(:)
-            real(KP), intent(in)    :: a
-            real(kind(1.0)), intent(in) :: x(:)
-            integer  :: i
-            real(KP) :: term, tsum
-            if (KP == WP) then
-                do i = 1, size(acc)
-                    acc(i) = acc(i) + a * x(i)
-                end do
-            else
-                do i = 1, size(acc)
-                    term = a * x(i) - comp(i)
-                    tsum = acc(i) + term
-                    comp(i) = (tsum - acc(i)) - term
-                    acc(i) = tsum
-                end do
-            end if
-        end subroutine add_column_sp
-
-        !> acc += a * x, compensated when the kernels are narrower than WP (kernel-precision arrays).
-        subroutine add_column(acc, comp, a, x)
-            real(KP), intent(inout) :: acc(:), comp(:)
-            real(KP), intent(in)    :: a
-            real(KP), intent(in) :: x(:)
-            integer  :: i
-            real(KP) :: term, tsum
-            if (KP == WP) then
-                do i = 1, size(acc)
-                    acc(i) = acc(i) + a * x(i)
-                end do
-            else
-                do i = 1, size(acc)
-                    term = a * x(i) - comp(i)
-                    tsum = acc(i) + term
-                    comp(i) = (tsum - acc(i)) - term
-                    acc(i) = tsum
-                end do
-            end if
-        end subroutine add_column
-
     end subroutine accumulate_by_templates
+
+    !> Adds the templates of the libraries other than the main one (WMBasic, post-AGB, WN, WC,
+    !> carbon-star, O- and C-rich AGB) with weights w_*, to acc (compensated with comp at FP32).
+    !> Step 2 of accumulate_by_templates, also used by the batched SSP operator.
+    subroutine sum_small_templates(ctx, nz, w_wmb, w_pagb, w_wrn, w_wrc, w_car, w_agbo, w_agbc, acc, comp)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)  :: nz
+        real(WP), intent(in) :: w_wmb(:,:), w_pagb(:,:), w_wrn(:), w_wrc(:), w_car(:), w_agbo(:), w_agbc(:)
+        real(KP), intent(inout) :: acc(:), comp(:)
+        real(KP), allocatable :: lam_sum(:), lam_comp(:)
+        integer :: a, b, nspec
+
+        nspec = size(acc)
+        do b = 1, size(w_wmb, 2)
+            do a = 1, size(w_wmb, 1)
+                if (w_wmb(a, b) /= 0.0_wp) &
+                    call add_column_sp(acc, comp, real(w_wmb(a, b), KP), ctx%state%wmb_spec(1:nspec, nz, a, b))
+            end do
+        end do
+        do b = 1, size(w_pagb, 2)
+            do a = 1, size(w_pagb, 1)
+                if (w_pagb(a, b) /= 0.0_wp) &
+                    call add_column(acc, comp, real(w_pagb(a, b), KP), ctx%state%pagb_spec(1:nspec, a, b))
+            end do
+        end do
+        do a = 1, size(w_wrn)
+            if (w_wrn(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrn(a), KP), ctx%state%wrn_spec(1:nspec, a, nz))
+        end do
+        do a = 1, size(w_wrc)
+            if (w_wrc(a) /= 0.0_wp) call add_column(acc, comp, real(w_wrc(a), KP), ctx%state%wrc_spec(1:nspec, a, nz))
+        end do
+        do a = 1, size(w_car)
+            if (w_car(a) /= 0.0_wp) call add_column(acc, comp, real(w_car(a), KP), ctx%state%agb_spec_car(1:nspec, a))
+        end do
+        ! O- and C-rich AGB templates carry lambda^2 (per unit frequency), applied once per library.
+        ! Before lambda^2 (up to 7e14 A^2 in the far IR) the weighted sum is ~1e-37 there, at the
+        ! bottom of the FP32 range, where subnormal handling (kept by gfortran, flushed by
+        ! nvfortran and GPUs) changed the result by 1%: the sum carries an exact factor AGB_SCALE
+        if (any(w_agbo /= 0.0_wp) .or. any(w_agbc /= 0.0_wp)) then
+            allocate(lam_sum(nspec), lam_comp(nspec))
+            lam_sum = 0.0_KP; lam_comp = 0.0_KP
+            do a = 1, size(w_agbo)
+                if (w_agbo(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbo(a) * AGB_SCALE, KP), &
+                                                         ctx%state%agb_spec_o(1:nspec, a))
+            end do
+            do a = 1, size(w_agbc)
+                if (w_agbc(a) /= 0.0_wp) call add_column(lam_sum, lam_comp, real(w_agbc(a) * AGB_SCALE, KP), &
+                                                         ctx%state%agb_spec_c(1:nspec, a))
+            end do
+            call add_column(acc, comp, real(1.0_wp / AGB_SCALE, KP), &
+                            real(ctx%state%spec_lambda(1:nspec), KP)**2 * lam_sum)
+        end if
+    end subroutine sum_small_templates
+
+    !> Adds the dust-shell AGB corners 1..nslot (key dkey(:, slot): C-rich flag, Teff and tau
+    !> indices of flux_dagb; template weights dw_*(:, slot)): per corner the template sum (smoothed
+    !> beyond 3 um) times its transfer function. Step 3 of accumulate_by_templates, also used by
+    !> the batched SSP operator.
+    subroutine sum_dusty_slots(ctx, nz, nslot, dkey, dw_main, dw_o, dw_c, dw_car, acc, comp)
+        type(fsps_context_t), intent(in) :: ctx
+        integer, intent(in)  :: nz, nslot, dkey(:,:)
+        real(WP), intent(in) :: dw_main(:,:,:), dw_o(:,:), dw_c(:,:), dw_car(:,:)
+        real(KP), intent(inout) :: acc(:), comp(:)
+        real(KP), allocatable :: tmp(:), tmp_comp(:), low(:), low_comp(:)
+        integer :: a, b, slot, i0, nspec
+
+        nspec = size(acc)
+        i0 = nspec - size(ctx%state%speclib_agb_smooth, 1) + 1
+        allocate(tmp(nspec), tmp_comp(nspec), low(nspec), low_comp(nspec))
+        do slot = 1, nslot
+            tmp = 0.0_KP; tmp_comp = 0.0_KP; low = 0.0_KP; low_comp = 0.0_KP
+            do b = 1, size(dw_main, 2)
+                do a = 1, size(dw_main, 1)
+                    if (dw_main(a, b, slot) == 0.0_wp) cycle
+                    call add_column_sp(tmp(1:i0-1), tmp_comp(1:i0-1), real(dw_main(a, b, slot), KP), &
+                                       ctx%state%speclib(1:i0-1, nz, a, b))
+                    call add_column(tmp(i0:), tmp_comp(i0:), real(dw_main(a, b, slot), KP), &
+                                    ctx%state%speclib_agb_smooth(:, nz, a, b))
+                end do
+            end do
+            do a = 1, size(dw_car, 1)
+                if (dw_car(a, slot) == 0.0_wp) cycle
+                call add_column(tmp(1:i0-1), tmp_comp(1:i0-1), real(dw_car(a, slot), KP), &
+                                ctx%state%agb_spec_car(1:i0-1, a))
+                call add_column(tmp(i0:), tmp_comp(i0:), real(dw_car(a, slot), KP), &
+                                ctx%state%agb_spec_car_smooth(:, a))
+            end do
+            ! O/C-rich: lambda^2 / c below 3 um; the smoothed templates already include it
+            ! (low carries the factor AGB_SCALE, as lam_sum above)
+            do a = 1, size(dw_o, 1)
+                if (dw_o(a, slot) == 0.0_wp) cycle
+                call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_o(a, slot) * AGB_SCALE, KP), &
+                                ctx%state%agb_spec_o(1:i0-1, a))
+                call add_column(tmp(i0:), tmp_comp(i0:), real(dw_o(a, slot) * C_LIGHT, KP), &
+                                ctx%state%agb_spec_o_smooth(:, a))
+            end do
+            do a = 1, size(dw_c, 1)
+                if (dw_c(a, slot) == 0.0_wp) cycle
+                call add_column(low(1:i0-1), low_comp(1:i0-1), real(dw_c(a, slot) * AGB_SCALE, KP), &
+                                ctx%state%agb_spec_c(1:i0-1, a))
+                call add_column(tmp(i0:), tmp_comp(i0:), real(dw_c(a, slot) * C_LIGHT, KP), &
+                                ctx%state%agb_spec_c_smooth(:, a))
+            end do
+            tmp(1:i0-1) = tmp(1:i0-1) + real(ctx%state%spec_lambda(1:i0-1), KP)**2 * low(1:i0-1) * &
+                          real(1.0_wp / AGB_SCALE, KP)
+            call add_column(acc, comp, 1.0_KP, tmp * ctx%state%flux_dagb(1:nspec, dkey(1, slot) + 1, &
+                                                                        dkey(2, slot), dkey(3, slot)))
+        end do
+    end subroutine sum_dusty_slots
+
+    !> acc += a * x, compensated when the kernels are narrower than WP (templates stored in FP32).
+    subroutine add_column_sp(acc, comp, a, x)
+        real(KP), intent(inout) :: acc(:), comp(:)
+        real(KP), intent(in)    :: a
+        real(kind(1.0)), intent(in) :: x(:)
+        integer  :: i
+        real(KP) :: term, tsum
+        if (KP == WP) then
+            do i = 1, size(acc)
+                acc(i) = acc(i) + a * x(i)
+            end do
+        else
+            do i = 1, size(acc)
+                term = a * x(i) - comp(i)
+                tsum = acc(i) + term
+                comp(i) = (tsum - acc(i)) - term
+                acc(i) = tsum
+            end do
+        end if
+    end subroutine add_column_sp
+
+    !> acc += a * x, compensated when the kernels are narrower than WP (kernel-precision arrays).
+    subroutine add_column(acc, comp, a, x)
+        real(KP), intent(inout) :: acc(:), comp(:)
+        real(KP), intent(in)    :: a
+        real(KP), intent(in) :: x(:)
+        integer  :: i
+        real(KP) :: term, tsum
+        if (KP == WP) then
+            do i = 1, size(acc)
+                acc(i) = acc(i) + a * x(i)
+            end do
+        else
+            do i = 1, size(acc)
+                term = a * x(i) - comp(i)
+                tsum = acc(i) + term
+                comp(i) = (tsum - acc(i)) - term
+                acc(i) = tsum
+            end do
+        end if
+    end subroutine add_column
+
 
     !> Starts a new deferred dust corner (slot) of age t with transfer-function indices key.
     subroutine dusty_push_slot(d, t, key)

@@ -15,7 +15,8 @@ module fsps_stellar_modifications
     use fsps_constants, only: NM, GRAVITY_L_M_T_COEFF, BHB_SBS_TIME
     use fsps_types, only: params
     use fsps_context_types, only: fsps_context_t
-    use fsps_imf, only: get_imf_value, integrate_imf_interval_analytic
+    use fsps_imf, only: get_imf_value, integrate_imf_interval_analytic, imf_integral_p, imf_pack_params, &
+                        IMF_NPAR, IMF_P_LOWER_LIMIT, IMF_P_UPPER_LIMIT, IMF_P_MLIM_BH, IMF_P_MLIM_NS
     use fsps_interpolation, only: interpolate_linear, find_interval
     
     
@@ -28,7 +29,7 @@ module fsps_stellar_modifications
     public :: apply_blue_stragglers
     public :: modify_giant_branch
     public :: modify_horizontal_branch
-    public :: add_remnant_mass
+    public :: add_remnant_mass, add_remnant_mass_p
     public :: add_xray_binaries
 
     ! ------------------------------------------------------------------------
@@ -489,7 +490,7 @@ contains
     !> @param[inout] weights      Weights array (modified).
     subroutine modify_horizontal_branch(ctx, time_idx, f_bhb, hb_time, hb_total_weight, &
                                         n_mass, mass_ini, mass_act, log_l, log_t, &
-                                        log_g, phase, weights)
+                                        log_g, phase, weights, hb_flag, parent)
         type(fsps_context_t), intent(inout) :: ctx
         integer, intent(in) :: time_idx
         real(WP), intent(in) :: f_bhb, hb_time
@@ -499,6 +500,11 @@ contains
         real(WP), dimension(:,:), intent(inout), contiguous :: mass_ini, mass_act
         real(WP), dimension(:,:), intent(inout), contiguous :: log_l, log_t, log_g, phase
         real(WP), dimension(:), intent(inout), contiguous :: weights
+        !> Bookkeeping for the batched SSP operator (fsps_ssp_operator), no effect on the result:
+        !> hb_flag(j) is set for the stars summed into hb_total_weight, parent(i) = j for every
+        !> blue HB star i added from star j (entries of other stars are left unchanged)
+        logical, dimension(:), intent(inout), optional :: hb_flag
+        integer, dimension(:), intent(inout), optional :: parent
 
         ! Local variables
         integer :: i, j, k, n_curr
@@ -549,6 +555,7 @@ contains
 
                     ! We are on the HB: Accumulate weight
                     hb_total_weight = hb_total_weight + weights(j)
+                    if (present(hb_flag)) hb_flag(j) = .true.
 
                     ! Apply modification if requested and age is appropriate
                     if (f_bhb > 1.0e-3_wp .and. hb_time >= BHB_SBS_TIME) then
@@ -583,6 +590,7 @@ contains
 
                             ! Distribute Weight
                             weights(i) = (f_bhb * weights(j)) * inv_nbs
+                            if (present(parent)) parent(i) = j
                         end do
 
                         ! Reduce weight of the original red clump star
@@ -630,6 +638,7 @@ contains
                 if (phase(time_idx, j) == 3.0_wp) then
                     
                     hb_total_weight = hb_total_weight + weights(j)
+                    if (present(hb_flag)) hb_flag(j) = .true.
 
                     if (f_bhb > 1.0e-4_wp .and. hb_time >= BHB_SBS_TIME) then
                         
@@ -665,6 +674,7 @@ contains
                         ! Swap Weights
                         weights(i) = f_bhb * weights(j)
                         weights(j) = weights(j) * (1.0_wp - f_bhb)
+                        if (present(parent)) parent(i) = j
                         
                     end if
                 end if
@@ -696,6 +706,23 @@ contains
         type(fsps_context_t), intent(inout) :: ctx
         real(WP), intent(inout) :: current_mass
         real(WP), intent(in) :: max_living_mass
+        real(WP) :: p(IMF_NPAR)
+
+        call imf_pack_params(ctx, p)
+        call add_remnant_mass_p(ctx%imf_type_val, p, current_mass, max_living_mass)
+    end subroutine add_remnant_mass
+
+    !> add_remnant_mass with the IMF parameters packed in p(IMF_NPAR) (fsps_imf, imf_pack_params):
+    !> no context, so usable for a batch of IMF parameter sets (fsps_ssp_operator).
+    pure subroutine add_remnant_mass_p(imf_type, p, current_mass, max_living_mass)
+        !$acc routine seq
+#ifdef OMP_TARGET
+        !$omp declare target
+#endif
+        integer, intent(in) :: imf_type
+        real(WP), intent(in) :: p(IMF_NPAR)
+        real(WP), intent(inout) :: current_mass
+        real(WP), intent(in) :: max_living_mass
 
         real(WP) :: imf_norm
         real(WP) :: integration_min, integration_max
@@ -703,14 +730,13 @@ contains
         
         real(WP) :: limit_low, limit_high, limit_bh, limit_ns
 
-        ! Pull constants from context for cleaner reading
-        limit_low  = ctx%state%imf_lower_limit
-        limit_high = ctx%state%imf_upper_limit
-        limit_bh   = ctx%state%mlim_bh
-        limit_ns   = ctx%state%mlim_ns
+        limit_low  = p(IMF_P_LOWER_LIMIT)
+        limit_high = p(IMF_P_UPPER_LIMIT)
+        limit_bh   = p(IMF_P_MLIM_BH)
+        limit_ns   = p(IMF_P_MLIM_NS)
         ! 1. Normalize the weights (Mass-weighted IMF integral over the full range)
         !    This ensures we are working with the correct mass fractions.
-        imf_norm = integrate_imf_interval_analytic(ctx, limit_low, limit_high, mass_weighted=.true.)
+        imf_norm = imf_integral_p(imf_type, p, limit_low, limit_high, mass_weighted=.true.)
 
         if (imf_norm <= 0.0_wp) then
             ! Guard against division by zero if IMF is invalid
@@ -729,7 +755,7 @@ contains
         
         ! Only integrate if the range is valid (min < max)
         if (integration_min < limit_high) then
-            term_bh = integrate_imf_interval_analytic(ctx, integration_min, limit_high, mass_weighted=.true.)
+            term_bh = imf_integral_p(imf_type, p, integration_min, limit_high, mass_weighted=.true.)
             current_mass = current_mass + (0.5_wp * term_bh / imf_norm)
         end if
 
@@ -748,7 +774,7 @@ contains
 
             if (integration_min < integration_max) then
                 ! Integrate Number Density (wrapper_imf_number) because mass is constant (1.4)
-                term_ns = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.false.)
+                term_ns = imf_integral_p(imf_type, p, integration_min, integration_max, mass_weighted=.false.)
                 current_mass = current_mass + (MASS_NS_REMNANT * term_ns / imf_norm)
             end if
         end if
@@ -765,10 +791,10 @@ contains
 
             if (integration_min < integration_max) then
                 ! Term 1: Constant part (0.48 * Number of stars)
-                term_wd_const = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.false.)
+                term_wd_const = imf_integral_p(imf_type, p, integration_min, integration_max, mass_weighted=.false.)
                 
                 ! Term 2: Linear part (0.077 * Mass of stars)
-                term_wd_linear = integrate_imf_interval_analytic(ctx, integration_min, integration_max, mass_weighted=.true.)
+                term_wd_linear = imf_integral_p(imf_type, p, integration_min, integration_max, mass_weighted=.true.)
 
                 current_mass = current_mass + &
                                ((WD_INTERCEPT * term_wd_const) / imf_norm) + &
@@ -776,7 +802,7 @@ contains
             end if
         end if
 
-    end subroutine add_remnant_mass
+    end subroutine add_remnant_mass_p
 
     !> @brief
     !> Adds X-ray Binary (XRB) emission to the output spectrum.
