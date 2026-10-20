@@ -40,3 +40,7 @@ test_runner
 tests_units
 # Python bytecode
 __pycache__/
+
+# Standard-format data root converted from data/ (tools/fsps_data/convert_legacy.py)
+/opensps-data/
+/fsps-data/

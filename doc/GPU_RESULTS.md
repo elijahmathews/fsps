@@ -30,8 +30,72 @@ Session 2 (2026-10-19), new questions (conservative choice taken, work continued
    there be an explicit release call (or a size cap) for callers that run one huge batch?
 7. Page-locking that buffer (`cuMemHostRegister`) is on by default in NVIDIA GPU builds;
    `FSPS_NO_PIN=1` turns it off. Fine as a default on shared nodes?
+9. One code path, step 1: OpenACC multicore keeps the old single-call path (its FP32 per-core
+   sums put the batch 2e-6 from the all-ages output, over the oracle's 1e-6). Alternatives:
+   loosen that oracle to 100 eps(KP) in FP32 builds (the AGENTS.md rule for FP32 tolerances),
+   or leave multicore on the old path until OpenMP host threads replace it. Kept the latter.
 8. Item 5 (batched SSP generation with IMF parameters per model) was not started: see
    "Next" in `doc/GPU_PLAN.md` for the first step. Keep it next in line?
+
+## One code path, step 1 (2026-10-19, branch `refactor/scenario-as-batch`)
+
+Roadmap priority 2 (`doc/ROADMAP.md`): `compute_csp_scenario` as a batch of one, following
+the design note below. Branch from `gpu/a100-call-overhead2` (#17, not yet merged; #14 is),
+PR against `develop`. Node `p-gc-3025` (A100-PCIE-40GB), nvhpc 25.1, gcc 13.4.
+
+**What it does.** With `FSPS_SCENARIO_BATCH=1`, a single call with `tage > 0` runs as
+`compute_csp_batch` on one model and is packed into `results(1)` exactly as before (spectrum,
+lines, magnitudes or -99, indices or -99, mass, L_bol, dust mass, SFR, `mformed = 1`, age).
+It stays on the old path for several metallicities (`nzin > 1`), redshift colours,
+light-weighted ages, fast mode, and anything the batch rejects (status /= 0: smoothing other
+than the device velocity kernel, invalid dust settings). The old path is the default until
+the new one passes everywhere; `set_scenario_batch(.false.)` selects it in code (used by the
+tests that inspect its internals or use it as the batch's reference).
+- Structure: `sfh_weights_core` / `convert_sfhparams` moved from `fsps_csp` to `fsps_sfh`
+  (re-exported), and the batch of one is an external procedure
+  (`src/physics/fsps_scenario_batch.f90`): `fsps_context` uses `fsps_csp`, and
+  `fsps_csp_batch` uses `fsps_context`, so `fsps_csp` cannot use the batch module directly.
+  (Lesson: ninja stops without an error message on a Fortran module cycle, and the stale
+  library then made the old path look like the new one; confirm the path with
+  `NVCOMPILER_ACC_NOTIFY=1`, which lists the batch's kernels.)
+- No new kernels and no OpenACC changes (OpenACC freeze respected).
+
+**Correctness.**
+- Unit + regression suites with `FSPS_SCENARIO_BATCH=1`: 33/33 in all nine builds (OpenACC
+  FP32 / FP64, cuBLAS FP32 / FP64, OpenMP target FP32 / FP64, OpenACC multicore FP32, gfortran
+  FP64 / FP32); `test_csp_batch` 166/166. With the old path 33/33 as before.
+- OpenACC multicore stays on the old path: through the batch, the single-age vs all-ages oracle
+  (`test_physics_oracles`, element-wise within 1e-6 of the peak) differed by 1.4-2.1e-6 there,
+  because multicore runs the FP32 reductions as plain per-core sums; the GPU and CPU FP32 builds
+  give 4e-8 with either path (the oracle now prints this difference). Conservative choice, see
+  Questions 9.
+- Case matrix (35 cases), gfortran FP64, new path vs old path in the same build: identical in
+  most cases; largest differences 1.2e-12 per pixel (velocity smoothing: the batch applies the
+  same sparse operator on the columns), 2.4e-15 (nebular), 7e-15 mag; PASS at `--rtol 1e-10`.
+  `csp_tau_allages` (tage <= 0) takes the old path and is identical.
+
+- Case matrix through the new path on the GPU, against the nvfortran CPU build (old path):
+  OpenACC FP64 1.6e-11 per pixel, 1.3e-11 mag, 8.5e-12 indices (`--rtol 1e-10`, PASS; the same
+  numbers with the old path and as in session 1); OpenACC FP32 4.2e-7 per pixel, 5.1e-7 mag,
+  1.1e-5 indices (PASS). (Against the gfortran CPU build the FP64 GPU differs by up to 2e-9 with
+  either path: compare with the nvfortran CPU build, as the case-matrix notes say.)
+
+**Single-call time** (`benchmark_csp_batch 0 300 <config>`, us per call; GPU runs alternated
+old / new twice):
+
+| | old path | batch of one |
+|---|---|---|
+| A100, OpenACC FP32, basic | 572-619 | **513-515** (-14%) |
+| A100, OpenACC FP32, full physics + smoothing | 1374-1409 | **1100-1151** (-19%) |
+| CPU (gfortran FP64, one core), basic | 3585 | 4820 (+34%) |
+| CPU (gfortran FP64, one core), full physics + smoothing | 12016 | 8875 (-26%) |
+
+The CPU basic case is slower through the batch (to look at before the batch path becomes the
+default: the batch's host loops are written for many models, e.g. the age sums' 4 x 8 tiles).
+
+**Next steps:** all-ages mode (`tage <= 0`) as a batch of `ntfull` columns with a weight
+matrix; then redshift colours, light ages, MDF sums; make the batch path the default once it
+passes in all builds and the CPU basic case is no slower; then remove the old path.
 
 ## Status (A100 session 2, 2026-10-19)
 

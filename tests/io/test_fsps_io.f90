@@ -8,6 +8,8 @@ module test_fsps_io_mod
                         load_dust_emission_table, load_tabular_sfh, write_csp_output_files, write_isochrone_cmd, &
                         load_index_definitions, load_attenuation_curves, load_lsf_data, load_standard_sed
     use fsps_integration, only: integrate_trapezoid_array
+    use fsps_datalib, only: datalib_t, datalib_open, datalib_axis_values, datalib_check_array, datalib_read_real
+    use, intrinsic :: iso_fortran_env, only: int64
     use fsps_interpolation, only: interpolate_linear
     use test_utils_mod, only: print_group, print_summary_line, print_minor_header, &
                               assert_float_equals, assert_int_equals, assert_true, assert_relative_error
@@ -510,19 +512,22 @@ contains
     ! ------------------------------------------------------------------------
     subroutine test_nebular_grid_interpolation()
         type(fsps_context_t), allocatable :: ctx
-        character(len=256) :: root, file_path
-        integer :: u, i
+        character(len=512) :: root
+        integer :: i
+        type(datalib_t) :: lib
+        integer(int64) :: off
         real(WP), allocatable :: raw_lam(:), raw_spec(:), raw_spec_log(:)
         real(WP), allocatable :: expected(:)
-        real(WP) :: val_logz, val_age, val_logu
 
         allocate(ctx)
 
         call print_group("Nebular Grid Interpolation")
 
-        call get_source_root(root)
+        ! The coarse nebular grid of the test library (standard format); no data/ needed
+        call get_test_library_root(root)
 
         ctx%sps_home = trim(root)
+        ctx%data_format = 'standard'
         ctx%state%nspec = 50
         allocate(ctx%state%spec_lambda(ctx%state%nspec))
         allocate(ctx%state%nebem_cont(ctx%state%nspec, NEBNZ, NEBNAGE, NEBNIP))
@@ -539,20 +544,15 @@ contains
             ctx%state%spec_lambda(i) = 1000.0_wp + 180.0_wp * real(i - 1, WP)
         end do
 
-        call load_nebular_grid(ctx, 'mist', .true.)
+        call load_nebular_grid(ctx, 'mist', .false.)
 
-        file_path = trim(root) // '/data/nebular/ZAU_WD_mist.cont'
-        open(newunit=u, file=trim(file_path), status='old', action='read')
-        read(u, *)
-        allocate(raw_lam(NLAM_NEBCONT))
-        allocate(raw_spec(NLAM_NEBCONT))
-        allocate(expected(ctx%state%nspec))
-        allocate(raw_spec_log(NLAM_NEBCONT))
-
-        read(u, *) raw_lam
-        read(u, *) val_logz, val_age, val_logu
-        read(u, *) raw_spec
-        close(u)
+        ! Expected: the first continuum of the library, log10(f + 1e-95), interpolated linearly
+        call datalib_open(lib, root, 'nebular', 'mist_nodust')
+        call datalib_axis_values(lib, 'wavelength', raw_lam)
+        allocate(raw_spec(size(raw_lam)), raw_spec_log(size(raw_lam)), expected(ctx%state%nspec))
+        call datalib_check_array(lib, 'continuum', [character(len=10) :: 'logZ', 'age', 'logU', 'wavelength'], &
+                                 [NEBNZ, NEBNAGE, NEBNIP, size(raw_lam)], off)
+        call datalib_read_real(lib, 'continuum', size(raw_spec, kind=int64), raw_spec, off)
 
         raw_spec_log = log10(raw_spec + 1.0e-95_wp)
         do i = 1, ctx%state%nspec
@@ -573,16 +573,17 @@ contains
 
     subroutine test_dust_model_selection()
         type(fsps_context_t), allocatable :: ctx
-        character(len=256) :: root
+        character(len=512) :: root
         integer :: i
 
         allocate(ctx)
 
         call print_group("Dust Model Selection (THEMIS vs DL07)")
 
-        call get_source_root(root)
+        call get_test_library_root(root)
 
         ctx%sps_home = trim(root)
+        ctx%data_format = 'standard'
         ctx%state%nspec = 50
         allocate(ctx%state%spec_lambda(ctx%state%nspec))
         ctx%state%spec_lambda = [(1000.0_wp + 200.0_wp * real(i - 1, WP), i = 1, ctx%state%nspec)]
@@ -1083,6 +1084,21 @@ contains
         end if
         call ensure_dir(path)
     end subroutine make_temp_root
+
+    !> The small standard-format test library: FSPS_TEST_LIBRARY (set by meson), else
+    !> <source root>/tests/data/fsps-test-data.
+    subroutine get_test_library_root(path)
+        character(len=*), intent(out) :: path
+        integer :: status, length
+        character(len=512) :: value
+        call get_environment_variable('FSPS_TEST_LIBRARY', value, length=length, status=status)
+        if (status == 0 .and. length > 0) then
+            path = trim(value(1:length))
+        else
+            call get_source_root(path)
+            path = trim(path) // '/tests/data/fsps-test-data'
+        end if
+    end subroutine get_test_library_root
 
     subroutine get_source_root(path)
         character(len=*), intent(out) :: path

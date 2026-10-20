@@ -79,6 +79,10 @@ module fsps_context_types
         real(WP) :: zsol_spec = 0.0_wp
         character(len=64) :: isoc_type = ''
         character(len=64) :: spec_type = ''
+        !> Axis selections of the isochrone and spectral libraries (standard format), e.g.
+        !> 'afe=0.4' from a library name 'mist:afe=0.4'; empty: each axis's default
+        character(len=64) :: isoc_select = ''
+        character(len=64) :: spec_select = ''
         integer :: nt = 0
         integer :: nz = 0
         integer :: nspec = 0
@@ -272,6 +276,8 @@ module fsps_context_types
         character(len=250) :: sps_home = ''
         character(len=250) :: data_home = ''
         character(len=250) :: output_home = ''
+        !> Data format of the libraries (FSPS_DATA_FORMAT): 'auto', 'legacy' or 'standard'
+        character(len=8) :: data_format = 'auto'
         type(fsps_setup_cache_t), pointer :: setup_cache => null()
         type(fsps_context_state_t) :: state
         real(WP) :: om0_val = 0.0_wp

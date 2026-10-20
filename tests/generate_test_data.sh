@@ -21,7 +21,9 @@ TEST_DATA_DIR="$SCRIPT_DIR/data"
 BUILD_DIR="$PROJECT_ROOT/build"
 GENERATOR="$BUILD_DIR/generate_test_data"
 
-# Ensure FSPS finds data files by setting FSPS_DATA_HOME to the project root
+# Ensure FSPS finds data files by setting the data root to the project root (OPENSPS_DATA_HOME is
+# searched first, then SPS_HOME, then FSPS_DATA_HOME)
+export OPENSPS_DATA_HOME="$PROJECT_ROOT"
 export FSPS_DATA_HOME="$PROJECT_ROOT"
 
 # ============================================================================

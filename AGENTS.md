@@ -30,7 +30,8 @@ meson compile -C build
 meson test -C build --suite unit --suite regression --print-errorlogs
 ```
 
-GPU builds (details and per-machine notes: `doc/GPU_PLAN.md`, results: `doc/GPU_RESULTS.md`):
+GPU builds (details and per-machine notes: `doc/GPU_PLAN.md`, results: `doc/GPU_RESULTS.md`;
+what comes next: `doc/ROADMAP.md`):
 
 - OpenACC: `FC=nvfortran CC=nvc meson setup b -Daccel=gpu -Dgpu_arch=cc80` (add
   `-Dcublas=true` for cuBLAS batch products); `-Daccel=multicore` runs the same code on CPU cores.
@@ -45,9 +46,11 @@ Other tools: `tests/benchmark_phases` (SSP/CSP timings), `tests/benchmark_csp_ba
 ## Correctness gates
 
 - All of `--suite unit --suite regression` pass in FP64 and FP32 builds before a PR.
-- Regression references (`tests/data/sps_ref_*.bin`, `tests/data/param_ref/`) are regenerated
-  only for an intended, explained change (`tests/generate_test_data`,
-  `test_param_regression ... --generate`); say why in the commit message.
+- Regression references (data-release libraries `references/sps` and `references/param`; in-tree
+  `tests/data/sps_ref_*.bin`, `tests/data/param_ref/` while they exist) are regenerated only for an
+  intended, explained change (`tests/generate_test_data`, `test_param_regression ... --generate`,
+  then `tools/fsps_data/make_references.py`, which updates the pin `tests/data/references.json`);
+  say why in the commit message. Workflow: `doc/DATA_FORMAT.md`, Section 7.
 - Physics changes are checked against legacy FSPS (`tools/legacy_parity/run_matrix.sh`); every
   deliberate difference is listed with its cause in `tools/legacy_parity/README.md`.
 - GPU builds match the CPU build: FP64 to ~1e-10 per pixel, FP32 to ~5e-7
