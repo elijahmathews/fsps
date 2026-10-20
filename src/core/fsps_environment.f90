@@ -13,6 +13,7 @@ module fsps_environment
     use iso_fortran_env, only: error_unit, output_unit
     use fsps_context_types, only: fsps_context_t, fsps_context_state_destroy
     use fsps_cache, only: fsps_cache_release_setup
+    use fsps_datalib, only: datalib_format_from_env, datalib_root_is_standard
 
     implicit none
     private
@@ -133,6 +134,10 @@ contains
         ! Set Data Home
         ctx%data_home = trim(ctx%sps_home)//'/data'
 
+        ! Library format: libraries with a manifest under <root>/libraries are read in the
+        ! standard format unless FSPS_DATA_FORMAT=legacy (doc/DATA_FORMAT.md, Section 5)
+        ctx%data_format = datalib_format_from_env()
+
         ! ------------------------------------------------------------------------
         ! 2. RESOLVE OUTPUT DIRECTORY
         ! ------------------------------------------------------------------------
@@ -208,12 +213,14 @@ contains
 
     !> @brief Checks if the 'data' subdirectory exists within a given path.
     !> @param[in] path The root directory candidate.
-    !> @return .true. if `path/data/allfilters.dat` or `path/data/FILTER_LIST` exists.
+    !> @return .true. if `path` is a standard data root (`fsps-data.json`) or a legacy one
+    !>         (`path/data/allfilters.dat` or `path/data/FILTER_LIST` exists).
     logical function check_data_exists(path)
         character(len=*), intent(in) :: path
         logical :: file_exists
 
-        check_data_exists = .false.
+        check_data_exists = datalib_root_is_standard(path)
+        if (check_data_exists) return
 
         ! Check for critical data file to confirm valid directory
         inquire (file=trim(path)//'/data/allfilters.dat', exist=file_exists)
