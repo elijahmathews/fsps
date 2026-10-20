@@ -56,6 +56,7 @@ contains
         call test_driver_status_codes()
         call test_driver_igm_precalc()
         call test_driver_tabular_tage_99()
+        call test_tabular_mass_formed()
 
         call test_single_age_outputs_are_weighted_sums()
 
@@ -1684,6 +1685,70 @@ contains
         call unmap_csp_workspace_from_device(ctx)
         call teardown_basic_context(ctx)
     end subroutine test_driver_tabular_tage_99
+
+    !> Tabular SFHs are absolute (SFR in M_sun/yr, not normalized): the mass formed must be the
+    !> integral of the SFR table up to tage over the lookback times the weights cover (>=
+    !> 10**tiny_logt yr, as for every SFH), i.e. the sum of the SSP weights, consistent with the
+    !> surviving mass (mass_csp = sum(w * mass_ssp)). It was reported as 1. Checked at tage > 0
+    !> and with tage = -99 (evaluate at the end of the table), for sfh = 3.
+    subroutine test_tabular_mass_formed()
+        type(fsps_context_t), allocatable :: ctx
+        type(params) :: pset
+        type(compspout), allocatable :: results(:)
+        real(WP), allocatable :: time_full(:), spec_lambda(:), weights(:)
+        real(WP), allocatable :: tspec_ssp(:,:,:), mass_ssp(:,:), lbol_ssp(:,:)
+        integer :: n, i, k
+        real(WP), parameter :: tages(2) = [5.0_wp, -99.0_wp]
+        real(WP), parameter :: expected(2) = [5.0e9_wp, 6.0e9_wp]  ! 1 M_sun/yr from t = 0
+        character(len=96) :: label
+
+        call print_group("Driver: Tabular SFH Mass Formed")
+
+        n = 40
+        allocate(time_full(n), weights(n), spec_lambda(2))
+        call fill_log_grid(time_full, 6.0_wp, 10.15_wp)
+        spec_lambda = [5500.0_wp, 5600.0_wp]
+        allocate(tspec_ssp(2, n, 1), mass_ssp(n, 1), lbol_ssp(n, 1))
+        tspec_ssp = 1.0_wp
+        lbol_ssp = 0.0_wp
+        do i = 1, n
+            mass_ssp(i, 1) = 1.0_wp - 0.4_wp * real(i - 1, WP) / real(n - 1, WP)
+        end do
+
+        do k = 1, size(tages)
+            call setup_basic_context(ctx, time_full, spec_lambda, 1, 1)
+            call fsps_context_prepare_csp_workspace(ctx)
+            call fsps_context_update_ssp_basis(ctx, tspec_ssp, mass_ssp, lbol_ssp, 1)
+            call map_csp_workspace_to_device(ctx)
+
+            pset%sfh = 3
+            pset%tage = tages(k)
+            ctx%state%ntabsfh = 3
+            ctx%state%sfh_tab(1, 1:3) = [0.0_wp, 3.0e9_wp, 6.0e9_wp]
+            ctx%state%sfh_tab(2, 1:3) = [1.0_wp, 1.0_wp, 1.0_wp]
+            ctx%state%sfh_tab(3, 1:3) = 0.0_wp
+
+            call compute_csp_scenario(ctx, pset, 1, results)
+            !$acc update host(ctx%state%csp_weights)
+            weights = ctx%state%csp_weights(1:n, 1, 1)
+
+            write(label, '(A,F6.1,A)') "mass formed = integral of the SFR table (tage = ", tages(k), ")"
+            call assert_relative_error(expected(k) - 10.0_wp**ctx%tiny_logt_val, results(1)%mformed, 1.0e-10_wp, &
+                                       trim(label), &
+                                       total_tests, total_failures)
+            write(label, '(A,F6.1,A)') "mass formed = sum of the SSP weights (tage = ", tages(k), ")"
+            call assert_relative_error(sum(weights), results(1)%mformed, 1.0e-12_wp, trim(label), &
+                                       total_tests, total_failures)
+            write(label, '(A,F6.1,A)') "surviving mass = sum(w * mass_ssp) (tage = ", tages(k), ")"
+            call assert_relative_error(sum(weights * mass_ssp(:, 1)), results(1)%mass_csp, 1.0e-10_wp, &
+                                       trim(label), total_tests, total_failures)
+
+            if (allocated(results)) deallocate(results)
+            call unmap_csp_workspace_from_device(ctx)
+            call teardown_basic_context(ctx)
+        end do
+        deallocate(time_full, weights, spec_lambda, tspec_ssp, mass_ssp, lbol_ssp)
+    end subroutine test_tabular_mass_formed
 
     ! ---------------------------------------------------------------------
     ! Oracle: single-age CSP outputs are SFH-weighted sums of the SSP basis
