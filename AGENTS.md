@@ -30,7 +30,8 @@ meson compile -C build
 meson test -C build --suite unit --suite regression --print-errorlogs
 ```
 
-GPU builds (details and per-machine notes: `doc/GPU_PLAN.md`, results: `doc/GPU_RESULTS.md`):
+GPU builds (details and per-machine notes: `doc/GPU_PLAN.md`, results: `doc/GPU_RESULTS.md`;
+what comes next: `doc/ROADMAP.md`):
 
 - OpenACC: `FC=nvfortran CC=nvc meson setup b -Daccel=gpu -Dgpu_arch=cc80` (add
   `-Dcublas=true` for cuBLAS batch products); `-Daccel=multicore` runs the same code on CPU cores.
