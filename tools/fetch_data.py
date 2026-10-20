@@ -31,7 +31,7 @@ import urllib.request
 
 GITHUB_REPO = "elijahmathews/opensps-data"
 MANIFEST_URL = "https://github.com/" + GITHUB_REPO + "/releases/download/{tag}/{tag}.json"
-DEFAULT_RELEASE = "data-v1"
+DEFAULT_RELEASE = "data-v2"
 CHUNK = 1 << 22
 
 
