@@ -368,7 +368,7 @@ All in `tools/` (Python >= 3.8; NumPy for everything except `fetch_data.py`):
 | `fsps_data/convert_legacy.py LEGACY_ROOT OUT_ROOT` | Converts all 37 libraries of the legacy layout (35 s); `--only kind[/name]`; `--upstream-mist`, `--upstream-c3k` for the upstream [alpha/Fe] layouts |
 | `fsps_data/make_test_library.py STANDARD_ROOT OUT` | Builds the test library of Section 6 |
 | `fsps_data/make_afe_variants.py` | [alpha/Fe] variants of the test library for `unit_standard_library` |
-| `fsps_data/provenance.py` | Source, version, citations and redistribution note of each library (written into the manifests and DATA_README.md) |
+| `fsps_data/provenance.py`, `bibtex.py`, `data_release.bib` | Source, version, citations (ADS bibcodes) and redistribution note of each library (written into the manifests and DATA_README.md) |
 | `fsps_data/pack_data.py ROOT OUTDIR --release data-vK [--previous M]` | Versioned library archives, release manifest, DATA_README.md (Section 6) |
 | `fsps_data/upload_release.sh OUTDIR data-vK` | Publishes a packed release as a GitHub release (run by hand after review) |
 | `fetch_data.py DEST [--release data-vK]` | Download from the mirrors, verify and unpack a release |
@@ -433,10 +433,12 @@ then `write_root_index(root, release)` once all libraries are in place.
     `<kind>-<name>-v<N>.tar.zst` (`.tar.gz` without zstd), holding `libraries/<kind>/<name>/`;
     `N` is the manifest's `version`, which must be raised whenever a library's files change.
   - A data release (tag `data-vK`) is a small release manifest `data-vK.json` plus a base
-    archive `base-data-vK.tar.zst` (root index, small text tables, `DATA_README.md`). The
+    archive `base-data-vK.tar.zst` (root index, small text tables, `DATA_README.md`,
+    `data_release.bib`). The
     manifest lists each archive's library, version, size, SHA-256, the tag it was uploaded to and
     its mirror URLs: `https://github.com/elijahmathews/opensps-data/releases/download/<tag>/<file>`
-    first, a Zenodo record second (placeholder, TODO). A release reuses unchanged archives of an
+    (`MIRRORS` in `pack_data.py`; more, such as a Zenodo record of a tagged release, can be added
+    later). A release reuses unchanged archives of an
     earlier one (`pack_data.py --previous`) instead of uploading them again.
   - `pack_data.py ROOT OUTDIR --release data-v1` writes the archives, the manifest,
     `DATA_README.md` (what each library is and what to cite, from `tools/fsps_data/provenance.py`;
@@ -449,10 +451,13 @@ then `write_root_index(root, release)` once all libraries are in place.
   - Measured (2026-10-20): `data-v1` is 38 archives, 525 MB with zstd (C3K optional); a
     `data-v2` with one library re-versioned reuses the other 36 archives and uploads two files.
     Fetching either through local-directory mirrors gives a root identical to the source.
-  - Provenance: every manifest's `provenance` holds source, version, what to cite and the
-    redistribution note, taken only from the FSPS sources (README, manual, revision history, data
-    headers and READMEs, code comments); these mostly give author and year, so full references,
-    versions, URLs and licenses are marked TODO for the maintainers.
+  - Provenance: every manifest's `provenance` holds the source, version and notes, what to cite
+    (`cite`, and `cite_code` for codes the data were computed with), the FSPS papers
+    (`cite_also`) and the redistribution note. Citations are bibcodes of
+    `tools/fsps_data/data_release.bib`, an export from NASA ADS shipped in the base archive and
+    as a release asset; the references are rendered from it (`tools/fsps_data/bibtex.py`), never
+    typed by hand, and `test_fsps_data.py` checks that every bibcode resolves and every entry is
+    used. The license terms of the original data remain an open question (each manifest's `todo`).
 - **Tests and the data root**: the unit suite needs no data at all (tests that read real data
   use the test library through `FSPS_TEST_LIBRARY`). The regression and stress suites read the
   root given by `meson setup -Ddata_home=<root>` (a legacy tree with `data/` or a standard root;

@@ -142,9 +142,37 @@ def test_upstream_c3k(tmp):
     check("available" not in lib.manifest["arrays"], "C3K regular grid has no available mask")
 
 
+def test_bibliography(tmp):
+    import bibtex
+    import provenance
+    e = bibtex.parse()
+    check(len(e) == 48, "data_release.bib: 48 entries parsed")
+    check(all("author" in v and "year" in v and "title" in v for v in e.values()),
+          "every entry has author, year and title")
+    check(all(v.get("adsurl", "").endswith(k) for k, v in e.items()), "bibcodes match the ADS URLs")
+    try:
+        provenance.check()
+        ok = True
+    except KeyError:
+        ok = False
+    check(ok, "every bibcode of the provenance table is in data_release.bib")
+    used = set(provenance.FSPS)
+    for p in provenance.P.values():
+        used |= set(p["cite"]) | set(p["cite_code"])
+    check(used == set(e), "every entry of data_release.bib is cited by some library")
+    r = bibtex.citation("2002A&A...393..167L", e)
+    check(r["reference"] == "Lan\u00e7on & Mouhcine 2002, A&A, 393, 167" and r["doi"].startswith("10.1051/"),
+          "references rendered from the fields (accents, journal macro, DOI)")
+    check(bibtex.render(e["1992IAUS..149..225K"]) == "Kurucz 1992, IAU Symp., 149, 225",
+          "proceedings rendered from series, volume and page")
+    rec = provenance.provenance("isochrones", "mist")
+    check([c["bibcode"] for c in rec["cite"]] == ["2016ApJ...823..102C", "2016ApJS..222....8D"]
+          and not any("TODO" in c["reference"] for c in rec["cite"]), "manifest provenance cites by bibcode")
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
-        for t in (test_round_trip, test_list_reader, test_upstream_mist, test_upstream_c3k):
+        for t in (test_round_trip, test_list_reader, test_upstream_mist, test_upstream_c3k, test_bibliography):
             d = os.path.join(tmp, t.__name__)
             os.makedirs(d)
             t(d)

@@ -7,20 +7,35 @@
  "title": "WMBasic O-star spectra - coarse test subset of the full library; not for science",
  "provenance": {
   "converter": "tools/fsps_data",
-  "created": "2026-10-20T07:40:24Z",
+  "created": "2026-10-20T12:26:09Z",
   "converted_from": "legacy FSPS layout: data/spectra/Hot_spectra/WMBASIC_*",
-  "source": "WMBasic O-star spectral grid 'courtesy of JJ Eldridge, Mason Ng, and Georgie Taylor' (doc/REVISION_HISTORY)",
-  "url": "TODO",
-  "version": "TODO",
-  "cite": [
-   "TODO: reference for the WMBasic grid (not given in the FSPS sources)"
+  "source": "WMBasic O-star spectral grid",
+  "notes": "Grid courtesy of J. J. Eldridge, M. Ng and G. Taylor (as distributed with FSPS); WM-basic code: see cite_code.",
+  "cite": [],
+  "cite_code": [
+   {
+    "bibcode": "2001A&A...375..161P",
+    "reference": "Pauldrach et al. 2001, A&A, 375, 161",
+    "doi": "10.1051/0004-6361:20010805",
+    "ads": "https://ui.adsabs.harvard.edu/abs/2001A&A...375..161P"
+   }
   ],
   "cite_also": [
-   "Conroy, Gunn & White 2009, ApJ, 699, 486 (doi:10.1088/0004-637X/699/1/486)",
-   "Conroy & Gunn 2010, ApJ, 712, 833 (doi:10.1088/0004-637X/712/2/833)"
+   {
+    "bibcode": "2009ApJ...699..486C",
+    "reference": "Conroy et al. 2009, ApJ, 699, 486",
+    "doi": "10.1088/0004-637X/699/1/486",
+    "ads": "https://ui.adsabs.harvard.edu/abs/2009ApJ...699..486C"
+   },
+   {
+    "bibcode": "2010ApJ...712..833C",
+    "reference": "Conroy & Gunn 2010, ApJ, 712, 833",
+    "doi": "10.1088/0004-637X/712/2/833",
+    "ads": "https://ui.adsabs.harvard.edu/abs/2010ApJ...712..833C"
+   }
   ],
+  "bibliography": "data_release.bib (NASA ADS export, shipped with the data release)",
   "redistribution": "Distributed publicly with FSPS (https://github.com/cconroy20/fsps), from whose data tree this library was converted. No separate license is stated in the FSPS distribution; the terms of the original data apply.",
-  "notes": "",
   "todo": [
    "license or redistribution terms of the original data (not stated in the FSPS sources)"
   ],
