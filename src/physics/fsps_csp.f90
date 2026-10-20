@@ -53,15 +53,15 @@ module fsps_csp
     !> calls as a batch of one (scenario_batch_of_one); read once (-1: not yet read)
     integer, save :: scenario_batch_mode = -1
 
-    ! The batch of one is an external procedure (src/physics/fsps_scenario_batch.f90): it uses
-    ! fsps_csp_batch, which uses fsps_context, which uses this module
+    ! The batch of one is in the submodule fsps_scenario_batch (src/physics/fsps_scenario_batch.f90):
+    ! it uses fsps_csp_batch, which uses fsps_context, which uses this module
     interface
-        logical function fsps_scenario_batch_of_one(ctx, pset, nzin, results)
-            import :: fsps_context_t, params, compspout
+        module function fsps_scenario_batch_of_one(ctx, pset, nzin, results) result(done)
             type(fsps_context_t), intent(inout)         :: ctx
             type(params), intent(in)                    :: pset
             integer, intent(in)                         :: nzin
             type(compspout), allocatable, intent(inout) :: results(:)
+            logical :: done
         end function fsps_scenario_batch_of_one
     end interface
     ! Expose internal kernels for unit testing
