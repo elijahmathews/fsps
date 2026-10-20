@@ -92,7 +92,7 @@ contains
 
         integer :: i, nt, nspec, n_outputs, start_idx
         integer :: k, i_spec, i_em
-        logical :: dev_mags
+        logical :: dev_mags, tabular
         real(WP), allocatable :: mags_all(:,:), indx_all(:,:)
 
         call fsps_context_sync_device_settings(ctx)
@@ -253,6 +253,17 @@ contains
             end if
         end if
 
+        ! Tabular SFHs (sfh = 2, 3) are not normalized: their SSP weights are the solar masses formed
+        ! per SSP age (from the SFR table), and the spectrum, mass and L_bol are absolute. The mass
+        ! formed is then the sum of the weights (it was reported as 1). The weights of more than one
+        ! output are computed on the device in OpenACC GPU builds.
+        tabular = pset%sfh == 2 .or. pset%sfh == 3
+#if defined(_OPENACC) && !defined(ACC_MULTICORE)
+        if (tabular .and. n_outputs > 1) then
+            !$acc update host(ctx%state%csp_weights(:, 1:nzin, 1:n_outputs))
+        end if
+#endif
+
         do i = 1, n_outputs
             if (.not. allocated(results(i)%spec)) allocate(results(i)%spec(nspec))
             if (.not. allocated(results(i)%emlines)) allocate(results(i)%emlines(NEMLINE))
@@ -282,6 +293,8 @@ contains
                 results(i)%mass_csp = ctx%state%out_mass_csp(i)
                 results(i)%mdust    = ctx%state%sfh_w_tmp1(3, i)
             end if
+
+            if (tabular) results(i)%mformed = sum(ctx%state%csp_weights(1:nt, 1:nzin, i))
 
             results(i)%age      = log10(target_age * 1.0e9_wp)
             results(i)%sfr      = sfr_norm
