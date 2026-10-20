@@ -9,7 +9,9 @@ sequence for the day itself is in [CHECKLIST.md](CHECKLIST.md).
 | File | Purpose |
 |---|---|
 | `make_import_commit.sh <commit> <libopensps-dir>` | The import: one commit `feat: import elijahmathews/fsps at commit <hash>` on a branch `import` from libopensps's `main`; no push |
-| `rename_to_opensps.sh <repo-dir>` | The rename pull request: public C surface and build artifacts to `opensps`, version 0.1.0; idempotent, does not commit |
+| `rename_to_opensps.sh <repo-dir>` | The rename pull request: public C surface, build artifacts and internal Fortran names to `opensps`, version 0.1.0; idempotent, does not commit |
+| `rename_internal.pl` | The text rules of the rename's internal stage |
+| `port_patches.sh <patch>...` | Ports fork commits (`git format-patch`) onto renamed libopensps: same rename applied, author and message kept |
 | `authors.mailmap` | Identities merged when `AUTHORS` is generated (with the evidence for each) |
 | `templates/CITATION.cff` | Added by the import (cites the FSPS papers and libopensps) |
 | `proposals/README.md` | Sections proposed for libopensps's README (not applied: the repository's README wins) |
@@ -99,7 +101,10 @@ opensps`, with a `BREAKING CHANGE:` footer (CHECKLIST.md, step 5).
 
 ## Rename scope
 
-**Implemented: the public surface; internal Fortran names kept.**
+**Full rename** (decided): the public surface (stage 1) and the internal names (stage 2, on by
+default; `--no-internal` skips it).
+
+Stage 1, the public surface:
 
 | Renamed | From | To |
 |---|---|---|
@@ -113,81 +118,85 @@ opensps`, with a `BREAKING CHANGE:` footer (CHECKLIST.md, step 5).
 | Docs and tests | C tests, `doc/FSPS_C_API.md`, mentions in docs | `opensps_*`, `doc/C_API.md` |
 | CI | branch filters | `[main]` (`--branch`; already done by the import) |
 
-The rename never edits README.md, LICENSE.md, AGENTS.md, CONTRIBUTING.md, SECURITY.md,
-CODE_OF_CONDUCT.md, CITATION.cff, AUTHORS or assets/.
+Stage 2, the internal names (`rename_internal.pl`):
 
-After the rename the library exports no C function starting with `fsps` (checked with `nm -D`).
-What remains of `fsps` in its symbol table are Fortran symbols: module procedures
-(`__fsps_*_MOD_*`, namespaced by module) and one external procedure,
-`fsps_scenario_batch_of_one_` (`src/physics/fsps_scenario_batch.f90`, PR #22), which sits
-outside a module and so is exported under its plain name.
+| Renamed | From | To |
+|---|---|---|
+| Source files (58) | `src/**/fsps_*.f90`, `src/core/fsps_*.c`, `tests/**/test_fsps_*.f90`, `tests/test_fsps.f90`, `tools/fsps_data/fsps_data.py`, ... | `opensps_*`, `test_opensps_*` |
+| Fortran modules, submodules, procedures, types, variables | `fsps_*` (also after `_`: `test_fsps_io_mod`) | `opensps_*` |
+| Fortran named constants | `FSPS_ERR_UNKNOWN_INT_PARAM`, ... | `OPENSPS_*` |
+| Message tags | `[FSPS_IO]`, `[FSPS_INIT]`, `[FSPS-C]`, ... | `[OPENSPS_IO]`, `[OPENSPS-C]`, ... |
+| Data tools and test library | `tools/fsps_data/`, `tests/data/fsps-test-data/` | `tools/opensps_data/`, `tests/data/opensps-test-data/` |
+| Meson | source lists, unit test modules (`substring(5)` of `fsps_` becomes `substring(8)`) | |
 
-Kept, on purpose:
+Fortran code lines that grow beyond 132 characters are split at a comma with `&` (4 lines in
+the current tree). The two renamed directories were cheap (references in meson.build, CI, the
+Python tools and docs) and keep the tree free of `fsps` names except where they name legacy
+FSPS or the past; the data inside `tests/data` is not edited (its manifests record
+`"converter": "tools/fsps_data"` as provenance, which stays true for that data).
 
-- **Fortran module, procedure, constant and file names (`fsps_*`)**: not an interface (the
-  `.mod` files are not installed). See "Renaming the internal names" for what renaming them
-  would cost; libopensps's AGENTS.md currently assumes they are renamed
-  (`src/core/opensps_precision.f90`).
-- **Environment variables** (`SPS_HOME`, `FSPS_DATA_HOME`, `FSPS_TEST_*`, ...) and the data
-  directory names (`share/fsps`, `~/.local/share/fsps`): existing setups keep working;
-  `OPENSPS_DATA_HOME`, the preferred name, is read first (PR #29).
-- **Internal preprocessor switches** (`FSPS_PINNED`, `FSPS_CUBLAS`).
+**Kept, on purpose** (what `fsps` remains after the rename, and why):
+
+- **Environment variables** `SPS_HOME`, `FSPS_DATA_HOME`, `FSPS_DATA_FORMAT`, `FSPS_TEST_*`,
+  `FSPS_STRESS_*`, `FSPS_SCENARIO_BATCH`, `FSPS_NO_PIN`, ... and the CI variable
+  `FSPS_DATA_RELEASE`: existing setups and CI keep working; `OPENSPS_DATA_HOME`, the preferred
+  data root, is read first (PR #29).
+- **Data directory names** (`share/fsps`, `~/.local/share/fsps`, `$XDG_DATA_HOME/fsps`) and the
+  legacy data-format aliases the readers still accept (`fsps-data.json`, `fsps-data-release`).
+- **Build switches** `FSPS_PINNED`, `FSPS_CUBLAS`, `FSPS_CUBLAS_MATH` (preprocessor).
+- **`FSPS_VERSION`** and the "FSPS Version: 3.2" banner: the FSPS version the physics follows.
+- **Upstream FSPS**: URLs (`cconroy20/fsps`), the word FSPS in prose, citations, `python-fsps`,
+  `FSPS_URL` in the data provenance tool; **elijahmathews/fsps** and `fsps-final` where the
+  import's origin is named.
+- **`tools/legacy_parity`, `tools/benchmark_legacy`**: they build and run legacy FSPS.
+- **`include/fsps.h`**, the deprecated compatibility header (stage 1).
+- **`tests/data`** contents (data and their provenance).
+
+After the rename, `nm -D` lists no symbol containing `fsps`. Every exported symbol is a C
+function `opensps_*` or a module symbol `__opensps_*_MOD_*`. The batch of one, formerly an
+external procedure exported as `fsps_scenario_batch_of_one_`, is a submodule procedure since
+fork PR #31.
 
 **Compatibility:** `include/fsps.h` becomes a deprecated header that includes `opensps.h` and
 `#define`s each old function and macro name to the new one, generated once from the header as
-it was before the rename and frozen afterwards. It is installed alongside `opensps.h`, costs one
-file, and keeps C code written against the fork compiling. There is no binary compatibility
-(the soname changes anyway). Remove it at the next major version.
+it was before the rename and frozen afterwards. It is installed alongside `opensps.h`. It costs
+one file and keeps C code written against the fork compiling; there is no binary
+compatibility (the soname changes anyway). Remove it at the next major version.
 
-**Rerunnable:** the script finds the names to rename in the sources (bind names, header
-declarations, header macros), not in a fixed list. Run again on a tree that gained `fsps_*`
-entry points (a ported patch), it renames just those; on a renamed tree it changes nothing.
-`--check-only` lists what still carries an old name.
+**Rerunnable:** the script finds the public names in the sources (bind names, header
+declarations, header macros), not in a fixed list, and the internal rules are patterns. A run
+on a renamed tree changes nothing, and a run on a tree that gained `fsps_*` names (a ported
+patch) renames just those. `--check-only` lists what still carries an old public name.
 
-**Versions:** libopensps starts at 0.1.0, soname `libopensps.so.0`: the inherited 3.2.0 and
-`.so.3` were libfsps's, and a new library name starts its own numbering (before 1.0, an
+**Blame:** the rename touches ~3,600 lines in 199 files. `.git-blame-ignore-revs` (written by
+the rename, honored by GitHub and by `git config blame.ignoreRevsFile .git-blame-ignore-revs`)
+lists commits that blame skips. Squash merges give the rename its final hash only on `main`,
+so the hash is recorded after the merge, in a one-line follow-up pull request:
+`rename_to_opensps.sh --record-blame-ignore <commit> .` (CHECKLIST.md, step 5).
+
+**Versions:** libopensps starts at 0.1.0, soname `libopensps.so.0`. The inherited 3.2.0 and
+`.so.3` were libfsps's, and a new library name starts its own numbering. Before 1.0, an
 incompatible change raises the minor version and keeps soname 0; from 1.0 on, the soname follows
-the major version). The RPM and Debian package versions follow (`libopensps0`). The C API version
+the major version. The RPM and Debian package versions follow (`libopensps0`). The C API version
 (`OPENSPS_API_VERSION_*`, `opensps_get_driver_version`, now 1.2) stays separate: it describes the
 interface the bindings check, changes only when entry points do, and would otherwise jump with
-every library release. The `FSPS Version: 3.2` line of the verbose banner also stays: it names
-the FSPS version whose physics the code follows.
-
-## Renaming the internal names (open question)
-
-Renaming the internal names too (`src/**/fsps_*.f90` -> `opensps_*.f90`, modules `fsps_*` ->
-`opensps_*`, procedures and constants with the prefix, test files `test_fsps_*`) would touch, as
-of PR #30: 67 file names and about 2,400 identifier occurrences in 113 files (of ~73,000 lines in
-`src/` and `tests/`). Costs:
-
-- **Porting fork patches:** `git am` of a fork patch onto the renamed tree fails (paths and
-  identifiers differ). The replay procedure below still works, since the rename is scripted:
-  apply on the import commit, rerun the rename stages, carry the difference over.
-- **Blame:** within libopensps every line touched would point at the rename commit unless that
-  commit is listed in `.git-blame-ignore-revs` (which GitHub honors). The history before the
-  import is not in libopensps anyway, so nothing is lost across the cutover beyond that.
-- **Diff size:** a large but purely mechanical pull request; review is checking that the tests
-  and the regression outputs are unchanged.
-- **Pitfalls:** names that must not change (environment variables `FSPS_*`, the data paths
-  `tests/data/fsps-test-data` and `tools/fsps_data`, everything under `tools/legacy_parity`,
-  which refers to legacy FSPS) and code that derives names from module names (the unit test
-  names in `meson.build` cut the `fsps_` prefix with `substring(5)`).
-
-`rename_to_opensps.sh` could do it as an optional second stage (`--internal`): `git mv` of the
-files, then `\bfsps_(\w+)` -> `opensps_\1` in Fortran sources, `meson.build` and docs, with the
-exclusions above, verified by the unit and regression suites bit for bit. Not implemented;
-decide whether the internal names should follow.
+every library release.
 
 ## Porting a patch from this repository after the rename
 
-The import commit holds the fork's tree apart from the left-out files, so a fork patch applies
-on top of it and the rename can be replayed:
+`port_patches.sh` does it: run in a libopensps clone, on the branch that should receive the
+commits.
 
 ```sh
-cd libopensps
-imp=$(git log --format=%H --grep='^feat: import elijahmathews/fsps' -1 main)
-git switch -c port-A "$imp" && git am /path/to/0001-*.patch
-tools/cutover/rename_to_opensps.sh . && git add -A && git -c commit.gpgsign=false commit -m "chore: rename (port)"
-git switch -c rename-only "$imp" && tools/cutover/rename_to_opensps.sh . && git add -A && git -c commit.gpgsign=false commit -m "chore: rename"
-git switch -c port/A main && git diff rename-only port-A | git apply -3
+git -C ~/Code/fsps-fork-clone format-patch -o /tmp/port <fork-commit-range>
+cd ~/Code/libopensps && git switch -c port/<topic> origin/main
+tools/cutover/port_patches.sh --prefix "fix: " /tmp/port/*.patch   # --prefix: a Conventional type
 ```
+
+For each patch it applies `git am` on top of the import commit (where the tree is the fork's),
+runs the same rename on the trees before and after the patch, and applies the difference to the
+branch (`git apply -3`), committing with the patch's author, date and message plus
+`Ported-from: elijahmathews/fsps@<hash>`. The patch thus arrives renamed exactly as the code it
+touches was, including split long lines. Tested on fork PR #31 (the batch-of-one submodule): it
+applied cleanly to the renamed tree as `src/physics/opensps_csp.f90` and
+`src/physics/opensps_scenario_batch.f90`, and the suites pass on the result.

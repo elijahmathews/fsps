@@ -16,11 +16,21 @@
 #   never    the repository's own README.md, LICENSE.md, AGENTS.md, CONTRIBUTING.md, SECURITY.md,
 #            CODE_OF_CONDUCT.md, CITATION.cff, AUTHORS, assets/ (proposals for them, if any, are
 #            in tools/cutover/proposals/)
-#   kept     Fortran module, procedure, constant and file names (fsps_*), environment variables
-#            (SPS_HOME, FSPS_DATA_HOME, FSPS_TEST_*, ...), the installed data directory
-#            (share/fsps), internal preprocessor switches (FSPS_PINNED, FSPS_CUBLAS)
+#   internal (stage 2, on by default; --no-internal skips it) Fortran file, module, submodule,
+#            procedure, type, variable and constant names fsps_* / FSPS_* -> opensps_* /
+#            OPENSPS_*, test files and drivers (test_fsps_* -> test_opensps_*), tools/fsps_data ->
+#            tools/opensps_data, tests/data/fsps-test-data -> tests/data/opensps-test-data, the
+#            message tags [FSPS_IO] etc.; rules in rename_internal.pl
+#   kept     environment variables (SPS_HOME, FSPS_DATA_HOME, FSPS_TEST_*, ...; OPENSPS_DATA_HOME
+#            is read first), the installed data directory (share/fsps), build switches
+#            (FSPS_PINNED, FSPS_CUBLAS), FSPS_VERSION (the FSPS version the physics follows),
+#            anything naming upstream FSPS (URLs, citations), tools/legacy_parity and
+#            tools/benchmark_legacy (they build legacy FSPS), the contents of tests/data
+#            (data and their provenance records)
 #   added    include/fsps.h, a deprecated header that includes opensps.h and maps the old names
-#            (written once, from the names present at the first run; frozen afterwards)
+#            (written once, from the names present at the first run; frozen afterwards), and
+#            .git-blame-ignore-revs (for the rename's commit, recorded after it is merged:
+#            --record-blame-ignore REV)
 #
 # Options:
 #   --version X.Y.Z     library version: Meson project version, soversion X (libopensps.so.X), RPM
@@ -29,6 +39,9 @@
 #                       (OPENSPS_API_VERSION_*, currently 1.2) is separate and is not changed.
 #   --keep-version      leave the version and soversion as they are
 #   --branch NAME       default branch for CI triggers (default: main)
+#   --no-internal       public surface only (keep the internal Fortran names)
+#   --record-blame-ignore REV
+#                       only append commit REV (the merged rename) to .git-blame-ignore-revs
 #   --check-only        change nothing; list what still carries the old public names (exit 1 if any)
 #   -h, --help          this text
 set -euo pipefail
@@ -40,6 +53,8 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 version="0.1.0"
 branch="main"
 check_only=0
+internal=1
+blame_rev=""
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,6 +62,8 @@ while [ $# -gt 0 ]; do
         --keep-version) version=""; shift ;;
         --branch) branch=$2; shift 2 ;;
         --check-only) check_only=1; shift ;;
+        --no-internal) internal=0; shift ;;
+        --record-blame-ignore) blame_rev=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         -*) die "unknown option $1 (see --help)" ;;
         *) args+=("$1"); shift ;;
@@ -65,7 +82,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 && is_git=1
 # Never edited: this tool and its templates, the credit and license files (they name
 # elijahmathews/fsps on purpose), the legacy-FSPS comparison tools (their "fsps" is legacy FSPS),
 # the compatibility header, and data.
-excluded_re='^(tools/cutover/|tools/legacy_parity/|tools/benchmark_legacy/|AUTHORS$|LICENSE\.md$|README\.md$|AGENTS\.md$|CONTRIBUTING\.md$|SECURITY\.md$|CODE_OF_CONDUCT\.md$|CITATION\.cff$|assets/|include/fsps\.h$|data/|tests/data/)'
+excluded_re='^(tools/cutover/|tools/legacy_parity/|tools/benchmark_legacy/|AUTHORS$|LICENSE\.md$|README\.md$|AGENTS\.md$|CLAUDE\.md$|GEMINI\.md$|CONTRIBUTING\.md$|SECURITY\.md$|CODE_OF_CONDUCT\.md$|CITATION\.cff$|assets/|include/fsps\.h$|data/|tests/data/)'
 compat_marker='libopensps compatibility header'
 tmp_list=$(mktemp)
 trap 'rm -f "$tmp_list"' EXIT
@@ -76,7 +93,7 @@ list_files() {
     else
         find . -type f -not -path './.git/*' -printf '%P\n'
     fi | grep -v -E "$excluded_re" | while IFS= read -r f; do
-        [ -f "$f" ] && grep -Iq . "$f" 2>/dev/null || continue
+        [ -f "$f" ] && [ ! -L "$f" ] && grep -Iq . "$f" 2>/dev/null || continue
         printf '%s\n' "$f"
     done
     return 0
@@ -130,6 +147,16 @@ check() {
     fi
     return 0
 }
+
+if [ -n "$blame_rev" ]; then
+    full=$(git rev-parse --verify "${blame_rev}^{commit}") || die "no commit $blame_rev"
+    touch .git-blame-ignore-revs
+    if ! grep -q "^$full" .git-blame-ignore-revs; then
+        printf '# %s\n%s\n' "$(git log -1 --format=%s "$full")" "$full" >> .git-blame-ignore-revs
+    fi
+    echo "Recorded $full in .git-blame-ignore-revs (commit it; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs)"
+    exit 0
+fi
 
 if [ $check_only -eq 1 ]; then
     if check; then echo "No old public names left."; exit 0; else exit 1; fi
@@ -260,7 +287,7 @@ if [ -f packaging/opensps.spec ]; then
         perl -i -pe 's{^(%\{_includedir\}/opensps\.h)\n}{$1\n%{_includedir}/fsps.h\n}' packaging/opensps.spec
     perl -i -pe "s{(%\\{_libdir\\}/libopensps\\.so\\.)[0-9]+\\*}{\${1}${soversion}*}" packaging/opensps.spec
     [ -z "$version" ] || perl -i -pe "s/^Version:(\\s+)\\S+/Version:\${1}$version/" packaging/opensps.spec
-    if [ -n "$version" ]; then
+    if [ -n "$version" ] && ! grep -q 'Renamed from fsps to opensps' packaging/opensps.spec; then
         perl -0 -i -pe "s/(%changelog\n\* [^\n]*?) - [0-9][^\s]*-1\n(?!- Renamed)/\$1 - $version-1\n- Renamed from fsps to opensps (libopensps $version, soname libopensps.so.${version%%.*})\n/" packaging/opensps.spec
     fi
 fi
@@ -271,7 +298,7 @@ if [ -d debian ]; then
                  s/^Description: FSPS shared library$/Description: libopensps shared library/;
                  s/^ Shared library for FSPS \(Flexible Stellar Population Synthesis\)\.$/ Shared library of libopensps, derived from FSPS (Flexible Stellar Population Synthesis)./' debian/control
     perl -i -pe 's/^fsps \(/opensps (/' debian/changelog
-    if [ -n "$version" ]; then
+    if [ -n "$version" ] && ! grep -q 'Renamed from fsps to opensps' debian/changelog; then
         perl -0 -i -pe "s/\Aopensps \([^)]*\)(.*?\n\n)(?!  \* Renamed)/opensps ($version-1)\$1  * Renamed from fsps to opensps (libopensps $version, soname libopensps.so.${version%%.*}).\n/s" debian/changelog
     fi
     perl -i -pe 's/^Upstream-Name: fsps$/Upstream-Name: opensps/;
@@ -346,6 +373,39 @@ if [ -n "$old_header_text" ] && [ ! -f include/fsps.h ]; then
     } > include/fsps.h
     [ $is_git -eq 1 ] && git add include/fsps.h
     echo "  wrote include/fsps.h (deprecated compatibility header: $(printf '%s\n' "$old_syms" | grep -c .) functions, $(printf '%s\n' "$old_macs" | grep -c .) macros)"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 8. Internal names (stage 2): files, then text (rename_internal.pl)
+# ---------------------------------------------------------------------------------------------
+if [ $internal -eq 1 ]; then
+    echo "== Internal names"
+    move tools/fsps_data tools/opensps_data
+    move tests/data/fsps-test-data tests/data/opensps-test-data
+    if [ $is_git -eq 1 ]; then git ls-files; else find . -type f -not -path './.git/*' -printf '%P\n'; fi |
+        grep -E '^(src|tests|tools)/' | grep -v -E "$excluded_re" |
+        perl -ne 'chomp; my ($d, $b) = m{^(.*/)?([^/]+)$}; my $n = $b;
+                  $n =~ s/(?<![A-Za-z0-9])fsps_/opensps_/; $n =~ s/^test_fsps\./test_opensps./;
+                  print "$_\t$d$n\n" if $n ne $b;' > "$tmp_list.moves"
+    n_moves=$(wc -l < "$tmp_list.moves")
+    while IFS=$'\t' read -r from to; do
+        if [ $is_git -eq 1 ]; then git mv "$from" "$to"; else mv "$from" "$to"; fi
+    done < "$tmp_list.moves"
+    rm -f "$tmp_list.moves"
+    echo "  moved $n_moves files named fsps_* / test_fsps*"
+    list_files | perl "$script_dir/rename_internal.pl"
+    left=$(list_files | xargs -r -d '\n' grep -nIE '(^|[^A-Za-z0-9])fsps_[a-z0-9]|\btest_fsps\b|fsps-test-data' 2>/dev/null || true)
+    [ -z "$left" ] || { echo "Internal names left:"; printf '%s\n' "$left" | sed 's/^/  /'; exit 1; }
+    if [ ! -f .git-blame-ignore-revs ]; then
+        cat > .git-blame-ignore-revs <<'EOB'
+# Commits that git blame skips (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub
+# reads this file by itself): mechanical changes such as the fsps -> opensps rename. Add the
+# rename's commit on main once it is merged:
+#   tools/cutover/rename_to_opensps.sh --record-blame-ignore <commit> .
+EOB
+        [ $is_git -eq 1 ] && git add .git-blame-ignore-revs
+        echo "  wrote .git-blame-ignore-revs"
+    fi
 fi
 
 echo "== Project $(perl -ne 'print $1 if /^project\(\x27(\w+)\x27/' meson.build) $proj_version, soname libopensps.so.$soversion"

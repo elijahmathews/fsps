@@ -12,8 +12,7 @@ export OPENSPS_DATA_HOME=~/opensps-data
 
 Decided: version 0.1.0 (`libopensps.so.0`, the rename script's default; the C API version stays
 1.2); the regression references are left out of the import (the default) for the data release;
-the two Google Code era handles stay handles. Open: whether the internal Fortran names follow
-(README.md, "Renaming the internal names").
+the two Google Code era handles stay handles; the full rename, internal Fortran names included.
 
 ## 0. Before the day
 
@@ -21,29 +20,25 @@ the two Google Code era handles stay handles. Open: whether the internal Fortran
       resolve `sps_ref_*.bin` and `param_ref/` through the data root, falling back to
       `tests/data/`. It must be merged before the cutover commit, since the snapshot leaves
       `tests/data/sps_ref_*.bin` and `tests/data/param_ref/` out.
-- [ ] **Publish data-v2** (the release that contains the references) to
-      [elijahmathews/opensps-data](https://github.com/elijahmathews/opensps-data). This pushes to
-      a public repository: only with your explicit go-ahead.
-
-  ```sh
-  cat ~/Code/fsps-data-release/data-v2/UPLOAD.txt                     # what will be uploaded
-  $FORK/tools/fsps_data/upload_release.sh ~/Code/fsps-data-release/data-v2 data-v2   # asks before uploading
-  python3 $FORK/tools/fetch_data.py /tmp/check-v2 --release data-v2 --all --cache /tmp/check-v2-cache
-  ```
+- [x] **data-v2 published** (the release that contains the references):
+      https://github.com/elijahmathews/opensps-data/releases/tag/data-v2; fork variable
+      `FSPS_DATA_RELEASE` = `data-v2`.
 
 - [ ] **Default release** in `tools/fetch_data.py` (`DEFAULT_RELEASE`) set to `data-v2`, so a
       plain `fetch_data.py ~/opensps-data` includes the references.
-- [ ] **CI of this repository on data-v2:** the repository variable `FSPS_DATA_RELEASE` (read by
-      `ci.yml`) set to `data-v2`, and one CI run on develop that fetches the release.
+- [ ] **CI of this repository on data-v2:** one green run on develop that fetches the release.
 
   ```sh
-  gh variable set FSPS_DATA_RELEASE -R elijahmathews/fsps --body data-v2
   gh workflow run ci.yml -R elijahmathews/fsps --ref develop
   ```
 
+- [ ] **Fork PR #31** (the batch of one as a submodule procedure) merged, so that the library
+      exports no stray `fsps_`/`opensps_` external symbol; otherwise port it afterwards with
+      `port_patches.sh`.
+
 ## 1. Merge into develop (order decided by you)
 
-Whatever is ready, including `data/references` and this pull request (`tools/cutover` must be in
+Whatever is ready, including #30 (`data/references`), #31 and this pull request (`tools/cutover` must be in
 the cutover commit, so that the rename script travels with the tree). Work not merged moves later
 as patches (README.md, "Porting a patch").
 
@@ -111,17 +106,20 @@ cd $NEW && git push origin import:main
 
 ```sh
 cd $NEW && git fetch && git switch -c refactor/rename-opensps origin/main
-tools/cutover/rename_to_opensps.sh .                  # version 0.1.0, libopensps.so.0
+tools/cutover/rename_to_opensps.sh .                  # public + internal names, version 0.1.0, libopensps.so.0
 tools/cutover/rename_to_opensps.sh --check-only . && git diff --stat
 meson setup build --wipe && meson compile -C build && meson test -C build --suite unit --suite regression
 readelf -d build/libopensps.so | grep SONAME          # libopensps.so.0
-nm -D --defined-only build/libopensps.so | awk '{print $3}' | grep -E '^fsps\w*[^_]$'   # no C functions: expect nothing
+nm -D --defined-only build/libopensps.so | awk '{print $3}' | grep -i fsps          # expect nothing
+git grep -n -E '(^|[^A-Za-z0-9])fsps_[a-z]' -- . ':!tools/legacy_parity' ':!tools/benchmark_legacy' ':!tests/data' ':!include/fsps.h' ':!tools/cutover'   # expect nothing
 git add -A && git -c commit.gpgsign=false commit -F - <<'MSG'
 refactor!: rename the public C API and library to opensps
 
 The library is libopensps (version 0.1.0, soname libopensps.so.0), the header
 opensps.h, the pkg-config name opensps; C functions and macros carry the
-prefixes opensps_ and OPENSPS_. Internal Fortran names are unchanged.
+prefixes opensps_ and OPENSPS_. Internal names follow: Fortran files, modules,
+procedures and constants (fsps_* -> opensps_*), test files, tools/opensps_data
+and tests/data/opensps-test-data. Environment variables are unchanged.
 
 BREAKING CHANGE: libfsps, fsps.h, pkg-config fsps and the fsps_* / FSPS_* C
 names are now libopensps, opensps.h, opensps and opensps_* / OPENSPS_*. A
@@ -133,7 +131,22 @@ gh pr checks -R elijahmathews/libopensps refactor/rename-opensps --watch
 ```
 
 Squash-merge once CI passes (the pull request title is the commit subject: keep it the
-Conventional one above, with the `BREAKING CHANGE:` footer in the body).
+Conventional one above, with the `BREAKING CHANGE:` footer in the body). Then let git blame skip
+the merged rename commit, in a one-line follow-up pull request:
+
+```sh
+git switch main && git pull --ff-only
+R=$(git log -1 --format=%H --grep='^refactor!: rename the public C API')
+git switch -c chore/blame-ignore-rename
+tools/cutover/rename_to_opensps.sh --record-blame-ignore "$R" .
+git add .git-blame-ignore-revs && git -c commit.gpgsign=false commit -m "chore: ignore the opensps rename in git blame"
+git push -u origin chore/blame-ignore-rename
+gh pr create -R elijahmathews/libopensps --base main --head chore/blame-ignore-rename --fill
+git config blame.ignoreRevsFile .git-blame-ignore-revs    # locally (GitHub reads the file itself)
+```
+
+Porting fork work that was not merged before the cutover: `tools/cutover/port_patches.sh`
+(README.md, "Porting a patch").
 
 ## 6. Repository settings (github.com/elijahmathews/libopensps/settings)
 
