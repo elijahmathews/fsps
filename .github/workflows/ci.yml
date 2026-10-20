@@ -101,6 +101,7 @@ jobs:
 
     env:
       FFLAGS: ${{ matrix.fflags }}
+      DATA_RELEASE: ${{ vars.FSPS_DATA_RELEASE }}
 
     steps:
       - name: Checkout (without the C3K library)
@@ -171,8 +172,23 @@ jobs:
           ls "$sdk_lib" | grep -i -E 'nvcpumath|nvhpcatm|nvc\.' || true
           echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 
+      # Data from the published release instead of the checked-out data/ (doc/DATA_FORMAT.md,
+      # Section 6). Off until the repository variable FSPS_DATA_RELEASE is set (e.g. data-v1);
+      # the verified archives are cached per release, so a release is downloaded once.
+      - name: Cache the data release
+        if: env.DATA_RELEASE != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fsps-data
+          key: fsps-data-${{ env.DATA_RELEASE }}${{ matrix.full_data && '-all' || '' }}
+      - name: Fetch the data release
+        if: env.DATA_RELEASE != ''
+        run: |
+          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"${{ matrix.full_data && ' --all' || '' }}
+          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+
       - name: Configure
-        run: meson setup build --buildtype=release ${{ matrix.setup_args }}
+        run: meson setup build --buildtype=release ${{ matrix.setup_args }} $DATA_ARGS
 
       - name: Build
         run: meson compile -C build
@@ -193,6 +209,15 @@ jobs:
               exit 1
             fi
           fi
+
+      # The standard data format (doc/DATA_FORMAT.md): convert the checked-out legacy tree and
+      # require every loaded array and SSP/CSP output to be bit-for-bit those of the legacy reader
+      - name: Standard data format parity
+        if: matrix.full_data && env.DATA_RELEASE == ''
+        run: |
+          sudo apt-get install -y -q python3-numpy
+          python3 tools/fsps_data/convert_legacy.py . fsps-data
+          meson test -C build --suite data_parity --print-errorlogs ${{ matrix.coverage && '--timeout-multiplier 3' || '' }}
 
       # Every assertion is a JUnit test case (the suites print TAP, which meson converts)
       - name: Report test results
@@ -260,6 +285,7 @@ jobs:
       FFLAGS: -ffpe-summary=invalid,zero,overflow
       FC: ccache gfortran
       CC: ccache gcc
+      DATA_RELEASE: ${{ vars.FSPS_DATA_RELEASE }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -278,7 +304,22 @@ jobs:
         with:
           key: asan
           max-size: 200M
-      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=address,undefined
+      # Data from the published release instead of the checked-out data/ (doc/DATA_FORMAT.md,
+      # Section 6). Off until the repository variable FSPS_DATA_RELEASE is set (e.g. data-v1);
+      # the verified archives are cached per release, so a release is downloaded once.
+      - name: Cache the data release
+        if: env.DATA_RELEASE != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fsps-data
+          key: fsps-data-${{ env.DATA_RELEASE }}
+      - name: Fetch the data release
+        if: env.DATA_RELEASE != ''
+        run: |
+          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"
+          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+
+      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=address,undefined $DATA_ARGS
       - run: meson compile -C build
       - run: meson test -C build --suite unit --print-errorlogs
       - name: Stress phases A and C
@@ -311,6 +352,7 @@ jobs:
       FFLAGS: -ffpe-summary=invalid,zero,overflow
       FC: ccache gfortran
       CC: ccache gcc
+      DATA_RELEASE: ${{ vars.FSPS_DATA_RELEASE }}
       OMP_NUM_THREADS: 2
       # Suppress known false positives in the uninstrumented Fortran/OpenMP runtimes (all steps)
       TSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/tsan.supp halt_on_error=1 second_deadlock_stack=1
@@ -332,7 +374,22 @@ jobs:
         with:
           key: tsan
           max-size: 200M
-      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=thread -Denable_openmp=true
+      # Data from the published release instead of the checked-out data/ (doc/DATA_FORMAT.md,
+      # Section 6). Off until the repository variable FSPS_DATA_RELEASE is set (e.g. data-v1);
+      # the verified archives are cached per release, so a release is downloaded once.
+      - name: Cache the data release
+        if: env.DATA_RELEASE != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fsps-data
+          key: fsps-data-${{ env.DATA_RELEASE }}
+      - name: Fetch the data release
+        if: env.DATA_RELEASE != ''
+        run: |
+          python3 tools/fetch_data.py "$HOME/fsps-data" --release "$DATA_RELEASE"
+          echo "DATA_ARGS=-Ddata_home=$HOME/fsps-data" >> "$GITHUB_ENV"
+
+      - run: meson setup build -Denable_stress_testing=true -Db_sanitize=thread -Denable_openmp=true $DATA_ARGS
       - run: meson compile -C build
       - run: meson test -C build --suite unit --print-errorlogs
       - name: Stress phases B and D

@@ -185,7 +185,7 @@ contains
 
         call print_group("Nebular H-beta / Q(H0) equals Case B")
 
-        i_hbeta = emission_line_index(4861.0_wp)
+        i_hbeta = emission_line_index(ctx, 4861.0_wp)
         call assert_true(i_hbeta > 0, "H-beta found in the line list", total_tests, total_failures)
         if (i_hbeta <= 0) return
 
@@ -469,15 +469,17 @@ contains
     end function spectral_lbol
 
     !> Index of the emission line closest to the given wavelength (Angstrom), or 0.
-    integer function emission_line_index(lambda)
+    integer function emission_line_index(ctx, lambda)
+        use fsps_io, only: auxiliary_table_path
+        type(fsps_context_t), intent(in) :: ctx
         real(WP), intent(in) :: lambda
         emission_line_index = 0
         block
             real(WP) :: line_lambda
             integer :: unit_in, ios, i
-            character(len=512) :: path, line
-            call get_environment_variable('FSPS_DATA_HOME', path)
-            open(newunit=unit_in, file=trim(path) // '/data/emlines_info.dat', status='old', &
+            character(len=512) :: line
+            ! The context's resolved data root, legacy or standard layout alike
+            open(newunit=unit_in, file=auxiliary_table_path(ctx, 'emlines_info.dat'), status='old', &
                  action='read', iostat=ios)
             if (ios /= 0) return
             do i = 1, NEMLINE
