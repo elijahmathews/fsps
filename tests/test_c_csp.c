@@ -183,6 +183,9 @@ int main(void) {
     check(status == 309, "mags in fast mode: 309");
 
     fsps_context_destroy(h, &status);
+    free(lam); free(ages); free(zl); free(eml); free(leff); free(mvega); free(msun);
+    free(sspec); free(smass); free(slbol); free(cmass); free(clbol); free(cage);
+    free(spec); free(mags); free(bspec); free(bmags); free(lines); free(blines); free(spec2);
 
     /* A handle reused after destroy starts from the default parameters, like a new one */
     {
